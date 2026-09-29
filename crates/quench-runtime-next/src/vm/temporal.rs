@@ -463,16 +463,8 @@ impl<H: Host> Vm<H> {
                 }
                 let ordering = if let Some(date) = relative_date.as_ref().filter(|_| has_date_units)
                 {
-                    let left = quench_temporal::relative_duration_nanoseconds(
-                        date.iso_date,
-                        std::array::from_fn(|index| left[index] as i128),
-                    )
-                    .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
-                    let right = quench_temporal::relative_duration_nanoseconds(
-                        date.iso_date,
-                        std::array::from_fn(|index| right[index] as i128),
-                    )
-                    .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
+                    let left = self.relative_duration_nanoseconds(p, date, &left)?;
+                    let right = self.relative_duration_nanoseconds(p, date, &right)?;
                     left.cmp(&right)
                 } else {
                     self.duration_time_nanos(&left)
@@ -657,6 +649,61 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    fn relative_duration_nanoseconds(
+        &mut self,
+        p: &ResidualProgram,
+        relative: &TemporalRelativeDate,
+        fields: &[f64; 10],
+    ) -> Result<i128, JsError> {
+        let Some(zoned) = &relative.zoned else {
+            return quench_temporal::relative_duration_nanoseconds(
+                relative.iso_date,
+                std::array::from_fn(|index| fields[index] as i128),
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()));
+        };
+        let date_fields: [Value; 10] = std::array::from_fn(|index| {
+            Value::number(
+                if index <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
+                    fields[index]
+                } else {
+                    0.0
+                },
+            )
+        });
+        let date_duration = self.temporal_duration_construct(p, &date_fields)?;
+        let date_endpoint = if fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+            .iter()
+            .any(|value| *value != 0.0)
+        {
+            let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
+                object: Box::new(Self::empty_object(self.object_proto)),
+                epoch_nanoseconds: zoned.epoch_nanoseconds,
+                time_zone: zoned.time_zone.clone(),
+                calendar: zoned.calendar.clone(),
+            });
+            let result = self.temporal_zoned_date_time_arithmetic(
+                p,
+                Native::TemporalZonedDateTimeAdd,
+                receiver,
+                &[date_duration],
+            )?;
+            let Some(Cell::TemporalZonedDateTime {
+                epoch_nanoseconds, ..
+            }) = self.heap.get(result)
+            else {
+                return Err(self.range_error(p, "Invalid relativeTo".into()));
+            };
+            *epoch_nanoseconds
+        } else {
+            zoned.epoch_nanoseconds
+        };
+        date_endpoint
+            .checked_add(duration_clock_nanoseconds(fields))
+            .and_then(|endpoint| endpoint.checked_sub(zoned.epoch_nanoseconds))
+            .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))
+    }
+
     fn temporal_relative_date(
         &mut self,
         p: &ResidualProgram,
@@ -730,18 +777,28 @@ impl<H: Host> Vm<H> {
         let offset = fields.offset.clone();
         let timezone = fields.time_zone.clone();
         let validate_time_bounds = fields.has_zoned_time();
-        let (year, month, day, _, _) =
+        let (year, month, day, _, time) =
             self.resolve_plain_date_time_fields(p, fields, true, validate_time_bounds)?;
         let minimum_date_time_boundary = (year, month, day)
             == super::temporal_plain_date_time_conversion::MIN_PLAIN_DATE_TIME_DATE;
-        if let Some(timezone) = timezone {
-            let timezone = self.heap.alloc(Cell::String(timezone.into()));
+        if let Some(timezone) = &timezone {
+            let timezone = self.heap.alloc(Cell::String(timezone.clone().into()));
             self.temporal_timezone_id(p, timezone)?;
         }
-        if let Some(offset) = offset {
+        if let Some(offset) = &offset {
             if !quench_temporal::valid_string_offset(&offset) {
                 return Err(self.range_error(p, "Invalid offset".into()));
             }
+        }
+        if let (Some(timezone), Some(offset)) = (&timezone, &offset)
+            && !super::temporal_zoned_date_time::relative_offset_matches(
+                super::temporal_date::IsoDate { year, month, day },
+                time,
+                timezone,
+                offset,
+            )
+        {
+            return Err(self.range_error(p, "Offset does not match time zone".into()));
         }
         Ok(TemporalRelativeDate {
             iso_date: quench_temporal::IsoDate { year, month, day },
@@ -796,11 +853,32 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.range_error(p, "Invalid relativeTo range".into()));
         }
-        if (index <= 2 || fields[..3].iter().any(|value| *value != 0.0)) && relative_date.is_none()
+        if (index <= 2
+            || fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .any(|value| *value != 0.0))
+            && relative_date.is_none()
         {
             return Err(self.range_error(p, "relativeTo required".into()));
         }
-        if index <= 2 || fields[..3].iter().any(|value| *value != 0.0) {
+        if index >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
+            && fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .any(|value| *value != 0.0)
+            && let Some(relative) = relative_date
+                .as_ref()
+                .filter(|relative| relative.zoned.is_some())
+        {
+            return Ok(Value::number(divide_duration_nanos(
+                self.relative_duration_nanoseconds(p, relative, &fields)?,
+                DURATION_TIME_NANOSECOND_SCALES[index - 3],
+            )));
+        }
+        if index <= 2
+            || fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .any(|value| *value != 0.0)
+        {
             return self.temporal_duration_total_relative_date(
                 p,
                 &fields,
@@ -974,8 +1052,11 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.range_error(p, "Invalid relativeTo range".into()));
         }
-        let needs_relative_date =
-            smallest <= 2 || largest <= 2 || fields[..3].iter().any(|value| *value != 0.0);
+        let needs_relative_date = smallest <= 2
+            || largest <= 2
+            || fields[..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+                .iter()
+                .any(|value| *value != 0.0);
         let needs_zoned_day_rounding = largest
             == super::temporal_date_arithmetic::DURATION_DAYS_FIELD
             && smallest >= super::temporal_date_arithmetic::DURATION_HOURS_FIELD
@@ -1064,6 +1145,11 @@ impl<H: Host> Vm<H> {
                 return self.make_temporal_duration(p, result);
             }
         }
+        let zoned_duration_nanoseconds = relative_date
+            .zoned
+            .is_some()
+            .then(|| self.relative_duration_nanoseconds(p, &relative_date, &fields))
+            .transpose()?;
         let relative_date = relative_date.iso_date;
         let fields_i128 = std::array::from_fn(|index| fields[index] as i128);
         let (target_date, time_remainder) = if !explicit_smallest_unit {
@@ -1122,7 +1208,10 @@ impl<H: Host> Vm<H> {
             )
         };
         if largest >= 4 {
-            let total = quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
+            let total = zoned_duration_nanoseconds
+                .or_else(|| {
+                    quench_temporal::relative_duration_nanoseconds(relative_date, fields_i128)
+                })
                 .ok_or_else(|| self.range_error(p, "Invalid relativeTo".into()))?;
             let quantum = duration_round_unit_nanoseconds(smallest)
                 .checked_mul(increment)
@@ -1318,6 +1407,18 @@ fn duration_total_time_out_of_range(values: &[f64]) -> bool {
         },
     );
     total.is_none_or(|total| total.unsigned_abs() > DURATION_TOTAL_TIME_LIMIT_NANOS as u128)
+}
+
+fn duration_clock_nanoseconds(fields: &[f64; 10]) -> i128 {
+    fields[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
+        .iter()
+        .zip(
+            DURATION_TIME_NANOSECOND_SCALES[super::temporal_date_arithmetic::DURATION_HOURS_FIELD
+                - super::temporal_date_arithmetic::DURATION_DAYS_FIELD..]
+                .iter(),
+        )
+        .map(|(value, scale)| *value as i128 * scale)
+        .sum()
 }
 
 fn balance_duration_time(left: &[f64; 10], right: &[f64; 10], subtract: bool) -> [f64; 10] {

@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+const OFFSET_MATCH_TOLERANCE_NANOSECONDS: i128 = 30 * NANOSECONDS_PER_SECOND;
 const NANOSECOND: i128 = 1;
 const MIN_ROUNDING_INCREMENT: i128 = NANOSECOND;
 const MAX_SUBSECOND_ROUNDING_INCREMENT: i128 = 1_000;
@@ -1471,6 +1472,7 @@ impl<H: Host> Vm<H> {
             local_epoch,
             offset,
             false,
+            false,
             &offset_mode,
             &disambiguation,
         )
@@ -2132,6 +2134,7 @@ impl<H: Host> Vm<H> {
             local_epoch,
             offset,
             false,
+            false,
             &options.offset,
             &options.disambiguation,
         )
@@ -2195,6 +2198,7 @@ struct IsoZonedDateTimeBase {
     date: super::temporal_date::IsoDate,
     time: [u32; 6],
     offset_nanoseconds: Option<i128>,
+    offset_minute_precision: bool,
     time_zone_offset_syntax: bool,
     z_designator: bool,
     leap_second: bool,
@@ -2308,6 +2312,7 @@ fn resolve_zoned_date_time_string(
         local_epoch_nanoseconds,
         local.offset_nanoseconds,
         local.z_designator,
+        local.offset_minute_precision,
         offset_mode,
         "compatible",
     )?;
@@ -2328,6 +2333,7 @@ fn resolve_zoned_local_epoch(
     local_epoch: i128,
     offset: Option<i128>,
     z_designator: bool,
+    offset_minute_precision: bool,
     offset_mode: &str,
     disambiguation: &str,
 ) -> Option<i128> {
@@ -2342,13 +2348,81 @@ fn resolve_zoned_local_epoch(
     if offset_mode == "ignore" {
         return zone_epoch();
     }
+    if offset_minute_precision
+        && let Some(epoch) =
+            minute_precision_offset_epoch(local_epoch, offset_epoch, offset, time_zone)
+    {
+        return Some(epoch);
+    }
     let actual_offset = fixed_time_zone_offset_nanoseconds(time_zone)
         .or_else(|| timezone_offset_nanoseconds(time_zone, offset_epoch));
-    match (offset_mode, actual_offset == Some(offset)) {
-        (_, true) => Some(offset_epoch),
-        ("prefer", false) => zone_epoch(),
-        _ => None,
+    if actual_offset == Some(offset) {
+        return Some(offset_epoch);
     }
+    if offset_minute_precision
+        && let Some(actual_offset) = actual_offset
+        && actual_offset.abs_diff(offset) <= OFFSET_MATCH_TOLERANCE_NANOSECONDS as u128
+    {
+        return local_epoch.checked_sub(actual_offset);
+    }
+    (offset_mode == "prefer").then(zone_epoch).flatten()
+}
+
+pub(super) fn relative_offset_matches(
+    date: super::temporal_date::IsoDate,
+    time: [i32; 6],
+    time_zone: &str,
+    offset: &str,
+) -> bool {
+    let Some(offset) = parse_offset_nanoseconds(offset) else {
+        return false;
+    };
+    let time = time.map(|field| field as u32);
+    let local_epoch = local_epoch_from_iso_fields(date, time);
+    resolve_zoned_local_epoch(
+        date,
+        time,
+        time_zone,
+        local_epoch,
+        Some(offset),
+        false,
+        false,
+        "reject",
+        "compatible",
+    )
+    .is_some()
+}
+
+fn minute_precision_offset_epoch(
+    local_epoch: i128,
+    offset_epoch: i128,
+    offset: i128,
+    time_zone: &str,
+) -> Option<i128> {
+    let probes = [
+        offset_epoch.checked_sub(OFFSET_MATCH_TOLERANCE_NANOSECONDS)?,
+        offset_epoch,
+        offset_epoch.checked_add(OFFSET_MATCH_TOLERANCE_NANOSECONDS)?,
+    ];
+    let mut earliest = None;
+    for probe in probes {
+        let Some(candidate_offset) = timezone_offset_nanoseconds(time_zone, probe) else {
+            continue;
+        };
+        if candidate_offset.abs_diff(offset) > OFFSET_MATCH_TOLERANCE_NANOSECONDS as u128 {
+            continue;
+        }
+        let Some(candidate_epoch) = local_epoch.checked_sub(candidate_offset) else {
+            continue;
+        };
+        if timezone_offset_nanoseconds(time_zone, candidate_epoch) != Some(candidate_offset) {
+            continue;
+        }
+        if earliest.is_none_or(|current| candidate_epoch < current) {
+            earliest = Some(candidate_epoch);
+        }
+    }
+    earliest
 }
 
 pub(super) fn parse_iso_zoned_base(
@@ -2381,6 +2455,7 @@ fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
             date: parse_iso_zoned_date_fields(value)?,
             time: [0; 6],
             offset_nanoseconds: None,
+            offset_minute_precision: false,
             time_zone_offset_syntax: true,
             z_designator: false,
             leap_second: false,
@@ -2456,6 +2531,8 @@ fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
     let microsecond = nanosecond / NANOSECONDS_PER_MICROSECOND % MICROSECONDS_PER_MILLISECOND;
     let nanosecond = nanosecond % NANOSECONDS_PER_MICROSECOND;
     let time_zone_offset_syntax = offset_text.is_none_or(quench_temporal::valid_timezone_offset);
+    let offset_minute_precision =
+        offset_text.is_some_and(|value| offset_has_minutes(value) && !offset_has_seconds(value));
     let offset = match offset_text {
         Some(value) => Some(parse_offset_nanoseconds(value)?),
         None => None,
@@ -2464,6 +2541,7 @@ fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
         date,
         time: [hour, minute, second, millisecond, microsecond, nanosecond],
         offset_nanoseconds: offset,
+        offset_minute_precision,
         time_zone_offset_syntax,
         z_designator,
         leap_second,
@@ -2550,6 +2628,22 @@ fn parse_offset_nanoseconds(value: &str) -> Option<i128> {
         i128::from(quench_temporal::offset_seconds(clock)) * NANOSECONDS_PER_SECOND
             + i128::from(sign) * i128::from(fraction),
     )
+}
+
+fn offset_has_seconds(value: &str) -> bool {
+    let clock = value
+        .split_once(['.', ','])
+        .map_or(value, |(clock, _)| clock);
+    let unsigned = clock.strip_prefix(['+', '-']).unwrap_or(clock);
+    unsigned.matches(':').count() == 2 || unsigned.len() == 6
+}
+
+fn offset_has_minutes(value: &str) -> bool {
+    let clock = value
+        .split_once(['.', ','])
+        .map_or(value, |(clock, _)| clock);
+    let unsigned = clock.strip_prefix(['+', '-']).unwrap_or(clock);
+    unsigned.contains(':') || unsigned.len() >= 4
 }
 
 pub(super) fn timezone_offset_nanoseconds(zone: &str, epoch: i128) -> Option<i128> {
