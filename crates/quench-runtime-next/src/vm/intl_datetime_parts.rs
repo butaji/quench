@@ -154,7 +154,6 @@ pub(super) struct DateTimePartOptions {
     pub second: Option<String>,
     pub day_period: Option<String>,
     pub hour_cycle: Option<String>,
-    pub hour12: Option<bool>,
     pub fractional_second_digits: Option<u32>,
     pub time_zone_name: Option<String>,
 }
@@ -416,13 +415,8 @@ fn append_time(
         }
         return;
     }
-    let hour_cycle = options.hour12.map_or_else(
-        || options.hour_cycle.as_deref().unwrap_or("h12"),
-        |hour12| if hour12 { "h12" } else { "h23" },
-    );
-    let hour12 = options
-        .hour12
-        .unwrap_or_else(|| matches!(hour_cycle, "h11" | "h12"));
+    let hour_cycle = options.hour_cycle.as_deref().unwrap_or("h12");
+    let hour12 = matches!(hour_cycle, "h11" | "h12");
     let hour = match hour_cycle {
         "h11" => fields.hour % HOURS_PER_HALF_DAY,
         "h12" => match fields.hour % HOURS_PER_HALF_DAY {
