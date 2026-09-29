@@ -45,6 +45,21 @@ impl<H: Host> Vm<H> {
         Ok(self.new_array(values))
     }
 
+    pub(super) fn iterator_step_value(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+    ) -> Result<Option<Value>, JsError> {
+        let step = self.iterator_next(p, iterator)?;
+        let done_atom = self.intern_atom("done");
+        let done = self.get_property(p, step, done_atom)?;
+        if self.truthy(done) {
+            return Ok(None);
+        }
+        let value_atom = self.intern_atom("value");
+        self.get_property(p, step, value_atom).map(Some)
+    }
+
     pub(super) fn iterator_close(
         &mut self,
         p: &ResidualProgram,

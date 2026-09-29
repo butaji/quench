@@ -175,31 +175,8 @@ impl<H: Host> Vm<H> {
         kind: WeakCollectionKind,
     ) -> Result<(), JsError> {
         loop {
-            let step = match self.iterator_next(p, iterator) {
-                Ok(step) => step,
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
-            };
-            let done_atom = self.intern_atom("done");
-            let done = match self.get_property(p, step, done_atom) {
-                Ok(done) => self.truthy(done),
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
-            };
-            if done {
+            let Some(entry) = self.iterator_step_value(p, iterator)? else {
                 return Ok(());
-            }
-            let value_atom = self.intern_atom("value");
-            let entry = match self.get_property(p, step, value_atom) {
-                Ok(entry) => entry,
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
             };
             if matches!(kind, WeakCollectionKind::Map) && !self.is_object_like(entry) {
                 let error = self.type_error(p, "Iterator value is not an entry object".into());
@@ -660,37 +637,14 @@ impl<H: Host> Vm<H> {
                     return Ok(map);
                 };
                 let setter_atom = self.intern_atom("set");
-                let setter = self.get_property(p, self.map_proto, setter_atom)?;
+                let setter = self.get_property(p, map, setter_atom)?;
                 if self.call_target(setter).is_err() {
                     return Err(self.type_error(p, "Map.prototype.set is not callable".into()));
                 }
                 let iterator = self.get_iterator(p, iterable)?;
                 loop {
-                    let step = match self.iterator_next(p, iterator) {
-                        Ok(step) => step,
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
-                    };
-                    let done_atom = self.intern_atom("done");
-                    let done = match self.get_property(p, step, done_atom) {
-                        Ok(done) => self.truthy(done),
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
-                    };
-                    if done {
+                    let Some(entry) = self.iterator_step_value(p, iterator)? else {
                         return Ok(map);
-                    }
-                    let value_atom = self.intern_atom("value");
-                    let entry = match self.get_property(p, step, value_atom) {
-                        Ok(entry) => entry,
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
                     };
                     if !self.is_object_like(entry) {
                         let error =
@@ -740,31 +694,8 @@ impl<H: Host> Vm<H> {
                 }
                 let iterator = self.get_iterator(p, iterable)?;
                 loop {
-                    let step = match self.iterator_next(p, iterator) {
-                        Ok(step) => step,
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
-                    };
-                    let done_atom = self.intern_atom("done");
-                    let done = match self.get_property(p, step, done_atom) {
-                        Ok(done) => self.truthy(done),
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
-                    };
-                    if done {
+                    let Some(value) = self.iterator_step_value(p, iterator)? else {
                         return Ok(set);
-                    }
-                    let value_atom = self.intern_atom("value");
-                    let value = match self.get_property(p, step, value_atom) {
-                        Ok(value) => value,
-                        Err(error) => {
-                            let _ = self.iterator_close(p, iterator);
-                            return Err(error);
-                        }
                     };
                     if let Err(error) = self.call_value(p, adder, set, &[value]) {
                         let _ = self.iterator_close(p, iterator);
