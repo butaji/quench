@@ -470,30 +470,15 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(item) {
                     return Err(self.type_error(p, "Invalid PlainDate fields".into()));
                 }
+                let (era, era_year) = self.read_calendar_era_fields(p, item, &calendar)?;
                 let year_atom = self.intern_atom("year");
                 let year_value = self.get_property(p, item, year_atom)?;
                 let year = self.plain_date_optional_integer(p, year_value)?;
-                let era_atom = self.intern_atom("era");
-                let era_value = self.get_property(p, item, era_atom)?;
-                let era = if era_value.is_undefined() {
-                    None
-                } else {
-                    Some(self.to_string(p, era_value)?.to_string())
-                };
-                let era_year_atom = self.intern_atom("eraYear");
-                let era_year_value = self.get_property(p, item, era_year_atom)?;
-                let era_year = self.plain_date_optional_integer(p, era_year_value)?;
-                let year = self.resolve_calendar_year(
-                    p,
-                    &calendar,
-                    year,
-                    era.as_deref(),
-                    era_year,
-                )?;
+                let year =
+                    self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
                 let date = if calendar == "iso8601" {
-                    let day = day.min(
-                        iso_days_in_month(year, month as i32).unwrap_or(day as i32) as u32,
-                    );
+                    let day =
+                        day.min(iso_days_in_month(year, month as i32).unwrap_or(day as i32) as u32);
                     checked_iso_date(year, month as i32, day as i32)
                 } else {
                     let reference = quench_intl::calendar_fields_from_iso(
@@ -619,22 +604,15 @@ impl<H: Host> Vm<H> {
             } else {
                 year
             };
-            let ordinal = quench_intl::calendar_month_from_code(
-                calendar_year,
-                &month_code,
-                &calendar,
-            )
-            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
+            let ordinal =
+                quench_intl::calendar_month_from_code(calendar_year, &month_code, &calendar)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
             if month.is_some_and(|month| month != ordinal as i32) {
                 return Err(self.range_error(p, "Conflicting month fields".into()));
             }
             if !year_value.is_undefined() {
                 let date = quench_intl::calendar_date_to_iso_with_overflow(
-                    year,
-                    ordinal,
-                    day as u32,
-                    &calendar,
-                    constrain,
+                    year, ordinal, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
                 return self.make_plain_month_day_from_iso_date(
@@ -802,10 +780,12 @@ impl<H: Host> Vm<H> {
                         year: other_year,
                         month: other_month,
                         calendar: other_calendar,
+                        reference_iso_day: other_day,
                         ..
                     }) if *other_year == year
                         && *other_month == month
-                        && *other_calendar == calendar =>
+                        && *other_calendar == calendar
+                        && *other_day == reference_day =>
                     {
                         Value::TRUE
                     }
@@ -940,7 +920,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
         let (changed_year, changed_month, changed_code, era, era_year) =
-            self.temporal_plain_year_month_change_fields(p, changes)?;
+            self.temporal_plain_year_month_change_fields(p, changes, &calendar)?;
         if changed_month.is_some_and(|month| month <= 0) {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
         }
@@ -1003,6 +983,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         changes: Value,
+        calendar: &str,
     ) -> Result<
         (
             Option<i32>,
@@ -1014,6 +995,7 @@ impl<H: Host> Vm<H> {
         JsError,
     > {
         self.validate_plain_year_month_changes(p, changes)?;
+        let (era, era_year) = self.read_calendar_era_fields(p, changes, calendar)?;
         let month_atom = self.intern_atom("month");
         let month_value = self.get_property(p, changes, month_atom)?;
         let month = self.plain_date_optional_integer(p, month_value)?;
@@ -1027,16 +1009,6 @@ impl<H: Host> Vm<H> {
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
         let year = self.plain_date_optional_integer(p, year_value)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, changes, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, changes, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         Ok((year, month, month_code, era, era_year))
     }
 
@@ -1204,7 +1176,8 @@ impl<H: Host> Vm<H> {
         if day.is_undefined() {
             return Err(self.type_error(p, "Missing day".into()));
         }
-        let day = self.plain_date_integer(p, day)?;
+        let day = self.plain_date_positive_integer(p, day)?;
+        let (era, era_year) = self.read_calendar_era_fields(p, bag, &calendar)?;
         let month_atom = self.intern_atom("month");
         let month_value = self.get_property(p, bag, month_atom)?;
         let month = self.plain_date_optional_integer(p, month_value)?;
@@ -1225,19 +1198,9 @@ impl<H: Host> Vm<H> {
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
         let supplied_year = self.plain_date_optional_integer(p, year_value)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, bag, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, bag, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let calendar_uses_eras = quench_intl::calendar_uses_eras(&calendar);
-        let has_relevant_year_fields = supplied_year.is_some()
-            || calendar_uses_eras && (era.is_some() || era_year.is_some());
+        let has_relevant_year_fields =
+            supplied_year.is_some() || calendar_uses_eras && (era.is_some() || era_year.is_some());
         let year = if has_relevant_year_fields {
             self.resolve_calendar_year(p, &calendar, supplied_year, era.as_deref(), era_year)?
         } else {
@@ -1281,28 +1244,25 @@ impl<H: Host> Vm<H> {
                     return Err(self.range_error(p, "month and monthCode must agree".into()));
                 }
                 let regular_code = code.strip_suffix('L');
-                let (reference_code, days_in_month) = match
-                    quench_intl::calendar_days_in_month_for_code(year, code, &calendar)
-                {
-                    Some(days) => (code, days),
-                    None if constrain => match regular_code {
-                        Some(code) => (
-                            code,
-                            quench_intl::calendar_days_in_month_for_code(
-                                year, code, &calendar,
-                            )
-                            .ok_or_else(|| {
-                                self.range_error(p, "Invalid PlainMonthDay".into())
-                            })?,
-                        ),
+                let (reference_code, days_in_month) =
+                    match quench_intl::calendar_days_in_month_for_code(year, code, &calendar) {
+                        Some(days) => (code, days),
+                        None if constrain => match regular_code {
+                            Some(code) => (
+                                code,
+                                quench_intl::calendar_days_in_month_for_code(year, code, &calendar)
+                                    .ok_or_else(|| {
+                                        self.range_error(p, "Invalid PlainMonthDay".into())
+                                    })?,
+                            ),
+                            None => {
+                                return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                            }
+                        },
                         None => {
                             return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
                         }
-                    },
-                    None => {
-                        return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
-                    }
-                };
+                    };
                 if day < 1 || !constrain && day as u32 > days_in_month {
                     return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
                 }
@@ -1335,11 +1295,9 @@ impl<H: Host> Vm<H> {
                     let Some(candidate) = resolved_ordinal else {
                         return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
                     };
-                    if let Some(code) = quench_intl::calendar_month_code_for_ordinal(
-                        year,
-                        candidate,
-                        &calendar,
-                    ) {
+                    if let Some(code) =
+                        quench_intl::calendar_month_code_for_ordinal(year, candidate, &calendar)
+                    {
                         break code;
                     }
                     if !constrain || candidate <= 1 {
@@ -1466,9 +1424,24 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(bag) {
             return Err(self.type_error(p, "Invalid PlainYearMonth".into()));
         }
+        let calendar_atom = self.intern_atom("calendar");
+        let calendar_value = self.get_property(p, bag, calendar_atom)?;
+        let calendar = self.temporal_calendar_property(p, calendar_value)?;
+        let (era, era_year) = self.read_calendar_era_fields(p, bag, &calendar)?;
+        let month_atom = self.intern_atom("month");
+        let month_value = self.get_property(p, bag, month_atom)?;
+        let month = self.plain_date_optional_integer(p, month_value)?;
+        let month_code_atom = self.intern_atom("monthCode");
+        let month_code_value = self.get_property(p, bag, month_code_atom)?;
+        let month_code = self.plain_date_time_month_code_from_value(p, month_code_value)?;
+        let year_atom = self.intern_atom("year");
+        let year_value = self.get_property(p, bag, year_atom)?;
+        let year = self.plain_date_optional_integer(p, year_value)?;
         let constrain = self.plain_date_overflow(p, options)?;
-        let (calendar, year, month, month_code) =
-            self.temporal_plain_year_month_fields(p, bag, constrain)?;
+        let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
+        let month_code = month_code
+            .map(|code| self.calendarized_month_code(p, code, &calendar, year, constrain))
+            .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(code)) if month != code => {
                 return Err(self.range_error(p, "Conflicting month fields".into()));
@@ -1488,54 +1461,6 @@ impl<H: Host> Vm<H> {
         )
         .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?;
         self.make_plain_year_month(p, constructor, iso.0, iso.1, calendar, iso.2)
-    }
-
-    fn temporal_plain_year_month_fields(
-        &mut self,
-        p: &ResidualProgram,
-        bag: Value,
-        constrain: bool,
-    ) -> Result<(String, i32, Option<i32>, Option<i32>), JsError> {
-        let calendar_atom = self.intern_atom("calendar");
-        let calendar_value = self.get_property(p, bag, calendar_atom)?;
-        let calendar = self.temporal_calendar_property(p, calendar_value)?;
-        let month_atom = self.intern_atom("month");
-        let month_value = self.get_property(p, bag, month_atom)?;
-        let month = self.plain_date_optional_integer(p, month_value)?;
-        let month_code_atom = self.intern_atom("monthCode");
-        let month_code_value = self.get_property(p, bag, month_code_atom)?;
-        let month_code_text = if month_code_value.is_undefined() {
-            None
-        } else {
-            let string_or_object = matches!(self.heap.get(month_code_value), Some(Cell::String(_)))
-                || self.is_object_like(month_code_value);
-            if !string_or_object {
-                return Err(self.type_error(p, "Invalid monthCode".into()));
-            }
-            let text = self.to_string(p, month_code_value)?.to_string();
-            if self.is_object_like(month_code_value) && !text.starts_with('M') {
-                return Err(self.type_error(p, "Invalid monthCode".into()));
-            }
-            Some(text)
-        };
-        let year_atom = self.intern_atom("year");
-        let year_value = self.get_property(p, bag, year_atom)?;
-        let year = self.plain_date_optional_integer(p, year_value)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, bag, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, bag, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
-        let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
-        let month_code = month_code_text
-            .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year, constrain))
-            .transpose()?;
-        Ok((calendar, year, month, month_code))
     }
 
     fn make_plain_month_day(

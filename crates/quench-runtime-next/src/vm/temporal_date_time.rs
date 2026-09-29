@@ -518,6 +518,7 @@ impl<H: Host> Vm<H> {
         let calendar = self.get_property(p, bag, calendar_atom)?;
         let calendar = self.temporal_calendar_property(p, calendar)?;
         let day = self.plain_date_field(p, bag, "day")?;
+        let (era, era_year) = self.read_calendar_era_fields(p, bag, &calendar)?;
         let mut time = [None; 6];
         for (index, name) in super::temporal_plain_date_time_conversion::TIME_FIELDS
             .iter()
@@ -560,14 +561,6 @@ impl<H: Host> Vm<H> {
             None
         };
         let year = self.plain_date_field(p, bag, "year")?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, bag, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year = self.plain_date_field(p, bag, "eraYear")?;
         Ok(PlainDateTimeFromFields {
             calendar,
             day,
@@ -992,35 +985,20 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .map_or(date.day as i32, |fields| fields.day as i32);
         let mut time = time.map(|value| value as i32);
-        let names = if calendar == "iso8601" {
-            &[
-                "day",
-                "hour",
-                "microsecond",
-                "millisecond",
-                "minute",
-                "month",
-                "monthCode",
-                "nanosecond",
-                "second",
-                "year",
-            ][..]
-        } else {
-            &[
-                "day",
-                "hour",
-                "microsecond",
-                "millisecond",
-                "minute",
-                "month",
-                "monthCode",
-                "nanosecond",
-                "second",
-                "year",
-                "era",
-                "eraYear",
-            ][..]
-        };
+        let names = [
+            "day",
+            "era",
+            "eraYear",
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "month",
+            "monthCode",
+            "nanosecond",
+            "second",
+            "year",
+        ];
         let mut recognized = false;
         let mut month_was_provided = false;
         let mut year_was_provided = false;
@@ -1028,7 +1006,9 @@ impl<H: Host> Vm<H> {
         let mut era_year_was_provided = false;
         let mut era_value = None;
         let mut era_year_value = None;
-        for name in names {
+        for name in names.iter().filter(|name| {
+            !matches!(**name, "era" | "eraYear") || quench_intl::calendar_uses_eras(&calendar)
+        }) {
             let atom = self.intern_atom(name);
             let value = self.get_property(p, changes, atom)?;
             if value.is_undefined() {
@@ -1036,13 +1016,13 @@ impl<H: Host> Vm<H> {
             }
             recognized = true;
             match *name {
-                "day" => day = self.plain_date_integer(p, value)?,
+                "day" => day = self.plain_date_positive_integer(p, value)?,
                 "hour" => time[0] = self.plain_date_integer(p, value)?,
                 "microsecond" => time[MICROSECOND_FIELD] = self.plain_date_integer(p, value)?,
                 "millisecond" => time[MILLISECOND_FIELD] = self.plain_date_integer(p, value)?,
                 "minute" => time[1] = self.plain_date_integer(p, value)?,
                 "month" => {
-                    month = self.plain_date_integer(p, value)?;
+                    month = self.plain_date_positive_integer(p, value)?;
                     month_was_provided = true;
                 }
                 "monthCode" => {
