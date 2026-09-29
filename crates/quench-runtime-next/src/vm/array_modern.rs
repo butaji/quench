@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    fn array_create(&mut self, p: &ResidualProgram, length: usize) -> Result<Value, JsError> {
+    pub(super) fn array_create(&mut self, p: &ResidualProgram, length: usize) -> Result<Value, JsError> {
         if length > MAX_ARRAY_LENGTH {
             return Err(self.range_error(p, "invalid array length".into()));
         }
