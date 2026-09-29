@@ -524,13 +524,13 @@ impl FunctionCompiler<'_, '_> {
                 let atom = self.owner.atom(item.property.name.as_str());
                 if operator == 0 && matches!(&item.object, Expression::ThisExpression(_)) {
                     let site = self.owner.cache_site();
-                    self.emit(Op::SetThisField, right, 0, site, atom);
+                    self.emit_set_this_field(right, site, atom);
                     return right;
                 }
                 let object = self.expression(&item.object);
                 let value = self.compound_field(object, atom, right, operator);
                 let site = self.owner.cache_site();
-                self.emit(Op::SetField, value, object, site, atom);
+                self.emit_set_field(value, object, site, atom);
                 // A top-level global declaration is represented by the root
                 // frame while `globalThis` is its object view. Keep both
                 // views coherent at this explicit mutation boundary.
@@ -545,7 +545,7 @@ impl FunctionCompiler<'_, '_> {
                 self.emit(Op::CheckPrivate, object, 0, 0, atom);
                 let value = self.compound_field(object, atom, right, operator);
                 let site = self.owner.cache_site();
-                self.emit(Op::SetField, value, object, site, atom);
+                self.emit_set_field(value, object, site, atom);
                 value
             }
             SimpleAssignmentTarget::ComputedMemberExpression(item) => {
@@ -559,7 +559,7 @@ impl FunctionCompiler<'_, '_> {
                 let key = self.reg();
                 self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
                 let value = self.compound_index(object, key, right, operator);
-                self.emit(Op::SetIndex, value, object, key, 0);
+                self.emit(Op::SetIndex, value, object, key, u32::from(self.strict));
                 value
             }
             _ => {
@@ -568,6 +568,30 @@ impl FunctionCompiler<'_, '_> {
                 right
             }
         }
+    }
+
+    pub(super) fn emit_set_field(
+        &mut self,
+        value: Register,
+        object: Register,
+        site: u16,
+        atom: Atom,
+    ) {
+        let op = if self.strict {
+            Op::SetFieldStrict
+        } else {
+            Op::SetField
+        };
+        self.emit(op, value, object, site, atom);
+    }
+
+    pub(super) fn emit_set_this_field(&mut self, value: Register, site: u16, atom: Atom) {
+        let op = if self.strict {
+            Op::SetThisFieldStrict
+        } else {
+            Op::SetThisField
+        };
+        self.emit(op, value, 0, site, atom);
     }
     pub(super) fn compound_name(&mut self, atom: Atom, right: Register, op: u8) -> Register {
         if op == 0 {
@@ -714,10 +738,10 @@ impl FunctionCompiler<'_, '_> {
             UpdateTarget::Name(atom, None) => self.store_atom(atom, next),
             UpdateTarget::Field(atom, object) => {
                 let cache = self.owner.cache_site();
-                self.emit(Op::SetField, next, object, cache, atom);
+                self.emit_set_field(next, object, cache, atom);
             }
             UpdateTarget::Index(object, key) => {
-                self.emit(Op::SetIndex, next, object, key, 0);
+                self.emit(Op::SetIndex, next, object, key, u32::from(self.strict));
             }
         }
         if value.prefix { next } else { numeric_old }

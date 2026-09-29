@@ -503,7 +503,7 @@ impl FunctionCompiler<'_, '_> {
             } => self.store_atom(atom, value),
             AssignmentReference::ThisField(atom) => {
                 let site = self.owner.cache_site();
-                self.emit(Op::SetThisField, value, 0, site, atom);
+                self.emit_set_this_field(value, site, atom);
             }
             AssignmentReference::Field {
                 object,
@@ -511,7 +511,7 @@ impl FunctionCompiler<'_, '_> {
                 mirror_global,
             } => {
                 let site = self.owner.cache_site();
-                self.emit(Op::SetField, value, object, site, atom);
+                self.emit_set_field(value, object, site, atom);
                 if mirror_global {
                     self.store_atom(atom, value);
                 }
@@ -529,10 +529,10 @@ impl FunctionCompiler<'_, '_> {
             AssignmentReference::PrivateField { object, atom } => {
                 self.emit(Op::CheckPrivate, object, 0, 0, atom);
                 let site = self.owner.cache_site();
-                self.emit(Op::SetField, value, object, site, atom);
+                self.emit_set_field(value, object, site, atom);
             }
             AssignmentReference::Index { object, key } => {
-                self.emit(Op::SetIndex, value, object, key, 0);
+                self.emit(Op::SetIndex, value, object, key, u32::from(self.strict));
             }
         }
     }
