@@ -297,7 +297,9 @@ impl FunctionCompiler<'_, '_> {
                     .reject(span, "computed class element key is unsupported");
                 continue;
             };
+            let outer_strict = std::mem::replace(&mut self.strict, true);
             let raw_key = self.expression(key);
+            self.strict = outer_strict;
             let key_value = self.reg();
             self.emit(Op::ToPropertyKey, key_value, raw_key, 0, 0);
             let key_atom = self.owner.atom(&computed_field_key_name(span.start));
