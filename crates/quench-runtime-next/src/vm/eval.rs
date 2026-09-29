@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
             let pattern = self
                 .heap
                 .alloc(Cell::String(JsString::from_units(pattern_units)));
-            return self.construct_regexp_native(p, &[pattern, Value::UNDEFINED]);
+            return self.construct_regexp_native(p, &[pattern, Value::UNDEFINED], None);
         }
         if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
         {
@@ -899,7 +899,7 @@ impl<H: Host> Vm<H> {
             if let Some(pattern) = regexp_literal_pattern(&units[start..end]) {
                 let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
                 let flags = self.heap.alloc(Cell::String(literal.flags.into()));
-                return self.construct_regexp_native(p, &[pattern, flags]);
+                return self.construct_regexp_native(p, &[pattern, flags], None);
             }
         }
         if expression.starts_with('(') && !self.direct_eval {
