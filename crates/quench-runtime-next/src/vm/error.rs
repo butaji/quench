@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
             Native::AsyncGeneratorFunction => crate::compile::DynamicFunctionKind::AsyncGenerator,
             _ => crate::compile::DynamicFunctionKind::Ordinary,
         };
-        let residual = crate::Engine::specialize_dynamic_function_with_kind(
+        let residual = crate::Engine::specialize_function_constructor(
             &parser_parameters,
             source,
             &source_name,

@@ -63,6 +63,18 @@ pub(crate) enum DynamicFunctionKind {
     Generator,
     AsyncGenerator,
 }
+
+#[derive(Clone, Copy)]
+enum ParsedProgramShape {
+    Any,
+    DynamicFunction { parameter_list_end: usize },
+}
+
+#[derive(Clone, Copy)]
+enum DynamicFunctionValidation {
+    None,
+    ParameterBoundary,
+}
 pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
@@ -640,15 +652,59 @@ impl Engine {
         atom_prefix: &[String],
         kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_dynamic_function_source(
+            parameters,
+            body,
+            name,
+            atom_prefix,
+            kind,
+            DynamicFunctionValidation::None,
+        )
+    }
+    pub(crate) fn specialize_function_constructor(
+        parameters: &str,
+        body: &str,
+        name: &str,
+        atom_prefix: &[String],
+        kind: DynamicFunctionKind,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_dynamic_function_source(
+            parameters,
+            body,
+            name,
+            atom_prefix,
+            kind,
+            DynamicFunctionValidation::ParameterBoundary,
+        )
+    }
+    fn specialize_dynamic_function_source(
+        parameters: &str,
+        body: &str,
+        name: &str,
+        atom_prefix: &[String],
+        kind: DynamicFunctionKind,
+        validation: DynamicFunctionValidation,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
+        let parameters = early::normalize_dynamic_function_parameters(parameters);
         let prefix = match kind {
             DynamicFunctionKind::Ordinary => "function",
             DynamicFunctionKind::Async => "async function",
             DynamicFunctionKind::Generator => "function*",
             DynamicFunctionKind::AsyncGenerator => "async function*",
         };
-        let source = format!("({prefix} anonymous({parameters}) {{{body}\n}})");
-        Self::specialize_with_mode(
+        let function_prefix = format!("{prefix} anonymous(");
+        let expression_wrapper = "(";
+        let parameter_list_end =
+            expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
+        let source = format!("{expression_wrapper}{function_prefix}{parameters}) {{{body}\n}})");
+        let expected_shape = match validation {
+            DynamicFunctionValidation::None => ParsedProgramShape::Any,
+            DynamicFunctionValidation::ParameterBoundary => {
+                ParsedProgramShape::DynamicFunction { parameter_list_end }
+            }
+        };
+        Self::specialize_with_program_shape(
             &source,
             name,
             SpecializationMode::Disabled,
@@ -657,6 +713,7 @@ impl Engine {
             false,
             false,
             false,
+            expected_shape,
         )
     }
     pub(crate) fn specialize_dynamic_function_with_private_names(
@@ -678,6 +735,7 @@ impl Engine {
             false,
             false,
             private_names,
+            ParsedProgramShape::Any,
         )
     }
     fn specialize_module_with_mode(
@@ -706,6 +764,29 @@ impl Engine {
         capture_script_completion: bool,
         inherited_strict: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_program_shape(
+            source,
+            name,
+            mode,
+            atom_prefix,
+            source_type,
+            module_goal,
+            capture_script_completion,
+            inherited_strict,
+            ParsedProgramShape::Any,
+        )
+    }
+    fn specialize_with_program_shape(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &[String],
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        expected_shape: ParsedProgramShape,
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
@@ -716,6 +797,7 @@ impl Engine {
             capture_script_completion,
             inherited_strict,
             &[],
+            expected_shape,
         )
     }
     fn specialize_with_mode_and_private_names(
@@ -728,6 +810,7 @@ impl Engine {
         capture_script_completion: bool,
         inherited_strict: bool,
         private_name_overrides: &[(String, String)],
+        expected_shape: ParsedProgramShape,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let (normalized, annex_b_call_target_marker) = match annex_b_targets::normalize(&normalized)
@@ -747,6 +830,36 @@ impl Engine {
                     span: Span::default(),
                 })
                 .collect());
+        }
+        let dynamic_function_shape = match expected_shape {
+            ParsedProgramShape::Any => true,
+            ParsedProgramShape::DynamicFunction { parameter_list_end } => {
+                match parsed.program.body.as_slice() {
+                    [Statement::ExpressionStatement(statement)] => match &statement.expression {
+                        Expression::ParenthesizedExpression(expression) => {
+                            match &expression.expression {
+                                Expression::FunctionExpression(function) => {
+                                    function
+                                        .id
+                                        .as_ref()
+                                        .is_some_and(|id| id.name == "anonymous")
+                                        && function.body.is_some()
+                                        && function.params.span.end as usize == parameter_list_end
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            }
+        };
+        if !dynamic_function_shape {
+            return Err(vec![Diagnostic::unsupported(
+                name,
+                "SyntaxError: invalid dynamic Function source shape",
+            )]);
         }
         let semantic = oxc_semantic::SemanticBuilder::new()
             .with_check_syntax_error(true)
