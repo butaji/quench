@@ -179,9 +179,7 @@ impl<H: Host> Vm<H> {
         if !quench_intl::valid_calendar(&calendar) {
             return Err(self.range_error(p, "Invalid calendar".into()));
         }
-        let iso = quench_intl::calendar_date_to_iso(year, month as u32, day as u32, &calendar)
-            .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
-        let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
+        let date = checked_iso_date(year, month, day)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
         self.make_temporal_plain_date(p, date, calendar, new_target)
     }
