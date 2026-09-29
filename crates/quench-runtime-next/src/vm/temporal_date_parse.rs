@@ -63,11 +63,13 @@ pub(super) fn parse_calendar_identifier(text: &str) -> Option<String> {
 }
 
 pub(super) fn parse_calendar_identifier_name(text: &str) -> Option<String> {
-    let calendar = quench_intl::calendar_alias(text);
-    quench_intl::valid_calendar(&calendar).then_some(calendar)
+    temporal_calendar_alias(text)
 }
 
 pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
+    if let Some(calendar) = parse_calendar_identifier_name(text) {
+        return Some(calendar);
+    }
     if let Some(calendar) = parse_calendar_identifier(text) {
         return Some(calendar);
     }
@@ -84,15 +86,25 @@ pub(super) fn calendar_identifier_from_string(text: &str) -> Option<String> {
 
 fn parse_calendar_annotation(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
-    if quench_intl::valid_calendar(&lower) {
-        return Some(quench_intl::calendar_alias(&lower));
+    if let Some(calendar) = temporal_calendar_alias(&lower) {
+        return Some(calendar);
     }
     if !valid_calendar_source(text) {
         return None;
     }
     let calendar = first_calendar_annotation(&lower).unwrap_or(ISO_CALENDAR);
-    let calendar = quench_intl::calendar_alias(calendar);
-    quench_intl::valid_calendar(&calendar).then_some(calendar)
+    temporal_calendar_alias(calendar)
+}
+
+fn temporal_calendar_alias(value: &str) -> Option<String> {
+    let value = value.to_ascii_lowercase();
+    let calendar = match value.as_str() {
+        "islamicc" => "islamic-civil",
+        "islamic" | "islamic-rgsa" => return None,
+        "ethiopic-amete-alem" => "ethioaa",
+        _ => value.as_str(),
+    };
+    quench_intl::valid_calendar(calendar).then(|| calendar.to_owned())
 }
 
 fn first_calendar_annotation(text: &str) -> Option<&str> {
@@ -111,11 +123,44 @@ fn valid_calendar_source(text: &str) -> bool {
     parse_iso_date_part(date).is_some()
         || parse_iso_month_day_part(partial_date).is_some()
         || parse_iso_month_day_from_full_date(date).is_some()
+        || parse_calendar_time(base).is_some()
         || parse_calendar_partial_date(date).is_some()
         || matches!(
             text.to_ascii_lowercase().as_str(),
             ISO_CALENDAR | GREGORIAN_CALENDAR
         )
+}
+
+fn parse_calendar_time(text: &str) -> Option<()> {
+    let time = text.strip_prefix(['T', 't'])?;
+    let mut fields = time.split(':');
+    let hour = parse_two_digits(fields.next()?)?;
+    let minute = parse_two_digits(fields.next()?)?;
+    let second = if let Some(second) = fields.next() {
+        let (second, fraction) = second
+            .split_once(['.', ','])
+            .map_or((second, None), |(second, fraction)| (second, Some(fraction)));
+        if fraction.is_some_and(|fraction| {
+            fraction.is_empty()
+                || fraction.len() > MAX_FRACTION_DIGITS
+                || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+        }) {
+            return None;
+        }
+        parse_two_digits(second)?
+    } else {
+        0
+    };
+    if fields.next().is_some() || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    Some(())
+}
+
+fn parse_two_digits(value: &str) -> Option<u32> {
+    (value.len() == ISO_MONTH_DIGITS && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| value.parse().ok())
+        .flatten()
 }
 
 fn valid_plain_date_string(text: &str) -> bool {
@@ -341,8 +386,7 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn has_invalid_calendar_annotation(text: &str) -> bool {
-    first_calendar_annotation(text)
-        .is_some_and(|value| !quench_intl::valid_calendar(&quench_intl::calendar_alias(value)))
+    first_calendar_annotation(text).is_some_and(|value| temporal_calendar_alias(value).is_none())
 }
 
 fn has_time_junk(text: &str) -> bool {

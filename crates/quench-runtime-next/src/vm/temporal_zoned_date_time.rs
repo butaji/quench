@@ -2002,7 +2002,7 @@ impl<H: Host> Vm<H> {
         let calendar = match self.heap.get(calendar_value) {
             None if calendar_value.is_undefined() => "iso8601".to_owned(),
             Some(Cell::String(value)) => {
-                super::temporal_date_parse::parse_calendar_identifier(value.host_string())
+                super::temporal_date_parse::calendar_identifier_from_string(value.host_string())
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
             Some(Cell::TemporalPlainDate { calendar, .. })
