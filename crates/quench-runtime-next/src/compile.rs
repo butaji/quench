@@ -210,14 +210,6 @@ impl Engine {
         source.get(span.start as usize..span.end as usize)
     }
 
-    pub(crate) fn eval_is_new_target_expression(source: &str) -> bool {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
-        parsed.diagnostics.is_empty()
-            && matches!(parsed.program.body.as_slice(), [Statement::ExpressionStatement(statement)]
-                if matches!(statement.expression.without_parentheses(), Expression::NewTarget(_)))
-    }
-
     pub(crate) fn eval_block_completion(source: &str) -> Option<(&str, &str)> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -605,13 +597,18 @@ impl Engine {
         name: &str,
         atom_prefix: &[String],
         inherited_strict: bool,
+        in_function: bool,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
             name,
             SpecializationMode::Disabled,
             atom_prefix,
-            SourceType::unambiguous(),
+            if in_function {
+                SourceType::cjs()
+            } else {
+                SourceType::script()
+            },
             false,
             true,
             inherited_strict,
@@ -833,7 +830,7 @@ impl Engine {
             None => (normalized.into_owned(), String::new()),
         };
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let parsed = Parser::new(&allocator, &normalized, source_type).parse();
+        let mut parsed = Parser::new(&allocator, &normalized, source_type).parse();
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
@@ -844,6 +841,21 @@ impl Engine {
                     span: Span::default(),
                 })
                 .collect());
+        }
+        if capture_script_completion
+            && source_type.is_commonjs()
+            && let Some(span) = early::eval_return_outside_function(&parsed.program)
+        {
+            return Err(vec![Diagnostic {
+                source: name.into(),
+                message: "SyntaxError: return outside function in eval".into(),
+                span,
+            }]);
+        }
+        if capture_script_completion {
+            // CommonJS provides OXC's inherited new.target parsing context;
+            // eval still has Script semantics for declarations and scopes.
+            parsed.program.source_type = SourceType::script();
         }
         if let Some(span) =
             annex_b_targets::invalid_target(&parsed.program, &annex_b_call_target_marker)
