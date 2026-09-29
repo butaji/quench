@@ -268,8 +268,8 @@ impl Engine {
     pub(crate) fn eval_requires_compiled_completion(source: &str) -> bool {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        parsed.diagnostics.is_empty()
-            && parsed.program.body.iter().any(|statement| {
+        !parsed.diagnostics.is_empty()
+            || parsed.program.body.iter().any(|statement| {
                 matches!(
                     statement,
                     Statement::ClassDeclaration(_)
