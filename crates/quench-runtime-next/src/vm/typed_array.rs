@@ -619,12 +619,10 @@ impl<H: Host> Vm<H> {
         }
         let length = self.typed_array_length(this).unwrap_or_default();
         if native == Native::TypedArrayAt {
-            let index = self.typed_array_relative_index(p, args.first(), length)?;
-            return Ok(if index == length {
-                Value::UNDEFINED
-            } else {
-                self.typed_array_get(this, index).unwrap_or(Value::UNDEFINED)
-            });
+            return Ok(self
+                .indexed_at_index(p, args.first().copied().unwrap_or(Value::UNDEFINED), length)?
+                .and_then(|index| self.typed_array_get(this, index))
+                .unwrap_or(Value::UNDEFINED));
         }
         if native == Native::TypedArrayWith {
             let index = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
