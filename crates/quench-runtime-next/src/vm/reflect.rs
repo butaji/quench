@@ -294,6 +294,9 @@ impl<H: Host> Vm<H> {
             if self.same_value(cursor, target) {
                 return Ok(Value::FALSE);
             }
+            if matches!(self.heap.get(cursor), Some(Cell::Proxy { .. })) {
+                break;
+            }
             cursor = self.object_get_prototype_of(p, cursor)?;
         }
         self.object_set_prototype_of(p, target, prototype)?;
