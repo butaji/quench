@@ -1,4 +1,3 @@
-use super::property_key::PropertyKey;
 use super::*;
 
 const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
@@ -95,6 +94,7 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom("");
             return self.get_property(p, object, atom);
         }
+        let key = self.to_property_key(p, key)?;
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
@@ -251,27 +251,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
+        let key = self.to_property_key(p, key)?;
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = self.heap.get(object).cloned()
-            {
-                return self.proxy_set_symbol(p, target, handler, object, key, value);
-            }
-            if let Some(attributes) = self.property_attributes(object, PropertyKey::symbol(key))
-                && attributes.accessor
-            {
-                if let Some(setter) = attributes.setter {
-                    self.call_value(p, setter, object, &[value])?;
-                } else if strict {
-                    return Err(self.type_error(p, "symbol property has no setter".into()));
-                }
-                return Ok(());
-            }
-            return match self.set_symbol_property(object, key, value) {
-                Ok(()) => Ok(()),
-                Err(_) if !strict => Ok(()),
-                Err(error) => Err(error),
+            let succeeded =
+                self.set_symbol_property_with_receiver(p, object, key, value, object)?;
+            return if succeeded || !strict {
+                Ok(())
+            } else {
+                Err(self.type_error(p, "cannot assign symbol property".into()))
             };
         }
         if matches!(self.heap.get(object), Some(Cell::Array { .. }))

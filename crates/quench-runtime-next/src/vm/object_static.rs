@@ -819,12 +819,7 @@ impl<H: Host> Vm<H> {
             let trap = self.get_property(p, handler, trap_atom)?;
             if self.is_function(trap) {
                 let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-                    key_value
-                } else {
-                    let text = self.coerce_js_string(p, key_value)?;
-                    self.heap.alloc(Cell::String(text))
-                };
+                let key = self.to_property_key(p, key_value)?;
                 let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
                 if self.object_data(descriptor).is_none() {
                     return Err(self.type_error(p, "property descriptor is not an object".into()));
@@ -857,15 +852,13 @@ impl<H: Host> Vm<H> {
         if self.object_data(descriptor).is_none() {
             return Err(self.type_error(p, "property descriptor is not an object".into()));
         }
-        if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-            return self.define_ordinary_property_key(
-                p,
-                target,
-                PropertyKey::symbol(key_value),
-                descriptor,
-            );
+        let key = self.to_property_key(p, key_value)?;
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            return self.define_ordinary_property_key(p, target, PropertyKey::symbol(key), descriptor);
         }
-        let key = self.coerce_js_string(p, key_value)?;
+        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+            unreachable!("ToPropertyKey returns a string or symbol")
+        };
         if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             match Self::typed_array_index_key(key.host_string()) {
                 super::object_descriptors::TypedArrayIndexKey::Index(index) => {

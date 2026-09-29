@@ -48,12 +48,17 @@ impl<H: Host> Vm<H> {
                 self.call_value(p, target, this, &arguments)
             }
             Native::ReflectGet => {
-                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let key = self.to_property_key(
+                    p,
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                )?;
                 let receiver = args.get(2).copied().unwrap_or(target);
-                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-                    return self.get_index(p, target, key_value);
+                if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+                    return self.get_symbol_property_with_receiver(p, target, key, receiver);
                 }
-                let key = self.coerce_js_string(p, key_value)?;
+                let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
+                };
                 let atom = self.intern_js_atom(&key);
                 self.get_property_with_receiver(p, target, atom, receiver)
             }
@@ -65,15 +70,18 @@ impl<H: Host> Vm<H> {
             Native::ReflectPreventExtensions => self.reflect_prevent_extensions(p, target),
             Native::ReflectIsExtensible => self.object_is_extensible(p, args),
             Native::ReflectSet | Native::SuperSet => {
-                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let key = self.to_property_key(
+                    p,
+                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
+                )?;
                 let receiver = args.get(3).copied().unwrap_or(target);
                 let strict_super = native == Native::SuperSet
                     && args.get(4).is_some_and(|flag| self.truthy(*flag));
-                if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
+                if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
                     let succeeded = self.set_symbol_property_with_receiver(
                         p,
                         target,
-                        key_value,
+                        key,
                         args.get(2).copied().unwrap_or(Value::UNDEFINED),
                         receiver,
                     )?;
@@ -82,7 +90,9 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(if succeeded { Value::TRUE } else { Value::FALSE });
                 }
-                let key = self.coerce_js_string(p, key_value)?;
+                let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
+                };
                 let atom = self.intern_js_atom(&key);
                 let succeeded = self.set_property_with_receiver(
                     p,
