@@ -216,6 +216,7 @@ struct State {
 // still be exponentially large); it is no longer silently result-changing.
 const MAX_BACKTRACK_STATES: usize = usize::MAX;
 const ASCII_MAX: u16 = 0x7F;
+const BMP_MAX: u32 = u16::MAX as u32;
 
 pub struct Regex {
     program: Expr,
@@ -2213,18 +2214,24 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
     }
 }
 fn canonical(value: u32, unicode: bool) -> u32 {
+    let Some(character) = char::from_u32(value) else {
+        return value;
+    };
     if unicode {
-        lower(value)
-    } else if (u32::from(b'A')..=u32::from(b'Z')).contains(&value) {
-        value + 0x20
-    } else {
-        value
+        return u32::from(icu_casemap::CaseMapper::new().simple_fold(character));
     }
-}
-fn lower(value: u32) -> u32 {
-    char::from_u32(value)
-        .map(|character| icu_casemap::CaseMapper::new().simple_fold(character))
-        .map_or(value, u32::from)
+    let mut uppercase = character.to_uppercase();
+    let Some(canonical) = uppercase.next() else {
+        return value;
+    };
+    if uppercase.next().is_some()
+        || u32::from(canonical) > BMP_MAX
+        || (value > u32::from(ASCII_MAX) && u32::from(canonical) <= u32::from(ASCII_MAX))
+    {
+        value
+    } else {
+        u32::from(canonical)
+    }
 }
 fn is_word(value: u32) -> bool {
     char::from_u32(value)
