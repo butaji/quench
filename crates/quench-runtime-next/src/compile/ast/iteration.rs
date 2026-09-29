@@ -214,6 +214,10 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::JumpFalse, valid, 0, 0, 0)
         });
         let iteration_body_start = self.code.len() as u32;
+        let tracks_iterator_cleanup = for_in_source.is_none();
+        if tracks_iterator_cleanup {
+            self.emit(Op::IteratorCleanupPush, iterator, done, 0, 0);
+        }
         let using_iteration = match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if matches!(
@@ -245,17 +249,28 @@ impl FunctionCompiler<'_, '_> {
         self.push_control(ControlKind::Loop, label);
         self.statement(body);
         let iteration_body_end = self.code.len() as u32;
-        self.emit_iterator_close_on_abrupt(iterator_atom, iteration_body_start, iteration_body_end);
+        self.emit_iterator_close_on_abrupt(
+            iterator_atom,
+            iteration_body_start,
+            iteration_body_end,
+            tracks_iterator_cleanup,
+        );
         let control = self.controls.pop().unwrap();
         self.iterator_closures.pop();
         let iteration_cleanup = self.code.len() as u32;
         self.patch_edges(&control.continues, iteration_cleanup);
+        if tracks_iterator_cleanup {
+            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
+        }
         if using_iteration.is_some() {
             self.emit_disposal();
         }
         let skip_break_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let break_cleanup = self.code.len() as u32;
         self.patch_edges(&control.breaks, break_cleanup);
+        if tracks_iterator_cleanup {
+            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
+        }
         if using_iteration.is_some() {
             self.emit_disposal();
             self.pop_disposal_scope();
@@ -278,7 +293,13 @@ impl FunctionCompiler<'_, '_> {
         self.patch_to(end_edge, end);
     }
 
-    fn emit_iterator_close_on_abrupt(&mut self, iterator: Atom, start: u32, end: u32) {
+    fn emit_iterator_close_on_abrupt(
+        &mut self,
+        iterator: Atom,
+        start: u32,
+        end: u32,
+        tracks_iterator_cleanup: bool,
+    ) {
         let error = self.hidden_local("\0rqj:for-of-body-error");
         let skip_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let cleanup = self.code.len() as u32;
@@ -304,6 +325,9 @@ impl FunctionCompiler<'_, '_> {
             }
         });
 
+        if tracks_iterator_cleanup {
+            self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
+        }
         let close_iterator = self.load_atom(iterator);
         let _ = self.emit(Op::IteratorClose, 0, close_iterator, 0, 0);
         let close_end = self.code.len() as u32;
