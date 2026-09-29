@@ -6,6 +6,8 @@ use std::cmp::Ordering;
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
 const OFFSET_MATCH_TOLERANCE_NANOSECONDS: i128 = 30 * NANOSECONDS_PER_SECOND;
+const START_OF_DAY_SEARCH_LIMIT_MINUTES: i64 = 180;
+const SKIPPED_START_OF_DAY_SEARCH_LIMIT_DAYS: usize = 4;
 const NANOSECOND: i128 = 1;
 const MIN_ROUNDING_INCREMENT: i128 = NANOSECOND;
 const MAX_SUBSECOND_ROUNDING_INCREMENT: i128 = 1_000;
@@ -2197,6 +2199,7 @@ pub(super) struct ZonedDateTimeRecord {
 struct IsoZonedDateTimeBase {
     date: super::temporal_date::IsoDate,
     time: [u32; 6],
+    date_only: bool,
     offset_nanoseconds: Option<i128>,
     offset_minute_precision: bool,
     time_zone_offset_syntax: bool,
@@ -2305,17 +2308,21 @@ fn resolve_zoned_date_time_string(
     {
         return None;
     }
-    let epoch_nanoseconds = resolve_zoned_local_epoch(
-        local.date,
-        local.time,
-        &time_zone,
-        local_epoch_nanoseconds,
-        local.offset_nanoseconds,
-        local.z_designator,
-        local.offset_minute_precision,
-        offset_mode,
-        "compatible",
-    )?;
+    let epoch_nanoseconds = if local.date_only && local.offset_nanoseconds.is_none() {
+        timezone_start_of_day_epoch(local.date, &time_zone)?
+    } else {
+        resolve_zoned_local_epoch(
+            local.date,
+            local.time,
+            &time_zone,
+            local_epoch_nanoseconds,
+            local.offset_nanoseconds,
+            local.z_designator,
+            local.offset_minute_precision,
+            offset_mode,
+            "compatible",
+        )?
+    };
     if epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
         return None;
     }
@@ -2454,6 +2461,7 @@ fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
         return Some(IsoZonedDateTimeBase {
             date: parse_iso_zoned_date_fields(value)?,
             time: [0; 6],
+            date_only: true,
             offset_nanoseconds: None,
             offset_minute_precision: false,
             time_zone_offset_syntax: true,
@@ -2540,6 +2548,7 @@ fn parse_iso_zoned_base_fields(value: &str) -> Option<IsoZonedDateTimeBase> {
     Some(IsoZonedDateTimeBase {
         date,
         time: [hour, minute, second, millisecond, microsecond, nanosecond],
+        date_only: false,
         offset_nanoseconds: offset,
         offset_minute_precision,
         time_zone_offset_syntax,
@@ -2867,6 +2876,35 @@ fn zoned_local_epoch(local: chrono::NaiveDateTime, zone: &str) -> Option<i128> {
     zoned_local_epoch_with_disambiguation(local, zone, "compatible")
 }
 
+pub(super) fn timezone_start_of_day_epoch(
+    date: super::temporal_date::IsoDate,
+    time_zone: &str,
+) -> Option<i128> {
+    if let Some(offset) = fixed_time_zone_offset_nanoseconds(time_zone) {
+        return local_epoch_from_iso_fields(date, [0; 6]).checked_sub(offset);
+    }
+    let zone = time_zone.parse::<chrono_tz::Tz>().ok()?;
+    let date = chrono::NaiveDate::from_ymd_opt(date.year, date.month, date.day)?;
+    for minute in 0..=START_OF_DAY_SEARCH_LIMIT_MINUTES {
+        let local = date
+            .and_hms_opt(0, 0, 0)?
+            .checked_add_signed(Duration::minutes(minute))?;
+        let instant = match zone.from_local_datetime(&local) {
+            chrono::LocalResult::Single(value) => value,
+            chrono::LocalResult::Ambiguous(first, second) => {
+                if first.timestamp() <= second.timestamp() {
+                    first
+                } else {
+                    second
+                }
+            }
+            chrono::LocalResult::None => continue,
+        };
+        return Some(i128::from(instant.timestamp()) * NANOSECONDS_PER_SECOND);
+    }
+    None
+}
+
 pub(super) fn zoned_local_epoch_with_disambiguation(
     local: chrono::NaiveDateTime,
     zone: &str,
@@ -3154,10 +3192,27 @@ fn zoned_date_time_day_bounds(epoch_nanoseconds: i128, time_zone: &str) -> Optio
         u32::try_from(fields[1]).ok()?,
         u32::try_from(fields[2]).ok()?,
     )?;
-    let start = zoned_local_epoch(date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
-    let next_date = date.succ_opt()?;
-    let next = zoned_local_epoch(next_date.and_hms_nano_opt(0, 0, 0, 0)?, time_zone)?;
-    Some((start, next))
+    let start = timezone_start_of_day_epoch(
+        super::temporal_date::IsoDate {
+            year: date.year(),
+            month: date.month() as u32,
+            day: date.day() as u32,
+        },
+        time_zone,
+    )?;
+    let mut next_date = date;
+    for _ in 0..SKIPPED_START_OF_DAY_SEARCH_LIMIT_DAYS {
+        next_date = next_date.succ_opt()?;
+        let iso_date = super::temporal_date::IsoDate {
+            year: next_date.year(),
+            month: next_date.month() as u32,
+            day: next_date.day() as u32,
+        };
+        if let Some(next) = timezone_start_of_day_epoch(iso_date, time_zone) {
+            return Some((start, next));
+        }
+    }
+    None
 }
 
 fn normalize_zoned_difference_unit(value: &str) -> &str {
