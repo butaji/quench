@@ -4,7 +4,7 @@ use super::*;
 fn decoder_rejects_out_of_range_local_load() {
     let program = ResidualProgram {
         specialized: true,
-        module: false,
+        kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),
         module_link_plan: None,
@@ -64,7 +64,7 @@ fn decoder_rejects_out_of_range_local_load() {
 fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     let program = ResidualProgram {
         specialized: true,
-        module: false,
+        kind: crate::bytecode::ProgramKind::Script,
         module_requests: Vec::new(),
         module_imports: Vec::new(),
         module_link_plan: None,

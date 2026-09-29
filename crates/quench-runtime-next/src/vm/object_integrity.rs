@@ -10,24 +10,6 @@ impl<H: Host> Vm<H> {
             return Ok(Value::TRUE);
         }
         let frame = self.frames.len().saturating_sub(1);
-        if self.dynamic_binding(frame, atom).is_some()
-            || self
-                .frames
-                .get(frame)
-                .is_some_and(|frame| self.local_binding_slot(p, frame.function, atom).is_some())
-            || self
-                .outer_environment_binding(self.captured_parent_environment(frame), atom)
-                .is_some()
-        {
-            return Ok(Value::FALSE);
-        }
-        if p.functions
-            .first()
-            .is_some_and(|root| root.global_lexical_atoms.contains(&atom))
-            || self.realm.global_lexical_bindings.contains_key(&atom)
-        {
-            return Ok(Value::FALSE);
-        }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         let with_base = self
             .frames
@@ -39,6 +21,12 @@ impl<H: Host> Vm<H> {
             if self.with_binding(p, object, key, atom)? {
                 return self.object_delete_property(p, &[object, key]);
             }
+        }
+        if let Some(deleted) = self.delete_environment_binding(p, frame, atom) {
+            return Ok(if deleted { Value::TRUE } else { Value::FALSE });
+        }
+        if self.realm.global_lexical_bindings.contains_key(&atom) {
+            return Ok(Value::FALSE);
         }
         self.object_delete_property(p, &[self.realm.globals, key])
     }

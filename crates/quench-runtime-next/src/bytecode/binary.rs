@@ -5,7 +5,7 @@ use super::{
     ObjectSite, Op, Superinstruction, WideInstruction,
 };
 
-const RESIDUAL_MAGIC: &[u8; 5] = b"RQJ\0\x1b";
+const RESIDUAL_MAGIC: &[u8; 5] = &[b'R', b'Q', b'J', 0, super::ResidualProgram::FORMAT_VERSION];
 const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
@@ -19,7 +19,7 @@ pub(super) fn write_program(
     out.bytes.extend_from_slice(RESIDUAL_MAGIC);
     out.u64(super::ResidualProgram::RUNTIME_ABI_FINGERPRINT);
     out.u8(u8::from(program.specialized));
-    out.u8(u8::from(program.module));
+    out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
     out.u32(program.module_requests.len() as u32);
     for request in &program.module_requests {
@@ -253,11 +253,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         1 => true,
         _ => return Err("invalid residual specialization mode".into()),
     };
-    let module = match input.u8()? {
-        0 => false,
-        1 => true,
-        _ => return Err("invalid residual source goal".into()),
-    };
+    let kind = super::ProgramKind::from_binary_tag(input.u8()?)
+        .ok_or_else(|| "invalid residual program kind".to_owned())?;
     let source_name = input.string()?;
     let module_requests = input.list(|input| {
         let source = input.string()?;
@@ -565,7 +562,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     input.finish()?;
     let program = super::ResidualProgram {
         specialized,
-        module,
+        kind,
         module_requests,
         module_imports,
         module_link_plan,
