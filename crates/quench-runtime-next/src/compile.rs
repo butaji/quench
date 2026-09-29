@@ -272,7 +272,8 @@ impl Engine {
             && parsed.program.body.iter().any(|statement| {
                 matches!(
                     statement,
-                    Statement::BlockStatement(_)
+                    Statement::ClassDeclaration(_)
+                        | Statement::BlockStatement(_)
                         | Statement::DoWhileStatement(_)
                         | Statement::ForStatement(_)
                         | Statement::ForInStatement(_)
