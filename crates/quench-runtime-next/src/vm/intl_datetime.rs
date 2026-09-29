@@ -1,6 +1,6 @@
 use super::intl_datetime_parts::{self, DateTimeFields, DateTimePartOptions, TemporalKind};
 use super::*;
-use chrono::{FixedOffset, TimeZone, Utc};
+use chrono::{FixedOffset, NaiveDate, Offset, TimeZone, Utc};
 use std::str::FromStr;
 
 const DATE_TIME_FORMAT_OPTIONS_SLOT: &str = "\0rqj:intl-datetime-options";
@@ -307,8 +307,7 @@ impl<H: Host> Vm<H> {
                         "year" | "month" | "day" | "weekday" | "era" => has_date = true,
                         "dateStyle" => has_date = true,
                         "timeStyle" => has_time = true,
-                        "hourCycle" if !matches!(text.as_str(), "h11" | "h12" | "h23" | "h24") => {}
-                        "localeMatcher" | "formatMatcher" => {}
+                        "hourCycle" | "localeMatcher" | "formatMatcher" | "timeZoneName" => {}
                         _ => has_time = true,
                     }
                     if matches!(*key, "localeMatcher" | "formatMatcher") {
@@ -1100,16 +1099,13 @@ impl<H: Host> Vm<H> {
                     }
                 })
             }),
-            hour12: self
-                .date_time_option(resolved, "hour12")
-                .and_then(Value::as_bool),
             fractional_second_digits: self
                 .date_time_option(resolved, "fractionalSecondDigits")
                 .and_then(Value::as_number)
                 .map(|digits| digits as u32),
             time_zone_name: text("timeZoneName").map(|style| {
                 let zone = text("timeZone").unwrap_or_else(|| DEFAULT_TIME_ZONE.into());
-                time_zone_name_for(&style, &zone)
+                time_zone_name_for(&style, &zone, fields)
             }),
         };
         if let Some(style) = text("dateStyle") {
@@ -1126,7 +1122,7 @@ impl<H: Host> Vm<H> {
                 let zone = text("timeZone").unwrap_or_else(|| DEFAULT_TIME_ZONE.into());
                 options
                     .time_zone_name
-                    .get_or_insert_with(|| time_zone_name_for(zone_style, &zone));
+                    .get_or_insert_with(|| time_zone_name_for(zone_style, &zone, fields));
             }
         }
         if self
@@ -1308,16 +1304,17 @@ impl<H: Host> Vm<H> {
         let start_options = self.date_time_part_options(this, &start_fields);
         let end_options = self.date_time_part_options(this, &end_fields);
         let textual_month = |options: &DateTimePartOptions| {
-            options.month.as_deref().is_some_and(|style| {
-                matches!(style, "long" | "short" | "narrow")
-            })
+            options
+                .month
+                .as_deref()
+                .is_some_and(|style| matches!(style, "long" | "short" | "narrow"))
         };
         let same_date = (start_fields.year, start_fields.month, start_fields.day)
             == (end_fields.year, end_fields.month, end_fields.day);
         let same_year = start_fields.year == end_fields.year;
         let fields_have_time = start_fields.has_time && end_fields.has_time;
-        let compress_date = same_year
-            && (textual_month(&start_options) || textual_month(&end_options));
+        let compress_date =
+            same_year && (textual_month(&start_options) || textual_month(&end_options));
         let parts = merge_date_time_range_parts(
             start_parts,
             end_parts,
@@ -1747,6 +1744,63 @@ fn time_zone_name_for(style: &str, zone: &str) -> String {
         _ if zone == DEFAULT_TIME_ZONE => DEFAULT_TIME_ZONE_SHORT_NAME.to_string(),
         _ => zone.to_string(),
     }
+}
+
+fn offset_time_zone_name(style: &str, zone: &str) -> Option<String> {
+    let offset = FixedOffset::from_str(zone).ok()?.local_minus_utc();
+    if offset == 0 {
+        return Some("GMT".into());
+    }
+    let sign = if offset < 0 { '-' } else { '+' };
+    let absolute_offset = offset.abs();
+    let hours = absolute_offset / SECONDS_PER_HOUR as i32;
+    let minutes = absolute_offset % SECONDS_PER_HOUR as i32 / SECONDS_PER_MINUTE;
+    Some(if style == "longOffset" {
+        format!("GMT{sign}{hours:02}:{minutes:02}")
+    } else if minutes == 0 {
+        format!("GMT{sign}{hours}")
+    } else {
+        format!("GMT{sign}{hours}:{minutes:02}")
+    })
+}
+
+fn time_zone_name_from_zone(
+    style: &str,
+    zone: &str,
+    fields: &DateTimeFields,
+) -> Option<String> {
+    let zone = chrono_tz::Tz::from_str(zone).ok()?;
+    let date = NaiveDate::from_ymd_opt(fields.year, fields.month, fields.day)?;
+    let local = date.and_hms_opt(fields.hour, fields.minute, fields.second)?;
+    let zoned = zone
+        .from_local_datetime(&local)
+        .earliest()
+        .or_else(|| zone.from_local_datetime(&local).latest())?;
+    let abbreviation = zoned.format("%Z").to_string();
+    if matches!(style, "long" | "longGeneric") {
+        return Some(match abbreviation.as_str() {
+            "CET" => "Central European Standard Time".into(),
+            "CEST" => "Central European Summer Time".into(),
+            "EST" => "Eastern Standard Time".into(),
+            "EDT" => "Eastern Daylight Time".into(),
+            "PST" => "Pacific Standard Time".into(),
+            "PDT" => "Pacific Daylight Time".into(),
+            _ => zone.to_string(),
+        });
+    }
+    if matches!(style, "shortOffset" | "longOffset") {
+        let offset = zoned.offset().fix().local_minus_utc();
+        let sign = if offset < 0 { '-' } else { '+' };
+        let absolute_offset = offset.abs();
+        let hours = absolute_offset / SECONDS_PER_HOUR as i32;
+        let minutes = absolute_offset % SECONDS_PER_HOUR as i32 / SECONDS_PER_MINUTE;
+        return Some(if style == "longOffset" || minutes != 0 {
+            format!("GMT{sign}{hours:02}:{minutes:02}")
+        } else {
+            format!("GMT{sign}{hours}")
+        });
+    }
+    Some(abbreviation)
 }
 
 fn locale_unicode_value(locale: &str, key: &str) -> Option<String> {
