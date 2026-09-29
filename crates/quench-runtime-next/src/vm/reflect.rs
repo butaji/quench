@@ -115,16 +115,7 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "target is not a constructor".into()));
                 }
                 let argument_array = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let arguments = if argument_array.is_undefined() {
-                    vec![]
-                } else {
-                    if !self.is_object_like(argument_array) {
-                        return Err(JsError(
-                            "Reflect.construct arguments must be an object".into(),
-                        ));
-                    }
-                    self.call_argument_list(p, argument_array, false)?
-                };
+                let arguments = self.call_argument_list(p, argument_array, false)?;
                 let result =
                     self.construct_value_with_new_target(p, target, new_target, &arguments)?;
                 Ok(result)
