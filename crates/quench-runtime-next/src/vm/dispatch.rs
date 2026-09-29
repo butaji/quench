@@ -208,6 +208,21 @@ impl<H: Host> Vm<H> {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
+                let atom = function.local_atoms.get(slot).copied();
+                if let Some(atom) = atom
+                    && self.store_with_binding(p, f, atom, value)?
+                {
+                    if let Some(register) = i.optional_register_b() {
+                        self.write(f, register, value);
+                    }
+                    return Ok(StepResult::Continue);
+                }
+                if let Some(atom) = atom
+                    && function.global_immutable_atoms.contains(&atom)
+                    && !i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false)
+                {
+                    return Err(self.type_error(p, "assignment to constant binding".into()));
+                }
                 if function
                     .local_atoms
                     .get(slot)
@@ -286,6 +301,8 @@ impl<H: Host> Vm<H> {
                 i.atom_index(),
                 self.read(f, i.register_a()),
                 i.cache_site_index(),
+                i.boolean_field(crate::bytecode::InstructionField::B)
+                    .expect("validated initialization flag"),
             )?,
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
