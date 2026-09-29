@@ -305,16 +305,29 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Temporal.PlainDateTime requires new".into()));
         }
         let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
+        let calendar_fields =
+            quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar);
         let value = match native {
             Native::TemporalPlainDateTimeCalendarIdGetter => {
                 return Ok(self.heap.alloc(Cell::String(calendar.into())));
             }
-            Native::TemporalPlainDateTimeYearGetter => i64::from(date.year),
-            Native::TemporalPlainDateTimeMonthGetter => i64::from(date.month),
-            Native::TemporalPlainDateTimeDayGetter => i64::from(date.day),
+            Native::TemporalPlainDateTimeYearGetter => i64::from(
+                calendar_fields.as_ref().map_or(date.year, |fields| fields.year),
+            ),
+            Native::TemporalPlainDateTimeMonthGetter => i64::from(
+                calendar_fields
+                    .as_ref()
+                    .map_or(date.month, |fields| fields.month),
+            ),
+            Native::TemporalPlainDateTimeDayGetter => i64::from(
+                calendar_fields.as_ref().map_or(date.day, |fields| fields.day),
+            ),
             Native::TemporalPlainDateTimeMonthCodeGetter => {
                 return Ok(self.heap.alloc(Cell::String(
-                    format!("M{:0width$}", date.month, width = MONTH_CODE_DIGITS).into(),
+                    calendar_fields.map_or_else(
+                        || format!("M{:0width$}", date.month, width = MONTH_CODE_DIGITS),
+                        |fields| fields.month_code,
+                    ).into(),
                 )));
             }
             Native::TemporalPlainDateTimeHourGetter => i64::from(time[0]),
@@ -324,7 +337,16 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateTimeMicrosecondGetter => i64::from(time[4]),
             Native::TemporalPlainDateTimeNanosecondGetter => i64::from(time[5]),
             Native::TemporalPlainDateTimeEraGetter | Native::TemporalPlainDateTimeEraYearGetter => {
-                return Ok(Value::UNDEFINED);
+                return Ok(match native {
+                    Native::TemporalPlainDateTimeEraGetter => calendar_fields
+                        .and_then(|fields| fields.era)
+                        .map_or(Value::UNDEFINED, |era| {
+                            self.heap.alloc(Cell::String(era.into()))
+                        }),
+                    _ => calendar_fields
+                        .and_then(|fields| fields.era_year)
+                        .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
+                });
             }
             Native::TemporalPlainDateTimeDayOfWeekGetter => {
                 i64::from(super::temporal_date::iso_day_of_week(date))
@@ -344,16 +366,25 @@ impl<H: Host> Vm<H> {
                 super::temporal_date::ISO_DAYS_PER_WEEK
             }
             Native::TemporalPlainDateTimeDaysInMonthGetter => i64::from(
-                super::temporal_date::iso_days_in_month(date.year, date.month as i32).unwrap_or(31),
+                calendar_fields.as_ref().map_or_else(
+                    || super::temporal_date::iso_days_in_month(date.year, date.month as i32).unwrap_or(31) as u32,
+                    |fields| fields.days_in_month,
+                ),
             ),
-            Native::TemporalPlainDateTimeDaysInYearGetter => {
-                i64::from(super::temporal_date::iso_days_in_year(date.year))
-            }
+            Native::TemporalPlainDateTimeDaysInYearGetter => i64::from(calendar_fields
+                .as_ref()
+                .map_or_else(|| super::temporal_date::iso_days_in_year(date.year) as i32, |fields| fields.days_in_year as i32)),
             Native::TemporalPlainDateTimeMonthsInYearGetter => {
-                i64::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
+                i64::from(calendar_fields.as_ref().map_or(
+                    super::temporal_date::ISO_MONTHS_PER_YEAR as u32,
+                    |fields| fields.months_in_year,
+                ))
             }
             Native::TemporalPlainDateTimeInLeapYearGetter => {
-                return Ok(if super::temporal_date::iso_is_leap_year(date.year) {
+                return Ok(if calendar_fields.map_or_else(
+                    || super::temporal_date::iso_is_leap_year(date.year),
+                    |fields| fields.is_leap_year,
+                ) {
                     Value::TRUE
                 } else {
                     Value::FALSE
@@ -581,10 +612,7 @@ impl<H: Host> Vm<H> {
         let month_code = fields
             .month_code
             .map(|month| {
-                (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
-                    .contains(&month)
-                    .then_some(month)
-                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+                self.calendarized_month_code(p, month, &fields.calendar, year)
             })
             .transpose()?;
         let month = match (fields.month, month_code) {
@@ -768,19 +796,6 @@ impl<H: Host> Vm<H> {
         let constrain =
             self.plain_date_overflow(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
         let (date, time, calendar) = self.temporal_plain_date_time_slots(p, this)?;
-        let month_delta =
-            i128::from(duration[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64)
-                * i128::from(super::temporal_date::ISO_MONTHS_PER_YEAR)
-                + i128::from(
-                    duration[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
-                );
-        let original_day = date.day;
-        let mut date = super::temporal_date::shift_iso_months(date, month_delta)
-            .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-        if !constrain && date.day != original_day {
-            return Err(self.range_error(p, "Invalid PlainDateTime".into()));
-        }
-
         let mut time_nanos = time
             .iter()
             .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
@@ -793,16 +808,23 @@ impl<H: Host> Vm<H> {
             .sum::<i128>();
         let carry_days = time_nanos.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let remainder = time_nanos.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
-        let duration_days =
-            i128::from(duration[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] as i64)
-                * i128::from(super::temporal_date_arithmetic::DAYS_PER_WEEK)
-                + i128::from(duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i64);
-        let days = i64::try_from(duration_days + carry_days)
+        let days = i64::try_from(
+            duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i128 + carry_days,
+        )
             .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
-        if days != 0 {
-            date = super::temporal_date::shift_iso_days(date, days)
-                .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
-        }
+        let date = quench_intl::calendar_date_add(
+            (date.year, date.month, date.day),
+            (
+                duration[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] as i64,
+                duration[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] as i64,
+                duration[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] as i64,
+                days,
+            ),
+            &calendar,
+            constrain,
+        )
+        .map(|(year, month, day)| super::temporal_date::IsoDate { year, month, day })
+        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
 
         let mut time = [0_i32; 6];
         let mut remainder = remainder;
@@ -923,8 +945,12 @@ impl<H: Host> Vm<H> {
             }
         }
 
-        let mut year = date.year;
-        let mut month = date.month as i32;
+        let calendar_fields =
+            quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar);
+        let mut year = calendar_fields.as_ref().map_or(date.year, |fields| fields.year);
+        let mut month = calendar_fields
+            .as_ref()
+            .map_or(date.month as i32, |fields| fields.month as i32);
         let mut month_code_text = None;
         let mut day = date.day as i32;
         let mut time = time.map(|value| value as i32);
@@ -1020,12 +1046,9 @@ impl<H: Host> Vm<H> {
         }
         let month_code = month_code_text
             .as_deref()
-            .map(|text| self.parse_plain_date_month_code(p, text))
+            .map(|text| self.parse_plain_date_month_code(p, text, &calendar, year))
             .transpose()?;
         if let Some(code_month) = month_code {
-            if !(1..=super::temporal_date::ISO_MONTHS_PER_YEAR).contains(&code_month) {
-                return Err(self.range_error(p, "Invalid monthCode".into()));
-            }
             if month_was_provided && month != code_month {
                 return Err(self.range_error(p, "Month mismatch".into()));
             }
@@ -1035,15 +1058,22 @@ impl<H: Host> Vm<H> {
         }
         let constrain = overflow == "constrain";
         let month = if constrain {
-            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
+            month.clamp(1, calendar_fields.as_ref().map_or(
+                super::temporal_date::ISO_MONTHS_PER_YEAR as i32,
+                |fields| fields.months_in_year as i32,
+            ))
         } else {
             month
         };
-        let max_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
-        if constrain {
-            day = day.min(max_day);
-        }
-        let date = checked_iso_date(year, month, day)
+        let iso = quench_intl::calendar_date_to_iso_with_overflow(
+            year,
+            month as u32,
+            day as u32,
+            &calendar,
+            constrain,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
         for (value, limit) in time.iter_mut().zip([
             HOUR_LIMIT,

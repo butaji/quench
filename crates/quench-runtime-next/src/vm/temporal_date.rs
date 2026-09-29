@@ -460,7 +460,7 @@ impl<H: Host> Vm<H> {
         let month_code_value =
             month_code_text.map(|value| self.heap.alloc(Cell::String(value.into())));
         let month_code = month_code_value
-            .map(|value| self.plain_date_month_code(p, value))
+            .map(|value| self.plain_date_month_code(p, value, &calendar, year))
             .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(month_code)) if month != month_code => {
@@ -696,12 +696,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Missing PlainDate field".into()));
         };
         let month_code = month_code
-            .map(|month| {
-                (1..=ISO_MONTHS_PER_YEAR)
-                    .contains(&month)
-                    .then_some(month)
-                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
-            })
+            .map(|month| self.calendarized_month_code(p, month, &calendar, year))
             .transpose()?;
         let month = match (month, month_code) {
             (Some(month), Some(month_code)) if month != month_code => {
@@ -731,9 +726,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         value: Value,
+        calendar: &str,
+        year: i32,
     ) -> Result<i32, JsError> {
         let code = self.temporal_month_code_to_string(p, value)?;
-        self.parse_plain_date_month_code(p, &code)
+        self.parse_plain_date_month_code(p, &code, calendar, year)
     }
 
     pub(super) fn temporal_month_code_to_string(
@@ -748,8 +745,42 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         code: &str,
+        calendar: &str,
+        year: i32,
     ) -> Result<i32, JsError> {
-        parse_iso_month_code(code).ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+        let parsed = parse_iso_month_code_syntax(code)
+            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
+        if matches!(calendar, "iso8601" | "gregory") {
+            return parse_iso_month_code(code)
+                .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()));
+        }
+        let canonical_code = if parsed >= ISO_LEAP_MONTH_CODE_OFFSET {
+            format!("M{:02}L", parsed - ISO_LEAP_MONTH_CODE_OFFSET)
+        } else {
+            format!("M{parsed:02}")
+        };
+        quench_intl::calendar_month_from_code(year, &canonical_code, calendar)
+            .or_else(|| {
+                (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR as i32)
+                    .then_some(parsed as u32)
+            })
+            .map(|month| month as i32)
+            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+    }
+
+    pub(super) fn calendarized_month_code(
+        &mut self,
+        p: &ResidualProgram,
+        code: i32,
+        calendar: &str,
+        year: i32,
+    ) -> Result<i32, JsError> {
+        let code = if code >= ISO_LEAP_MONTH_CODE_OFFSET {
+            format!("M{:02}L", code - ISO_LEAP_MONTH_CODE_OFFSET)
+        } else {
+            format!("M{code:02}")
+        };
+        self.parse_plain_date_month_code(p, &code, calendar, year)
     }
 
     pub(super) fn plain_date_optional_integer(
