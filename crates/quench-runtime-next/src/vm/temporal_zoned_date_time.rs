@@ -1292,9 +1292,10 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Invalid time zone".into()));
         }
 
-        // Preserve the old core's observable property-read ordering.
         let names = [
             "day",
+            "era",
+            "eraYear",
             "hour",
             "microsecond",
             "millisecond",
@@ -1305,11 +1306,11 @@ impl<H: Host> Vm<H> {
             "offset",
             "second",
             "year",
-            "era",
-            "eraYear",
         ];
         let mut supplied = Vec::with_capacity(names.len());
-        for name in names {
+        for name in names.into_iter().filter(|name| {
+            !matches!(*name, "era" | "eraYear") || quench_intl::calendar_uses_eras(&calendar)
+        }) {
             let key = self.intern_atom(name);
             let value = self.get_property(p, partial, key)?;
             let value = if value.is_undefined() {
@@ -2211,6 +2212,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         let day = self.temporal_date_bag_field(p, value, "day")?;
+        let (era, era_year) = self.read_calendar_era_fields(p, value, &calendar)?;
         let hour = self.temporal_date_bag_field(p, value, "hour")?;
         let microsecond = self.temporal_date_bag_field(p, value, "microsecond")?;
         let millisecond = self.temporal_date_bag_field(p, value, "millisecond")?;
@@ -2241,16 +2243,6 @@ impl<H: Host> Vm<H> {
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, value, year_atom)?;
         let year = self.plain_date_optional_integer(p, year_value)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, value, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, value, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let options = self.temporal_zoned_date_time_options(p, options)?;
         let Some(day) = day else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));

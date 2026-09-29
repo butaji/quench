@@ -199,6 +199,18 @@ impl<H: Host> Vm<H> {
         Ok(number.trunc() as i32)
     }
 
+    pub(super) fn plain_date_positive_integer(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+    ) -> Result<i32, JsError> {
+        let integer = self.plain_date_integer(p, value)?;
+        if integer <= 0 {
+            return Err(self.range_error(p, "Date field must be positive".into()));
+        }
+        Ok(integer)
+    }
+
     pub(super) fn make_temporal_plain_date(
         &mut self,
         p: &ResidualProgram,
@@ -434,6 +446,7 @@ impl<H: Host> Vm<H> {
         let day = self
             .plain_date_optional_integer(p, day_value)?
             .unwrap_or(base_day as i32);
+        let (era, era_year) = self.read_calendar_era_fields(p, changes, &calendar)?;
         let month_atom = self.intern_atom("month");
         let month_value = self.get_property(p, changes, month_atom)?;
         let month = self.plain_date_optional_integer(p, month_value)?;
@@ -447,28 +460,18 @@ impl<H: Host> Vm<H> {
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
         let changed_year = self.plain_date_optional_integer(p, year_value)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, changes, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, changes, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         if day_value.is_undefined()
             && month_value.is_undefined()
             && month_code_value.is_undefined()
             && year_value.is_undefined()
-            && era_value.is_undefined()
-            && era_year_value.is_undefined()
+            && era.is_none()
+            && era_year.is_none()
         {
             return Err(self.type_error(p, "Invalid fields".into()));
         }
         let year = if changed_year.is_some() {
             changed_year.unwrap_or(base_year)
-        } else if era_value.is_undefined() && era_year_value.is_undefined() {
+        } else if era.is_none() && era_year.is_none() {
             base_year
         } else {
             self.resolve_calendar_year(p, &calendar, None, era.as_deref(), era_year)?
@@ -720,22 +723,13 @@ impl<H: Host> Vm<H> {
         }
         let day = self.get_property(p, value, day_atom)?;
         let day = self.plain_date_optional_integer(p, day)?;
+        let (era, era_year) = self.read_calendar_era_fields(p, value, &calendar)?;
         let month = self.get_property(p, value, month_atom)?;
         let month = self.plain_date_optional_integer(p, month)?;
         let month_code_value = self.get_property(p, value, month_code_atom)?;
         let month_code = self.plain_date_time_month_code_from_value(p, month_code_value)?;
         let year = self.get_property(p, value, year_atom)?;
         let year = self.plain_date_optional_integer(p, year)?;
-        let era_atom = self.intern_atom("era");
-        let era_value = self.get_property(p, value, era_atom)?;
-        let era = if era_value.is_undefined() {
-            None
-        } else {
-            Some(self.to_string(p, era_value)?.to_string())
-        };
-        let era_year_atom = self.intern_atom("eraYear");
-        let era_year_value = self.get_property(p, value, era_year_atom)?;
-        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let constrain = self.plain_date_overflow(p, options)?;
         let Some(day) = day else {
             return Err(self.type_error(p, "Missing PlainDate field".into()));
@@ -824,14 +818,14 @@ impl<H: Host> Vm<H> {
                     && matches!(calendar, "chinese" | "dangi")
                     && canonical_code.ends_with('L')
                     && parsed <= ISO_MONTHS_PER_YEAR as i32)
-                .then(|| {
-                    canonical_code
-                        .strip_prefix('M')?
-                        .strip_suffix('L')?
-                        .parse::<u32>()
-                        .ok()
-                })
-                .flatten()
+                    .then(|| {
+                        canonical_code
+                            .strip_prefix('M')?
+                            .strip_suffix('L')?
+                            .parse::<u32>()
+                            .ok()
+                    })
+                    .flatten()
             })
             .or_else(|| {
                 (!canonical_code.ends_with('L') && parsed <= ISO_MONTHS_PER_YEAR as i32)
@@ -855,6 +849,28 @@ impl<H: Host> Vm<H> {
             format!("M{code:02}")
         };
         self.parse_plain_date_month_code(p, &code, calendar, year, constrain)
+    }
+
+    pub(super) fn read_calendar_era_fields(
+        &mut self,
+        p: &ResidualProgram,
+        bag: Value,
+        calendar: &str,
+    ) -> Result<(Option<String>, Option<i32>), JsError> {
+        if !quench_intl::calendar_uses_eras(calendar) {
+            return Ok((None, None));
+        }
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, bag, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, bag, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
+        Ok((era, era_year))
     }
 
     pub(super) fn resolve_calendar_year(
