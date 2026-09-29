@@ -33,12 +33,14 @@ impl FunctionCompiler<'_, '_> {
             return dst;
         }
         self.emit(Op::MakeArray, dst, 0, 0, value.elements.len() as u32);
+        let element_temporaries = self.next_reg;
         for (index, item) in value.elements.iter().enumerate() {
             let Some(expr) = item.as_expression() else {
                 continue;
             };
             let item = self.expression(expr);
             self.emit(Op::DefineArrayElement, item, dst, 0, index as u32);
+            self.next_reg = element_temporaries;
         }
         dst
     }
