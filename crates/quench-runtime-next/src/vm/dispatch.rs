@@ -698,7 +698,7 @@ impl<H: Host> Vm<H> {
                     });
                 }
             }
-            Op::SetField => {
+            Op::SetField | Op::SetFieldStrict => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());
                 self.set_field_cached(
@@ -707,7 +707,8 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     value,
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict,
+                    p.functions[self.frames[f].function as usize].strict
+                        || i.op() == Op::SetFieldStrict,
                 )?;
             }
             Op::DefineField => {
@@ -726,7 +727,7 @@ impl<H: Host> Vm<H> {
                 };
                 self.define_class_field(p, object, key, self.read(f, i.register_a()))?;
             }
-            Op::SetThisField => {
+            Op::SetThisField | Op::SetThisFieldStrict => {
                 let this = self.checked_this_binding(p, f)?;
                 self.set_field_cached(
                     p,
@@ -734,7 +735,8 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     self.read(f, i.register_a()),
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict,
+                    p.functions[self.frames[f].function as usize].strict
+                        || i.op() == Op::SetThisFieldStrict,
                 )?;
             }
             Op::SetIndex => {

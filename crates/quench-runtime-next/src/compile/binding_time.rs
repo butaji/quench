@@ -87,9 +87,11 @@ fn analyze_root(functions: &[Function]) -> Vec<BindingTime<StaticValue>> {
             Op::StoreCapture
             | Op::StoreName
             | Op::SetField
+            | Op::SetFieldStrict
             | Op::DefineField
             | Op::DefineComputedField
             | Op::SetThisField
+            | Op::SetThisFieldStrict
             | Op::SetIndex
             | Op::DefineArrayElement
             | Op::Jump
