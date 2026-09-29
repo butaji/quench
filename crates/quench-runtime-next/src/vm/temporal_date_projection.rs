@@ -1425,8 +1425,9 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(bag) {
             return Err(self.type_error(p, "Invalid PlainYearMonth".into()));
         }
-        let (calendar, year, month, month_code) = self.temporal_plain_year_month_fields(p, bag)?;
         let constrain = self.plain_date_overflow(p, options)?;
+        let (calendar, year, month, month_code) =
+            self.temporal_plain_year_month_fields(p, bag, constrain)?;
         let month = match (month, month_code) {
             (Some(month), Some(code)) if month != code => {
                 return Err(self.range_error(p, "Conflicting month fields".into()));
@@ -1452,6 +1453,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         bag: Value,
+        constrain: bool,
     ) -> Result<(String, i32, Option<i32>, Option<i32>), JsError> {
         let calendar_atom = self.intern_atom("calendar");
         let calendar_value = self.get_property(p, bag, calendar_atom)?;
@@ -1490,7 +1492,7 @@ impl<H: Host> Vm<H> {
         let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code_text
-            .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year, false))
+            .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year, constrain))
             .transpose()?;
         Ok((calendar, year, month, month_code))
     }
