@@ -1380,6 +1380,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let Some(root_index) = self.frames.iter().rposition(|frame| {
             frame.function == super::ROOT_FUNCTION_ID
+                && frame.this == self.realm.globals
                 && self.programs.get(frame.program).is_some_and(|program| {
                     !program.root_variables_are_local()
                         && program
@@ -1437,18 +1438,21 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn mirror_global_var_property_write(
         &mut self,
-        p: &ResidualProgram,
         object: Value,
         atom: Atom,
         value: Value,
     ) {
-        if object != self.realm.globals || p.is_module() {
+        if object != self.realm.globals {
             return;
         }
         let Some(root_index) = self
             .frames
             .iter()
-            .rposition(|frame| frame.program == self.active_program && frame.function == 0)
+            .rposition(|frame| {
+                frame.program == self.active_program
+                    && frame.function == super::ROOT_FUNCTION_ID
+                    && frame.this == object
+            })
         else {
             return;
         };
@@ -1458,7 +1462,9 @@ impl<H: Host> Vm<H> {
         let Some(root_function) = root_program.functions.first() else {
             return;
         };
-        if !root_function.global_var_atoms.contains(&atom) {
+        if root_program.root_variables_are_local()
+            || !root_function.global_var_atoms.contains(&atom)
+        {
             return;
         }
         let Some(slot) = root_function

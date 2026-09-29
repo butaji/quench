@@ -5,6 +5,53 @@
 
 const MARKER_BASE: &str = "__quench_annex_b_call_target__";
 
+/// Normalization only bridges Annex B ordinary call targets. Validate its
+/// synthetic members against the OXC AST before they acquire member semantics.
+pub(super) fn invalid_target(
+    program: &oxc_ast::ast::Program<'_>,
+    marker: &str,
+) -> Option<oxc_span::Span> {
+    use oxc_ast::ast::{AssignmentExpression, Expression, StaticMemberExpression};
+    use oxc_ast_visit::{Visit, walk};
+    use oxc_span::GetSpan;
+
+    struct Targets<'m> {
+        marker: &'m str,
+        invalid: Option<oxc_span::Span>,
+    }
+    impl<'a> Visit<'a> for Targets<'_> {
+        fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+            if member.property.name == self.marker
+                && !matches!(member.object.without_parentheses(),
+                    Expression::CallExpression(call) if !call.optional)
+            {
+                self.invalid.get_or_insert(member.span);
+            }
+            walk::walk_static_member_expression(self, member);
+        }
+
+        fn visit_assignment_expression(&mut self, assignment: &AssignmentExpression<'a>) {
+            if assignment.operator.is_logical()
+                && let Some(oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member)) =
+                    assignment.left.as_simple_assignment_target()
+                && member.property.name == self.marker
+            {
+                self.invalid.get_or_insert(assignment.left.span());
+            }
+            walk::walk_assignment_expression(self, assignment);
+        }
+    }
+    if marker.is_empty() {
+        return None;
+    }
+    let mut targets = Targets {
+        marker,
+        invalid: None,
+    };
+    targets.visit_program(program);
+    targets.invalid
+}
+
 pub(super) struct NormalizedTargets {
     pub(super) source: String,
     pub(super) marker: String,
