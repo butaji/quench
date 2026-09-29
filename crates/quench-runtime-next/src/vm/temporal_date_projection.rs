@@ -1403,13 +1403,27 @@ impl<H: Host> Vm<H> {
             let text = text.host_string().to_owned();
             let (date, calendar) = parse_plain_year_month_string(self, p, &text)?;
             let _ = self.plain_date_overflow(p, options)?;
+            let reference = if calendar == "iso8601" {
+                (date.year, date.month, DEFAULT_REFERENCE_ISO_DAY)
+            } else {
+                quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar)
+                    .and_then(|fields| {
+                        quench_intl::calendar_year_month_reference_date(
+                            fields.year,
+                            fields.month,
+                            &calendar,
+                            true,
+                        )
+                    })
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?
+            };
             return self.make_plain_year_month(
                 p,
                 constructor,
-                date.year,
-                date.month,
+                reference.0,
+                reference.1,
                 calendar,
-                DEFAULT_REFERENCE_ISO_DAY,
+                reference.2,
             );
         }
         self.temporal_plain_year_month_from_bag(p, constructor, value, options)

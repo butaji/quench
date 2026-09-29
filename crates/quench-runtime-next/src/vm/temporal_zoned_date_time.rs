@@ -1552,6 +1552,33 @@ impl<H: Host> Vm<H> {
         right: &ZonedDateTimeRecord,
         options: &ZonedDateTimeDifferenceOptions,
     ) -> Result<Value, JsError> {
+        if zoned_date_time_unit_rank(options.smallest) >= zoned_date_time_unit_rank("hour") {
+            let sign = if native == Native::TemporalZonedDateTimeSince {
+                -1
+            } else {
+                1
+            };
+            let quantum = zoned_date_time_unit_nanoseconds(options.smallest)
+                .expect("validated time rounding unit")
+                * options.increment;
+            let rounded_delta = round_temporal_nanoseconds(
+                (right.epoch_nanoseconds - left.epoch_nanoseconds) * sign,
+                quantum,
+                &options.rounding_mode,
+            ) * quantum
+                * sign;
+            if let (Some([sy, sm, sd, ..]), Some([ey, em, ed, ..]), Some([ry, rm, rd, ..])) = (
+                zoned_date_time_fields(left.epoch_nanoseconds, &left.time_zone),
+                zoned_date_time_fields(right.epoch_nanoseconds, &left.time_zone),
+                zoned_date_time_fields(left.epoch_nanoseconds + rounded_delta, &left.time_zone),
+            ) && (sy, sm, sd) == (ey, em, ed)
+                && (sy, sm, sd) == (ry, rm, rd)
+            {
+                // No calendar boundary is crossed before or after rounding;
+                // elapsed time remains authoritative even during an overlap.
+                return self.zoned_date_time_time_difference(p, native, left, right, options);
+            }
+        }
         if options.smallest == "nanosecond"
             && options.increment == MIN_ROUNDING_INCREMENT
             && self.zoned_date_time_difference_uses_local_endpoints(left, right)
@@ -1621,9 +1648,8 @@ impl<H: Host> Vm<H> {
         } else {
             1
         };
-        let fields = self.zoned_date_time_local_difference_fields(p, start, target, options)?;
         let (mut fields, endpoint_epoch) =
-            self.zoned_date_time_balance_date_difference(p, start, target, fields)?;
+            self.zoned_date_time_date_difference(p, start, target, options)?;
         let residual = target
             .epoch_nanoseconds
             .checked_sub(endpoint_epoch)
@@ -1649,99 +1675,100 @@ impl<H: Host> Vm<H> {
         self.make_temporal_duration(p, fields)
     }
 
-    fn zoned_date_time_local_difference_fields(
+    fn zoned_date_time_date_difference(
         &mut self,
         p: &ResidualProgram,
         start: &ZonedDateTimeRecord,
         target: &ZonedDateTimeRecord,
         options: &ZonedDateTimeDifferenceOptions,
-    ) -> Result<[f64; 10], JsError> {
-        let constructor = self.temporal_plain_date_time_constructor(p)?;
-        let start_local = self.zoned_date_time_local_plain_date_time(p, constructor, start)?;
-        let target_local = self.zoned_date_time_local_plain_date_time(p, constructor, target)?;
-        let local_options = self.object();
-        for (name, value) in [
-            ("largestUnit", options.largest),
-            ("smallestUnit", "nanosecond"),
-            ("roundingMode", "trunc"),
-        ] {
-            let key = self.intern_atom(name);
-            let value = self.heap.alloc(Cell::String(value.into()));
-            self.set_property(local_options, key, value)?;
-        }
-        let local_increment = self.intern_atom("roundingIncrement");
-        self.set_property(local_options, local_increment, Value::number(1.0))?;
-        let local_difference = self.temporal_plain_date_time_difference(
-            p,
-            Native::TemporalPlainDateTimeUntil,
-            start_local,
-            &[target_local, local_options],
-        )?;
-        self.duration_fields(p, local_difference)
-    }
-
-    fn zoned_date_time_balance_date_difference(
-        &mut self,
-        p: &ResidualProgram,
-        start: &ZonedDateTimeRecord,
-        target: &ZonedDateTimeRecord,
-        mut fields: [f64; 10],
     ) -> Result<([f64; 10], i128), JsError> {
-        let mut endpoint_epoch = self.zoned_date_time_add_date_duration(p, start, &fields)?;
-        let direction = (target.epoch_nanoseconds - start.epoch_nanoseconds).signum();
-        loop {
-            if (target.epoch_nanoseconds - endpoint_epoch) * direction >= 0 {
-                let mut next_fields = fields;
-                next_fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] +=
-                    direction as f64;
-                let next_epoch = self.zoned_date_time_add_date_duration(p, start, &next_fields)?;
-                if (target.epoch_nanoseconds - next_epoch) * direction >= 0 {
-                    fields = next_fields;
-                    endpoint_epoch = next_epoch;
-                    continue;
-                }
-                return Ok((fields, endpoint_epoch));
-            }
-            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] -= direction as f64;
-            endpoint_epoch = self.zoned_date_time_add_date_duration(p, start, &fields)?;
-        }
-    }
-
-    fn zoned_date_time_add_date_duration(
-        &mut self,
-        p: &ResidualProgram,
-        start: &ZonedDateTimeRecord,
-        fields: &[f64; 10],
-    ) -> Result<i128, JsError> {
-        let date_fields: [Value; 10] = std::array::from_fn(|index| {
-            Value::number(
-                if index <= super::temporal_date_arithmetic::DURATION_DAYS_FIELD {
-                    fields[index]
-                } else {
-                    0.0
-                },
-            )
-        });
-        let duration = self.temporal_duration_construct(p, &date_fields)?;
-        let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
-            object: Box::new(Self::empty_object(self.object_proto)),
-            epoch_nanoseconds: start.epoch_nanoseconds,
-            time_zone: start.time_zone.clone(),
-            calendar: start.calendar.clone(),
-        });
-        let endpoint = self.temporal_zoned_date_time_arithmetic(
-            p,
-            Native::TemporalZonedDateTimeAdd,
-            receiver,
-            &[duration],
-        )?;
-        let epoch = match self.heap.get(endpoint) {
-            Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds, ..
-            }) => *epoch_nanoseconds,
-            _ => return Err(self.range_error(p, "Invalid ZonedDateTime difference".into())),
+        let [sy, sm, sd, start_time @ ..] =
+            zoned_date_time_fields(start.epoch_nanoseconds, &start.time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime difference".into()))?;
+        let [ey, em, ed, end_time @ ..] =
+            zoned_date_time_fields(target.epoch_nanoseconds, &start.time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime difference".into()))?;
+        let start_date = super::temporal_date::IsoDate {
+            year: sy,
+            month: sm as u32,
+            day: sd as u32,
         };
-        Ok(epoch)
+        let end_date = super::temporal_date::IsoDate {
+            year: ey,
+            month: em as u32,
+            day: ed as u32,
+        };
+        if start_date == end_date {
+            return Ok(([0.0; 10], start.epoch_nanoseconds));
+        }
+        let direction = (target.epoch_nanoseconds - start.epoch_nanoseconds).signum();
+        let wall_direction = match end_time.cmp(&start_time) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        };
+        // DifferenceZonedDateTime bounds corrections to the target date:
+        // forward differences permit two corrections, backward ones one.
+        const MAX_FORWARD_DAY_CORRECTION: i128 = 2;
+        const MAX_BACKWARD_DAY_CORRECTION: i128 = 1;
+        let maximum = if direction > 0 {
+            MAX_FORWARD_DAY_CORRECTION
+        } else {
+            MAX_BACKWARD_DAY_CORRECTION
+        };
+        let first = i128::from(wall_direction == -direction);
+        for correction in first..=maximum {
+            let intermediate = quench_temporal::add_iso_date(
+                end_date.into(),
+                (0, 0, 0, (-direction * correction) as i64),
+                true,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime difference".into()))?;
+            let endpoint = zoned_local_epoch_from_iso_fields(
+                intermediate.into(),
+                start_time.map(|field| field as u32),
+                &start.time_zone,
+                "compatible",
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime difference".into()))?;
+            if (target.epoch_nanoseconds - endpoint).signum() == -direction {
+                continue;
+            }
+            let days = quench_temporal::days_from_civil(intermediate)
+                - quench_temporal::days_from_civil(start_date.into());
+            let date_fields = match options.largest {
+                "year" | "month" => quench_intl::calendar_date_difference(
+                    (start_date.year, start_date.month, start_date.day),
+                    (intermediate.year, intermediate.month, intermediate.day),
+                    &start.calendar,
+                    if options.largest == "year" {
+                        quench_intl::CalendarDifferenceUnit::Years
+                    } else {
+                        quench_intl::CalendarDifferenceUnit::Months
+                    },
+                    quench_intl::CalendarDifferenceDirection::Until,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime difference".into()))?,
+                "week" => (
+                    0,
+                    0,
+                    days / super::temporal_date::ISO_DAYS_PER_WEEK,
+                    days % super::temporal_date::ISO_DAYS_PER_WEEK,
+                ),
+                "day" => (0, 0, 0, days),
+                _ => unreachable!("validated calendar difference unit"),
+            };
+            let mut fields = [0.0; 10];
+            for (field, value) in
+                fields
+                    .iter_mut()
+                    .zip([date_fields.0, date_fields.1, date_fields.2, date_fields.3])
+            {
+                *field = value as f64;
+            }
+            return Ok((fields, endpoint));
+        }
+        Err(self.range_error(p, "Invalid ZonedDateTime difference".into()))
     }
 
     fn temporal_zoned_date_time_difference_options(
