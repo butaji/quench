@@ -184,7 +184,7 @@ fn cell_bytes(cell: &Cell) -> usize {
         Cell::DataView { .. } => 0,
         Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
         Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-        Cell::WeakMap { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+        Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
         Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
         Cell::WeakRef { .. } => 0,
         Cell::FinalizationRegistry { .. } => 0,

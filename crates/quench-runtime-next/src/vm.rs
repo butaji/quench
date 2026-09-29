@@ -104,6 +104,7 @@ mod proxy;
 mod reflect;
 mod regexp;
 mod shadow_realm;
+mod sort;
 mod string;
 mod string_cache;
 mod string_extra;

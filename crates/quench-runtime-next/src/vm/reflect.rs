@@ -301,6 +301,9 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(target).cloned()
         else {
+            if self.typed_array_length_is_variable(target) {
+                return Ok(Value::FALSE);
+            }
             self.object_prevent_extensions(p, &[target])?;
             return Ok(Value::TRUE);
         };

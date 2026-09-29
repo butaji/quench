@@ -908,18 +908,13 @@ impl<H: Host> Vm<H> {
         values: &mut [Value],
         comparator: Option<Value>,
     ) -> Result<(), JsError> {
-        for index in 1..values.len() {
-            let value = values[index];
-            let mut position = index;
-            while position > 0
-                && self.sort_compare(p, comparator, values[position - 1], value)? > 0.0
-            {
-                values[position] = values[position - 1];
-                position -= 1;
-            }
-            values[position] = value;
-        }
-        Ok(())
+        super::sort::try_stable_sort_by(values, |left, right| {
+            Ok(match self.sort_compare(p, comparator, *left, *right)? {
+                value if value < 0.0 => std::cmp::Ordering::Less,
+                value if value > 0.0 => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            })
+        })
     }
 
     fn sort_compare(
