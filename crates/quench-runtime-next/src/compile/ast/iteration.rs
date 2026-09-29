@@ -14,8 +14,7 @@ impl<'a> Visit<'a> for IterationClosureFinder {
     }
 
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-        if matches!(&call.callee, oxc_ast::ast::Expression::Identifier(identifier) if identifier.name == "eval")
-        {
+        if super::super::early::is_direct_eval_call(call) {
             self.0 = true;
         } else {
             walk::walk_call_expression(self, call);

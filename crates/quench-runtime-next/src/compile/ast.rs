@@ -790,7 +790,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let target =
                         self.hidden_local(&format!("\0rqj:block-class:{}", identifier.name));
                     scope.insert(source, target);
-                    immutable.insert(source);
                 }
             }
             Statement::FunctionDeclaration(function) => {
