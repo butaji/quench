@@ -19,10 +19,10 @@ impl FunctionCompiler<'_, '_> {
         if value.optional {
             self.optional_computed_get(&value.object, &value.expression)
         } else if matches!(&value.object, Expression::Super(_)) {
+            let key = self.expression(&value.expression);
             let base = self.expression(&value.object);
             let receiver = self.reg();
             self.emit(Op::LoadThis, receiver, 0, 0, 0);
-            let key = self.expression(&value.expression);
             self.super_get(base, key, receiver)
         } else {
             self.computed_get(&value.object, &value.expression)
