@@ -15,6 +15,8 @@ pub(super) struct PlainDateTimeFromFields {
     month: Option<i32>,
     month_code: Option<i32>,
     year: Option<i32>,
+    era: Option<String>,
+    era_year: Option<i32>,
     time: [Option<i32>; 6],
     pub(super) offset: Option<String>,
     pub(super) time_zone: Option<String>,
@@ -540,12 +542,22 @@ impl<H: Host> Vm<H> {
             None
         };
         let year = self.plain_date_field(p, bag, "year")?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, bag, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year = self.plain_date_field(p, bag, "eraYear")?;
         Ok(PlainDateTimeFromFields {
             calendar,
             day,
             month,
             month_code,
             year,
+            era,
+            era_year,
             time,
             offset,
             time_zone,
@@ -603,9 +615,13 @@ impl<H: Host> Vm<H> {
         constrain: bool,
         validate_time_bounds: bool,
     ) -> Result<(i32, u32, u32, String, [i32; 6]), JsError> {
-        let year = fields
-            .year
-            .ok_or_else(|| self.type_error(p, "Missing year".into()))?;
+        let year = self.resolve_calendar_year(
+            p,
+            &fields.calendar,
+            fields.year,
+            fields.era.as_deref(),
+            fields.era_year,
+        )?;
         let day = fields
             .day
             .ok_or_else(|| self.type_error(p, "Missing day".into()))?;
@@ -626,14 +642,15 @@ impl<H: Host> Vm<H> {
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainDateTime".into()));
         }
-        let month = if constrain {
-            month.min(super::temporal_date::ISO_MONTHS_PER_YEAR)
-        } else {
-            month
-        };
-        let max_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
-        let day = if constrain { day.min(max_day) } else { day };
-        let date = checked_iso_date(year, month, day)
+        let iso = quench_intl::calendar_date_to_iso_with_overflow(
+            year,
+            month as u32,
+            day as u32,
+            &fields.calendar,
+            constrain,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
         let time = self.resolve_plain_date_time_time(p, fields.time, constrain)?;
         if validate_time_bounds {
@@ -952,7 +969,9 @@ impl<H: Host> Vm<H> {
             .as_ref()
             .map_or(date.month as i32, |fields| fields.month as i32);
         let mut month_code_text = None;
-        let mut day = date.day as i32;
+        let mut day = calendar_fields
+            .as_ref()
+            .map_or(date.day as i32, |fields| fields.day as i32);
         let mut time = time.map(|value| value as i32);
         let names = if calendar == "iso8601" {
             &[
@@ -988,6 +1007,8 @@ impl<H: Host> Vm<H> {
         let mut year_was_provided = false;
         let mut era_was_provided = false;
         let mut era_year_was_provided = false;
+        let mut era_value = None;
+        let mut era_year_value = None;
         for name in names {
             let atom = self.intern_atom(name);
             let value = self.get_property(p, changes, atom)?;
@@ -1014,16 +1035,25 @@ impl<H: Host> Vm<H> {
                     year = self.plain_date_integer(p, value)?;
                     year_was_provided = true;
                 }
-                "era" => era_was_provided = true,
-                "eraYear" => era_year_was_provided = true,
+                "era" => {
+                    era_was_provided = true;
+                    era_value = Some(self.to_string(p, value)?.to_string());
+                }
+                "eraYear" => {
+                    era_year_was_provided = true;
+                    era_year_value = Some(self.plain_date_integer(p, value)?);
+                }
                 _ => unreachable!(),
             }
         }
-        if era_was_provided != era_year_was_provided && !year_was_provided {
-            return Err(self.type_error(p, "era and eraYear must be provided together".into()));
-        }
-        if era_was_provided && !year_was_provided {
-            return Err(self.type_error(p, "Unsupported calendar era fields".into()));
+        if !year_was_provided && (era_was_provided || era_year_was_provided) {
+            year = self.resolve_calendar_year(
+                p,
+                &calendar,
+                None,
+                era_value.as_deref(),
+                era_year_value,
+            )?;
         }
         if !recognized {
             return Err(self.type_error(p, "Insufficient date-time data".into()));
