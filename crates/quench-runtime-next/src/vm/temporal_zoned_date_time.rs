@@ -398,7 +398,7 @@ impl<H: Host> Vm<H> {
         if let Some(identifier) = time_zone_from_datetime_identifier(&text) {
             return Ok(identifier);
         }
-        quench_intl::canonical_time_zone_name(&text)
+        canonical_time_zone(&text)
             .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))
     }
 
@@ -494,7 +494,7 @@ impl<H: Host> Vm<H> {
             )?;
             return Ok(
                 if receiver.epoch_nanoseconds == other.epoch_nanoseconds
-                    && receiver.time_zone == other.time_zone
+                    && zoned_time_zones_equivalent(&receiver.time_zone, &other.time_zone)
                     && receiver.calendar == other.calendar
                 {
                     Value::TRUE
@@ -2699,9 +2699,14 @@ fn zoned_time_zones_equivalent(left: &str, right: &str) -> bool {
     if left == right {
         return true;
     }
-    let left_is_fixed = left.starts_with(['+', '-']) || left.eq_ignore_ascii_case("utc");
-    let right_is_fixed = right.starts_with(['+', '-']) || right.eq_ignore_ascii_case("utc");
-    left_is_fixed && right_is_fixed
+    match (parse_offset_nanoseconds(left), parse_offset_nanoseconds(right)) {
+        (Some(left), Some(right)) => left == right,
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => {
+            quench_temporal::timezone_primary_name(left)
+                == quench_temporal::timezone_primary_name(right)
+        }
+    }
 }
 
 fn zoned_date_time_rounding_quantum(options: &ZonedDateTimeStringOptions) -> Option<i128> {
@@ -2865,7 +2870,10 @@ fn canonical_time_zone(value: &str) -> Option<String> {
         let minutes = seconds / SECONDS_PER_MINUTE as u32 % SECONDS_PER_MINUTE as u32;
         return Some(format!("{sign}{hours:02}:{minutes:02}"));
     }
-    quench_intl::canonical_time_zone_name(value)
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|time_zone| time_zone.name().eq_ignore_ascii_case(value))
+        .map(|time_zone| time_zone.name().to_owned())
 }
 
 fn valid_time_zone_offset(value: &str) -> bool {
