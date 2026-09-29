@@ -263,12 +263,49 @@ impl FunctionCompiler<'_, '_> {
                 {
                     lexical_bindings.push(crate::bytecode::EvalBinding {
                         atom: *atom,
-                        slot: *slot,
-                        immutable: scope.kinds.get(atom)
-                            == Some(&LexicalBindingKind::Immutable),
+                        location: crate::bytecode::EvalBindingLocation::Local(*slot),
+                        kind: scope
+                            .kinds
+                            .get(atom)
+                            .copied()
+                            .unwrap_or(LexicalBindingKind::Mutable),
                         catch_parameter: scope.catch_parameter,
                     });
                 }
+            }
+        }
+        visible.extend(self.function_scope.iter().copied());
+        for (depth, scope) in self.scopes.iter().enumerate() {
+            let Ok(depth) = u16::try_from(depth) else {
+                self.owner.reject(
+                    Span::default(),
+                    "eval capture depth exceeds residual encoding",
+                );
+                break;
+            };
+            for (marker, slot) in scope.iter() {
+                let text = self.owner.atoms[*marker as usize].clone();
+                let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
+                    text.strip_prefix(kind.capture_prefix())
+                        .map(|name| (kind, name))
+                }) else {
+                    continue;
+                };
+                let atom = self.owner.atom(name);
+                if !visible.insert(atom) {
+                    continue;
+                }
+                let catch_marker = format!("\0rqj:catch-capture:{name}");
+                lexical_bindings.push(crate::bytecode::EvalBinding {
+                    atom,
+                    location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
+                    kind,
+                    catch_parameter: self
+                        .owner
+                        .atom_index
+                        .get(catch_marker.as_str())
+                        .is_some_and(|marker| scope.contains_key(marker)),
+                });
             }
         }
         lexical_bindings.sort_unstable_by_key(|binding| binding.atom);

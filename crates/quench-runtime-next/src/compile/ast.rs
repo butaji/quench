@@ -59,13 +59,6 @@ struct IteratorClosure {
     control_depth: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum LexicalBindingKind {
-    Mutable,
-    Immutable,
-    FunctionName,
-}
-
 struct LexicalScope {
     bindings: FxHashMap<Atom, Atom>,
     kinds: FxHashMap<Atom, LexicalBindingKind>,
@@ -743,6 +736,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .flat_map(|scope| scope.bindings.values())
             .filter_map(|binding| self.local_slots.get(binding).copied())
             .collect::<Vec<_>>();
+        self.initialize_tdz_slots(slots);
+    }
+
+    pub(super) fn initialize_tdz_slots(&mut self, mut slots: Vec<u16>) {
+        slots.sort_unstable();
+        slots.dedup();
         for slot in slots {
             self.emit(Op::InitializeTdz, 0, 0, 0, u32::from(slot));
         }
@@ -832,12 +831,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
-        if self.dynamic_eval {
-            return Vec::new();
-        }
         let mut scope: FxHashMap<Atom, u16> = self
             .function_scope
             .iter()
+            .filter(|_| !self.dynamic_eval)
             .filter_map(|atom| self.local_slots.get(atom).map(|slot| (*atom, *slot)))
             .collect();
         scope.extend(
@@ -852,9 +849,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     || Some(*slot) == self.parameter_arguments_slot
             });
         }
-        if self.dynamic_eval {
-            scope.remove(&self.owner.atom("arguments"));
-        }
         for lexical in self
             .lexical_scopes
             .iter()
@@ -863,23 +857,37 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
                     scope.insert(*source, slot);
-                    let marker_kind = match lexical.kinds.get(source) {
-                        Some(LexicalBindingKind::Immutable) => Some("immutable-capture"),
-                        Some(LexicalBindingKind::FunctionName) => Some("function-name-capture"),
-                        Some(LexicalBindingKind::Mutable) | None => None,
-                    };
-                    if let Some(marker_kind) = marker_kind {
-                        let name = self.owner.atoms[*source as usize].clone();
-                        let marker = self
-                            .owner
-                            .atom(&format!("\0rqj:{marker_kind}:{name}"));
+                    let kind = lexical
+                        .kinds
+                        .get(source)
+                        .copied()
+                        .unwrap_or(LexicalBindingKind::Mutable);
+                    let name = self.owner.atoms[*source as usize].clone();
+                    for kind in LexicalBindingKind::ALL {
+                        let marker = format!("{}{name}", kind.capture_prefix());
+                        if let Some(marker) = self.owner.atom_index.get(marker.as_str()) {
+                            scope.remove(marker);
+                        }
+                    }
+                    let catch_name = format!("\0rqj:catch-capture:{name}");
+                    if let Some(marker) = self.owner.atom_index.get(catch_name.as_str()) {
+                        scope.remove(marker);
+                    }
+                    let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
+                    scope.insert(marker, slot);
+                    if lexical.catch_parameter {
+                        let marker = self.owner.atom(&catch_name);
                         scope.insert(marker, slot);
                     }
                 }
             }
         }
         let mut scopes = vec![Rc::new(scope)];
-        scopes.extend(self.scopes.iter().cloned());
+        // Eval can introduce vars that shadow inherited bindings. Current lexical
+        // bindings cannot be replaced by those declarations and remain capturable.
+        if !self.dynamic_eval {
+            scopes.extend(self.scopes.iter().cloned());
+        }
         scopes
     }
 
