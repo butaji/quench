@@ -1871,6 +1871,13 @@ impl<H: Host> Vm<H> {
                 continue;
             };
             for (slot, candidate) in function.local_atoms.iter().enumerate() {
+                if p.kind == crate::bytecode::ProgramKind::Eval
+                    && self.root_global_var_atom(p, frame.function, slot).is_some()
+                {
+                    // Object-environment bindings must read the property,
+                    // including its accessor, rather than a frame-local copy.
+                    continue;
+                }
                 let candidate_name = self.atom_name(*candidate);
                 if candidate_name != name
                     && !name.starts_with('\0')
