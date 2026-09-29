@@ -1981,7 +1981,7 @@ pub(super) fn native<H: Host>(
         let (year, month, calendar, day) = (*year, *month, calendar.clone(), *reference_iso_day);
         let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
         let (date, annotation) = text.split_once('[').unwrap_or((&text, ""));
-        let month_end = if annotation.is_empty() {
+        let month_end = if annotation.is_empty() && calendar == "iso8601" {
             date.rfind('-').unwrap_or(date.len())
         } else {
             date.len()
