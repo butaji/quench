@@ -69,7 +69,14 @@ enum DateTimeDefaults {
     Date,
     Time,
     DateAndTime,
+    Temporal(&'static [&'static str]),
 }
+
+const PLAIN_DATE_DEFAULTS: &[&str] = &["year", "month", "day"];
+const PLAIN_MONTH_DAY_DEFAULTS: &[&str] = &["month", "day"];
+const PLAIN_YEAR_MONTH_DEFAULTS: &[&str] = &["year", "month"];
+const PLAIN_TIME_DEFAULTS: &[&str] = &["hour", "minute", "second"];
+const DATE_TIME_DEFAULTS: &[&str] = &["year", "month", "day", "hour", "minute", "second"];
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_intl_date_time_format_for_realm(
@@ -315,8 +322,10 @@ impl<H: Host> Vm<H> {
                 self.set_property(resolved, atom, normalized)?;
             }
         }
-        let temporal_defaults = matches!(defaults, DateTimeDefaults::Format)
-            && (!any || (!has_date && !has_time));
+        let temporal_defaults = matches!(
+            defaults,
+            DateTimeDefaults::Format | DateTimeDefaults::Temporal(_)
+        ) && (!any || (!has_date && !has_time));
         let has_date_style = self.date_time_option(resolved, "dateStyle").is_some();
         let has_time_style = self.date_time_option(resolved, "timeStyle").is_some();
         match defaults {
@@ -340,10 +349,27 @@ impl<H: Host> Vm<H> {
                     self.set_default_time_components(resolved)?;
                 }
             }
+            DateTimeDefaults::Temporal(components)
+                if !has_date && !has_time && !has_date_style && !has_time_style =>
+            {
+                let numeric = self.heap.alloc(Cell::String("numeric".into()));
+                for component in components {
+                    self.set_date_time_property(resolved, component, numeric)?;
+                    if matches!(*component, "year" | "month" | "day") {
+                        has_date = true;
+                    } else {
+                        has_time = true;
+                    }
+                }
+            }
             _ => {}
         }
         if temporal_defaults {
-            self.set_date_time_property(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT, Value::TRUE)?;
+            self.set_date_time_property(
+                resolved,
+                DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT,
+                Value::TRUE,
+            )?;
         }
         let mut resolved_locale = locale.clone();
         if self
@@ -493,17 +519,75 @@ impl<H: Host> Vm<H> {
         let locale_value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let locale = self.collator_locale(p, Some(locale_value))?;
         let options = self.date_time_options(p, args.get(1).copied(), defaults, &locale)?;
+        let formatter = self.date_time_formatter(p, constructor, locale, options)?;
+        self.date_time_format(p, formatter, &[this])
+    }
+
+    pub(super) fn temporal_to_locale_string(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let defaults = if self.temporal_plain_time_fields(this).is_some() {
+            DateTimeDefaults::Temporal(PLAIN_TIME_DEFAULTS)
+        } else {
+            match self.heap.get(this) {
+                Some(Cell::TemporalPlainDate { .. }) => {
+                    DateTimeDefaults::Temporal(PLAIN_DATE_DEFAULTS)
+                }
+                Some(Cell::TemporalPlainDateTime { .. }) => {
+                    DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS)
+                }
+                Some(Cell::TemporalInstant { .. }) => {
+                    DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS)
+                }
+                Some(Cell::TemporalPlainMonthDay { .. }) => {
+                    DateTimeDefaults::Temporal(PLAIN_MONTH_DAY_DEFAULTS)
+                }
+                Some(Cell::TemporalPlainYearMonth { .. }) => {
+                    DateTimeDefaults::Temporal(PLAIN_YEAR_MONTH_DEFAULTS)
+                }
+                Some(Cell::TemporalZonedDateTime { .. }) => {
+                    return Err(self.type_error(p, "Temporal.ZonedDateTime is not supported".into()))
+                }
+                _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
+            }
+        };
+        let constructor = self
+            .intl_datetime_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
+        let locale = self.collator_locale(p, args.first().copied())?;
+        let options = self.date_time_options(
+            p,
+            args.get(1).copied(),
+            defaults,
+            &locale,
+        )?;
+        let formatter = self.date_time_formatter(p, constructor, locale, options)?;
+        self.date_time_format(p, formatter, &[this])
+    }
+
+    fn date_time_formatter(
+        &mut self,
+        p: &ResidualProgram,
+        constructor: Value,
+        locale: String,
+        options: (bool, bool, Value),
+    ) -> Result<Value, JsError> {
         let prototype_atom = self.intern_atom("prototype");
-        let constructor_prototype = self.get_property(p, constructor, prototype_atom)?;
+        let prototype = self.get_property(p, constructor, prototype_atom)?;
         let formatter = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(constructor_prototype)));
+            .alloc(Cell::Object(Self::empty_object(prototype)));
         let locale = self
             .date_time_option(options.2, "\0locale")
             .and_then(|value| self.string_value(value))
             .unwrap_or(locale);
-        let locale_value = self.heap.alloc(Cell::String(locale.into()));
-        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
+        let locale = self.heap.alloc(Cell::String(locale.into()));
+        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale)?;
         self.set_date_time_slot(
             formatter,
             DATE_TIME_FORMAT_DATE_SLOT,
@@ -515,9 +599,7 @@ impl<H: Host> Vm<H> {
             if options.1 { Value::TRUE } else { Value::FALSE },
         )?;
         self.set_date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT, options.2)?;
-        let format_atom = self.intern_atom("format");
-        let format = self.get_property(p, formatter, format_atom)?;
-        self.call_value(p, format, formatter, &[this])
+        Ok(formatter)
     }
 
     pub(super) fn intl_date_time_format_native(
@@ -680,22 +762,14 @@ impl<H: Host> Vm<H> {
             let resolved = self
                 .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
                 .unwrap_or(Value::UNDEFINED);
-            if !fields.has_date
-                && self.date_time_option(resolved, "dateStyle").is_some()
-                && self.date_time_option(resolved, "timeStyle").is_none()
-            {
+            let incompatible_style = (!fields.has_date
+                && self.date_time_option(resolved, "dateStyle").is_some())
+                || (!fields.has_time
+                    && self.date_time_option(resolved, "timeStyle").is_some());
+            if incompatible_style {
                 return Err(self.type_error(
                     p,
-                    "dateStyle is incompatible with this Temporal value".into(),
-                ));
-            }
-            if !fields.has_time
-                && self.date_time_option(resolved, "timeStyle").is_some()
-                && self.date_time_option(resolved, "dateStyle").is_none()
-            {
-                return Err(self.type_error(
-                    p,
-                    "timeStyle is incompatible with this Temporal value".into(),
+                    "dateStyle/timeStyle is incompatible with this Temporal value".into(),
                 ));
             }
             self.validate_temporal_options(p, formatter, &fields)?;
@@ -861,13 +935,15 @@ impl<H: Host> Vm<H> {
             .date_time_option(resolved, "calendar")
             .and_then(|value| self.string_value(value))
             .unwrap_or_else(|| "gregory".into());
+        let calendar = quench_intl::calendar_alias(calendar);
+        let format_calendar = quench_intl::calendar_alias(&format_calendar);
         let compatible = if matches!(
             fields.temporal_kind,
             Some(TemporalKind::PlainMonthDay | TemporalKind::PlainYearMonth)
         ) {
             calendar == format_calendar
         } else {
-            matches!(calendar, "iso8601" | "gregory") || calendar == format_calendar
+            matches!(calendar.as_str(), "iso8601" | "gregory") || calendar == format_calendar
         };
         if !compatible {
             return Err(self.range_error(

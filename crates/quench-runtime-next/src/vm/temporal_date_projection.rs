@@ -1754,13 +1754,16 @@ pub(super) fn native<H: Host>(
     this: Value,
     args: &[Value],
 ) -> Result<Value, JsError> {
+    if matches!(
+        native,
+        Native::TemporalPlainMonthDayToLocaleString
+            | Native::TemporalPlainYearMonthToLocaleString
+    ) {
+        return vm.temporal_to_locale_string(p, this, args);
+    }
     let options = match native {
         Native::TemporalPlainMonthDayToString | Native::TemporalPlainYearMonthToString => {
             args.first().copied().unwrap_or(Value::UNDEFINED)
-        }
-        Native::TemporalPlainMonthDayToLocaleString
-        | Native::TemporalPlainYearMonthToLocaleString => {
-            args.get(1).copied().unwrap_or(Value::UNDEFINED)
         }
         _ => Value::UNDEFINED,
     };
