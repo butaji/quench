@@ -3,6 +3,12 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::IteratorZipMode;
 
+#[derive(Clone, Copy)]
+enum IteratorPrimitiveHandling {
+    IterateStrings,
+    Reject,
+}
+
 enum IteratorHelperFailure {
     Step(JsError),
     Abrupt(JsError),
@@ -925,31 +931,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(value), Some(Cell::String(_))) {
-            return self.get_iterator(p, value);
-        }
-        if !self.is_object_like(value) {
-            return Err(self.type_error(p, "Iterator.from requires an object".into()));
-        }
-        let iterator = if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
-            let method = self.get_index(p, value, symbol)?;
-            if !method.is_null() && !method.is_undefined() {
-                if !self.is_function(method) {
-                    return Err(self.type_error(p, "iterator method is not callable".into()));
-                }
-                let iterator = self.call_value(p, method, value, &[])?;
-                if !self.is_object_like(iterator) {
-                    return Err(
-                        self.type_error(p, "iterator method did not return an object".into())
-                    );
-                }
-                iterator
-            } else {
-                value
-            }
-        } else {
-            value
-        };
+        let iterator =
+            self.iterator_flattenable_source(p, value, IteratorPrimitiveHandling::IterateStrings)?;
         let next_atom = self.intern_atom("next");
         let next_method = self.get_property(p, iterator, next_atom)?;
         let iterator_root = self.heap.root(iterator);
@@ -973,6 +956,46 @@ impl<H: Host> Vm<H> {
         })();
         self.heap.release_root(next_root);
         self.heap.release_root(iterator_root);
+        result
+    }
+
+    fn iterator_flattenable_source(
+        &mut self,
+        p: &ResidualProgram,
+        value: Value,
+        primitives: IteratorPrimitiveHandling,
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(value)
+            && !(matches!(primitives, IteratorPrimitiveHandling::IterateStrings)
+                && matches!(self.heap.get(value), Some(Cell::String(_))))
+        {
+            return Err(self.type_error(
+                p,
+                "iterator input must be an object or an allowed string".into(),
+            ));
+        }
+        let value_root = self.heap.root(value);
+        let result = (|| {
+            let value = self.heap.root_value(value_root).unwrap();
+            let Some(symbol) = self.well_known_symbols.get("iterator").copied() else {
+                return self.get_iterator(p, value);
+            };
+            let method = self.get_index(p, value, symbol)?;
+            let value = self.heap.root_value(value_root).unwrap();
+            let iterator = if method.is_null() || method.is_undefined() {
+                value
+            } else {
+                if !self.is_function(method) {
+                    return Err(self.type_error(p, "iterator method is not callable".into()));
+                }
+                self.call_value(p, method, value, &[])?
+            };
+            if !self.is_object_like(iterator) {
+                return Err(self.type_error(p, "iterator method did not return an object".into()));
+            }
+            Ok(iterator)
+        })();
+        self.heap.release_root(value_root);
         result
     }
 
@@ -1073,9 +1096,9 @@ impl<H: Host> Vm<H> {
             *helper_started = true;
         }
         let result = match state {
-            IteratorHelper::RegExpStringMatchAll { .. } => Err(
-                self.type_error(p, "RegExp string iterator is not a helper".into()).into(),
-            ),
+            IteratorHelper::RegExpStringMatchAll { .. } => Err(self
+                .type_error(p, "RegExp string iterator is not a helper".into())
+                .into()),
             IteratorHelper::Map { callback, index } => {
                 self.iterator_helper_map(p, iterator, source, callback, index, args)
             }
@@ -1109,10 +1132,9 @@ impl<H: Host> Vm<H> {
                 keys,
                 opened,
                 done,
-            } => {
-                self.iterator_helper_zip(p, iterator, iterators, padding, mode, keys, opened, done)
-                    .map_err(IteratorHelperFailure::Abrupt)
-            }
+            } => self
+                .iterator_helper_zip(p, iterator, iterators, padding, mode, keys, opened, done)
+                .map_err(IteratorHelperFailure::Abrupt),
         };
         let result = match result {
             Ok(result) => Ok(result),
@@ -1319,7 +1341,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, IteratorHelperFailure> {
         let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+            return self
+                .iterator_result(Value::UNDEFINED, true)
+                .map_err(Into::into);
         };
         let mapped = self.call_value(
             p,
@@ -1349,7 +1373,9 @@ impl<H: Host> Vm<H> {
         loop {
             let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+                return self
+                    .iterator_result(Value::UNDEFINED, true)
+                    .map_err(Into::into);
             };
             let selected = self.call_value(
                 p,
@@ -1376,11 +1402,15 @@ impl<H: Host> Vm<H> {
         if remaining <= 0.0 {
             self.mark_iterator_done(iterator);
             self.iterator_close(p, source)?;
-            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+            return self
+                .iterator_result(Value::UNDEFINED, true)
+                .map_err(Into::into);
         }
         let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+            return self
+                .iterator_result(Value::UNDEFINED, true)
+                .map_err(Into::into);
         };
         self.update_iterator_helper(
             iterator,
@@ -1405,13 +1435,17 @@ impl<H: Host> Vm<H> {
                 .is_none()
             {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+                return self
+                    .iterator_result(Value::UNDEFINED, true)
+                    .map_err(Into::into);
             }
             remaining -= 1.0;
         }
         let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+            return self
+                .iterator_result(Value::UNDEFINED, true)
+                .map_err(Into::into);
         };
         self.update_iterator_helper(iterator, IteratorHelper::Drop { remaining });
         self.iterator_result(value, false).map_err(Into::into)
@@ -1447,7 +1481,9 @@ impl<H: Host> Vm<H> {
             }
             let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
+                return self
+                    .iterator_result(Value::UNDEFINED, true)
+                    .map_err(Into::into);
             };
             let mapped = self.call_value(
                 p,
@@ -1799,7 +1835,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         input: Value,
     ) -> Result<Vec<Value>, JsError> {
-        let outer = self.get_iterator(p, input)?;
+        let outer = self
+            .get_iterator(p, input)
+            .and_then(|iterator| self.iterator_get_direct(p, iterator))?;
         let outer_root = self.heap.root(outer);
         let mut roots = Vec::new();
         let mut iterators = Vec::new();
@@ -1832,22 +1870,9 @@ impl<H: Host> Vm<H> {
                     return Err(error);
                 }
             };
-            if matches!(self.heap.get(value), Some(Cell::String(_))) {
-                self.heap.release_root(value_root);
-                let iterators = roots
-                    .iter()
-                    .filter_map(|root| self.heap.root_value(*root))
-                    .collect::<Vec<_>>();
-                let _ = self.iterator_close_all(p, &iterators, Some(outer));
-                roots.into_iter().for_each(|root| {
-                    self.heap.release_root(root);
-                });
-                self.heap.release_root(outer_root);
-                return Err(self.type_error(p, "Iterator.zip does not accept strings".into()));
-            }
             match self
-                .iterator_from(p, &[value])
-                .and_then(|iterator| self.iterator_record(p, iterator))
+                .iterator_flattenable_source(p, value, IteratorPrimitiveHandling::Reject)
+                .and_then(|iterator| self.iterator_get_direct(p, iterator))
             {
                 Ok(iterator) => {
                     roots.push(self.heap.root(iterator));
@@ -1930,16 +1955,10 @@ impl<H: Host> Vm<H> {
                     self.heap.release_root(property_key_root);
                     continue;
                 }
-                if matches!(self.heap.get(value), Some(Cell::String(_))) {
-                    self.heap.release_root(property_key_root);
-                    return Err(
-                        self.type_error(p, "Iterator.zipKeyed does not accept strings".into())
-                    );
-                }
                 let value_root = self.heap.root(value);
                 match self
-                    .iterator_from(p, &[value])
-                    .and_then(|iterator| self.iterator_record(p, iterator))
+                    .iterator_flattenable_source(p, value, IteratorPrimitiveHandling::Reject)
+                    .and_then(|iterator| self.iterator_get_direct(p, iterator))
                 {
                     Ok(iterator) => {
                         iterators.push(iterator);
@@ -2016,7 +2035,10 @@ impl<H: Host> Vm<H> {
             }
             return Ok(values);
         }
-        let iterator = match self.get_iterator(p, padding) {
+        let iterator = match self
+            .get_iterator(p, padding)
+            .and_then(|iterator| self.iterator_get_direct(p, iterator))
+        {
             Ok(iterator) => iterator,
             Err(error) => return Err(error),
         };
@@ -2403,82 +2425,104 @@ impl<H: Host> Vm<H> {
         callback: Value,
         initial: Option<Value>,
     ) -> Result<Value, JsError> {
+        let iterator_root = self.heap.root(iterator);
+        let callback_root = self.heap.root(callback);
+        let value_root = self.heap.root(Value::UNDEFINED);
+        let mut accumulator = initial.map(|value| self.heap.root(value));
         let mut values = Vec::new();
-        let mut accumulator = initial;
-        let mut index = 0usize;
-        loop {
-            let step = match self.iterator_helper_step(p, iterator, &[]) {
-                Ok(step) => step,
-                Err(error) => return Err(error),
-            };
-            let Some(value) = step else {
-                break;
-            };
-            match consumer {
-                IteratorConsumer::ToArray => values.push(value),
-                IteratorConsumer::Reduce => {
-                    if let Some(current) = accumulator {
-                        accumulator = Some(self.call_iterator_callback(
+        let result = (|| {
+            let mut index = 0usize;
+            loop {
+                let iterator = self.heap.root_value(iterator_root).unwrap();
+                let Some(value) = self.iterator_helper_step(p, iterator, &[])? else {
+                    break;
+                };
+                self.heap.update_root(value_root, value);
+                let callback = self.heap.root_value(callback_root).unwrap();
+                match consumer {
+                    IteratorConsumer::ToArray => values.push(self.heap.root(value)),
+                    IteratorConsumer::Reduce => {
+                        if let Some(root) = accumulator {
+                            let current = self.heap.root_value(root).unwrap();
+                            let next = self.call_iterator_callback(
+                                p,
+                                iterator,
+                                callback,
+                                &[current, value, Value::number(index as f64)],
+                            )?;
+                            self.heap.update_root(root, next);
+                        } else {
+                            accumulator = Some(self.heap.root(value));
+                        }
+                    }
+                    IteratorConsumer::ForEach => {
+                        self.call_iterator_callback(
                             p,
                             iterator,
                             callback,
-                            &[current, value, Value::number(index as f64)],
-                        )?);
-                    } else {
-                        accumulator = Some(value);
+                            &[value, Value::number(index as f64)],
+                        )?;
+                    }
+                    IteratorConsumer::Every | IteratorConsumer::Some | IteratorConsumer::Find => {
+                        let selected = self.call_iterator_callback(
+                            p,
+                            iterator,
+                            callback,
+                            &[value, Value::number(index as f64)],
+                        )?;
+                        let done = matches!(
+                            (consumer, self.truthy(selected)),
+                            (IteratorConsumer::Every, false)
+                                | (IteratorConsumer::Some, true)
+                                | (IteratorConsumer::Find, true)
+                        );
+                        if done {
+                            let iterator = self.heap.root_value(iterator_root).unwrap();
+                            self.iterator_close(p, iterator)?;
+                            return Ok(match consumer {
+                                IteratorConsumer::Every => Value::FALSE,
+                                IteratorConsumer::Some => Value::TRUE,
+                                IteratorConsumer::Find => self.heap.root_value(value_root).unwrap(),
+                                _ => unreachable!(),
+                            });
+                        }
                     }
                 }
-                IteratorConsumer::ForEach => {
-                    self.call_iterator_callback(
-                        p,
-                        iterator,
-                        callback,
-                        &[value, Value::number(index as f64)],
-                    )?;
-                }
-                IteratorConsumer::Every | IteratorConsumer::Some | IteratorConsumer::Find => {
-                    let selected = self.call_iterator_callback(
-                        p,
-                        iterator,
-                        callback,
-                        &[value, Value::number(index as f64)],
-                    )?;
-                    let truthy = self.truthy(selected);
-                    let done = matches!(
-                        (consumer, truthy),
-                        (IteratorConsumer::Every, false)
-                            | (IteratorConsumer::Some, true)
-                            | (IteratorConsumer::Find, true)
-                    );
-                    if done {
-                        self.iterator_close(p, iterator)?;
-                        return Ok(match consumer {
-                            IteratorConsumer::Every => Value::FALSE,
-                            IteratorConsumer::Some => Value::TRUE,
-                            IteratorConsumer::Find => value,
-                            _ => unreachable!(),
-                        });
-                    }
-                }
+                index += 1;
             }
-            index += 1;
-        }
-        match consumer {
-            IteratorConsumer::Reduce => accumulator.ok_or_else(|| {
-                self.type_error(p, "reduce of empty iterator with no initial value".into())
-            }),
-            IteratorConsumer::ToArray => {
-                let array = self.array_create(p, values.len())?;
-                for (index, value) in values.into_iter().enumerate() {
-                    self.create_data_property_or_throw(p, array, index, value)?;
+            match consumer {
+                IteratorConsumer::Reduce => accumulator
+                    .and_then(|root| self.heap.root_value(root))
+                    .ok_or_else(|| {
+                        self.type_error(p, "reduce of empty iterator with no initial value".into())
+                    }),
+                IteratorConsumer::ToArray => {
+                    let array = self.array_create(p, values.len())?;
+                    let array_root = self.heap.root(array);
+                    let result = (|| {
+                        for (index, root) in values.iter().copied().enumerate() {
+                            let array = self.heap.root_value(array_root).unwrap();
+                            let value = self.heap.root_value(root).unwrap();
+                            self.create_data_property_or_throw(p, array, index, value)?;
+                        }
+                        Ok(self.heap.root_value(array_root).unwrap())
+                    })();
+                    self.heap.release_root(array_root);
+                    result
                 }
-                Ok(array)
+                IteratorConsumer::ForEach => Ok(Value::UNDEFINED),
+                IteratorConsumer::Every => Ok(Value::TRUE),
+                IteratorConsumer::Some => Ok(Value::FALSE),
+                IteratorConsumer::Find => Ok(Value::UNDEFINED),
             }
-            IteratorConsumer::ForEach => Ok(Value::UNDEFINED),
-            IteratorConsumer::Every => Ok(Value::TRUE),
-            IteratorConsumer::Some => Ok(Value::FALSE),
-            IteratorConsumer::Find => Ok(Value::UNDEFINED),
+        })();
+        for root in values.into_iter().chain(accumulator) {
+            self.heap.release_root(root);
         }
+        self.heap.release_root(value_root);
+        self.heap.release_root(callback_root);
+        self.heap.release_root(iterator_root);
+        result
     }
 
     fn call_iterator_callback(
