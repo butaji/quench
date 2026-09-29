@@ -263,7 +263,10 @@ impl<H: Host> Vm<H> {
                 )?;
                 Ok(self.heap.alloc(Cell::String(text.into())))
             }
-            Native::TemporalPlainDateToJSON | Native::TemporalPlainDateToLocaleString => {
+            Native::TemporalPlainDateToLocaleString => {
+                self.temporal_to_locale_string(p, this, args)
+            }
+            Native::TemporalPlainDateToJSON => {
                 let (year, month, day, _) = self.temporal_plain_date_slots(p, this)?;
                 Ok(self
                     .heap

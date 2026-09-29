@@ -645,18 +645,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::TemporalDuration { .. }) => {
                     self.temporal_duration_native(p, Native::TemporalDurationToString, this, &[])
                 }
-                Some(Cell::TemporalInstant { .. }) => {
-                    self.temporal_instant_native(p, Native::TemporalInstantToString, this, &[])
-                }
-                Some(Cell::TemporalPlainDateTime { .. }) => self.temporal_plain_date_time_native(
-                    p,
-                    Native::TemporalPlainDateTimeToString,
-                    this,
-                    &[],
-                ),
-                _ => {
-                    self.temporal_plain_time_native(p, Native::TemporalPlainTimeToString, this, &[])
-                }
+                _ => self.temporal_to_locale_string(p, this, args),
             },
             Native::TemporalDuration
             | Native::TemporalDurationFrom

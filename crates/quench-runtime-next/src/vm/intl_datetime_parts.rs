@@ -384,7 +384,10 @@ fn append_time(
         }
         return;
     }
-    let hour_cycle = options.hour_cycle.as_deref().unwrap_or("h12");
+    let hour_cycle = options.hour12.map_or_else(
+        || options.hour_cycle.as_deref().unwrap_or("h12"),
+        |hour12| if hour12 { "h12" } else { "h23" },
+    );
     let hour12 = options
         .hour12
         .unwrap_or_else(|| matches!(hour_cycle, "h11" | "h12"));
@@ -401,7 +404,7 @@ fn append_time(
         _ => fields.hour,
     };
     if let Some(style) = &options.hour {
-        let value = if style == "2-digit" {
+        let value = if style == "2-digit" || matches!(hour_cycle, "h23" | "h24") {
             format!("{hour:0width$}", width = TWO_DIGIT_WIDTH)
         } else {
             hour.to_string()
