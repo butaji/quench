@@ -1535,11 +1535,29 @@ impl<H: Host> Vm<H> {
         if zoned_date_time_unit_rank(options.largest) >= zoned_date_time_unit_rank("hour") {
             return self.zoned_date_time_time_difference(p, native, &left, &other, &options);
         }
+        let left_local = zoned_date_time_fields(left.epoch_nanoseconds, &left.time_zone)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        let right_local = zoned_date_time_fields(other.epoch_nanoseconds, &other.time_zone)
+            .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+        if left_local[..3] == right_local[..3] {
+            return self.zoned_date_time_time_difference(p, native, &left, &other, &options);
+        }
+        self.zoned_date_time_calendar_difference(p, native, &left, &other, &options)
+    }
+
+    fn zoned_date_time_calendar_difference(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        left: &ZonedDateTimeRecord,
+        right: &ZonedDateTimeRecord,
+        options: &ZonedDateTimeDifferenceOptions,
+    ) -> Result<Value, JsError> {
         let date_time_constructor = self.temporal_plain_date_time_constructor(p)?;
         let left_date_time =
-            self.zoned_date_time_local_plain_date_time(p, date_time_constructor, &left)?;
+            self.zoned_date_time_local_plain_date_time(p, date_time_constructor, left)?;
         let other_date_time =
-            self.zoned_date_time_local_plain_date_time(p, date_time_constructor, &other)?;
+            self.zoned_date_time_local_plain_date_time(p, date_time_constructor, right)?;
         let internal_options = self.object();
         for (name, value) in [
             ("largestUnit", options.largest),
@@ -1719,8 +1737,8 @@ impl<H: Host> Vm<H> {
             time[index] = remainder / scale;
             remainder %= scale;
         }
-        let first_unit =
-            zoned_date_time_unit_rank(options.largest) - zoned_date_time_unit_rank("hour");
+        let first_unit = zoned_date_time_unit_rank(options.largest)
+            .saturating_sub(zoned_date_time_unit_rank("hour"));
         if first_unit != 0 {
             time[first_unit] += time[..first_unit]
                 .iter()
@@ -2375,14 +2393,14 @@ fn resolve_zoned_local_epoch(
     (offset_mode == "prefer").then(zone_epoch).flatten()
 }
 
-pub(super) fn relative_offset_matches(
+pub(super) fn relative_offset_epoch(
     date: super::temporal_date::IsoDate,
     time: [i32; 6],
     time_zone: &str,
     offset: &str,
-) -> bool {
+) -> Option<i128> {
     let Some(offset) = parse_offset_nanoseconds(offset) else {
-        return false;
+        return None;
     };
     let time = time.map(|field| field as u32);
     let local_epoch = local_epoch_from_iso_fields(date, time);
@@ -2397,7 +2415,6 @@ pub(super) fn relative_offset_matches(
         "reject",
         "compatible",
     )
-    .is_some()
 }
 
 fn minute_precision_offset_epoch(
