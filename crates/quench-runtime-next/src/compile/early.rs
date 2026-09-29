@@ -54,6 +54,31 @@ pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
     }
 }
 
+pub(super) fn normalize_dynamic_function_parameters(source: &str) -> Cow<'_, str> {
+    let source = source.strip_prefix("<!--").unwrap_or(source);
+    if !source
+        .lines()
+        .enumerate()
+        .any(|(line_number, line)| line_number > 0 && line.trim_start().starts_with("-->"))
+    {
+        return Cow::Borrowed(source);
+    }
+    let normalized = source
+        .lines()
+        .enumerate()
+        .map(|(line_number, line)| {
+            let trimmed = line.trim_start();
+            if line_number > 0 && trimmed.starts_with("-->") {
+                &line[..line.len() - trimmed.len()]
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Cow::Owned(normalized)
+}
+
 fn dynamic_body_is_strict(source: &str) -> bool {
     let source = source.trim_start();
     ["'use strict'", "\"use strict\""]
@@ -345,11 +370,7 @@ impl ParameterEarlyErrors {
         }
     }
 
-    fn validate_parameter_body(
-        &mut self,
-        params: &FormalParameters<'_>,
-        body: &[Statement<'_>],
-    ) {
+    fn validate_parameter_body(&mut self, params: &FormalParameters<'_>, body: &[Statement<'_>]) {
         let mut parameters = Vec::new();
         for item in &params.items {
             collect_pattern_names(&item.pattern, &mut parameters);
