@@ -221,15 +221,20 @@ impl FunctionCompiler<'_, '_> {
         initializing: bool,
     ) {
         let source_atom = atom;
-        let immutable_lexical = !initializing
-            && self
-                .lexical_scopes
-                .iter()
-                .rev()
-                .any(|scope| scope.immutable.contains(&source_atom));
+        let binding_kind = self.lexical_binding_kind(source_atom);
+        let immutable_lexical = !initializing && binding_kind == LexicalBindingKind::Immutable;
         let compiler_binding = self.is_compiler_binding(source_atom);
         let lexical = self.active_lexical_binding(source_atom);
         let atom = lexical.unwrap_or(source_atom);
+        let function_name_binding = !initializing
+            && (binding_kind == LexicalBindingKind::FunctionName
+                || self.has_function_name_capture(source_atom));
+        if function_name_binding {
+            if self.strict {
+                self.throw_immutable_binding(atom);
+            }
+            return;
+        }
         if self.owner.atoms[atom as usize]
             .as_ref()
             .contains("\0rqj:class-binding:")
@@ -313,6 +318,14 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
         let name = self.owner.atoms[atom as usize].clone();
         let marker = self.owner.atom(&format!("\0rqj:immutable-capture:{name}"));
+        self.scopes.iter().any(|scope| scope.contains_key(&marker))
+    }
+
+    fn has_function_name_capture(&mut self, atom: Atom) -> bool {
+        let name = self.owner.atoms[atom as usize].clone();
+        let marker = self
+            .owner
+            .atom(&format!("\0rqj:function-name-capture:{name}"));
         self.scopes.iter().any(|scope| scope.contains_key(&marker))
     }
 

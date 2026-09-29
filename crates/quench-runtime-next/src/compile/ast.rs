@@ -59,9 +59,16 @@ struct IteratorClosure {
     control_depth: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LexicalBindingKind {
+    Mutable,
+    Immutable,
+    FunctionName,
+}
+
 struct LexicalScope {
     bindings: FxHashMap<Atom, Atom>,
-    immutable: FxHashSet<Atom>,
+    kinds: FxHashMap<Atom, LexicalBindingKind>,
     catch_parameter: bool,
     pub(super) with_depth: u16,
 }
@@ -682,12 +689,42 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         bindings: FxHashMap<Atom, Atom>,
         immutable: FxHashSet<Atom>,
     ) {
+        let kinds = bindings
+            .keys()
+            .map(|atom| {
+                (
+                    *atom,
+                    if immutable.contains(atom) {
+                        LexicalBindingKind::Immutable
+                    } else {
+                        LexicalBindingKind::Mutable
+                    },
+                )
+            })
+            .collect();
         self.lexical_scopes.push(LexicalScope {
             bindings,
-            immutable,
+            kinds,
             catch_parameter: false,
             with_depth: self.with_depth,
         });
+    }
+
+    pub(super) fn push_function_name_binding(&mut self, name: Atom, binding: Atom) {
+        self.lexical_scopes.push(LexicalScope {
+            bindings: FxHashMap::from_iter([(name, binding)]),
+            kinds: FxHashMap::from_iter([(name, LexicalBindingKind::FunctionName)]),
+            catch_parameter: false,
+            with_depth: self.with_depth,
+        });
+    }
+
+    pub(super) fn lexical_binding_kind(&self, atom: Atom) -> LexicalBindingKind {
+        self.lexical_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.kinds.get(&atom).copied())
+            .unwrap_or(LexicalBindingKind::Mutable)
     }
 
     fn push_catch_lexical_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
@@ -717,19 +754,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn push_lexical_scope(&mut self, body: &[Statement<'_>]) {
         let mut scope = FxHashMap::default();
+        let mut immutable = FxHashSet::default();
         for statement in body {
-            self.collect_lexical_binding(statement, &mut scope);
+            self.collect_lexical_binding(statement, &mut scope, &mut immutable);
         }
-        self.push_lexical_bindings(scope);
+        self.push_immutable_lexical_bindings(scope, immutable);
         self.initialize_lexical_scope();
     }
 
     pub(super) fn push_switch_lexical_scope(&mut self, cases: &[SwitchCase<'_>]) {
         let mut scope = FxHashMap::default();
+        let mut immutable = FxHashSet::default();
         for statement in cases.iter().flat_map(|case| &case.consequent) {
-            self.collect_lexical_binding(statement, &mut scope);
+            self.collect_lexical_binding(statement, &mut scope, &mut immutable);
         }
-        self.push_lexical_bindings(scope);
+        self.push_immutable_lexical_bindings(scope, immutable);
         self.initialize_lexical_scope();
     }
 
@@ -737,14 +776,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         &mut self,
         statement: &Statement<'_>,
         scope: &mut FxHashMap<Atom, Atom>,
+        immutable: &mut FxHashSet<Atom>,
     ) {
         match statement {
             Statement::VariableDeclaration(declaration)
                 if super::is_lexical_binding_declaration(declaration.kind) =>
             {
-                for item in &declaration.declarations {
-                    self.map_pattern_lexicals(&item.id, scope);
-                }
+                self.map_declaration_lexicals(declaration, scope, immutable);
             }
             Statement::ClassDeclaration(class) => {
                 if let Some(identifier) = &class.id {
@@ -752,6 +790,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     let target =
                         self.hidden_local(&format!("\0rqj:block-class:{}", identifier.name));
                     scope.insert(source, target);
+                    immutable.insert(source);
                 }
             }
             Statement::FunctionDeclaration(function) => {
@@ -825,9 +864,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
                     scope.insert(*source, slot);
-                    if lexical.immutable.contains(source) {
+                    let marker_kind = match lexical.kinds.get(source) {
+                        Some(LexicalBindingKind::Immutable) => Some("immutable-capture"),
+                        Some(LexicalBindingKind::FunctionName) => Some("function-name-capture"),
+                        Some(LexicalBindingKind::Mutable) | None => None,
+                    };
+                    if let Some(marker_kind) = marker_kind {
                         let name = self.owner.atoms[*source as usize].clone();
-                        let marker = self.owner.atom(&format!("\0rqj:immutable-capture:{name}"));
+                        let marker = self
+                            .owner
+                            .atom(&format!("\0rqj:{marker_kind}:{name}"));
                         scope.insert(marker, slot);
                     }
                 }
