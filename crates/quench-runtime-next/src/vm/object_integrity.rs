@@ -57,12 +57,7 @@ impl<H: Host> Vm<H> {
                 return Err(JsError("cannot access a revoked proxy".into()));
             }
             let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-                key_value
-            } else {
-                let text = self.coerce_js_string(p, key_value)?;
-                self.heap.alloc(Cell::String(text))
-            };
+            let key = self.to_property_key(p, key_value)?;
             let trap_atom = self.intern_atom("deleteProperty");
             let trap = self.get_property(p, handler, trap_atom)?;
             if self.is_function(trap) {
@@ -106,10 +101,13 @@ impl<H: Host> Vm<H> {
             return Err(JsError("delete target is not an object".into()));
         }
         let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let property_key = if matches!(self.heap.get(key_value), Some(Cell::Symbol(_))) {
-            PropertyKey::symbol(key_value)
+        let key = self.to_property_key(p, key_value)?;
+        let property_key = if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            PropertyKey::symbol(key)
         } else {
-            let key = self.coerce_js_string(p, key_value)?;
+            let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                unreachable!("ToPropertyKey returns a string or symbol")
+            };
             let atom = self.intern_js_atom(&key);
             self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
             if key.host_string() == "length"
