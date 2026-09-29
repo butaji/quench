@@ -1,6 +1,54 @@
 use super::*;
 
 const ARRAY_CONSTRUCTOR_LENGTH: f64 = 1.0;
+const ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
+    ("push", Native::ArrayPush),
+    ("pop", Native::ArrayPop),
+    ("slice", Native::ArraySlice),
+    ("includes", Native::ArrayIncludes),
+    ("join", Native::ArrayJoin),
+    ("concat", Native::ArrayConcat),
+    ("flat", Native::ArrayFlat),
+    ("reverse", Native::ArrayReverse),
+    ("shift", Native::ArrayShift),
+    ("unshift", Native::ArrayUnshift),
+    ("splice", Native::ArraySplice),
+    ("fill", Native::ArrayFill),
+    ("at", Native::ArrayAt),
+    ("lastIndexOf", Native::ArrayLastIndexOf),
+    ("indexOf", Native::ArrayIndexOf),
+    ("copyWithin", Native::ArrayCopyWithin),
+    ("with", Native::ArrayWith),
+    ("forEach", Native::ArrayForEach),
+    ("map", Native::ArrayMap),
+    ("filter", Native::ArrayFilter),
+    ("some", Native::ArraySome),
+    ("every", Native::ArrayEvery),
+    ("find", Native::ArrayFind),
+    ("findIndex", Native::ArrayFindIndex),
+    ("findLast", Native::ArrayFindLast),
+    ("findLastIndex", Native::ArrayFindLastIndex),
+    ("group", Native::ArrayGroup),
+    ("groupToMap", Native::ArrayGroupToMap),
+    ("flatMap", Native::ArrayFlatMap),
+    ("reduce", Native::ArrayReduce),
+    ("reduceRight", Native::ArrayReduceRight),
+    ("toReversed", Native::ArrayToReversed),
+    ("toSpliced", Native::ArrayToSpliced),
+    ("sort", Native::ArraySort),
+    ("toSorted", Native::ArrayToSorted),
+    ("toString", Native::ArrayToString),
+    ("toLocaleString", Native::ArrayToLocaleString),
+    ("keys", Native::ArrayKeys),
+    ("values", Native::ArrayValues),
+    ("entries", Native::ArrayEntries),
+];
+const ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
+    ("from", Native::ArrayFrom),
+    ("fromAsync", Native::ArrayFromAsync),
+    ("of", Native::ArrayOf),
+    ("isArray", Native::ArrayIsArray),
+];
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -10,48 +58,7 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(Vec::new()),
         });
         self.set_builtin_function_name(array, "Array")?;
-        for (name, native) in [
-            ("push", Native::ArrayPush),
-            ("pop", Native::ArrayPop),
-            ("slice", Native::ArraySlice),
-            ("includes", Native::ArrayIncludes),
-            ("join", Native::ArrayJoin),
-            ("concat", Native::ArrayConcat),
-            ("flat", Native::ArrayFlat),
-            ("reverse", Native::ArrayReverse),
-            ("shift", Native::ArrayShift),
-            ("unshift", Native::ArrayUnshift),
-            ("splice", Native::ArraySplice),
-            ("fill", Native::ArrayFill),
-            ("at", Native::ArrayAt),
-            ("lastIndexOf", Native::ArrayLastIndexOf),
-            ("indexOf", Native::ArrayIndexOf),
-            ("copyWithin", Native::ArrayCopyWithin),
-            ("with", Native::ArrayWith),
-            ("forEach", Native::ArrayForEach),
-            ("map", Native::ArrayMap),
-            ("filter", Native::ArrayFilter),
-            ("some", Native::ArraySome),
-            ("every", Native::ArrayEvery),
-            ("find", Native::ArrayFind),
-            ("findIndex", Native::ArrayFindIndex),
-            ("findLast", Native::ArrayFindLast),
-            ("findLastIndex", Native::ArrayFindLastIndex),
-            ("group", Native::ArrayGroup),
-            ("groupToMap", Native::ArrayGroupToMap),
-            ("flatMap", Native::ArrayFlatMap),
-            ("reduce", Native::ArrayReduce),
-            ("reduceRight", Native::ArrayReduceRight),
-            ("toReversed", Native::ArrayToReversed),
-            ("toSpliced", Native::ArrayToSpliced),
-            ("sort", Native::ArraySort),
-            ("toSorted", Native::ArrayToSorted),
-            ("toString", Native::ArrayToString),
-            ("toLocaleString", Native::ArrayToLocaleString),
-            ("keys", Native::ArrayKeys),
-            ("values", Native::ArrayValues),
-            ("entries", Native::ArrayEntries),
-        ] {
+        for &(name, native) in ARRAY_PROTOTYPE_METHODS {
             self.set_builtin_named(program, self.array_proto, name, native)?;
         }
         self.set_builtin_named(program, self.array_proto, "constructor", Native::Array)?;
@@ -83,11 +90,85 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_builtin_named(program, array, "from", Native::ArrayFrom)?;
-        self.set_builtin_named(program, array, "fromAsync", Native::ArrayFromAsync)?;
-        self.set_builtin_named(program, array, "of", Native::ArrayOf)?;
-        self.set_builtin_named(program, array, "isArray", Native::ArrayIsArray)?;
+        for &(name, native) in ARRAY_STATIC_METHODS {
+            self.set_builtin_named(program, array, name, native)?;
+        }
         self.global(program, "Array", array)
+    }
+
+    pub(super) fn install_array_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        let array = self.native_with_realm(Native::Array, global, global);
+        self.set_builtin_function_name(array, "Array")?;
+        self.set_builtin_value_named(array, "prototype", prototype)?;
+        self.set_builtin_value_named(prototype, "constructor", array)?;
+        let length = self.intern_atom("length");
+        self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(length),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(length),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            array,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        for &(name, native) in ARRAY_PROTOTYPE_METHODS {
+            self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
+        }
+        for &(name, native) in ARRAY_STATIC_METHODS {
+            self.set_realm_builtin_named(program, array, name, native, Some(global))?;
+        }
+        if let Some(species) = self.well_known_symbols.get("species").copied() {
+            let getter = self.native_with_realm(Native::ArraySpecies, global, global);
+            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+            self.set_symbol_property(array, species, Value::UNDEFINED)?;
+            self.set_property_attributes(
+                array,
+                PropertyKey::symbol(species),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: true,
+                    getter: Some(getter),
+                    setter: None,
+                },
+            );
+        }
+        self.set_named(program, global, "Array", array)
     }
 
     pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {

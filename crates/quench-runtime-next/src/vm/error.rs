@@ -1208,29 +1208,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let array = self.native_with_realm(Native::Array, global, global);
         let array_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.array_proto)));
-        self.set_builtin_value_named(array, "prototype", array_prototype)?;
-        self.set_builtin_value_named(array_prototype, "constructor", array)?;
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
-            let getter = self.native_with_realm(Native::ArraySpecies, global, global);
-            self.set_symbol_property(array, species, Value::UNDEFINED)?;
-            self.set_property_attributes(
-                array,
-                PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
-        self.set_named(program, global, "Array", array)?;
+        self.install_array_for_realm(program, global, array_prototype)?;
         let map = self.native_with_realm(Native::Map, global, global);
         let map_prototype = self
             .heap
@@ -1672,10 +1653,22 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let prototype_atom = self.intern_atom("prototype");
-        let constructor = if matches!(native, Native::TypeError | Native::RealmTypeError) {
-            self.lookup_atom("TypeError")
-                .and_then(|atom| self.own_property(self.realm.globals, atom))
-                .unwrap_or_else(|| self.native_value(native))
+        let name = match native {
+            Native::Error => Some("Error"),
+            Native::AggregateError => Some("AggregateError"),
+            Native::SuppressedError => Some("SuppressedError"),
+            Native::EvalError => Some("EvalError"),
+            Native::RangeError => Some("RangeError"),
+            Native::ReferenceError => Some("ReferenceError"),
+            Native::SyntaxError => Some("SyntaxError"),
+            Native::TypeError | Native::RealmTypeError => Some("TypeError"),
+            Native::URIError => Some("URIError"),
+            _ => None,
+        };
+        let constructor = if let Some(name) = name {
+            let atom = self.intern_atom(name);
+            self.get_property(program, self.realm.globals, atom)
+                .unwrap_or_else(|_| self.native_value(native))
         } else {
             self.native_value(native)
         };
