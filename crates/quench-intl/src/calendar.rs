@@ -27,6 +27,12 @@ pub enum CalendarDifferenceUnit {
     Months,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalendarDifferenceDirection {
+    Until,
+    Since,
+}
+
 pub fn calendar_fields_from_iso(
     year: i32,
     month: u32,
@@ -224,6 +230,7 @@ pub fn calendar_date_difference(
     end: (i32, u32, u32),
     calendar: &str,
     largest_unit: CalendarDifferenceUnit,
+    direction: CalendarDifferenceDirection,
 ) -> Option<(i64, i64, i64, i64)> {
     let kind = if calendar == "iso8601" {
         AnyCalendarKind::Iso
@@ -241,8 +248,24 @@ pub fn calendar_date_difference(
         CalendarDifferenceUnit::Years => DateDurationUnit::Years,
         CalendarDifferenceUnit::Months => DateDurationUnit::Months,
     });
-    let duration = start.try_until_with_options(&end, options).ok()?;
-    let sign = if duration.is_negative { -1 } else { 1 };
+    let duration = match start.try_until_with_options(&end, options) {
+        Ok(duration) => duration,
+        Err(_) => {
+            let mut duration = end.try_until_with_options(&start, options).ok()?;
+            duration.is_negative = !duration.is_negative;
+            duration
+        }
+    };
+    let nonzero = duration.years != 0
+        || duration.months != 0
+        || duration.weeks != 0
+        || duration.days != 0;
+    let negative = nonzero
+        && match direction {
+            CalendarDifferenceDirection::Until => duration.is_negative,
+            CalendarDifferenceDirection::Since => !duration.is_negative,
+        };
+    let sign = if negative { -1 } else { 1 };
     Some((
         i64::from(duration.years) * sign,
         i64::from(duration.months) * sign,

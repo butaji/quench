@@ -70,21 +70,21 @@ impl<H: Host> Vm<H> {
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
         {
-            let (calendar_start, calendar_end) = if native == Native::TemporalPlainYearMonthSince {
-                (end, start)
-            } else {
-                (start, end)
-            };
             let largest_unit = if settings.largest == DateUnit::Year {
                 quench_intl::CalendarDifferenceUnit::Years
             } else {
                 quench_intl::CalendarDifferenceUnit::Months
             };
             let difference = quench_intl::calendar_date_difference(
-                calendar_start,
-                calendar_end,
+                start,
+                end,
                 &calendar,
                 largest_unit,
+                if native == Native::TemporalPlainYearMonthSince {
+                    quench_intl::CalendarDifferenceDirection::Since
+                } else {
+                    quench_intl::CalendarDifferenceDirection::Until
+                },
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth difference".into()))?;
             let mut fields = [0.0; 10];
@@ -191,21 +191,21 @@ impl<H: Host> Vm<H> {
             && settings.increment == 1.0
             && is_trunc(settings.rounding_mode)
         {
-            let (calendar_start, calendar_end) = if native == Native::TemporalPlainDateSince {
-                (end, start)
-            } else {
-                (start, end)
-            };
             let largest_unit = if settings.largest == DateUnit::Year {
                 quench_intl::CalendarDifferenceUnit::Years
             } else {
                 quench_intl::CalendarDifferenceUnit::Months
             };
             let difference = quench_intl::calendar_date_difference(
-                (calendar_start.year, calendar_start.month, calendar_start.day),
-                (calendar_end.year, calendar_end.month, calendar_end.day),
+                (start.year, start.month, start.day),
+                (end.year, end.month, end.day),
                 &calendar,
                 largest_unit,
+                if native == Native::TemporalPlainDateSince {
+                    quench_intl::CalendarDifferenceDirection::Since
+                } else {
+                    quench_intl::CalendarDifferenceDirection::Until
+                },
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate difference".into()))?;
             let mut fields = [0.0; 10];
