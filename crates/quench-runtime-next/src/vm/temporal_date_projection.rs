@@ -471,15 +471,48 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "Invalid PlainDate fields".into()));
                 }
                 let year_atom = self.intern_atom("year");
-                let year = self.get_property(p, item, year_atom)?;
-                if year.is_undefined() {
-                    return Err(self.type_error(p, "Missing year".into()));
+                let year_value = self.get_property(p, item, year_atom)?;
+                let year = self.plain_date_optional_integer(p, year_value)?;
+                let era_atom = self.intern_atom("era");
+                let era_value = self.get_property(p, item, era_atom)?;
+                let era = if era_value.is_undefined() {
+                    None
+                } else {
+                    Some(self.to_string(p, era_value)?.to_string())
+                };
+                let era_year_atom = self.intern_atom("eraYear");
+                let era_year_value = self.get_property(p, item, era_year_atom)?;
+                let era_year = self.plain_date_optional_integer(p, era_year_value)?;
+                let year = self.resolve_calendar_year(
+                    p,
+                    &calendar,
+                    year,
+                    era.as_deref(),
+                    era_year,
+                )?;
+                let date = if calendar == "iso8601" {
+                    let day = day.min(
+                        iso_days_in_month(year, month as i32).unwrap_or(day as i32) as u32,
+                    );
+                    checked_iso_date(year, month as i32, day as i32)
+                } else {
+                    let reference = quench_intl::calendar_fields_from_iso(
+                        reference_year,
+                        month,
+                        day,
+                        &calendar,
+                    )
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                    quench_intl::calendar_date_to_iso_with_overflow(
+                        year,
+                        reference.month,
+                        reference.day,
+                        &calendar,
+                        true,
+                    )
+                    .and_then(|(year, month, day)| checked_iso_date(year, month as i32, day as i32))
                 }
-                let year = self.plain_date_integer(p, year)?;
-                let day =
-                    day.min(iso_days_in_month(year, month as i32).unwrap_or(day as i32) as u32);
-                let date = checked_iso_date(year, month as i32, day as i32)
-                    .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+                .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
                     object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
                     year: date.year,
@@ -509,11 +542,26 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
         self.validate_plain_month_day_changes(p, changes)?;
+        let original_calendar_fields = if calendar == "iso8601" {
+            None
+        } else {
+            Some(
+                quench_intl::calendar_fields_from_iso(
+                    reference_year,
+                    original_month,
+                    original_day,
+                    &calendar,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?,
+            )
+        };
 
         let day_atom = self.intern_atom("day");
         let day_value = self.get_property(p, changes, day_atom)?;
         let day = if day_value.is_undefined() {
-            original_day as i32
+            original_calendar_fields
+                .as_ref()
+                .map_or(original_day as i32, |fields| fields.day as i32)
         } else {
             self.plain_date_integer(p, day_value)?
         };
@@ -556,6 +604,62 @@ impl<H: Host> Vm<H> {
             && day_value.is_undefined()
         {
             return Err(self.type_error(p, "Invalid fields".into()));
+        }
+        if calendar != "iso8601" {
+            let original_fields = original_calendar_fields
+                .as_ref()
+                .expect("non-ISO calendar fields were resolved");
+            let month_code = if month_code_value.is_undefined() {
+                original_fields.month_code.clone()
+            } else {
+                self.to_string(p, month_code_value)?.to_string()
+            };
+            let calendar_year = if year_value.is_undefined() {
+                original_fields.year
+            } else {
+                year
+            };
+            let ordinal = quench_intl::calendar_month_from_code(
+                calendar_year,
+                &month_code,
+                &calendar,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
+            if month.is_some_and(|month| month != ordinal as i32) {
+                return Err(self.range_error(p, "Conflicting month fields".into()));
+            }
+            if !year_value.is_undefined() {
+                let date = quench_intl::calendar_date_to_iso_with_overflow(
+                    year,
+                    ordinal,
+                    day as u32,
+                    &calendar,
+                    constrain,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                return self.make_plain_month_day_from_iso_date(
+                    p,
+                    self.native_value(Native::TemporalPlainMonthDay),
+                    date,
+                    calendar,
+                    constrain,
+                );
+            }
+            let reference = quench_intl::calendar_reference_date_from_code(
+                &month_code,
+                day as u32,
+                &calendar,
+                constrain,
+            )
+            .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+            return self.make_plain_month_day(
+                p,
+                self.native_value(Native::TemporalPlainMonthDay),
+                reference.1,
+                reference.2,
+                calendar,
+                reference.0,
+            );
         }
         let month = match (month, month_code) {
             (Some(month), Some(code)) if month != code => {
