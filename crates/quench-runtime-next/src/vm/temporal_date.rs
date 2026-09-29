@@ -387,8 +387,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (base_year, base_month, base_day, calendar) =
+        let (iso_year, iso_month, iso_day, calendar) =
             self.temporal_plain_date_slots(p, this)?;
+        let calendar_fields =
+            quench_intl::calendar_fields_from_iso(iso_year, iso_month, iso_day, &calendar);
+        let base_year = calendar_fields.as_ref().map_or(iso_year, |fields| fields.year);
+        let base_month = calendar_fields
+            .as_ref()
+            .map_or(iso_month as i32, |fields| fields.month as i32);
+        let base_day = calendar_fields
+            .as_ref()
+            .map_or(iso_day as i32, |fields| fields.day as i32);
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(changes)
             || matches!(self.heap.get(changes), Some(Cell::Array { .. }))
@@ -431,16 +440,33 @@ impl<H: Host> Vm<H> {
         };
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
-        let year = self
-            .plain_date_optional_integer(p, year_value)?
-            .unwrap_or(base_year);
+        let changed_year = self.plain_date_optional_integer(p, year_value)?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, changes, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, changes, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         if day_value.is_undefined()
             && month_value.is_undefined()
             && month_code_value.is_undefined()
             && year_value.is_undefined()
+            && era_value.is_undefined()
+            && era_year_value.is_undefined()
         {
             return Err(self.type_error(p, "Invalid fields".into()));
         }
+        let year = if changed_year.is_some() {
+            changed_year.unwrap_or(base_year)
+        } else if era_value.is_undefined() && era_year_value.is_undefined() {
+            base_year
+        } else {
+            self.resolve_calendar_year(p, &calendar, None, era.as_deref(), era_year)?
+        };
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let primitive_options = !options.is_undefined() && !self.is_object_like(options);
         let overflow_atom = self.intern_atom("overflow");
@@ -470,20 +496,18 @@ impl<H: Host> Vm<H> {
             (None, Some(month_code)) => month_code,
             (None, None) => base_month as i32,
         };
-        if primitive_options && (month < 1 || month > ISO_MONTHS_PER_YEAR || day < 1) {
-            return Err(self.range_error(p, "Invalid PlainDate".into()));
-        }
         if month < 1 || day < 1 {
             return Err(self.range_error(p, "Invalid PlainDate".into()));
         }
-        let (month, day) = if overflow == "constrain" {
-            let month = month.clamp(1, ISO_MONTHS_PER_YEAR);
-            let last_day = iso_days_in_month(year, month).unwrap_or(31);
-            (month, day.clamp(1, last_day))
-        } else {
-            (month, day)
-        };
-        let date = checked_iso_date(year, month, day)
+        let iso = quench_intl::calendar_date_to_iso_with_overflow(
+            year,
+            month as u32,
+            day as u32,
+            &calendar,
+            overflow == "constrain",
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+        let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
         if primitive_options {
             return Err(self.type_error(p, "Invalid options".into()));
@@ -691,10 +715,27 @@ impl<H: Host> Vm<H> {
         let month_code = self.plain_date_time_month_code_from_value(p, month_code_value)?;
         let year = self.get_property(p, value, year_atom)?;
         let year = self.plain_date_optional_integer(p, year)?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, value, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, value, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let constrain = self.plain_date_overflow(p, options)?;
-        let (Some(day), Some(year)) = (day, year) else {
+        let Some(day) = day else {
             return Err(self.type_error(p, "Missing PlainDate field".into()));
         };
+        let year = self.resolve_calendar_year(
+            p,
+            &calendar,
+            year,
+            era.as_deref(),
+            era_year,
+        )?;
         let month_code = month_code
             .map(|month| self.calendarized_month_code(p, month, &calendar, year))
             .transpose()?;
@@ -781,6 +822,24 @@ impl<H: Host> Vm<H> {
             format!("M{code:02}")
         };
         self.parse_plain_date_month_code(p, &code, calendar, year)
+    }
+
+    pub(super) fn resolve_calendar_year(
+        &mut self,
+        p: &ResidualProgram,
+        calendar: &str,
+        year: Option<i32>,
+        era: Option<&str>,
+        era_year: Option<i32>,
+    ) -> Result<i32, JsError> {
+        if let Some(year) = year {
+            return Ok(year);
+        }
+        let (Some(era), Some(era_year)) = (era, era_year) else {
+            return Err(self.type_error(p, "Missing year".into()));
+        };
+        quench_intl::calendar_year_from_era(era, era_year, calendar)
+            .ok_or_else(|| self.range_error(p, "Invalid calendar era fields".into()))
     }
 
     pub(super) fn plain_date_optional_integer(

@@ -1277,6 +1277,8 @@ impl<H: Host> Vm<H> {
             "offset",
             "second",
             "year",
+            "era",
+            "eraYear",
         ];
         let mut supplied = Vec::with_capacity(names.len());
         for name in names {
@@ -1284,7 +1286,7 @@ impl<H: Host> Vm<H> {
             let value = self.get_property(p, partial, key)?;
             let value = if value.is_undefined() {
                 FieldValue::Undefined
-            } else if matches!(name, "monthCode" | "offset") {
+            } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
                     && !matches!(
                         self.heap.get(value),
@@ -1361,33 +1363,13 @@ impl<H: Host> Vm<H> {
         });
         let changes = self.object();
         let mut has_date_change = false;
-        let explicit_month = supplied
-            .iter()
-            .find_map(|(name, value)| match (name, value) {
-                (&"month", FieldValue::Number(value)) => Some(*value),
-                _ => None,
-            });
-        let explicit_month_code = supplied
-            .iter()
-            .find_map(|(name, value)| match (name, value) {
-                (&"monthCode", FieldValue::String(value)) => Some(value.as_str()),
-                _ => None,
-            });
-        if let (Some(month), Some(month_code)) = (explicit_month, explicit_month_code) {
-            let month = month.trunc();
-            let code_month = super::temporal_date::parse_iso_month_code(month_code)
-                .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
-            if month != f64::from(code_month) {
-                return Err(self.range_error(p, "Month mismatch".into()));
-            }
-        }
         for (name, value) in &supplied {
-            if matches!(*name, "year" | "month" | "monthCode" | "day")
+            if matches!(
+                *name,
+                "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
+            )
                 && !matches!(value, FieldValue::Undefined)
             {
-                if *name == "monthCode" && explicit_month.is_some() {
-                    continue;
-                }
                 let key = self.intern_atom(name);
                 let value = match value {
                     FieldValue::Number(value) => Value::number(*value),
@@ -2060,21 +2042,24 @@ impl<H: Host> Vm<H> {
         let timezone = self.temporal_timezone_id(p, timezone_value)?;
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, value, year_atom)?;
-        if year_value.is_undefined() {
-            return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
-        }
         let year = self.plain_date_optional_integer(p, year_value)?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, value, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, value, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let options = self.temporal_zoned_date_time_options(p, options)?;
-        let (Some(year), Some(day)) = (year, day) else {
+        let Some(day) = day else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
         };
+        let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code
-            .map(|code| {
-                (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
-                    .contains(&code)
-                    .then_some(code)
-                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
-            })
+            .map(|code| self.calendarized_month_code(p, code, &calendar, year))
             .transpose()?;
         let Some(month) = month.or(month_code) else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
@@ -2085,14 +2070,15 @@ impl<H: Host> Vm<H> {
         if month_code.is_some_and(|month_code| month_code != month) {
             return Err(self.range_error(p, "month and monthCode must agree".into()));
         }
-        let (month, day) = if options.overflow == "constrain" {
-            let month = month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR);
-            let last_day = super::temporal_date::iso_days_in_month(year, month).unwrap_or(31);
-            (month, day.clamp(1, last_day))
-        } else {
-            (month, day)
-        };
-        let date = super::temporal_date::checked_iso_date(year, month, day)
+        let iso = quench_intl::calendar_date_to_iso_with_overflow(
+            year,
+            month as u32,
+            day as u32,
+            &calendar,
+            options.overflow == "constrain",
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
+        let date = super::temporal_date::checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
             .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
         let time = [
             hour.unwrap_or(0) as u32,

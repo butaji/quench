@@ -1184,9 +1184,18 @@ impl<H: Host> Vm<H> {
         };
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
-        let year = self
-            .plain_date_optional_integer(p, year_value)?
-            .ok_or_else(|| self.type_error(p, "Missing year".into()))?;
+        let year = self.plain_date_optional_integer(p, year_value)?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, bag, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, bag, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
+        let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code_text
             .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year))
             .transpose()?;
