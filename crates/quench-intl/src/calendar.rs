@@ -312,6 +312,10 @@ pub fn calendar_year_from_era(era: &str, year: i32, calendar: &str) -> Option<i3
     })
 }
 
+pub fn calendar_uses_eras(calendar: &str) -> bool {
+    calendar_kind(calendar).is_some() && !matches!(calendar, "chinese" | "dangi")
+}
+
 pub fn calendar_date_add(
     date: (i32, u32, u32),
     duration: (i64, i64, i64, i64),
