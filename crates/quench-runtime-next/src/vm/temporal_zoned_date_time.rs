@@ -1,6 +1,6 @@
 use super::*;
 const ZERO_OFFSET_TIME_ZONES: [&str; 5] = ["UTC", "+00", "-00", "+00:00", "-00:00"];
-use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Duration, Offset, TimeZone, Utc};
 use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
@@ -3042,34 +3042,13 @@ pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]
             super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
         return zoned_fields_from_date_and_time(date, local.rem_euclid(NANOSECONDS_PER_DAY));
     }
-    let seconds = epoch.div_euclid(NANOSECONDS_PER_SECOND);
-    let nanoseconds = epoch.rem_euclid(NANOSECONDS_PER_SECOND) as u32;
-    let utc = Utc
-        .timestamp_opt(i64::try_from(seconds).ok()?, nanoseconds)
-        .single()?;
-    let offset = if zone.starts_with(['+', '-']) {
-        quench_temporal::offset_seconds(zone)
-    } else {
-        zone.parse::<chrono_tz::Tz>()
-            .ok()?
-            .offset_from_utc_datetime(&utc.naive_utc())
-            .fix()
-            .local_minus_utc()
-    };
-    let local = utc
-        .naive_utc()
-        .checked_add_signed(Duration::seconds(i64::from(offset)))?;
-    let subsecond = local.and_utc().timestamp_subsec_nanos();
-    let date = super::temporal_date::checked_iso_date(
-        local.year(),
-        i32::try_from(local.month()).ok()?,
-        i32::try_from(local.day()).ok()?,
-    )?;
-    let time = i128::from(local.hour()) * NANOSECONDS_PER_HOUR
-        + i128::from(local.minute()) * NANOSECONDS_PER_MINUTE
-        + i128::from(local.second()) * NANOSECONDS_PER_SECOND
-        + i128::from(subsecond);
-    zoned_fields_from_date_and_time(date, time)
+    zone.parse::<chrono_tz::Tz>().ok()?;
+    let offset = timezone_offset_nanoseconds(zone, epoch).unwrap_or_default();
+    let local = epoch.checked_add(offset)?;
+    let date_days = i64::try_from(local.div_euclid(NANOSECONDS_PER_DAY)).ok()?;
+    let date = quench_temporal::civil_from_days(date_days)?;
+    let date = super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
+    zoned_fields_from_date_and_time(date, local.rem_euclid(NANOSECONDS_PER_DAY))
 }
 
 fn zoned_fields_from_date_and_time(
