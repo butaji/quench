@@ -255,7 +255,7 @@ pub fn calendar_reference_date_from_code(
             return Some(date);
         }
         if constrain {
-            return lunisolar_reference_fallback_date(year, code, day);
+            return constrained_regular_month_reference(code, day, calendar, true);
         }
     }
     let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
@@ -322,22 +322,6 @@ pub fn calendar_reference_date_from_code(
     });
     let date = quench_temporal::civil_from_days(
         first_day + i64::from(target_day.saturating_sub(FIRST_DAY_OF_MONTH_VALUE)),
-    )?;
-    Some((date.year, date.month, date.day))
-}
-
-fn lunisolar_reference_fallback_date(year: i32, code: &str, day: u32) -> Option<(i32, u32, u32)> {
-    let month = code
-        .strip_prefix('M')?
-        .strip_suffix('L')?
-        .parse::<u32>()
-        .ok()?;
-    let date = quench_temporal::civil_from_days(
-        quench_temporal::days_from_civil(quench_temporal::IsoDate {
-            year,
-            month,
-            day: FIRST_DAY_OF_MONTH_VALUE,
-        }) + i64::from(day.saturating_sub(FIRST_DAY_OF_MONTH_VALUE)),
     )?;
     Some((date.year, date.month, date.day))
 }

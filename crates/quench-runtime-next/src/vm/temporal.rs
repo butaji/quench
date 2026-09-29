@@ -1038,6 +1038,26 @@ impl<H: Host> Vm<H> {
         )))
     }
 
+    pub(super) fn temporal_duration_to_locale_string(
+        &mut self,
+        p: &ResidualProgram,
+        duration: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let constructor = self
+            .intl_duration_format_constructors
+            .get(&self.realm.globals)
+            .copied()
+            .ok_or_else(|| JsError("Intl.DurationFormat intrinsic is not installed".into()))?;
+        let formatter = self.intl_duration_format_construct(p, args, constructor)?;
+        self.intl_duration_format_native(
+            p,
+            Native::IntlDurationFormatFormat,
+            formatter,
+            &[duration],
+        )
+    }
+
     fn temporal_duration_total_relative_date(
         &mut self,
         p: &ResidualProgram,

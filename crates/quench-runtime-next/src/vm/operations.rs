@@ -172,9 +172,7 @@ impl<H: Host> Vm<H> {
             Native::IntlNumberFormatSupportedLocalesOf => {
                 self.intl_number_format_supported_locales_of(p, args)
             }
-            Native::IntlNumberFormatFormatGetter => {
-                self.intl_number_format_format_getter(p, this)
-            }
+            Native::IntlNumberFormatFormatGetter => self.intl_number_format_format_getter(p, this),
             Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
             Native::IntlNumberFormatFormatToParts => {
                 self.intl_number_format_format_to_parts(p, this, args)
@@ -219,9 +217,7 @@ impl<H: Host> Vm<H> {
             | Native::IntlLocaleCaseFirstGetter
             | Native::IntlLocaleFirstDayOfWeekGetter
             | Native::IntlLocaleNumberingSystemGetter
-            | Native::IntlLocaleNumericGetter => {
-                self.intl_namespace_native(p, native, this, args)
-            }
+            | Native::IntlLocaleNumericGetter => self.intl_namespace_native(p, native, this, args),
             Native::IntlRelativeTimeFormat => {
                 self.intl_relative_time_format_native(p, native, this, args)
             }
@@ -643,7 +639,7 @@ impl<H: Host> Vm<H> {
             Native::SymbolFor | Native::SymbolKeyFor => self.call_symbol_native(p, native, args),
             Native::TemporalToLocaleString => match self.heap.get(this) {
                 Some(Cell::TemporalDuration { .. }) => {
-                    self.temporal_duration_native(p, Native::TemporalDurationToString, this, &[])
+                    self.temporal_duration_to_locale_string(p, this, args)
                 }
                 _ => self.temporal_to_locale_string(p, this, args),
             },
