@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
         let month = self.plain_date_optional_integer(p, month_value)?;
         let month_code_atom = self.intern_atom("monthCode");
         let month_code_value = self.get_property(p, changes, month_code_atom)?;
-        let month_code_text = if month_code_value.is_undefined() {
+        let mut month_code_text = if month_code_value.is_undefined() {
             None
         } else {
             Some(self.to_string(p, month_code_value)?.to_string())
@@ -467,6 +467,9 @@ impl<H: Host> Vm<H> {
         } else {
             self.resolve_calendar_year(p, &calendar, None, era.as_deref(), era_year)?
         };
+        if month.is_none() && month_code_text.is_none() && year != base_year {
+            month_code_text = calendar_fields.map(|fields| fields.month_code);
+        }
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let primitive_options = !options.is_undefined() && !self.is_object_like(options);
         let overflow_atom = self.intern_atom("overflow");

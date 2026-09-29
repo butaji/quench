@@ -965,6 +965,7 @@ impl<H: Host> Vm<H> {
         let calendar_fields =
             quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar);
         let mut year = calendar_fields.as_ref().map_or(date.year, |fields| fields.year);
+        let base_year = year;
         let mut month = calendar_fields
             .as_ref()
             .map_or(date.month as i32, |fields| fields.month as i32);
@@ -1054,6 +1055,11 @@ impl<H: Host> Vm<H> {
                 era_value.as_deref(),
                 era_year_value,
             )?;
+        }
+        if !month_was_provided && month_code_text.is_none() && year != base_year {
+            month_code_text = calendar_fields
+                .as_ref()
+                .map(|fields| fields.month_code.clone());
         }
         if !recognized {
             return Err(self.type_error(p, "Insufficient date-time data".into()));
