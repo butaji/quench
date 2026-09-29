@@ -94,6 +94,9 @@ impl FunctionCompiler<'_, '_> {
                     return self.literal(Constant::Undefined);
                 }
                 let atom = self.owner.atom(identifier.name.as_str());
+                if self.active_lexical_binding(atom).is_some() {
+                    return self.literal(Constant::Boolean(false));
+                }
                 let result = self.reg();
                 self.emit(Op::DeleteName, result, 0, 0, atom);
                 return result;

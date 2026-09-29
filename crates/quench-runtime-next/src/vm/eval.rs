@@ -38,6 +38,7 @@ impl<H: Host> Vm<H> {
             &source_name,
             &atom_prefix,
             false,
+            false,
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
@@ -182,6 +183,7 @@ impl<H: Host> Vm<H> {
             &source_name,
             &atom_prefix,
             strict,
+            self.direct_eval_function_context(p),
         )
         .map_err(|diagnostics| {
             let message = diagnostics
@@ -202,6 +204,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         program_id: super::ProgramId,
     ) -> Result<Value, JsError> {
+        let field_initializer = self.direct_eval && self.in_class_field_initializer(p);
         let residual = self
             .programs
             .get(program_id)
@@ -318,14 +321,19 @@ impl<H: Host> Vm<H> {
             } else {
                 Value::NULL
             };
-            let parent = if direct_eval && root_scope {
+            let parent = if direct_eval && (root_scope || field_initializer) {
+                let dynamic_bindings = if field_initializer {
+                    vec![(self.intern_atom("\0rqj:new-target"), Value::UNDEFINED)]
+                } else {
+                    Vec::new()
+                };
                 self.heap.alloc(Cell::Environment {
                     parent,
                     program: None,
-                    root_eval_scope: true,
+                    root_eval_scope: root_scope,
                     function: u32::MAX,
                     slots: Box::new([]),
-                    dynamic_bindings: Vec::new(),
+                    dynamic_bindings,
                     with_objects: Vec::new(),
                 })
             } else {
@@ -427,24 +435,6 @@ impl<H: Host> Vm<H> {
         if source.trim_start().starts_with("import ") || source.trim_start().starts_with("export ")
         {
             return self.syntax_error_result(p, "import/export is not valid in eval code");
-        }
-        if source.contains("new.target") {
-            let invalid_context = !self.direct_eval
-                || self.frames.last().is_none_or(|frame| {
-                    if frame.function == 0 {
-                        return true;
-                    }
-                    p.functions
-                        .get(frame.function as usize)
-                        .and_then(|function| function.name)
-                        .is_some_and(|name| p.atoms[name as usize].as_bytes() == b"\0rqj:arrow")
-                });
-            if invalid_context {
-                return self.syntax_error_result(p, "new.target is not valid in this eval context");
-            }
-            if crate::Engine::eval_is_new_target_expression(source) {
-                return self.eval_simple_expression(p, "new.target", inherited_strict);
-            }
         }
         if source.contains("super(") {
             return Err(
@@ -855,6 +845,20 @@ impl<H: Host> Vm<H> {
                 .or_else(|| self.load_eval_frame_local(p, atom))
                 == Some(Value::TRUE)
         })
+    }
+
+    fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
+        if !self.direct_eval {
+            return false;
+        }
+        if self.in_class_field_initializer(p) {
+            return true;
+        }
+        let new_target = self.intern_atom("\0rqj:new-target");
+        self.frames
+            .len()
+            .checked_sub(1)
+            .is_some_and(|frame| self.dynamic_binding(frame, new_target).is_some())
     }
 
     fn check_global_eval_declaration(
