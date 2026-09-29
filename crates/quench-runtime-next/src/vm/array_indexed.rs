@@ -42,14 +42,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
-        let index = self.array_relative_index(
+        let Some(index) = self.indexed_at_index(
             p,
             args.first().copied().unwrap_or(Value::UNDEFINED),
             length,
-        )?;
-        if index >= length {
+        )? else {
             return Ok(Value::UNDEFINED);
-        }
+        };
         self.get_index(p, object, Value::number(index as f64))
     }
 
