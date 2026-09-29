@@ -117,8 +117,12 @@ impl<H: Host> Vm<H> {
         if native != Native::AtomicsLoad {
             self.atomic_require_writable(p, view)?;
         }
-        let length = self.typed_array_length(view).unwrap_or(0);
         let index = self.atomic_index(p, args.get(1).copied())?;
+        self.atomic_array_kind(p, view)?;
+        if native != Native::AtomicsLoad {
+            self.atomic_require_writable(p, view)?;
+        }
+        let length = self.typed_array_length(view).unwrap_or(0);
         self.atomic_validate_index(p, length, index)?;
         let current = self
             .typed_array_get(view, index)
@@ -274,6 +278,8 @@ impl<H: Host> Vm<H> {
                 result,
             )
         };
+        self.atomic_array_kind(p, view)?;
+        self.atomic_require_writable(p, view)?;
         let next = next.map(|next| {
             if native == Native::AtomicsStore
                 && kind == TypedArrayKind::Int32
@@ -337,6 +343,8 @@ impl<H: Host> Vm<H> {
         } else {
             first.clone()
         };
+        self.atomic_array_kind(p, view)?;
+        self.atomic_require_writable(p, view)?;
         let compare = native == Native::AtomicsCompareExchange
             && self.normalize_atomic_bigint(first.clone())
                 == self.normalize_atomic_bigint(old_number.clone());
