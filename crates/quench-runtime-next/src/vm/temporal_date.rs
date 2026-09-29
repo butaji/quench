@@ -839,7 +839,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Missing year".into()));
         };
         quench_intl::calendar_year_from_era(era, era_year, calendar)
-            .ok_or_else(|| self.range_error(p, "Invalid calendar era fields".into()))
+            .ok_or_else(|| self.type_error(p, "Invalid calendar era fields".into()))
     }
 
     pub(super) fn plain_date_optional_integer(

@@ -155,27 +155,24 @@ pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option
 }
 
 pub fn calendar_year_from_era(era: &str, year: i32, calendar: &str) -> Option<i32> {
-    let kind = calendar_kind(calendar)?;
-    #[allow(deprecated)]
-    let date = Date::try_new_from_codes(
-        Some(era),
-        year,
-        Month::new(FIRST_MONTH_OF_YEAR as u8).code(),
-        FIRST_DAY_OF_MONTH,
-        AnyCalendar::new(kind),
-    )
-    .ok()?;
-    if calendar == "coptic" {
-        return Some(year);
-    }
-    let iso = date.to_calendar(Iso);
-    calendar_fields_from_iso(
-        iso.year().extended_year(),
-        u32::from(iso.month().ordinal),
-        u32::from(iso.day_of_month().0),
-        calendar,
-    )
-    .map(|fields| fields.year)
+    let era = era.to_ascii_lowercase();
+    Some(match (calendar, era.as_str()) {
+        ("gregory", "ad" | "ce") | ("buddhist", "be") | ("hebrew", "am")
+        | ("coptic", "am") | ("ethiopic", "am") | ("ethioaa", "aa")
+        | ("indian", "shaka") | ("persian", "ap") | ("roc", "roc")
+        | ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "ah") => year,
+        ("gregory", "bc" | "bce") | ("roc", "broc")
+        | ("islamic-civil" | "islamic-tbla" | "islamic-umalqura", "bh") => 1 - year,
+        ("ethiopic", "aa") => year - ETHIOPIC_AMETE_ALEM_YEAR_OFFSET,
+        ("japanese", "ad" | "ce") => year,
+        ("japanese", "bc" | "bce") => 1 - year,
+        ("japanese", "reiwa") => year + JAPANESE_REIWA_YEAR_OFFSET,
+        ("japanese", "heisei") => year + JAPANESE_HEISEI_YEAR_OFFSET,
+        ("japanese", "showa") => year + JAPANESE_SHOWA_YEAR_OFFSET,
+        ("japanese", "taisho") => year + JAPANESE_TAISHO_YEAR_OFFSET,
+        ("japanese", "meiji") => year + JAPANESE_MEIJI_YEAR_OFFSET,
+        _ => return None,
+    })
 }
 
 pub fn calendar_date_add(
@@ -389,6 +386,11 @@ const FIRST_DAY_OF_MONTH: u8 = 1;
 const FIRST_MONTH_OF_YEAR: u32 = 1;
 const ISO_MONTHS_PER_YEAR: u32 = 12;
 const ETHIOPIC_AMETE_ALEM_YEAR_OFFSET: i32 = 5_500;
+const JAPANESE_REIWA_YEAR_OFFSET: i32 = 2_018;
+const JAPANESE_HEISEI_YEAR_OFFSET: i32 = 1_988;
+const JAPANESE_SHOWA_YEAR_OFFSET: i32 = 1_925;
+const JAPANESE_TAISHO_YEAR_OFFSET: i32 = 1_911;
+const JAPANESE_MEIJI_YEAR_OFFSET: i32 = 1_867;
 const MONTHS_PER_YEAR: u32 = 12;
 const GREGORIAN_COMMON_YEAR_DAYS: u32 = 365;
 const GREGORIAN_LEAP_YEAR_DAYS: u32 = 366;
