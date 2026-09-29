@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         function: u32,
         slot: usize,
     ) -> Option<Atom> {
-        if program.module
+        if program.root_variables_are_local()
             || function != super::ROOT_FUNCTION_ID
             || self.direct_eval_var_program.is_some()
         {
@@ -38,7 +38,9 @@ impl<H: Host> Vm<H> {
         function: u32,
         slot: usize,
     ) -> Option<Atom> {
-        if program.module || function != super::ROOT_FUNCTION_ID {
+        if program.kind != crate::bytecode::ProgramKind::Script
+            || function != super::ROOT_FUNCTION_ID
+        {
             return None;
         }
         let root = program.functions.first()?;
@@ -65,8 +67,8 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn module_root_var_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
-        p.module
+    fn root_local_var_binding(&self, p: &ResidualProgram, function: u32, atom: Atom) -> bool {
+        p.root_variables_are_local()
             && function == super::ROOT_FUNCTION_ID
             && p.functions[super::ROOT_FUNCTION_ID as usize]
                 .global_var_atoms
@@ -380,7 +382,7 @@ impl<H: Host> Vm<H> {
                 && let Some(metadata) = environment_program.functions.get(*function as usize)
                 && if *function == super::ROOT_FUNCTION_ID {
                     metadata.global_lexical_atoms.contains(&atom)
-                        || self.module_root_var_binding(&environment_program, *function, atom)
+                        || self.root_local_var_binding(&environment_program, *function, atom)
                         || (root_eval_scope
                             && program.is_some_and(|program| program != self.active_program.raw()))
                 } else {
@@ -478,12 +480,12 @@ impl<H: Host> Vm<H> {
                 || p.functions[self.frames[frame_index].function as usize]
                     .global_var_atoms
                     .contains(&atom)
-                || self.module_root_var_binding(p, self.frames[frame_index].function, atom))
+                || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
             && let Some(slot) = self.local_binding_slot(p, self.frames[frame_index].function, atom)
         {
-            let mirrors_global_var = !p.module
-                && self.frames[frame_index].function == 0
-                && p.functions[0].global_var_atoms.contains(&atom);
+            let mirrors_global_var = self
+                .root_global_var_atom(p, self.frames[frame_index].function, slot)
+                .is_some();
             if p.functions[self.frames[frame_index].function as usize]
                 .global_immutable_atoms
                 .contains(&atom)
@@ -578,6 +580,74 @@ impl<H: Host> Vm<H> {
             }
             env = *parent;
         }
+    }
+
+    pub(super) fn delete_environment_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        atom: Atom,
+    ) -> Option<bool> {
+        let activation = self.frames.get(frame)?;
+        let metadata = p.functions.get(activation.function as usize)?;
+        if (metadata.environment_atoms.contains(&atom)
+            || metadata.global_lexical_atoms.contains(&atom)
+            || self.root_local_var_binding(p, activation.function, atom))
+            && self
+                .local_binding_slot(p, activation.function, atom)
+                .is_some()
+        {
+            return Some(false);
+        }
+        if let Some(index) = activation
+            .dynamic_bindings
+            .iter()
+            .rposition(|(candidate, _)| *candidate == atom)
+        {
+            self.frames[frame].dynamic_bindings.remove(index);
+            self.sync_dynamic_bindings();
+            return Some(true);
+        }
+        let mut env = self.frames[frame].env;
+        let static_owner = self
+            .outer_environment_binding(env, atom)
+            .map(|(env, _)| env);
+        while let Some(Cell::Environment {
+            parent,
+            dynamic_bindings,
+            ..
+        }) = self.heap.get(env)
+        {
+            if static_owner == Some(env) {
+                return Some(false);
+            }
+            let parent = *parent;
+            if let Some(index) = dynamic_bindings
+                .iter()
+                .rposition(|(candidate, _)| *candidate == atom)
+            {
+                if let Some(Cell::Environment {
+                    dynamic_bindings, ..
+                }) = self.heap.get_mut(env)
+                {
+                    dynamic_bindings.remove(index);
+                }
+                for activation in &mut self.frames {
+                    if activation.captured
+                        && activation.env == env
+                        && let Some(index) = activation
+                            .dynamic_bindings
+                            .iter()
+                            .rposition(|(candidate, _)| *candidate == atom)
+                    {
+                        activation.dynamic_bindings.remove(index);
+                    }
+                }
+                return Some(true);
+            }
+            env = parent;
+        }
+        None
     }
 
     pub(super) fn resolve_name(
@@ -921,7 +991,7 @@ impl<H: Host> Vm<H> {
         if function == 0
             && let Some(atom) = atom
             && !p.functions[0].global_lexical_atoms.contains(&atom)
-            && !self.module_root_var_binding(p, function, atom)
+            && !self.root_local_var_binding(p, function, atom)
         {
             self.set_property_with_program(p, self.realm.globals, atom, value)?;
         }
@@ -977,7 +1047,7 @@ impl<H: Host> Vm<H> {
                     || p.functions[frame.function as usize]
                         .global_lexical_atoms
                         .contains(&atom)
-                    || self.module_root_var_binding(p, frame.function, atom))
+                    || self.root_local_var_binding(p, frame.function, atom))
                 && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
             {
                 return Ok(if frame.captured {
@@ -1063,7 +1133,7 @@ impl<H: Host> Vm<H> {
                     || p.functions[frame.function as usize]
                         .global_lexical_atoms
                         .contains(&atom)
-                    || self.module_root_var_binding(p, frame.function, atom))
+                    || self.root_local_var_binding(p, frame.function, atom))
                 && let Some(slot) = self.local_binding_slot(p, frame.function, atom)
             {
                 let value = if frame.captured {
@@ -1144,7 +1214,7 @@ impl<H: Host> Vm<H> {
                     || p.functions[self.frames[frame_index].function as usize]
                         .global_lexical_atoms
                         .contains(&atom)
-                    || self.module_root_var_binding(p, self.frames[frame_index].function, atom))
+                    || self.root_local_var_binding(p, self.frames[frame_index].function, atom))
                 && let Some(slot) =
                     self.local_binding_slot(p, self.frames[frame_index].function, atom)
             {
@@ -1308,22 +1378,16 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<bool, JsError> {
-        let Some(root_index) = self
-            .frames
-            .iter()
-            .rposition(|frame| {
-                frame.function == super::ROOT_FUNCTION_ID
-                    && self
-                        .programs
-                        .get(frame.program)
-                        .is_some_and(|program| {
-                            program
-                                .functions
-                                .get(super::ROOT_FUNCTION_ID as usize)
-                                .is_some_and(|function| function.global_var_atoms.contains(&atom))
-                        })
-            })
-        else {
+        let Some(root_index) = self.frames.iter().rposition(|frame| {
+            frame.function == super::ROOT_FUNCTION_ID
+                && self.programs.get(frame.program).is_some_and(|program| {
+                    !program.root_variables_are_local()
+                        && program
+                            .functions
+                            .get(super::ROOT_FUNCTION_ID as usize)
+                            .is_some_and(|function| function.global_var_atoms.contains(&atom))
+                })
+        }) else {
             return Ok(false);
         };
         let root_frame = &self.frames[root_index];
@@ -1333,7 +1397,9 @@ impl<H: Host> Vm<H> {
         let Some(root_function) = root_program.functions.first() else {
             return Ok(false);
         };
-        if p.module || !root_function.global_var_atoms.contains(&atom) {
+        if root_program.root_variables_are_local()
+            || !root_function.global_var_atoms.contains(&atom)
+        {
             return Ok(false);
         }
         let Some(slot) = root_function
@@ -1376,7 +1442,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) {
-        if object != self.realm.globals || p.module {
+        if object != self.realm.globals || p.is_module() {
             return;
         }
         let Some(root_index) = self

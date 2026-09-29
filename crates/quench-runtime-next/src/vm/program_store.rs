@@ -53,7 +53,7 @@ impl ProgramStore {
 
     pub(crate) fn reset(&mut self, main: &ResidualProgram) -> ProgramId {
         self.programs.clear();
-        let module = main.module;
+        let module = main.is_module();
         let id = self.insert(main.clone()).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.programs.get_mut(id.index()) {
             entry.module = true;

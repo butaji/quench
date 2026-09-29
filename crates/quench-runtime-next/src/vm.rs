@@ -539,7 +539,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        if program.module {
+        if program.is_module() {
             return Ok(());
         }
         let Some(root) = program.functions.first() else {
@@ -732,7 +732,7 @@ impl<H: Host> Vm<H> {
     }
     pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.initialize(program)?;
-        if program.module {
+        if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
         }
@@ -742,7 +742,7 @@ impl<H: Host> Vm<H> {
             self.report_memory("initialized");
         }
         let root = self.closure(program, 0, Value::NULL)?;
-        let this = if program.module {
+        let this = if program.is_module() {
             Value::UNDEFINED
         } else {
             self.realm.globals

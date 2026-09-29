@@ -1842,7 +1842,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
     ) -> Result<Option<Value>, JsError> {
-        if !p.module
+        if !p.is_module()
             || self.active_program != ProgramId::MAIN
             || !crate::module_identity::same_name(&module.name, &p.source_name)
         {
@@ -1920,7 +1920,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         result: &Result<Value, JsError>,
     ) -> Result<(), JsError> {
-        if !p.module {
+        if !p.is_module() {
             return Ok(());
         }
         let key = module_cache_key(&p.source_name, "javascript");
@@ -2376,7 +2376,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        if !p.module {
+        if !p.is_module() {
             return Ok(());
         }
         let root = ModuleSource {
@@ -2490,7 +2490,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn instantiate_main_module(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        if !p.module || self.programs.module_environment(ProgramId::MAIN).is_some() {
+        if !p.is_module() || self.programs.module_environment(ProgramId::MAIN).is_some() {
             return Ok(());
         }
         let Some(root) = p.functions.first() else {
@@ -3864,7 +3864,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(graph);
         }
-        if p.module
+        if p.is_module()
             && self.active_program == ProgramId::MAIN
             && crate::module_identity::same_name(&module.name, &p.source_name)
         {

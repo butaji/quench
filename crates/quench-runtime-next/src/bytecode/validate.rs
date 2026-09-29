@@ -450,7 +450,7 @@ mod tests {
     fn program(function: Function, roots: Vec<u64>) -> ResidualProgram {
         ResidualProgram {
             specialized: true,
-            module: false,
+            kind: crate::bytecode::ProgramKind::Script,
             module_requests: Vec::new(),
             module_imports: Vec::new(),
             module_link_plan: None,
