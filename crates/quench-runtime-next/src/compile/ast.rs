@@ -207,7 +207,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     pub(super) fn reg(&mut self) -> Register {
         let value = self.next_reg;
         if value >= SET_THIS_REGISTER {
-            self.reject_packed_domain();
+            self.reject_packed_domain("register allocation exceeds its encoded domain");
             return 0;
         }
         self.next_reg += 1;
@@ -259,13 +259,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         imm: u32,
     ) -> usize {
         let instruction = Instr::try_new(op, a, b, c, imm).unwrap_or_else(|| {
-            let index = self.wide.len();
-            self.wide.push(WideInstruction::new(op, a, b, c, imm));
-            Instr::wide(index).unwrap_or_else(|| {
-                self.wide.pop();
-                self.reject_packed_domain();
-                Instr::new(Op::Nop, 0, 0, 0, 0)
-            })
+            self.store_wide_instruction(WideInstruction::new(op, a, b, c, imm))
+                .unwrap_or_else(|| {
+                    self.reject_packed_domain("wide instruction index exceeds its encoded domain");
+                    Instr::new(Op::Nop, 0, 0, 0, 0)
+                })
         });
         self.code.push(instruction);
         self.code.len() - 1
@@ -282,24 +280,36 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             if let Some(wide) = self.wide.get_mut(instruction.wide_index()) {
                 wide.set_jump_target(target);
             } else {
-                self.reject_packed_domain();
+                self.reject_packed_domain("wide instruction target is missing");
             }
             return;
         }
         let mut patched = instruction;
         if patched.try_set_jump_target(target) {
             self.code[at] = patched;
+        } else if let Some(wide) = self.store_wide_instruction({
+            let mut wide = patched.as_wide();
+            wide.set_jump_target(target);
+            wide
+        }) {
+            self.code[at] = wide;
         } else {
-            self.reject_packed_domain();
+            self.reject_packed_domain("jump target exceeds its encoded domain");
         }
     }
 
-    fn reject_packed_domain(&mut self) {
+    fn store_wide_instruction(&mut self, instruction: WideInstruction) -> Option<Instr> {
+        let index = self.wide.len();
+        self.wide.push(instruction);
+        Instr::wide(index).or_else(|| {
+            self.wide.pop();
+            None
+        })
+    }
+
+    fn reject_packed_domain(&mut self, reason: &str) {
         if !self.packed_domain_error {
-            self.owner.reject(
-                Span::default(),
-                "function exceeds the packed instruction domain",
-            );
+            self.owner.reject(Span::default(), reason);
             self.packed_domain_error = true;
         }
     }
