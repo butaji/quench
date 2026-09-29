@@ -199,6 +199,15 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let value = self.get_property(p, source, atom)?;
+            let value = if matches!(name, "enumerable" | "configurable" | "writable") {
+                if self.truthy(value) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                }
+            } else {
+                value
+            };
             if matches!(name, "get" | "set") && !value.is_undefined() && !self.is_function(value) {
                 return Err(self.type_error(
                     p,
