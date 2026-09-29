@@ -259,7 +259,13 @@ impl FunctionCompiler<'_, '_> {
             );
             if lexical.is_none() && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
-                self.emit(Op::StoreName, value, 0, cache, source_atom);
+                self.emit(
+                    Op::StoreName,
+                    value,
+                    u16::from(initializing),
+                    cache,
+                    source_atom,
+                );
             }
         } else if (self.with_depth == 0 || initializing)
             && let Some((depth, slot)) = self
@@ -277,7 +283,13 @@ impl FunctionCompiler<'_, '_> {
             );
         } else {
             let cache = self.owner.cache_site();
-            self.emit(Op::StoreName, value, 0, cache, atom);
+            self.emit(
+                Op::StoreName,
+                value,
+                u16::from(initializing),
+                cache,
+                atom,
+            );
         }
     }
 
