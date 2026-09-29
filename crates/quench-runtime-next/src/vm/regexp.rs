@@ -1303,6 +1303,14 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if !matches!(self.heap.get(this), Some(Cell::RegExp { .. })) {
+            return Err(self.type_error(p, "RegExp method called on incompatible receiver".into()));
+        }
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let last_index_atom = self.intern_atom("lastIndex");
+        let last_index = self.get_property(p, this, last_index_atom)?;
+        let last_index = regexp_to_length(self.to_number(p, last_index)?);
         let (source, flags) = match self.heap.get(this) {
             Some(Cell::RegExp { source, flags, .. }) => {
                 (source.host_string().to_owned(), flags.clone())
@@ -1314,13 +1322,8 @@ impl<H: Host> Vm<H> {
             }
         };
         let regex = Self::compile_regexp(&source, &flags)?;
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let stateful = flags.contains('g') || flags.contains('y');
         let sticky = flags.contains('y');
-        let last_index_atom = self.intern_atom("lastIndex");
-        let last_index = self.get_property(p, this, last_index_atom)?;
-        let last_index = regexp_to_length(self.to_number(p, last_index)?);
         let start = if stateful { last_index } else { 0 };
         if stateful && start > input.units().len() {
             self.set_property_with_program_mode(
