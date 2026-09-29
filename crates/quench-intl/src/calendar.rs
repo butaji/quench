@@ -154,6 +154,76 @@ pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option
     (date.month().to_input().code().0 == code).then_some(u32::from(date.month().ordinal))
 }
 
+pub fn calendar_reference_date_from_code(
+    code: &str,
+    day: u32,
+    calendar: &str,
+    constrain: bool,
+) -> Option<(i32, u32, u32)> {
+    let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
+    let exact = years.clone().find_map(|year| {
+        (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
+            (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+                let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+                (fields.month_code == code && fields.day == day)
+                    .then_some((year, month, iso_day))
+            })
+        })
+    });
+    if exact.is_some() || !constrain {
+        return exact;
+    }
+    let reference = years
+        .flat_map(|year| {
+            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).filter_map(move |month| {
+                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+                    let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+                    (fields.month_code == code && fields.day == FIRST_DAY_OF_MONTH_VALUE)
+                        .then_some((
+                            fields.days_in_month,
+                            fields.year,
+                            fields.month,
+                            year,
+                            month,
+                            iso_day,
+                        ))
+                })
+            })
+        })
+        .max_by_key(|(days, year, _, _, _, _)| (*days, *year))?;
+    let days_in_month = fixed_month_length(calendar, code).unwrap_or(reference.0);
+    let target_day = day.min(days_in_month);
+    let exact_constrained = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END)
+        .rev()
+        .find_map(|year| {
+            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
+                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+                    let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+                    (fields.month_code == code && fields.day == target_day)
+                        .then_some((year, month, iso_day))
+                })
+            })
+        });
+    if exact_constrained.is_some() {
+        return exact_constrained;
+    }
+    let first_day = quench_temporal::days_from_civil(quench_temporal::IsoDate {
+        year: reference.3,
+        month: reference.4,
+        day: reference.5,
+    });
+    let date = quench_temporal::civil_from_days(
+        first_day + i64::from(target_day.saturating_sub(FIRST_DAY_OF_MONTH_VALUE)),
+    )?;
+    Some((date.year, date.month, date.day))
+}
+
+fn fixed_month_length(calendar: &str, code: &str) -> Option<u32> {
+    let month = code.strip_prefix('M')?.parse::<u32>().ok()?;
+    (matches!(calendar, "coptic" | "ethiopic" | "ethioaa") && month <= 12)
+        .then_some(COPTIC_REGULAR_MONTH_DAYS)
+}
+
 pub fn calendar_year_from_era(era: &str, year: i32, calendar: &str) -> Option<i32> {
     let era = era.to_ascii_lowercase();
     Some(match (calendar, era.as_str()) {
@@ -391,6 +461,11 @@ const JAPANESE_HEISEI_YEAR_OFFSET: i32 = 1_988;
 const JAPANESE_SHOWA_YEAR_OFFSET: i32 = 1_925;
 const JAPANESE_TAISHO_YEAR_OFFSET: i32 = 1_911;
 const JAPANESE_MEIJI_YEAR_OFFSET: i32 = 1_867;
+const REFERENCE_YEAR_START: i32 = 1_932;
+const REFERENCE_YEAR_END: i32 = 1_972;
+const FIRST_DAY_OF_MONTH_VALUE: u32 = 1;
+const REFERENCE_MONTH_DAY_LIMIT: u32 = 31;
+const COPTIC_REGULAR_MONTH_DAYS: u32 = 30;
 const MONTHS_PER_YEAR: u32 = 12;
 const GREGORIAN_COMMON_YEAR_DAYS: u32 = 365;
 const GREGORIAN_LEAP_YEAR_DAYS: u32 = 366;

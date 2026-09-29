@@ -427,13 +427,21 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         (month, day, calendar, reference_year): (u32, u32, String, i32),
     ) -> Result<Value, JsError> {
+        let calendar_fields =
+            quench_intl::calendar_fields_from_iso(reference_year, month, day, &calendar);
         match native {
             Native::TemporalPlainMonthDayCalendarIdGetter => {
                 Ok(self.heap.alloc(Cell::String(calendar.into())))
             }
-            Native::TemporalPlainMonthDayDayGetter => Ok(Value::number(f64::from(day))),
+            Native::TemporalPlainMonthDayDayGetter => Ok(Value::number(f64::from(
+                calendar_fields.as_ref().map_or(day, |fields| fields.day),
+            ))),
             Native::TemporalPlainMonthDayMonthCodeGetter => Ok(self.heap.alloc(Cell::String(
-                format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS).into(),
+                calendar_fields.map_or_else(
+                    || format!("M{month:0width$}", width = ISO_MONTH_CODE_DIGITS),
+                    |fields| fields.month_code,
+                )
+                .into(),
             ))),
             Native::TemporalPlainMonthDayEquals => {
                 let constructor = self.native_value(Native::TemporalPlainMonthDay);
@@ -1103,15 +1111,18 @@ impl<H: Host> Vm<H> {
         let month = self.plain_date_optional_integer(p, month_value)?;
         let month_code_atom = self.intern_atom("monthCode");
         let month_code = self.get_property(p, bag, month_code_atom)?;
-        let month_code = if month_code.is_undefined() {
+        let month_code_text = if month_code.is_undefined() {
             None
         } else {
-            let text = self.to_string(p, month_code)?.to_string();
-            Some(
-                super::temporal_date::parse_iso_month_code_syntax(&text)
-                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?,
-            )
+            Some(self.to_string(p, month_code)?.to_string())
         };
+        let month_code = month_code_text
+            .as_deref()
+            .map(|text| {
+                super::temporal_date::parse_iso_month_code_syntax(text)
+                    .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))
+            })
+            .transpose()?;
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
         let year = if year_value.is_undefined() {
@@ -1120,6 +1131,21 @@ impl<H: Host> Vm<H> {
             self.plain_date_integer(p, year_value)?
         };
         let constrain = self.plain_date_overflow(p, options)?;
+        if month.is_none()
+            && year_value.is_undefined()
+            && !matches!(calendar.as_str(), "iso8601" | "gregory")
+        {
+            if let Some(code) = month_code_text.as_deref() {
+                let iso = quench_intl::calendar_reference_date_from_code(
+                    code,
+                    day as u32,
+                    &calendar,
+                    constrain,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                return self.make_plain_month_day(p, constructor, iso.1, iso.2, calendar, iso.0);
+            }
+        }
         let month_code = month_code
             .map(|month| {
                 (1..=super::temporal_date::ISO_MONTHS_PER_YEAR)
