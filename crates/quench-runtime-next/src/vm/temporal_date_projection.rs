@@ -711,7 +711,19 @@ impl<H: Host> Vm<H> {
                 )
             }
             Native::TemporalPlainYearMonthWith => {
-                self.temporal_plain_year_month_with(p, args, year, month, calendar, reference_day)
+                self.temporal_plain_year_month_with(
+                    p,
+                    args,
+                    calendar_fields.as_ref().map_or(year, |fields| fields.year),
+                    calendar_fields
+                        .as_ref()
+                        .map_or(month, |fields| fields.month),
+                    calendar_fields.as_ref().map_or_else(
+                        || format!("M{month:02}"),
+                        |fields| fields.month_code.clone(),
+                    ),
+                    calendar,
+                )
             }
             Native::TemporalPlainYearMonthUntil | Native::TemporalPlainYearMonthSince => self
                 .temporal_plain_year_month_difference_native(
@@ -818,21 +830,45 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         year: i32,
         month: u32,
+        month_code: String,
         calendar: String,
-        reference_day: u32,
     ) -> Result<Value, JsError> {
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let (changed_year, changed_month, changed_code) =
+        let (changed_year, changed_month, changed_code, era, era_year) =
             self.temporal_plain_year_month_change_fields(p, changes)?;
         if changed_month.is_some_and(|month| month <= 0) {
             return Err(self.range_error(p, "Invalid PlainYearMonth".into()));
         }
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let constrain = self.plain_date_overflow(p, options)?;
-        if changed_year.is_none() && changed_month.is_none() && changed_code.is_none() {
+        if changed_year.is_none()
+            && changed_month.is_none()
+            && changed_code.is_none()
+            && era.is_none()
+            && era_year.is_none()
+        {
             return Err(self.type_error(p, "Invalid fields".into()));
         }
-        let year = changed_year.unwrap_or(year);
+        if changed_year.is_none() && era.is_some() != era_year.is_some() {
+            return Err(self.type_error(p, "era and eraYear must be provided together".into()));
+        }
+        let original_year = year;
+        let year = if changed_year.is_some() {
+            changed_year.unwrap_or(year)
+        } else if era.is_some() {
+            self.resolve_calendar_year(
+                p,
+                &calendar,
+                None,
+                era.as_deref(),
+                era_year,
+            )?
+        } else {
+            year
+        };
+        let changed_code = changed_code.or_else(|| {
+            (changed_month.is_none() && year != original_year).then(|| month_code)
+        });
         let changed_code = changed_code
             .map(|code| self.heap.alloc(Cell::String(code.into())))
             .map(|code| self.plain_date_month_code(p, code, &calendar, changed_year.unwrap_or(year)))
@@ -845,20 +881,23 @@ impl<H: Host> Vm<H> {
             (None, Some(code)) => code,
             (None, None) => month as i32,
         };
-        let month = if constrain {
-            month.clamp(1, super::temporal_date::ISO_MONTHS_PER_YEAR)
-        } else {
-            month
-        };
+        let date = quench_intl::calendar_date_to_iso_with_overflow(
+            year,
+            month as u32,
+            1,
+            &calendar,
+            constrain,
+        )
+        .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?;
         let constructor = self.native_value(Native::TemporalPlainYearMonth);
-        self.make_plain_year_month(p, constructor, year, month as u32, calendar, reference_day)
+        self.make_plain_year_month(p, constructor, date.0, date.1, calendar, date.2)
     }
 
     fn temporal_plain_year_month_change_fields(
         &mut self,
         p: &ResidualProgram,
         changes: Value,
-    ) -> Result<(Option<i32>, Option<i32>, Option<String>), JsError> {
+    ) -> Result<(Option<i32>, Option<i32>, Option<String>, Option<String>, Option<i32>), JsError> {
         self.validate_plain_year_month_changes(p, changes)?;
         let month_atom = self.intern_atom("month");
         let month_value = self.get_property(p, changes, month_atom)?;
@@ -873,7 +912,17 @@ impl<H: Host> Vm<H> {
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, changes, year_atom)?;
         let year = self.plain_date_optional_integer(p, year_value)?;
-        Ok((year, month, month_code))
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, changes, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
+        } else {
+            Some(self.to_string(p, era_value)?.to_string())
+        };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, changes, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
+        Ok((year, month, month_code, era, era_year))
     }
 
     fn temporal_plain_year_month_difference_native(
