@@ -268,7 +268,8 @@ impl FunctionCompiler<'_, '_> {
                     lexical_bindings.push(crate::bytecode::EvalBinding {
                         atom: *atom,
                         slot: *slot,
-                        immutable: scope.immutable.contains(atom),
+                        immutable: scope.kinds.get(atom)
+                            == Some(&LexicalBindingKind::Immutable),
                         catch_parameter: scope.catch_parameter,
                     });
                 }

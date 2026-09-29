@@ -551,7 +551,7 @@ impl FunctionCompiler<'_, '_> {
         if bind_name {
             if let Some(name) = &class.id {
                 let atom = self.owner.atom(name.name.as_str());
-                self.store_atom(atom, class_value);
+                self.initialize_atom(atom, class_value);
             } else {
                 self.owner
                     .reject(class.span, "class declaration requires a name");

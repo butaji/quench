@@ -2051,7 +2051,7 @@ impl<'a> Compiler<'a> {
             options.with_depth,
         );
         if let Some((name, binding)) = name_binding {
-            function.push_lexical_bindings(FxHashMap::from_iter([(name, binding)]));
+            function.push_function_name_binding(name, binding);
         }
         function.super_home_atom = options.super_home_atom;
         function.super_call_binds_this = options.derived_constructor;
