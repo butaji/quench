@@ -312,6 +312,28 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
+    pub(super) fn store_with_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        atom: Atom,
+        value: Value,
+    ) -> Result<bool, JsError> {
+        if self.atom_name(atom).starts_with('\0') {
+            return Ok(false);
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        let with_base = self.frames[frame].with_base.min(self.with_stack.len());
+        let with_objects = self.with_stack[with_base..].to_vec();
+        for object in with_objects.into_iter().rev() {
+            if self.with_binding(p, object, key, atom)? {
+                self.set_property_with_program(p, object, atom, value)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn get_with_binding_value(
         &mut self,
         p: &ResidualProgram,
@@ -462,6 +484,12 @@ impl<H: Host> Vm<H> {
             let mirrors_global_var = !p.module
                 && self.frames[frame_index].function == 0
                 && p.functions[0].global_var_atoms.contains(&atom);
+            if p.functions[self.frames[frame_index].function as usize]
+                .global_immutable_atoms
+                .contains(&atom)
+            {
+                return Err(self.type_error(p, "assignment to constant binding".into()));
+            }
             if mirrors_global_var
                 && !self.set_property_with_receiver(
                     p,
@@ -491,8 +519,20 @@ impl<H: Host> Vm<H> {
         if let Some(frame_index) = self.frames.len().checked_sub(1)
             && let Some((env, slot)) =
                 self.outer_environment_binding(self.captured_parent_environment(frame_index), atom)
-            && let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
         {
+            let immutable = match self.heap.get(env) {
+                Some(Cell::Environment { function, .. }) => p
+                    .functions
+                    .get(*function as usize)
+                    .is_some_and(|metadata| metadata.global_immutable_atoms.contains(&atom)),
+                _ => false,
+            };
+            if immutable {
+                return Err(self.type_error(p, "assignment to constant binding".into()));
+            }
+            let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
+                return Err(JsError("invalid outer environment".into()));
+            };
             slots[slot] = value;
             return Ok(());
         }
@@ -788,17 +828,26 @@ impl<H: Host> Vm<H> {
         let env = self
             .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
-        let Some(Cell::Environment {
-            function, slots, ..
-        }) = self.heap.get(env)
-        else {
-            return Err(JsError("invalid capture".into()));
+        let (function, deleted) = match self.heap.get(env) {
+            Some(Cell::Environment { function, slots, .. }) => (
+                *function,
+                slots
+                    .get(usize::from(slot))
+                    .is_some_and(|current| current.is_deleted()),
+            ),
+            _ => return Err(JsError("invalid capture".into())),
         };
-        let function = *function;
-        if slots
-            .get(usize::from(slot))
-            .is_some_and(|current| current.is_deleted())
+        let atom = p
+            .functions
+            .get(function as usize)
+            .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
+            .copied();
+        if let Some(atom) = atom
+            && self.store_with_binding(p, frame, atom, value)?
         {
+            return Ok(());
+        }
+        if deleted {
             let atom = p
                 .functions
                 .get(function as usize)
@@ -813,11 +862,6 @@ impl<H: Host> Vm<H> {
                 ),
             ));
         }
-        let atom = p
-            .functions
-            .get(function as usize)
-            .and_then(|metadata| metadata.local_atoms.get(usize::from(slot)))
-            .copied();
         if atom.is_some_and(|atom| self.is_self_binding(atom)) {
             if p.functions[self.frames[frame].function as usize].strict {
                 return Err(self.type_error(p, "assignment to function name binding".into()));
@@ -1073,20 +1117,14 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
         cache: u16,
+        initializing: bool,
     ) -> Result<(), JsError> {
         let name = self.atom_name(atom).to_owned();
         if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.as_str().into()));
-            let with_base = self
-                .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
-            for object in with_objects.into_iter().rev() {
-                if self.with_binding(p, object, key, atom)? {
-                    return self.set_property_with_program(p, object, atom, value);
-                }
+            if let Some(frame) = self.frames.len().checked_sub(1)
+                && self.store_with_binding(p, frame, atom, value)?
+            {
+                return Ok(());
             }
             if self.store_direct_eval_var_binding(atom, value) {
                 return Ok(());
@@ -1110,6 +1148,13 @@ impl<H: Host> Vm<H> {
                 && let Some(slot) =
                     self.local_binding_slot(p, self.frames[frame_index].function, atom)
             {
+                if p.functions[self.frames[frame_index].function as usize]
+                    .global_immutable_atoms
+                    .contains(&atom)
+                    && !initializing
+                {
+                    return Err(self.type_error(p, "assignment to constant binding".into()));
+                }
                 let binding =
                     p.functions[self.frames[frame_index].function as usize].local_atoms[slot];
                 if self.is_self_binding(binding) {
