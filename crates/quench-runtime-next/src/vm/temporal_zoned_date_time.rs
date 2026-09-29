@@ -1464,16 +1464,11 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| self.range_error(p, "Invalid offset".into()))
             })
             .transpose()?;
-        if offset.is_none() && offset_mode != "ignore" {
-            return self.make_zoned_date_time_from_local(
-                p,
-                date,
-                time,
-                calendar,
-                time_zone,
-                &disambiguation,
-            );
-        }
+        let offset = offset.or_else(|| {
+            (offset_mode != "ignore")
+                .then(|| timezone_offset_nanoseconds(&time_zone, epoch_nanoseconds))
+                .flatten()
+        });
         let local_epoch = local_epoch_from_iso_fields(date, time);
         let epoch_nanoseconds = resolve_zoned_local_epoch(
             date,
@@ -1774,7 +1769,7 @@ impl<H: Host> Vm<H> {
             super::temporal_plain_date_time_conversion::validate_annotations(self, p, &text)?;
             let parsed = parse_zoned_date_time_string(&text)
                 .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
-            return resolve_zoned_date_time_string(parsed, "reject")
+            return resolve_zoned_date_time_string(parsed, "reject", "compatible")
                 .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()));
         }
         self.temporal_zoned_date_time_record(p, value, Value::UNDEFINED)
@@ -1806,7 +1801,11 @@ impl<H: Host> Vm<H> {
                 let parsed = parse_zoned_date_time_string(&text)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))?;
                 let options = self.temporal_zoned_date_time_options(p, options)?;
-                resolve_zoned_date_time_string(parsed, &options.offset)
+                resolve_zoned_date_time_string(
+                    parsed,
+                    &options.offset,
+                    &options.disambiguation,
+                )
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
             Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
@@ -2278,7 +2277,7 @@ pub(super) fn parse_relative_date_details(
     let (local, zoned_epoch_nanoseconds) = if let Some(parsed) = parse_zoned_date_time_string(text)
     {
         let local = parsed.local;
-        let record = resolve_zoned_date_time_string(parsed, "reject")?;
+        let record = resolve_zoned_date_time_string(parsed, "reject", "compatible")?;
         (local, Some(record))
     } else {
         let (base, annotations) = text
@@ -2315,6 +2314,7 @@ pub(super) fn parse_relative_date_details(
 fn resolve_zoned_date_time_string(
     parsed: ParsedZonedDateTimeString,
     offset_mode: &str,
+    disambiguation: &str,
 ) -> Option<ZonedDateTimeRecord> {
     let ParsedZonedDateTimeString {
         time_zone,
@@ -2346,7 +2346,7 @@ fn resolve_zoned_date_time_string(
             local.z_designator,
             local.offset_minute_precision,
             offset_mode,
-            "compatible",
+            disambiguation,
         )?
     };
     if epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
