@@ -148,6 +148,23 @@ impl<H: Host> Vm<H> {
         for &(name, native) in ARRAY_PROTOTYPE_METHODS {
             self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
         }
+        if let Some(iterator_symbol) = self.well_known_symbols.get("iterator").copied() {
+            let values_atom = self.intern_atom("values");
+            let values = self.get_property(program, prototype, values_atom)?;
+            self.set_symbol_property(prototype, iterator_symbol, values)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(iterator_symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         for &(name, native) in ARRAY_STATIC_METHODS {
             self.set_realm_builtin_named(program, array, name, native, Some(global))?;
         }
