@@ -273,6 +273,7 @@ impl Engine {
                 matches!(
                     statement,
                     Statement::ClassDeclaration(_)
+                        | Statement::FunctionDeclaration(_)
                         | Statement::BlockStatement(_)
                         | Statement::DoWhileStatement(_)
                         | Statement::ForStatement(_)
