@@ -89,6 +89,13 @@ pub struct TestMetadata {
     pub features: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+enum MetadataList {
+    Flags,
+    Includes,
+    Features,
+}
+
 impl TestMetadata {
     /// Parse the small YAML subset used for dispatch decisions.
     pub fn parse(source: &str) -> Result<Self, String> {
@@ -98,33 +105,49 @@ impl TestMetadata {
         let normalized = source.replace('\r', "\n");
         let frontmatter = extract_frontmatter(&normalized)?;
         let mut metadata = Self::default();
+        let mut flags = Vec::new();
         let mut in_negative = false;
+        let mut list = None;
         for line in frontmatter.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("flags:") {
-                let flags = list_after_colon(trimmed);
-                metadata.is_module = flags.iter().any(|flag| flag == "module");
-                metadata.is_async = flags.iter().any(|flag| flag == "async");
-                metadata.is_raw = flags.iter().any(|flag| flag == "raw");
-                metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
-                metadata.can_block = flags.iter().any(|flag| flag == "CanBlockIsTrue");
+                flags.extend(list_after_colon(trimmed));
+                list = Some(MetadataList::Flags);
                 in_negative = false;
             } else if trimmed.starts_with("includes:") {
-                metadata.includes = list_after_colon(trimmed);
+                metadata.includes.extend(list_after_colon(trimmed));
+                list = Some(MetadataList::Includes);
                 in_negative = false;
             } else if trimmed.starts_with("features:") {
-                metadata.features = list_after_colon(trimmed);
+                metadata.features.extend(list_after_colon(trimmed));
+                list = Some(MetadataList::Features);
                 in_negative = false;
             } else if trimmed == "negative:" {
+                list = None;
                 in_negative = true;
             } else if in_negative && trimmed.starts_with("phase:") {
                 metadata.negative_phase = value_after_colon(trimmed);
             } else if in_negative && trimmed.starts_with("type:") {
                 metadata.negative_type = value_after_colon(trimmed);
+            } else if let Some(item) = trimmed.strip_prefix("-") {
+                if let Some(value) = list_item(item) {
+                    match list {
+                        Some(MetadataList::Flags) => flags.push(value),
+                        Some(MetadataList::Includes) => metadata.includes.push(value),
+                        Some(MetadataList::Features) => metadata.features.push(value),
+                        None => {}
+                    }
+                }
             } else if !trimmed.is_empty() && !line.starts_with(' ') {
+                list = None;
                 in_negative = false;
             }
         }
+        metadata.is_module = flags.iter().any(|flag| flag == "module");
+        metadata.is_async = flags.iter().any(|flag| flag == "async");
+        metadata.is_raw = flags.iter().any(|flag| flag == "raw");
+        metadata.only_strict = flags.iter().any(|flag| flag == "onlyStrict");
+        metadata.can_block = flags.iter().any(|flag| flag == "CanBlockIsTrue");
         Ok(metadata)
     }
 }
@@ -272,11 +295,13 @@ fn list_after_colon(line: &str) -> Vec<String> {
         .trim_start_matches('[')
         .trim_end_matches(']')
         .split(',')
-        .map(str::trim)
-        .map(|item| item.trim_matches(['\'', '"']))
-        .filter(|item| !item.is_empty())
-        .map(str::to_string)
+        .filter_map(list_item)
         .collect()
+}
+
+fn list_item(item: &str) -> Option<String> {
+    let item = item.trim().trim_matches(['\'', '"']);
+    (!item.is_empty()).then(|| item.to_string())
 }
 
 /// Result of dispatching one test source to the engine.

@@ -555,10 +555,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
-        let realm = match self.heap.get(new_target) {
-            Some(Cell::Function { realm, .. }) => *realm,
-            _ => self.realm.globals,
-        };
+        let realm = self.function_realm(p, new_target)?;
         let constructor_atom = self.intern_atom(if shared {
             "SharedArrayBuffer"
         } else {
