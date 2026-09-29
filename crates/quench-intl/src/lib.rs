@@ -16,6 +16,7 @@ pub use calendar::{
     calendar_month_from_code,
     calendar_reference_date_from_code,
     calendar_uses_eras, calendar_year_from_era, calendar_year_month_reference_date,
+    MAX_CALENDAR_MONTHS_PER_YEAR,
 };
 pub use collator::{CollatorOptions, canonical_locale_identifier, compare_collator};
 pub use digits::localize_digits;

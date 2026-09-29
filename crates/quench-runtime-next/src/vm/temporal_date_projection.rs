@@ -1280,27 +1280,72 @@ impl<H: Host> Vm<H> {
                 if month.is_some_and(|month| month != ordinal as i32) {
                     return Err(self.range_error(p, "month and monthCode must agree".into()));
                 }
-                let iso = quench_intl::calendar_date_to_iso_with_overflow(
-                    year, ordinal, day as u32, &calendar, constrain,
-                )
-                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
-                return self.make_plain_month_day_from_iso_date(
+                let regular_code = code.strip_suffix('L');
+                let (reference_code, days_in_month) = match
+                    quench_intl::calendar_days_in_month_for_code(year, code, &calendar)
+                {
+                    Some(days) => (code, days),
+                    None if constrain => match regular_code {
+                        Some(code) => (
+                            code,
+                            quench_intl::calendar_days_in_month_for_code(
+                                year, code, &calendar,
+                            )
+                            .ok_or_else(|| {
+                                self.range_error(p, "Invalid PlainMonthDay".into())
+                            })?,
+                        ),
+                        None => {
+                            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                        }
+                    },
+                    None => {
+                        return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                    }
+                };
+                if day < 1 || !constrain && day as u32 > days_in_month {
+                    return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                }
+                let day = (day as u32).min(days_in_month);
+                let (reference_year, reference_month, reference_day) =
+                    quench_intl::calendar_reference_date_from_code(
+                        reference_code,
+                        day,
+                        &calendar,
+                        constrain,
+                    )
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                return self.make_plain_month_day(
                     p,
                     constructor,
-                    iso,
+                    reference_month,
+                    reference_day,
                     calendar,
-                    constrain,
+                    reference_year,
                 );
             }
-            if matches!(calendar.as_str(), "chinese" | "dangi")
-                && let Some(ordinal) = month
-            {
-                let code = if constrain && ordinal > super::temporal_date::ISO_MONTHS_PER_YEAR {
-                    format!("M{:02}", super::temporal_date::ISO_MONTHS_PER_YEAR)
+            if non_iso_calendar && let Some(requested_month) = month {
+                let ordinal = if constrain {
+                    requested_month.clamp(1, quench_intl::MAX_CALENDAR_MONTHS_PER_YEAR as i32)
                 } else {
-                    let ordinal = if constrain { ordinal.max(1) } else { ordinal };
-                    quench_intl::calendar_month_code_for_ordinal(year, ordinal as u32, &calendar)
-                        .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?
+                    requested_month
+                };
+                let mut resolved_ordinal = u32::try_from(ordinal).ok();
+                let code = loop {
+                    let Some(candidate) = resolved_ordinal else {
+                        return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                    };
+                    if let Some(code) = quench_intl::calendar_month_code_for_ordinal(
+                        year,
+                        candidate,
+                        &calendar,
+                    ) {
+                        break code;
+                    }
+                    if !constrain || candidate <= 1 {
+                        return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                    }
+                    resolved_ordinal = Some(candidate - 1);
                 };
                 let maximum_day =
                     quench_intl::calendar_days_in_month_for_code(year, &code, &calendar)
@@ -1308,11 +1353,7 @@ impl<H: Host> Vm<H> {
                 if day < 1 || (!constrain && day as u32 > maximum_day) {
                     return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
                 }
-                let day = if constrain {
-                    (day as u32).min(maximum_day)
-                } else {
-                    day as u32
-                };
+                let day = (day as u32).min(maximum_day);
                 let reference = quench_intl::calendar_reference_date_from_code(
                     &code, day, &calendar, constrain,
                 )
@@ -1854,13 +1895,23 @@ pub(super) fn to_plain_year_month<H: Host>(
     p: &ResidualProgram,
     this: Value,
 ) -> Result<Value, JsError> {
-    let (year, month, _day, calendar) = vm.temporal_plain_date_slots(p, this)?;
+    let (year, month, day, calendar) = vm.temporal_plain_date_slots(p, this)?;
+    let reference_iso_day = quench_intl::calendar_fields_from_iso(year, month, day, &calendar)
+        .and_then(|fields| {
+            quench_intl::calendar_year_month_reference_date(
+                fields.year,
+                fields.month,
+                &calendar,
+                false,
+            )
+        })
+        .map_or(DEFAULT_REFERENCE_ISO_DAY, |(_, _, day)| day);
     Ok(vm.heap.alloc(Cell::TemporalPlainYearMonth {
         object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_year_month_proto)),
         year,
         month,
         calendar,
-        reference_iso_day: DEFAULT_REFERENCE_ISO_DAY,
+        reference_iso_day,
     }))
 }
 

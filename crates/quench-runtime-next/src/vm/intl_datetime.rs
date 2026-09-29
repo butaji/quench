@@ -73,6 +73,18 @@ enum DateTimeDefaults {
     TemporalZonedDateTime(&'static [(&'static str, &'static str)]),
 }
 
+impl DateTimeDefaults {
+    fn has_time_components(self) -> bool {
+        match self {
+            Self::Time | Self::DateAndTime => true,
+            Self::Temporal(components) | Self::TemporalZonedDateTime(components) => components
+                .iter()
+                .any(|(name, _)| matches!(*name, "hour" | "minute" | "second")),
+            Self::Format | Self::Date => false,
+        }
+    }
+}
+
 const NUMERIC: &str = "numeric";
 const PLAIN_DATE_DEFAULTS: &[(&str, &str)] = &[
     ("year", NUMERIC),
@@ -358,6 +370,14 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(key);
                 self.set_property(resolved, atom, normalized)?;
             }
+        }
+        let fractional_seconds_only =
+            self.date_time_option(resolved, "fractionalSecondDigits").is_some()
+                && !has_date
+                && !has_time;
+        if fractional_seconds_only && defaults.has_time_components() {
+            self.set_default_time_components(resolved)?;
+            has_time = true;
         }
         let temporal_defaults = matches!(
             defaults,
@@ -1202,6 +1222,7 @@ impl<H: Host> Vm<H> {
             && options.hour.is_none()
             && options.minute.is_none()
             && options.second.is_none()
+            && options.day_period.is_none()
         {
             match fields.temporal_kind {
                 Some(TemporalKind::PlainTime) => {
