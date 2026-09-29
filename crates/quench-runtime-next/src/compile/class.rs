@@ -207,10 +207,6 @@ impl FunctionCompiler<'_, '_> {
             let atom = self.owner.atom(name);
             self.emit(Op::SetFunctionName, class_value, 0, 0, atom);
         }
-        if let Some(binding) = class_binding {
-            self.initialize_class_binding(binding, class_value);
-        }
-
         let prototype = self.reg();
         let prototype_atom = self.owner.atom("prototype");
         let prototype_cache = self.owner.cache_site();
@@ -455,6 +451,10 @@ impl FunctionCompiler<'_, '_> {
             } else {
                 self.define_class_method(target, function, computed_key, name_text.as_deref());
             }
+        }
+
+        if let Some(binding) = class_binding {
+            self.initialize_class_binding(binding, class_value);
         }
 
         for element in &class.body.body {
