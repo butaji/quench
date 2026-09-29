@@ -35,7 +35,7 @@ pub use plural::{
 };
 pub use supported_values::{
     COLLATIONS, CURRENCIES, UNITS, canonical_time_zone_name, collation_supported,
-    currency_fraction_digits, supported_time_zones,
+    currency_fraction_digits, supported_time_zones, time_zone_identifier,
 };
 
 pub const NUMBER_FORMAT_OPTION_KEYS: &[&str] = &[

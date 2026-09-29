@@ -330,7 +330,7 @@ impl<H: Host> Vm<H> {
                 }
                 "timeZone" => {
                     let zone = self.to_string(p, value)?;
-                    let Some(zone) = canonical_time_zone(&zone) else {
+                    let Some(zone) = normalize_time_zone_identifier(&zone) else {
                         return Err(self.range_error(p, "invalid timeZone".into()));
                     };
                     Some(self.heap.alloc(Cell::String(zone.into())))
@@ -650,7 +650,7 @@ impl<H: Host> Vm<H> {
             if calendar != "iso8601" && calendar != formatter_calendar {
                 return Err(self.range_error(p, "Temporal calendar does not match formatter calendar".into()));
             }
-            let time_zone = canonical_time_zone(&time_zone)
+            let time_zone = normalize_time_zone_identifier(&time_zone)
                 .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
             let time_zone = self.heap.alloc(Cell::String(time_zone.into()));
             self.set_date_time_property(resolved, "timeZone", time_zone)?;
@@ -859,10 +859,10 @@ impl<H: Host> Vm<H> {
             let resolved = self
                 .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
                 .unwrap_or(Value::UNDEFINED);
-            let incompatible_style = (!fields.has_date
-                && self.date_time_option(resolved, "dateStyle").is_some())
-                || (!fields.has_time
-                    && self.date_time_option(resolved, "timeStyle").is_some());
+            let date_style = self.date_time_option(resolved, "dateStyle").is_some();
+            let time_style = self.date_time_option(resolved, "timeStyle").is_some();
+            let incompatible_style = (date_style || time_style)
+                && !(fields.has_date && date_style || fields.has_time && time_style);
             if incompatible_style {
                 return Err(self.type_error(
                     p,
@@ -1189,6 +1189,7 @@ impl<H: Host> Vm<H> {
                 options.time_zone_name = None;
             }
             Some(TemporalKind::PlainMonthDay) => {
+                options.weekday = None;
                 options.year = None;
                 options.era = None;
                 options.hour = None;
@@ -1197,6 +1198,7 @@ impl<H: Host> Vm<H> {
                 options.day_period = None;
             }
             Some(TemporalKind::PlainYearMonth) => {
+                options.weekday = None;
                 options.day = None;
                 options.hour = None;
                 options.minute = None;
@@ -1750,10 +1752,7 @@ const RANGE_SEPARATOR_PARTS: usize = 1;
 const DATE_TIME_SEPARATOR_PARTS: usize = 1;
 
 fn time_zone_name_for(style: &str, zone: &str, fields: &DateTimeFields) -> String {
-    let zone = match zone {
-        "Asia/Calcutta" => "Asia/Kolkata",
-        other => other,
-    };
+    let zone = quench_temporal::timezone_primary_name(zone);
     if zone.eq_ignore_ascii_case("utc") {
         return match style {
             "long" | "longGeneric" => "Coordinated Universal Time".into(),
@@ -1862,7 +1861,7 @@ fn remove_locale_unicode_key(locale: &str, key: &str) -> String {
     }
 }
 
-fn canonical_time_zone(zone: &str) -> Option<String> {
+fn normalize_time_zone_identifier(zone: &str) -> Option<String> {
     if zone.eq_ignore_ascii_case("utc") {
         return Some("UTC".into());
     }
@@ -1878,7 +1877,7 @@ fn canonical_time_zone(zone: &str) -> Option<String> {
             total_minutes % MINUTES_PER_HOUR
         ));
     }
-    quench_intl::canonical_time_zone_name(zone)
+    quench_intl::time_zone_identifier(zone).map(str::to_owned)
 }
 
 fn date_in_time_zone(
@@ -1897,7 +1896,7 @@ fn date_in_time_zone(
             .map(|instant| instant.with_timezone(&offset));
     }
     let timezone = chrono_tz::Tz::from_str(zone).ok().or_else(|| {
-        canonical_time_zone(zone).and_then(|canonical| chrono_tz::Tz::from_str(&canonical).ok())
+        normalize_time_zone_identifier(zone).and_then(|canonical| chrono_tz::Tz::from_str(&canonical).ok())
     })?;
     Utc.timestamp_millis_opt(milliseconds.trunc() as i64)
         .single()
