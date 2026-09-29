@@ -207,7 +207,7 @@ pub(super) fn decode_uri(
 }
 
 pub(super) fn parse_integer(text: &str, mut radix: i32) -> f64 {
-    let mut input = text.trim_start();
+    let mut input = text.trim_start_matches(super::primitives::is_ecma_whitespace_character);
     let sign = if let Some(rest) = input.strip_prefix('-') {
         input = rest;
         -1.0
