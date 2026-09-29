@@ -69,14 +69,39 @@ enum DateTimeDefaults {
     Date,
     Time,
     DateAndTime,
-    Temporal(&'static [&'static str]),
+    Temporal(&'static [(&'static str, &'static str)]),
+    TemporalZonedDateTime(&'static [(&'static str, &'static str)]),
 }
 
-const PLAIN_DATE_DEFAULTS: &[&str] = &["year", "month", "day"];
-const PLAIN_MONTH_DAY_DEFAULTS: &[&str] = &["month", "day"];
-const PLAIN_YEAR_MONTH_DEFAULTS: &[&str] = &["year", "month"];
-const PLAIN_TIME_DEFAULTS: &[&str] = &["hour", "minute", "second"];
-const DATE_TIME_DEFAULTS: &[&str] = &["year", "month", "day", "hour", "minute", "second"];
+const NUMERIC: &str = "numeric";
+const PLAIN_DATE_DEFAULTS: &[(&str, &str)] = &[
+    ("year", NUMERIC),
+    ("month", NUMERIC),
+    ("day", NUMERIC),
+];
+const PLAIN_MONTH_DAY_DEFAULTS: &[(&str, &str)] = &[("month", NUMERIC), ("day", NUMERIC)];
+const PLAIN_YEAR_MONTH_DEFAULTS: &[(&str, &str)] = &[("year", NUMERIC), ("month", NUMERIC)];
+const PLAIN_TIME_DEFAULTS: &[(&str, &str)] = &[
+    ("hour", NUMERIC),
+    ("minute", NUMERIC),
+    ("second", NUMERIC),
+];
+const DATE_TIME_DEFAULTS: &[(&str, &str)] = &[
+    ("year", NUMERIC),
+    ("month", NUMERIC),
+    ("day", NUMERIC),
+    ("hour", NUMERIC),
+    ("minute", NUMERIC),
+    ("second", NUMERIC),
+];
+const ZONED_DATE_TIME_DEFAULTS: &[(&str, &str)] = &[
+    ("year", NUMERIC),
+    ("month", NUMERIC),
+    ("day", NUMERIC),
+    ("hour", NUMERIC),
+    ("minute", NUMERIC),
+    ("second", NUMERIC),
+];
 
 impl<H: Host> Vm<H> {
     pub(super) fn install_intl_date_time_format_for_realm(
@@ -250,7 +275,20 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::String(locale_numbering_system.clone().into()));
         self.set_date_time_property(resolved, "numberingSystem", numbering_value)?;
+        let temporal_zoned = matches!(defaults, DateTimeDefaults::TemporalZonedDateTime(_));
+        if temporal_zoned {
+            let time_zone_atom = self.intern_atom("timeZone");
+            if !self
+                .get_property(p, options, time_zone_atom)?
+                .is_undefined()
+            {
+                return Err(self.type_error(p, "timeZone option is not allowed".into()));
+            }
+        }
         for (key, allowed) in DATE_TIME_OPTIONS {
+            if temporal_zoned && *key == "timeZone" {
+                continue;
+            }
             let atom = self.intern_atom(key);
             let value = self.get_property(p, options, atom)?;
             if value.is_undefined() {
@@ -324,7 +362,9 @@ impl<H: Host> Vm<H> {
         }
         let temporal_defaults = matches!(
             defaults,
-            DateTimeDefaults::Format | DateTimeDefaults::Temporal(_)
+            DateTimeDefaults::Format
+                | DateTimeDefaults::Temporal(_)
+                | DateTimeDefaults::TemporalZonedDateTime(_)
         ) && (!any || (!has_date && !has_time));
         let has_date_style = self.date_time_option(resolved, "dateStyle").is_some();
         let has_time_style = self.date_time_option(resolved, "timeStyle").is_some();
@@ -350,16 +390,21 @@ impl<H: Host> Vm<H> {
                 }
             }
             DateTimeDefaults::Temporal(components)
+            | DateTimeDefaults::TemporalZonedDateTime(components)
                 if !has_date && !has_time && !has_date_style && !has_time_style =>
             {
-                let numeric = self.heap.alloc(Cell::String("numeric".into()));
-                for component in components {
-                    self.set_date_time_property(resolved, component, numeric)?;
+                for (component, value) in components {
+                    let value = self.heap.alloc(Cell::String((*value).into()));
+                    self.set_date_time_property(resolved, component, value)?;
                     if matches!(*component, "year" | "month" | "day") {
                         has_date = true;
                     } else {
                         has_time = true;
                     }
+                }
+                if temporal_zoned && !any {
+                    let time_zone_name = self.heap.alloc(Cell::String("short".into()));
+                    self.set_date_time_property(resolved, "timeZoneName", time_zone_name)?;
                 }
             }
             _ => {}
@@ -529,28 +574,34 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let defaults = if self.temporal_plain_time_fields(this).is_some() {
-            DateTimeDefaults::Temporal(PLAIN_TIME_DEFAULTS)
+        let (defaults, zoned) = if self.temporal_plain_time_fields(this).is_some() {
+            (DateTimeDefaults::Temporal(PLAIN_TIME_DEFAULTS), None)
         } else {
             match self.heap.get(this) {
                 Some(Cell::TemporalPlainDate { .. }) => {
-                    DateTimeDefaults::Temporal(PLAIN_DATE_DEFAULTS)
+                    (DateTimeDefaults::Temporal(PLAIN_DATE_DEFAULTS), None)
                 }
                 Some(Cell::TemporalPlainDateTime { .. }) => {
-                    DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS)
+                    (DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS), None)
                 }
                 Some(Cell::TemporalInstant { .. }) => {
-                    DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS)
+                    (DateTimeDefaults::Temporal(DATE_TIME_DEFAULTS), None)
                 }
                 Some(Cell::TemporalPlainMonthDay { .. }) => {
-                    DateTimeDefaults::Temporal(PLAIN_MONTH_DAY_DEFAULTS)
+                    (DateTimeDefaults::Temporal(PLAIN_MONTH_DAY_DEFAULTS), None)
                 }
                 Some(Cell::TemporalPlainYearMonth { .. }) => {
-                    DateTimeDefaults::Temporal(PLAIN_YEAR_MONTH_DEFAULTS)
+                    (DateTimeDefaults::Temporal(PLAIN_YEAR_MONTH_DEFAULTS), None)
                 }
-                Some(Cell::TemporalZonedDateTime { .. }) => {
-                    return Err(self.type_error(p, "Temporal.ZonedDateTime is not supported".into()))
-                }
+                Some(Cell::TemporalZonedDateTime {
+                    epoch_nanoseconds,
+                    time_zone,
+                    calendar,
+                    ..
+                }) => (
+                    DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
+                    Some((*epoch_nanoseconds, time_zone.clone(), calendar.clone())),
+                ),
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
         };
@@ -567,7 +618,34 @@ impl<H: Host> Vm<H> {
             &locale,
         )?;
         let formatter = self.date_time_formatter(p, constructor, locale, options)?;
-        self.date_time_format(p, formatter, &[this])
+        if let Some((epoch_nanoseconds, time_zone, calendar)) = zoned {
+            let resolved = self
+                .date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT)
+                .unwrap_or(Value::UNDEFINED);
+            let formatter_calendar = self
+                .date_time_option(resolved, "calendar")
+                .and_then(|value| self.string_value(value))
+                .unwrap_or_else(|| "gregory".into());
+            let calendar = quench_intl::calendar_alias(&calendar);
+            let formatter_calendar = quench_intl::calendar_alias(&formatter_calendar);
+            if calendar != "iso8601" && calendar != formatter_calendar {
+                return Err(self.range_error(p, "Temporal calendar does not match formatter calendar".into()));
+            }
+            let time_zone = canonical_time_zone(&time_zone)
+                .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
+            let time_zone = self.heap.alloc(Cell::String(time_zone.into()));
+            self.set_date_time_property(resolved, "timeZone", time_zone)?;
+            let instant = self.heap.alloc(Cell::TemporalInstant {
+                object: Box::new(Self::empty_object(self.object_proto)),
+                epoch_nanoseconds,
+            });
+            self.active_call_roots.push(instant);
+            let result = self.date_time_format(p, formatter, &[instant]);
+            self.active_call_roots.pop();
+            result
+        } else {
+            self.date_time_format(p, formatter, &[this])
+        }
     }
 
     fn date_time_formatter(
@@ -1672,13 +1750,7 @@ fn time_zone_name_for(style: &str, zone: &str) -> String {
 }
 
 fn locale_unicode_value(locale: &str, key: &str) -> Option<String> {
-    let (_, extension) = locale.split_once("-u-")?;
-    let parts = extension.split('-').collect::<Vec<_>>();
-    let position = parts.iter().position(|part| *part == key)?;
-    parts
-        .get(position + 1)
-        .filter(|value| value.len() != 2)
-        .map(|value| (*value).to_string())
+    quench_intl::unicode_extension_value(locale, key)
 }
 
 fn remove_locale_unicode_key(locale: &str, key: &str) -> String {

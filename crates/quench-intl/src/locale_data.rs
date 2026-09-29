@@ -44,6 +44,20 @@ const DEFAULT_NUMBERING_SYSTEMS: &[(&str, &str)] = &[
     ("ur", "arabext"),
 ];
 
+const UNICODE_EXTENSION_KEY_LENGTH: usize = 2;
+
+pub fn unicode_extension_value(locale: &str, key: &str) -> Option<String> {
+    let (_, extension) = locale.split_once("-u-")?;
+    let parts = extension.split('-').collect::<Vec<_>>();
+    let position = parts.iter().position(|part| *part == key)?;
+    let value = parts[position + 1..]
+        .iter()
+        .take_while(|part| part.len() != UNICODE_EXTENSION_KEY_LENGTH)
+        .copied()
+        .collect::<Vec<_>>();
+    (!value.is_empty()).then(|| value.join("-"))
+}
+
 pub fn default_numbering_system(locale: &str) -> &'static str {
     let language = locale.split(['-', '_']).next().unwrap_or_default();
     DEFAULT_NUMBERING_SYSTEMS
