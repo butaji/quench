@@ -2443,7 +2443,13 @@ impl<H: Host> Vm<H> {
             IteratorConsumer::Reduce => accumulator.ok_or_else(|| {
                 self.type_error(p, "reduce of empty iterator with no initial value".into())
             }),
-            IteratorConsumer::ToArray => Ok(self.new_array(values)),
+            IteratorConsumer::ToArray => {
+                let array = self.array_create(p, values.len())?;
+                for (index, value) in values.into_iter().enumerate() {
+                    self.create_data_property_or_throw(p, array, index, value)?;
+                }
+                Ok(array)
+            }
             IteratorConsumer::ForEach => Ok(Value::UNDEFINED),
             IteratorConsumer::Every => Ok(Value::TRUE),
             IteratorConsumer::Some => Ok(Value::FALSE),

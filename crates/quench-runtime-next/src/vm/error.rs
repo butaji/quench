@@ -1210,7 +1210,7 @@ impl<H: Host> Vm<H> {
         );
         let array_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.array_proto)));
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_array_for_realm(program, global, array_prototype)?;
         let map = self.native_with_realm(Native::Map, global, global);
         let map_prototype = self
