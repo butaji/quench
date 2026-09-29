@@ -677,15 +677,25 @@ impl<H: Host> Vm<H> {
                     &calendar,
                 );
                 if native == Native::TemporalZonedDateTimeMonthCodeGetter {
-                    return Ok(self.heap.alloc(Cell::String(calendar_fields.map_or_else(
-                        || format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS),
-                        |fields| fields.month_code,
-                    ).into())));
+                    return Ok(self.heap.alloc(Cell::String(
+                        calendar_fields
+                            .map_or_else(
+                                || format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS),
+                                |fields| fields.month_code,
+                            )
+                            .into(),
+                    )));
                 }
                 let value = match native {
-                    Native::TemporalZonedDateTimeYearGetter => calendar_fields.as_ref().map_or(fields[0], |fields| fields.year),
-                    Native::TemporalZonedDateTimeMonthGetter => calendar_fields.as_ref().map_or(fields[1], |fields| fields.month as i32),
-                    Native::TemporalZonedDateTimeDayGetter => calendar_fields.as_ref().map_or(fields[2], |fields| fields.day as i32),
+                    Native::TemporalZonedDateTimeYearGetter => calendar_fields
+                        .as_ref()
+                        .map_or(fields[0], |fields| fields.year),
+                    Native::TemporalZonedDateTimeMonthGetter => calendar_fields
+                        .as_ref()
+                        .map_or(fields[1], |fields| fields.month as i32),
+                    Native::TemporalZonedDateTimeDayGetter => calendar_fields
+                        .as_ref()
+                        .map_or(fields[2], |fields| fields.day as i32),
                     Native::TemporalZonedDateTimeHourGetter => fields[3],
                     Native::TemporalZonedDateTimeMinuteGetter => fields[4],
                     Native::TemporalZonedDateTimeSecondGetter => fields[5],
@@ -697,7 +707,9 @@ impl<H: Host> Vm<H> {
                         return Ok(match native {
                             Native::TemporalZonedDateTimeEraGetter => calendar_fields
                                 .and_then(|fields| fields.era)
-                                .map_or(Value::UNDEFINED, |era| self.heap.alloc(Cell::String(era.into()))),
+                                .map_or(Value::UNDEFINED, |era| {
+                                    self.heap.alloc(Cell::String(era.into()))
+                                }),
                             _ => calendar_fields
                                 .and_then(|fields| fields.era_year)
                                 .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
@@ -711,8 +723,8 @@ impl<H: Host> Vm<H> {
                         }),
                     )
                     .unwrap_or_default(),
-                    Native::TemporalZonedDateTimeDayOfYearGetter => i32::try_from(
-                        calendar_fields.as_ref().map_or_else(
+                    Native::TemporalZonedDateTimeDayOfYearGetter => {
+                        i32::try_from(calendar_fields.as_ref().map_or_else(
                             || {
                                 super::temporal_date::iso_day_of_year(
                                     super::temporal_date::IsoDate {
@@ -723,9 +735,9 @@ impl<H: Host> Vm<H> {
                                 )
                             },
                             |fields| fields.day_of_year,
-                        ),
-                    )
-                    .unwrap_or_default(),
+                        ))
+                        .unwrap_or_default()
+                    }
                     Native::TemporalZonedDateTimeWeekOfYearGetter => {
                         return Ok(super::temporal_date::temporal_iso_week(
                             super::temporal_date::IsoDate {
@@ -753,7 +765,10 @@ impl<H: Host> Vm<H> {
                     }
                     Native::TemporalZonedDateTimeDaysInMonthGetter => {
                         calendar_fields.as_ref().map_or_else(
-                            || super::temporal_date::iso_days_in_month(fields[0], fields[1]).unwrap_or_default() as i32,
+                            || {
+                                super::temporal_date::iso_days_in_month(fields[0], fields[1])
+                                    .unwrap_or_default() as i32
+                            },
                             |fields| fields.days_in_month as i32,
                         )
                     }
@@ -763,21 +778,22 @@ impl<H: Host> Vm<H> {
                             |fields| fields.days_in_year as i32,
                         )
                     }
-                    Native::TemporalZonedDateTimeMonthsInYearGetter => {
-                        calendar_fields.as_ref().map_or(
-                            super::temporal_date::ISO_MONTHS_PER_YEAR,
-                            |fields| fields.months_in_year as i32,
-                        )
-                    }
+                    Native::TemporalZonedDateTimeMonthsInYearGetter => calendar_fields
+                        .as_ref()
+                        .map_or(super::temporal_date::ISO_MONTHS_PER_YEAR, |fields| {
+                            fields.months_in_year as i32
+                        }),
                     Native::TemporalZonedDateTimeInLeapYearGetter => {
-                        return Ok(if calendar_fields.map_or_else(
-                            || super::temporal_date::iso_is_leap_year(fields[0]),
-                            |fields| fields.is_leap_year,
-                        ) {
-                            Value::TRUE
-                        } else {
-                            Value::FALSE
-                        });
+                        return Ok(
+                            if calendar_fields.map_or_else(
+                                || super::temporal_date::iso_is_leap_year(fields[0]),
+                                |fields| fields.is_leap_year,
+                            ) {
+                                Value::TRUE
+                            } else {
+                                Value::FALSE
+                            },
+                        );
                     }
                     _ => return Err(self.type_error(p, "Unsupported ZonedDateTime getter".into())),
                 };
@@ -1369,8 +1385,7 @@ impl<H: Host> Vm<H> {
             if matches!(
                 *name,
                 "year" | "month" | "monthCode" | "day" | "era" | "eraYear"
-            )
-                && !matches!(value, FieldValue::Undefined)
+            ) && !matches!(value, FieldValue::Undefined)
             {
                 let key = self.intern_atom(name);
                 let value = match value {
@@ -2061,7 +2076,15 @@ impl<H: Host> Vm<H> {
         };
         let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code
-            .map(|code| self.calendarized_month_code(p, code, &calendar, year))
+            .map(|code| {
+                self.calendarized_month_code(
+                    p,
+                    code,
+                    &calendar,
+                    year,
+                    options.overflow == "constrain",
+                )
+            })
             .transpose()?;
         let Some(month) = month.or(month_code) else {
             return Err(self.type_error(p, "Missing ZonedDateTime field".into()));
