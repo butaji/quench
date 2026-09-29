@@ -69,6 +69,9 @@ impl<H: Host> Vm<H> {
                 TypedArrayKind::Int32 => {
                     i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
                 }
+                TypedArrayKind::Float16 => {
+                    super::number::half_to_f64(u16::from_ne_bytes([bytes[0], bytes[1]]))
+                }
                 TypedArrayKind::Float32 => {
                     f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f64
                 }
@@ -321,6 +324,8 @@ impl<H: Host> Vm<H> {
                     .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
                 TypedArrayKind::Int32 => bytes[start..start + 4]
                     .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
+                TypedArrayKind::Float16 => bytes[start..start + 2]
+                    .copy_from_slice(&super::number::f64_to_half(value).to_ne_bytes()),
                 TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
                     bytes[start..start + 8].copy_from_slice(&bigint_bytes.unwrap())
                 }

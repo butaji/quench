@@ -370,7 +370,7 @@ impl<H: Host> Vm<H> {
                 let value = match native {
                     Native::DataViewGetInt16 => (bits as u16 as i16) as f64,
                     Native::DataViewGetInt32 => (bits as u32 as i32) as f64,
-                    Native::DataViewGetFloat16 => f16_to_f64(bits as u16),
+                    Native::DataViewGetFloat16 => super::number::half_to_f64(bits as u16),
                     Native::DataViewGetFloat32 => f32::from_bits(bits as u32) as f64,
                     Native::DataViewGetFloat64 => f64::from_bits(bits),
                     _ => bits as f64,
@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
                     return Err(self.data_view_write_error(p, buffer, offset, length));
                 }
                 let bits = match native {
-                    Native::DataViewSetFloat16 => f64_to_half(value) as u64,
+                    Native::DataViewSetFloat16 => super::number::f64_to_half(value) as u64,
                     Native::DataViewSetFloat32 => (value as f32).to_bits() as u64,
                     Native::DataViewSetFloat64 => value.to_bits(),
                     Native::DataViewSetUint16 | Native::DataViewSetInt16 => {
@@ -527,75 +527,4 @@ impl<H: Host> Vm<H> {
         *slot = value;
         Ok(())
     }
-}
-
-const HALF_SIGN_MASK: u64 = 0x8000_0000_0000_0000;
-const HALF_EXPONENT_MASK: u64 = 0x7ff;
-const HALF_FRACTION_MASK: u64 = 0x000f_ffff_ffff_ffff;
-const HALF_INFINITY: u16 = 0x7c00;
-const HALF_FRACTION_BITS: u32 = 10;
-const HALF_FRACTION_SHIFT: u32 = 42;
-
-fn f16_to_f64(bits: u16) -> f64 {
-    let sign = ((bits & 0x8000) as u64) << 48;
-    let exponent = (bits >> HALF_FRACTION_BITS) & 0x1f;
-    let fraction = bits & 0x03ff;
-    match (exponent, fraction) {
-        (0, 0) => f64::from_bits(sign),
-        (0, fraction) => (fraction as f64 * 2f64.powi(-24)) * if sign == 0 { 1.0 } else { -1.0 },
-        (0x1f, 0) => f64::from_bits(sign | 0x7ff0_0000_0000_0000),
-        (0x1f, fraction) => {
-            f64::from_bits(sign | 0x7ff0_0000_0000_0000 | (fraction as u64) << HALF_FRACTION_SHIFT)
-        }
-        (exponent, fraction) => {
-            let value = (1.0 + fraction as f64 / 1024.0) * 2f64.powi(exponent as i32 - 15);
-            value * if sign == 0 { 1.0 } else { -1.0 }
-        }
-    }
-}
-
-fn f64_to_half(value: f64) -> u16 {
-    let bits = value.to_bits();
-    let sign = ((bits >> 63) as u16) << 15;
-    let exponent = ((bits >> 52) & HALF_EXPONENT_MASK) as u16;
-    let fraction = bits & HALF_FRACTION_MASK;
-    if exponent == HALF_EXPONENT_MASK as u16 {
-        return sign
-            | if fraction == 0 {
-                HALF_INFINITY
-            } else {
-                HALF_INFINITY | ((fraction >> HALF_FRACTION_SHIFT) as u16).max(1)
-            };
-    }
-    let absolute = f64::from_bits(bits & !HALF_SIGN_MASK);
-    if absolute < 2f64.powi(-14) {
-        let rounded = round_half(absolute * 2f64.powi(24));
-        return sign | if rounded >= 0x0400 { 0x0400 } else { rounded };
-    }
-    let unbiased = exponent as i32 - 1023;
-    if unbiased > 15 {
-        return sign | HALF_INFINITY;
-    }
-    let mut significand = (fraction >> HALF_FRACTION_SHIFT) as u16;
-    let remainder_mask = (1_u64 << HALF_FRACTION_SHIFT) - 1;
-    let remainder = fraction & remainder_mask;
-    let midpoint = 1_u64 << (HALF_FRACTION_SHIFT - 1);
-    if remainder > midpoint || (remainder == midpoint && significand & 1 != 0) {
-        significand += 1;
-    }
-    let mut half_exponent = (unbiased + 15) as u16;
-    if significand == 0x0400 {
-        significand = 0;
-        half_exponent += 1;
-        if half_exponent >= 0x1f {
-            return sign | HALF_INFINITY;
-        }
-    }
-    sign | (half_exponent << HALF_FRACTION_BITS) | significand
-}
-
-fn round_half(value: f64) -> u16 {
-    let lower = value.floor() as u64;
-    let fraction = value - lower as f64;
-    (lower + u64::from(fraction > 0.5 || (fraction == 0.5 && lower & 1 != 0))) as u16
 }
