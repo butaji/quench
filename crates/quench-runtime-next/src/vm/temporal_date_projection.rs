@@ -1049,14 +1049,13 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::String(text)) = self.heap.get(value) {
             let text = text.host_string().to_owned();
             let (date, calendar) = parse_plain_month_day_string(self, p, &text)?;
-            let _ = self.plain_date_overflow(p, options)?;
-            return self.make_plain_month_day(
+            let constrain = self.plain_date_overflow(p, options)?;
+            return self.make_plain_month_day_from_iso_date(
                 p,
                 constructor,
-                date.month,
-                date.day,
+                (date.year, date.month, date.day),
                 calendar,
-                DEFAULT_REFERENCE_ISO_YEAR,
+                constrain,
             );
         }
         if !self.is_object_like(value) {
@@ -1121,14 +1120,34 @@ impl<H: Host> Vm<H> {
             .transpose()?;
         let year_atom = self.intern_atom("year");
         let year_value = self.get_property(p, bag, year_atom)?;
-        let year = if year_value.is_undefined() {
-            DEFAULT_REFERENCE_ISO_YEAR
+        let supplied_year = self.plain_date_optional_integer(p, year_value)?;
+        let era_atom = self.intern_atom("era");
+        let era_value = self.get_property(p, bag, era_atom)?;
+        let era = if era_value.is_undefined() {
+            None
         } else {
-            self.plain_date_integer(p, year_value)?
+            Some(self.to_string(p, era_value)?.to_string())
         };
+        let era_year_atom = self.intern_atom("eraYear");
+        let era_year_value = self.get_property(p, bag, era_year_atom)?;
+        let era_year = self.plain_date_optional_integer(p, era_year_value)?;
+        let calendar_uses_eras = quench_intl::calendar_uses_eras(&calendar);
+        let has_relevant_year_fields = supplied_year.is_some()
+            || calendar_uses_eras && (era.is_some() || era_year.is_some());
+        let year = if has_relevant_year_fields {
+            self.resolve_calendar_year(p, &calendar, supplied_year, era.as_deref(), era_year)?
+        } else {
+            DEFAULT_REFERENCE_ISO_YEAR
+        };
+        if calendar != "iso8601"
+            && !(super::temporal_date::MIN_ISO_YEAR..=super::temporal_date::MAX_ISO_YEAR)
+                .contains(&year)
+        {
+            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+        }
         let constrain = self.plain_date_overflow(p, options)?;
         let non_iso_calendar = !matches!(calendar.as_str(), "iso8601" | "gregory");
-        if non_iso_calendar && year_value.is_undefined() && month.is_some() {
+        if calendar != "iso8601" && year_value.is_undefined() && month.is_some() {
             return Err(self.type_error(p, "Missing year".into()));
         }
         if non_iso_calendar && !year_value.is_undefined() {
