@@ -943,12 +943,6 @@ impl Engine {
             }
             return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
         }
-        let semantic = oxc_semantic::SemanticBuilder::new()
-            .with_check_syntax_error(true)
-            .build(&parsed.program);
-        if let Some(error) = semantic.diagnostics.first() {
-            return Some(format!("SyntaxError: {error}"));
-        }
         early::strict_binding_early_error(&parsed.program, strict)
     }
 
