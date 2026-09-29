@@ -3,6 +3,17 @@ use super::property_key::PropertyKey;
 use super::*;
 use crate::heap::IteratorZipMode;
 
+enum IteratorHelperFailure {
+    Step(JsError),
+    Abrupt(JsError),
+}
+
+impl From<JsError> for IteratorHelperFailure {
+    fn from(error: JsError) -> Self {
+        Self::Abrupt(error)
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn spread_to_array(
         &mut self,
@@ -915,12 +926,30 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if matches!(self.heap.get(iterator), Some(Cell::Iterator { .. })) {
-            return Ok(iterator);
-        }
         let next_atom = self.intern_atom("next");
         let next_method = self.get_property(p, iterator, next_atom)?;
-        self.protocol_iterator(iterator, next_method)
+        let iterator_root = self.heap.root(iterator);
+        let next_root = self.heap.root(next_method);
+        let result = (|| {
+            let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
+            let constructor_atom = self.intern_atom("Iterator");
+            let constructor = self.get_property(p, self.realm.globals, constructor_atom)?;
+            let prototype_atom = self.intern_atom("prototype");
+            let iterator_prototype = self.get_property(p, constructor, prototype_atom)?;
+            let mut current = self.object_get_prototype_of(p, iterator)?;
+            while !current.is_null() {
+                if self.same_value(current, iterator_prototype) {
+                    return Ok(iterator);
+                }
+                current = self.object_get_prototype_of(p, current)?;
+            }
+            let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
+            let next_method = self.heap.root_value(next_root).unwrap_or(next_method);
+            self.protocol_iterator(iterator, next_method)
+        })();
+        self.heap.release_root(next_root);
+        self.heap.release_root(iterator_root);
+        result
     }
 
     fn protocol_iterator(&mut self, source: Value, next_method: Value) -> Result<Value, JsError> {
@@ -1016,9 +1045,9 @@ impl<H: Host> Vm<H> {
             *helper_started = true;
         }
         let result = match state {
-            IteratorHelper::RegExpStringMatchAll { .. } => {
-                Err(self.type_error(p, "RegExp string iterator is not a helper".into()))
-            }
+            IteratorHelper::RegExpStringMatchAll { .. } => Err(
+                self.type_error(p, "RegExp string iterator is not a helper".into()).into(),
+            ),
             IteratorHelper::Map { callback, index } => {
                 self.iterator_helper_map(p, iterator, source, callback, index, args)
             }
@@ -1054,11 +1083,16 @@ impl<H: Host> Vm<H> {
                 done,
             } => {
                 self.iterator_helper_zip(p, iterator, iterators, padding, mode, keys, opened, done)
+                    .map_err(IteratorHelperFailure::Abrupt)
             }
         };
         let result = match result {
             Ok(result) => Ok(result),
-            Err(error) => {
+            Err(IteratorHelperFailure::Step(error)) => {
+                self.mark_iterator_done(iterator);
+                Err(error)
+            }
+            Err(IteratorHelperFailure::Abrupt(error)) => {
                 self.mark_iterator_done(iterator);
                 let _ = self.iterator_close(p, source);
                 Err(error)
@@ -1162,6 +1196,16 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    fn iterator_helper_step_for_helper(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        args: &[Value],
+    ) -> Result<Option<Value>, IteratorHelperFailure> {
+        self.iterator_helper_step(p, source, args)
+            .map_err(IteratorHelperFailure::Step)
+    }
+
     fn iterator_step_with_method(
         &mut self,
         p: &ResidualProgram,
@@ -1244,10 +1288,10 @@ impl<H: Host> Vm<H> {
         callback: Value,
         index: usize,
         args: &[Value],
-    ) -> Result<Value, JsError> {
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+    ) -> Result<Value, IteratorHelperFailure> {
+        let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true);
+            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
         };
         let mapped = self.call_value(
             p,
@@ -1262,7 +1306,7 @@ impl<H: Host> Vm<H> {
                 index: index + 1,
             },
         );
-        self.iterator_result(mapped, false)
+        self.iterator_result(mapped, false).map_err(Into::into)
     }
 
     fn iterator_helper_filter(
@@ -1273,11 +1317,11 @@ impl<H: Host> Vm<H> {
         callback: Value,
         mut index: usize,
         args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<Value, IteratorHelperFailure> {
         loop {
-            let Some(value) = self.iterator_helper_step(p, source, args)? else {
+            let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true);
+                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
             };
             let selected = self.call_value(
                 p,
@@ -1288,7 +1332,7 @@ impl<H: Host> Vm<H> {
             index += 1;
             if self.truthy(selected) {
                 self.update_iterator_helper(iterator, IteratorHelper::Filter { callback, index });
-                return self.iterator_result(value, false);
+                return self.iterator_result(value, false).map_err(Into::into);
             }
         }
     }
@@ -1300,15 +1344,15 @@ impl<H: Host> Vm<H> {
         source: Value,
         remaining: f64,
         args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<Value, IteratorHelperFailure> {
         if remaining <= 0.0 {
             self.mark_iterator_done(iterator);
             self.iterator_close(p, source)?;
-            return self.iterator_result(Value::UNDEFINED, true);
+            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
         }
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+        let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true);
+            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
         };
         self.update_iterator_helper(
             iterator,
@@ -1316,7 +1360,7 @@ impl<H: Host> Vm<H> {
                 remaining: remaining - 1.0,
             },
         );
-        self.iterator_result(value, false)
+        self.iterator_result(value, false).map_err(Into::into)
     }
 
     fn iterator_helper_drop(
@@ -1326,20 +1370,23 @@ impl<H: Host> Vm<H> {
         source: Value,
         mut remaining: f64,
         args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<Value, IteratorHelperFailure> {
         while remaining > 0.0 {
-            if self.iterator_helper_step(p, source, args)?.is_none() {
+            if self
+                .iterator_helper_step_for_helper(p, source, args)?
+                .is_none()
+            {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true);
+                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
             }
             remaining -= 1.0;
         }
-        let Some(value) = self.iterator_helper_step(p, source, args)? else {
+        let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
             self.mark_iterator_done(iterator);
-            return self.iterator_result(Value::UNDEFINED, true);
+            return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
         };
         self.update_iterator_helper(iterator, IteratorHelper::Drop { remaining });
-        self.iterator_result(value, false)
+        self.iterator_result(value, false).map_err(Into::into)
     }
 
     fn iterator_helper_flat_map(
@@ -1351,10 +1398,10 @@ impl<H: Host> Vm<H> {
         mut index: usize,
         mut inner: Option<Value>,
         args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<Value, IteratorHelperFailure> {
         loop {
             if let Some(current) = inner.take() {
-                if let Some(value) = self.iterator_helper_step(p, current, &[])? {
+                if let Some(value) = self.iterator_helper_step_for_helper(p, current, &[])? {
                     inner = Some(current);
                     self.update_iterator_helper(
                         iterator,
@@ -1364,12 +1411,12 @@ impl<H: Host> Vm<H> {
                             inner,
                         },
                     );
-                    return self.iterator_result(value, false);
+                    return self.iterator_result(value, false).map_err(Into::into);
                 }
             }
-            let Some(value) = self.iterator_helper_step(p, source, args)? else {
+            let Some(value) = self.iterator_helper_step_for_helper(p, source, args)? else {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true);
+                return self.iterator_result(Value::UNDEFINED, true).map_err(Into::into);
             };
             let mapped = self.call_value(
                 p,
@@ -1379,7 +1426,9 @@ impl<H: Host> Vm<H> {
             )?;
             index += 1;
             if !self.is_object_like(mapped) {
-                return Err(self.type_error(p, "flatMap result is not an object".into()));
+                return Err(self
+                    .type_error(p, "flatMap result is not an object".into())
+                    .into());
             }
             let next_inner = self.iterator_from(p, &[mapped])?;
             inner = Some(self.iterator_record(p, next_inner)?);
@@ -1396,11 +1445,11 @@ impl<H: Host> Vm<H> {
         mut next_item: usize,
         mut active: Option<Value>,
         _args: &[Value],
-    ) -> Result<Value, JsError> {
+    ) -> Result<Value, IteratorHelperFailure> {
         let mut opened = opened;
         loop {
             if let Some(current) = active.take() {
-                if let Some(value) = self.iterator_helper_step(p, current, &[])? {
+                if let Some(value) = self.iterator_helper_step_for_helper(p, current, &[])? {
                     active = Some(current);
                     self.update_iterator_helper(
                         iterator,
@@ -1412,28 +1461,38 @@ impl<H: Host> Vm<H> {
                             active,
                         },
                     );
-                    return self.iterator_result(value, false);
+                    return self.iterator_result(value, false).map_err(Into::into);
                 }
                 next_item += 1;
             }
             let Some(iterable) = items.get(next_item).copied() else {
                 self.mark_iterator_done(iterator);
-                return self.iterator_result(Value::UNDEFINED, true);
+                return self
+                    .iterator_result(Value::UNDEFINED, true)
+                    .map_err(Into::into);
             };
             let Some(next) = methods.get(next_item).copied() else {
-                return Err(self.type_error(p, "Iterator.concat state is invalid".into()));
+                return Err(self
+                    .type_error(p, "Iterator.concat state is invalid".into())
+                    .into());
             };
             if !self.is_function(next) {
-                return Err(self.type_error(p, "iterator method is not callable".into()));
+                return Err(self
+                    .type_error(p, "iterator method is not callable".into())
+                    .into());
             }
             let opened_iterator = self.call_value(p, next, iterable, &[])?;
             if !self.is_object_like(opened_iterator) {
-                return Err(self.type_error(p, "iterator method did not return an object".into()));
+                return Err(self
+                    .type_error(p, "iterator method did not return an object".into())
+                    .into());
             }
             let next_atom = self.intern_atom("next");
             let next_method = self.get_property(p, opened_iterator, next_atom)?;
             if !self.is_function(next_method) {
-                return Err(self.type_error(p, "iterator next method is not callable".into()));
+                return Err(self
+                    .type_error(p, "iterator next method is not callable".into())
+                    .into());
             }
             if let Some(slot) = opened.get_mut(next_item) {
                 *slot = Some(opened_iterator);
@@ -2319,10 +2378,7 @@ impl<H: Host> Vm<H> {
         loop {
             let step = match self.iterator_helper_step(p, iterator, &[]) {
                 Ok(step) => step,
-                Err(error) => {
-                    let _ = self.iterator_close(p, iterator);
-                    return Err(error);
-                }
+                Err(error) => return Err(error),
             };
             let Some(value) = step else {
                 break;
@@ -2805,18 +2861,7 @@ impl<H: Host> Vm<H> {
                 }) => *next_method,
                 _ => return Err(self.type_error(p, "iterator next method is not callable".into())),
             };
-            let result = self.call_value(p, next_method, source, args)?;
-            if !self.is_object_like(result) {
-                return Err(self.type_error(p, "iterator next result is not an object".into()));
-            }
-            let done_atom = self.intern_atom("done");
-            let done = self.get_property(p, result, done_atom)?;
-            if self.truthy(done)
-                && let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this)
-            {
-                *done = true;
-            }
-            return Ok(result);
+            return self.call_value(p, next_method, source, &[]);
         }
         if kind == IteratorKind::RegExpStringMatchAll {
             let (input, global, unicode) = match self.heap.get(this) {
