@@ -1737,13 +1737,15 @@ impl<H: Host> Vm<H> {
         let message = message
             .map(|message| self.to_string(program, message))
             .transpose()?;
-        let errors =
-            self.spread_to_array(program, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let prototype_atom = self.intern_atom("prototype");
         let realm = match self.heap.get(new_target) {
             Some(Cell::Function { realm, .. }) => *realm,
             _ => self.realm.globals,
         };
+        let errors_list = self
+            .iterable_to_list(program, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let errors_prototype = self.array_prototype_for_realm(program, realm)?;
+        let errors = self.new_array_with_prototype(errors_list, errors_prototype);
+        let prototype_atom = self.intern_atom("prototype");
         let constructor_atom = self.intern_atom("AggregateError");
         let constructor = self
             .own_property(realm, constructor_atom)
