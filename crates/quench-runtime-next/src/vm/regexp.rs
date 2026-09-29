@@ -38,15 +38,6 @@ impl CompiledRegexp {
     ) -> Option<quench_regexp::Match> {
         self.0.find_from_utf16(input, start).next()
     }
-
-    pub(super) fn find_range_from_utf16(
-        &self,
-        input: &[u16],
-        start: usize,
-    ) -> Option<std::ops::Range<usize>> {
-        self.0.find_range_from_utf16(input, start)
-    }
-
 }
 
 impl<H: Host> Vm<H> {
@@ -1014,7 +1005,7 @@ impl<H: Host> Vm<H> {
             };
         }
         if matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
-            return self.regexp_native(p, Native::RegExpExec, receiver, &[input]);
+            return self.regexp_builtin_exec(p, receiver, &[input]);
         }
         Err(self.type_error(p, "RegExp exec is not callable".into()))
     }
@@ -1292,10 +1283,29 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::String(escape_regexp_string(&input))))
     }
 
-    pub(super) fn regexp_native(
+    pub(super) fn regexp_test(
         &mut self,
         p: &ResidualProgram,
-        native: Native,
+        receiver: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(p, "RegExp.prototype.test called on non-object".into()));
+        }
+        let input =
+            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.heap.alloc(Cell::String(input));
+        let result = self.regexp_exec_value(p, receiver, input)?;
+        Ok(if result.is_null() {
+            Value::FALSE
+        } else {
+            Value::TRUE
+        })
+    }
+
+    pub(super) fn regexp_builtin_exec(
+        &mut self,
+        p: &ResidualProgram,
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
@@ -1329,38 +1339,7 @@ impl<H: Host> Vm<H> {
                 Value::number(0.0),
                 true,
             )?;
-            return Ok(if native == Native::RegExpTest {
-                Value::FALSE
-            } else {
-                Value::NULL
-            });
-        }
-        if native == Native::RegExpTest {
-            let matched = regex
-                .find_range_from_utf16(input.units(), start)
-                .filter(|matched| !sticky || matched.start == start);
-            let Some(matched) = matched else {
-                if stateful {
-                    self.set_property_with_program_mode(
-                        p,
-                        this,
-                        last_index_atom,
-                        Value::number(0.0),
-                        true,
-                    )?;
-                }
-                return Ok(Value::FALSE);
-            };
-            if stateful {
-                self.set_property_with_program_mode(
-                    p,
-                    this,
-                    last_index_atom,
-                    Value::number(matched.end as f64),
-                    true,
-                )?;
-            }
-            return Ok(Value::TRUE);
+            return Ok(Value::NULL);
         }
         let matched = regex.find_from_utf16(input.units(), start);
         let matched = matched.filter(|matched| !sticky || matched.range.start == start);
@@ -1374,11 +1353,7 @@ impl<H: Host> Vm<H> {
                     true,
                 )?;
             }
-            return Ok(if native == Native::RegExpTest {
-                Value::FALSE
-            } else {
-                Value::NULL
-            });
+            return Ok(Value::NULL);
         };
         if stateful {
             self.set_property_with_program_mode(
