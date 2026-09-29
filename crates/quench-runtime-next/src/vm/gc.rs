@@ -162,6 +162,7 @@ impl<H: Host> Vm<H> {
                     self.int32_array_proto,
                     self.bigint64_array_proto,
                     self.biguint64_array_proto,
+                    self.float16_array_proto,
                     self.float32_array_proto,
                     self.float64_array_proto,
                     self.data_view_proto,

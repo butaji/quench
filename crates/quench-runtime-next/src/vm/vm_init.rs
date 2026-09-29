@@ -32,6 +32,7 @@ impl<H: Host> Vm<H> {
             int32_array_proto: Value::NULL,
             bigint64_array_proto: Value::NULL,
             biguint64_array_proto: Value::NULL,
+            float16_array_proto: Value::NULL,
             float32_array_proto: Value::NULL,
             float64_array_proto: Value::NULL,
             data_view_proto: Value::NULL,
