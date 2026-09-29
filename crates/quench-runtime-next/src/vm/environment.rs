@@ -1379,39 +1379,17 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<bool, JsError> {
-        let Some(root_index) = self.frames.iter().rposition(|frame| {
-            frame.function == super::ROOT_FUNCTION_ID
-                && frame.this == self.realm.globals
-                && self.programs.get(frame.program).is_some_and(|program| {
-                    !program.root_variables_are_local()
-                        && program
-                            .functions
-                            .get(super::ROOT_FUNCTION_ID as usize)
-                            .is_some_and(|function| function.global_var_atoms.contains(&atom))
-                })
+        let Some(strict) = self.frames.iter().rev().find_map(|frame| {
+            if frame.function != super::ROOT_FUNCTION_ID || frame.this != self.realm.globals {
+                return None;
+            }
+            let program = self.programs.get(frame.program)?;
+            let function = program.functions.first()?;
+            (!program.root_variables_are_local() && function.global_var_atoms.contains(&atom))
+                .then_some(function.strict)
         }) else {
             return Ok(false);
         };
-        let root_frame = &self.frames[root_index];
-        let Some(root_program) = self.programs.get(root_frame.program) else {
-            return Ok(false);
-        };
-        let Some(root_function) = root_program.functions.first() else {
-            return Ok(false);
-        };
-        if root_program.root_variables_are_local()
-            || !root_function.global_var_atoms.contains(&atom)
-        {
-            return Ok(false);
-        }
-        let Some(slot) = root_function
-            .local_atoms
-            .iter()
-            .position(|candidate| *candidate == atom)
-        else {
-            return Ok(false);
-        };
-        let strict = root_function.strict;
         if !self.set_property_with_receiver(
             p,
             self.realm.globals,
@@ -1425,15 +1403,6 @@ impl<H: Host> Vm<H> {
                 Ok(true)
             };
         }
-        if self.frames[root_index].captured {
-            if let Some(Cell::Environment { slots, .. }) =
-                self.heap.get_mut(self.frames[root_index].env)
-            {
-                slots[slot] = value;
-            }
-        } else {
-            self.frames[root_index].locals[slot] = value;
-        }
         Ok(true)
     }
 
@@ -1446,43 +1415,35 @@ impl<H: Host> Vm<H> {
         if object != self.realm.globals {
             return;
         }
-        let Some(root_index) = self
-            .frames
-            .iter()
-            .rposition(|frame| {
-                frame.program == self.active_program
-                    && frame.function == super::ROOT_FUNCTION_ID
-                    && frame.this == object
-            })
-        else {
-            return;
-        };
-        let Some(root_program) = self.programs.get(self.frames[root_index].program) else {
-            return;
-        };
-        let Some(root_function) = root_program.functions.first() else {
-            return;
-        };
-        if root_program.root_variables_are_local()
-            || !root_function.global_var_atoms.contains(&atom)
-        {
-            return;
-        }
-        let Some(slot) = root_function
-            .local_atoms
-            .iter()
-            .position(|candidate| *candidate == atom)
-        else {
-            return;
-        };
-        if self.frames[root_index].captured {
-            if let Some(Cell::Environment { slots, .. }) =
-                self.heap.get_mut(self.frames[root_index].env)
-            {
-                slots[slot] = value;
+        // Each script/eval activation has its own local layout. The global
+        // object owns the binding; refresh every active projection in this realm.
+        for frame in &mut self.frames {
+            if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
+                continue;
             }
-        } else {
-            self.frames[root_index].locals[slot] = value;
+            let Some(program) = self.programs.get(frame.program) else {
+                continue;
+            };
+            let Some(function) = program.functions.first() else {
+                continue;
+            };
+            if program.root_variables_are_local() || !function.global_var_atoms.contains(&atom) {
+                continue;
+            }
+            let Some(slot) = function
+                .local_atoms
+                .iter()
+                .position(|candidate| *candidate == atom)
+            else {
+                continue;
+            };
+            if frame.captured {
+                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env) {
+                    slots[slot] = value;
+                }
+            } else {
+                frame.locals[slot] = value;
+            }
         }
     }
 }
