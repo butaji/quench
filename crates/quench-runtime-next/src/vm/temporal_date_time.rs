@@ -1080,9 +1080,12 @@ impl<H: Host> Vm<H> {
         if !matches!(overflow.as_str(), "constrain" | "reject") {
             return Err(self.range_error(p, "Invalid overflow".into()));
         }
+        let constrain = overflow == "constrain";
         let month_code = month_code_text
             .as_deref()
-            .map(|text| self.parse_plain_date_month_code(p, text, &calendar, year))
+            .map(|text| {
+                self.parse_plain_date_month_code(p, text, &calendar, year, constrain)
+            })
             .transpose()?;
         if let Some(code_month) = month_code {
             if month_was_provided && month != code_month {
@@ -1092,7 +1095,6 @@ impl<H: Host> Vm<H> {
                 month = code_month;
             }
         }
-        let constrain = overflow == "constrain";
         let month = if constrain {
             month.clamp(1, calendar_fields.as_ref().map_or(
                 super::temporal_date::ISO_MONTHS_PER_YEAR as i32,
