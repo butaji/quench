@@ -346,7 +346,11 @@ impl<H: Host> Vm<H> {
                 local,
                 &options,
                 None,
-                &super::temporal_zoned_date_time::format_offset_nanoseconds(offset),
+                &super::temporal_zoned_date_time::format_offset_nanoseconds(
+                    super::temporal_zoned_date_time::time_zone_display_offset(
+                        time_zone, offset,
+                    ),
+                ),
             )
         } else {
             super::temporal_instant_format::format_temporal_datetime(epoch, &options, None, "Z")
