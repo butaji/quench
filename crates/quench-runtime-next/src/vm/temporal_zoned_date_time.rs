@@ -675,15 +675,22 @@ impl<H: Host> Vm<H> {
             _ => {
                 let fields = zoned_date_time_fields(epoch, &zone)
                     .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
+                let calendar_fields = quench_intl::calendar_fields_from_iso(
+                    fields[0],
+                    fields[1] as u32,
+                    fields[2] as u32,
+                    &calendar,
+                );
                 if native == Native::TemporalZonedDateTimeMonthCodeGetter {
-                    return Ok(self.heap.alloc(Cell::String(
-                        format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS).into(),
-                    )));
+                    return Ok(self.heap.alloc(Cell::String(calendar_fields.map_or_else(
+                        || format!("M{:0width$}", fields[1], width = ISO_MONTH_DIGITS),
+                        |fields| fields.month_code,
+                    ).into())));
                 }
                 let value = match native {
-                    Native::TemporalZonedDateTimeYearGetter => fields[0],
-                    Native::TemporalZonedDateTimeMonthGetter => fields[1],
-                    Native::TemporalZonedDateTimeDayGetter => fields[2],
+                    Native::TemporalZonedDateTimeYearGetter => calendar_fields.as_ref().map_or(fields[0], |fields| fields.year),
+                    Native::TemporalZonedDateTimeMonthGetter => calendar_fields.as_ref().map_or(fields[1], |fields| fields.month as i32),
+                    Native::TemporalZonedDateTimeDayGetter => calendar_fields.as_ref().map_or(fields[2], |fields| fields.day as i32),
                     Native::TemporalZonedDateTimeHourGetter => fields[3],
                     Native::TemporalZonedDateTimeMinuteGetter => fields[4],
                     Native::TemporalZonedDateTimeSecondGetter => fields[5],
@@ -692,7 +699,14 @@ impl<H: Host> Vm<H> {
                     Native::TemporalZonedDateTimeNanosecondGetter => fields[8],
                     Native::TemporalZonedDateTimeEraGetter
                     | Native::TemporalZonedDateTimeEraYearGetter => {
-                        return Ok(Value::UNDEFINED);
+                        return Ok(match native {
+                            Native::TemporalZonedDateTimeEraGetter => calendar_fields
+                                .and_then(|fields| fields.era)
+                                .map_or(Value::UNDEFINED, |era| self.heap.alloc(Cell::String(era.into()))),
+                            _ => calendar_fields
+                                .and_then(|fields| fields.era_year)
+                                .map_or(Value::UNDEFINED, |year| Value::number(f64::from(year))),
+                        });
                     }
                     Native::TemporalZonedDateTimeDayOfWeekGetter => i32::try_from(
                         super::temporal_date::iso_day_of_week(super::temporal_date::IsoDate {
@@ -736,17 +750,28 @@ impl<H: Host> Vm<H> {
                         super::temporal_date::ISO_DAYS_PER_WEEK as i32
                     }
                     Native::TemporalZonedDateTimeDaysInMonthGetter => {
-                        super::temporal_date::iso_days_in_month(fields[0], fields[1])
-                            .unwrap_or_default()
+                        calendar_fields.as_ref().map_or_else(
+                            || super::temporal_date::iso_days_in_month(fields[0], fields[1]).unwrap_or_default() as i32,
+                            |fields| fields.days_in_month as i32,
+                        )
                     }
                     Native::TemporalZonedDateTimeDaysInYearGetter => {
-                        super::temporal_date::iso_days_in_year(fields[0]) as i32
+                        calendar_fields.as_ref().map_or_else(
+                            || super::temporal_date::iso_days_in_year(fields[0]) as i32,
+                            |fields| fields.days_in_year as i32,
+                        )
                     }
                     Native::TemporalZonedDateTimeMonthsInYearGetter => {
-                        super::temporal_date::ISO_MONTHS_PER_YEAR
+                        calendar_fields.as_ref().map_or(
+                            super::temporal_date::ISO_MONTHS_PER_YEAR,
+                            |fields| fields.months_in_year as i32,
+                        )
                     }
                     Native::TemporalZonedDateTimeInLeapYearGetter => {
-                        return Ok(if super::temporal_date::iso_is_leap_year(fields[0]) {
+                        return Ok(if calendar_fields.map_or_else(
+                            || super::temporal_date::iso_is_leap_year(fields[0]),
+                            |fields| fields.is_leap_year,
+                        ) {
                             Value::TRUE
                         } else {
                             Value::FALSE

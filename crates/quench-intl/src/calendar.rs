@@ -1,4 +1,9 @@
-use icu_calendar::{AnyCalendar, AnyCalendarKind, Date, cal::Iso, types::Month};
+use icu_calendar::{
+    cal::Iso,
+    options::{DateAddOptions, Overflow},
+    types::{DateDuration, Month},
+    AnyCalendar, AnyCalendarKind, Date,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CalendarDate {
@@ -77,7 +82,7 @@ pub fn calendar_fields_from_iso(
     };
     Some(CalendarDate {
         year,
-        month: u32::from(date.month().number()),
+        month: u32::from(date.month().ordinal),
         day: u32::from(date.day_of_month().0),
         month_code: date.month().to_input().code().0.to_string(),
         related_year,
@@ -98,6 +103,79 @@ pub fn calendar_date_to_iso(
     calendar: &str,
 ) -> Option<(i32, u32, u32)> {
     calendar_date_to_iso_with_overflow(year, month, day, calendar, false)
+}
+
+pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option<u32> {
+    let kind = calendar_kind(calendar)?;
+    let digits = code.strip_prefix('M')?;
+    let (digits, leap) = digits
+        .strip_suffix('L')
+        .map_or((digits, false), |digits| (digits, true));
+    if digits.len() != 2 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let number = digits.parse::<u8>().ok()?;
+    if number == 0 || number > 13 || leap && !matches!(calendar, "chinese" | "dangi" | "hebrew") {
+        return None;
+    }
+    if number == 13 && !leap && matches!(calendar, "coptic" | "ethiopic" | "ethioaa") {
+        return Some(13);
+    }
+    let input_month = if leap {
+        Month::leap(number)
+    } else {
+        Month::new(number)
+    };
+    let date = Date::try_new(year.into(), input_month, FIRST_DAY_OF_MONTH, AnyCalendar::new(kind))
+        .ok()?;
+    (date.month().to_input().code().0 == code).then_some(u32::from(date.month().ordinal))
+}
+
+pub fn calendar_date_add(
+    date: (i32, u32, u32),
+    duration: (i64, i64, i64, i64),
+    calendar: &str,
+    constrain: bool,
+) -> Option<(i32, u32, u32)> {
+    let kind = if calendar == "iso8601" {
+        AnyCalendarKind::Iso
+    } else {
+        calendar_kind(calendar)?
+    };
+    let values = [duration.0, duration.1, duration.2, duration.3];
+    let Some(first_nonzero) = values.iter().copied().find(|value| *value != 0) else {
+        return Some(date);
+    };
+    let is_negative = first_nonzero < 0;
+    if values
+        .iter()
+        .any(|value| *value != 0 && (*value < 0) != is_negative)
+    {
+        return None;
+    }
+    let [years, months, weeks, days] = values.map(|value| u32::try_from(value.unsigned_abs()).ok());
+    let duration = DateDuration {
+        is_negative,
+        years: years?,
+        months: months?,
+        weeks: weeks?,
+        days: days?,
+    };
+    let date = Date::try_new_iso(date.0, date.1.try_into().ok()?, date.2.try_into().ok()?)
+        .ok()?
+        .to_calendar(AnyCalendar::new(kind));
+    let mut options = DateAddOptions::default();
+    options.overflow = Some(if constrain {
+            Overflow::Constrain
+        } else {
+            Overflow::Reject
+        });
+    let date = date.try_added_with_options(duration, options).ok()?.to_calendar(Iso);
+    Some((
+        date.year().extended_year(),
+        u32::from(date.month().ordinal),
+        u32::from(date.day_of_month().0),
+    ))
 }
 
 pub fn calendar_date_to_iso_with_overflow(

@@ -1,4 +1,4 @@
-use super::temporal_date::{self, IsoDate};
+use super::temporal_date::IsoDate;
 use super::*;
 
 pub(super) const DURATION_YEARS_FIELD: usize = 0;
@@ -34,26 +34,32 @@ impl<H: Host> Vm<H> {
         let overflow = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let constrain = self.plain_date_overflow(p, overflow)?;
         let (year, month, day, calendar) = self.temporal_plain_date_slots(p, this)?;
-        let start = IsoDate { year, month, day };
-        let month_delta =
-            duration[DURATION_YEARS_FIELD] as i128 * 12 + duration[DURATION_MONTHS_FIELD] as i128;
-        let month_shifted = temporal_date::shift_iso_months(start, month_delta)
-            .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
-        if !constrain && month_shifted.day != day {
-            return Err(self.range_error(p, "Invalid PlainDate".into()));
-        }
         let subday_nanos = duration[4..]
             .iter()
             .zip(TIME_UNIT_NANOSECOND_SCALES)
             .map(|(value, scale)| *value as i128 * scale)
             .sum::<i128>();
-        let calendar_days = duration[DURATION_WEEKS_FIELD] as i128 * DAYS_PER_WEEK
-            + duration[DURATION_DAYS_FIELD] as i128
-            + subday_nanos / NANOS_PER_DAY;
-        let days = i64::try_from(calendar_days)
+        let days = i64::try_from(
+            duration[DURATION_DAYS_FIELD] as i128 + subday_nanos / NANOS_PER_DAY,
+        )
             .map_err(|_| self.range_error(p, "Invalid PlainDate".into()))?;
-        let result = temporal_date::shift_iso_days(month_shifted, days)
+        let result = quench_intl::calendar_date_add(
+            (year, month, day),
+            (
+                duration[DURATION_YEARS_FIELD] as i64,
+                duration[DURATION_MONTHS_FIELD] as i64,
+                duration[DURATION_WEEKS_FIELD] as i64,
+                days,
+            ),
+            &calendar,
+            constrain,
+        )
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
+        let result = IsoDate {
+            year: result.0,
+            month: result.1,
+            day: result.2,
+        };
         let constructor = self.temporal_plain_date_constructor(p)?;
         self.make_temporal_plain_date(p, result, calendar, constructor)
     }

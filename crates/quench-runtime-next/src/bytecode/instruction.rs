@@ -493,7 +493,7 @@ macro_rules! layout_accessors {
                 );
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),
-                    FieldLayout::CacheSiteIndex
+                    FieldLayout::FieldLookupCacheSiteIndex
                 );
                 if self.b() == FieldBase::NESTED {
                     (self.c() == 0).then_some(FieldLookup::Site(self.imm() as usize))
@@ -515,7 +515,7 @@ macro_rules! layout_accessors {
                 );
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::C),
-                    FieldLayout::CacheSiteIndex
+                    FieldLayout::FieldLookupCacheSiteIndex
                 );
                 self.set_b(FieldBase::NESTED);
                 self.set_c(0);
