@@ -700,13 +700,13 @@ fn fit_largest(
     .signum();
     let mut count = estimate;
     let mut candidate = temporal_date::shift_iso_months(start, count * month_scale)?;
-    if !reached_target(candidate, end, direction) {
+    if candidate.day != start.day || !reached_target(candidate, end, direction) {
         count -= i128::from(direction);
         candidate = temporal_date::shift_iso_months(start, count * month_scale)?;
     }
     let next_count = count + i128::from(direction);
     if let Some(next) = temporal_date::shift_iso_months(start, next_count * month_scale)
-        .filter(|next| reached_target(*next, end, direction))
+        .filter(|next| next.day == start.day && reached_target(*next, end, direction))
     {
         count = next_count;
         candidate = next;
