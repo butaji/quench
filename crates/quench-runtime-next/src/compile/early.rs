@@ -1,7 +1,7 @@
 use oxc_ast::ast::{
-    ArrowFunctionExpression, AssignmentExpression, BindingPattern, FormalParameterKind,
-    FormalParameters, Function, Program, SimpleAssignmentTarget, Statement, UnaryExpression,
-    UpdateExpression, VariableDeclarationKind,
+    ArrowFunctionExpression, AssignmentExpression, BindingPattern, CallExpression, Expression,
+    FormalParameterKind, FormalParameters, Function, Program, SimpleAssignmentTarget, Statement,
+    UnaryExpression, UpdateExpression, VariableDeclarationKind,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
@@ -301,11 +301,16 @@ pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> b
     finder.0
 }
 
+pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
+    !call.optional
+        && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")
+}
+
 struct DirectEvalParameterFinder(bool);
 
 impl<'a> Visit<'a> for DirectEvalParameterFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
-        if matches!(&call.callee, oxc_ast::ast::Expression::Identifier(id) if id.name == "eval") {
+        if is_direct_eval_call(call) {
             self.0 = true;
         } else {
             walk::walk_call_expression(self, call);
