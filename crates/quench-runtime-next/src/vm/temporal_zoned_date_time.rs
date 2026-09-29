@@ -1,6 +1,6 @@
 use super::*;
 const ZERO_OFFSET_TIME_ZONES: [&str; 5] = ["UTC", "+00", "-00", "+00:00", "-00:00"];
-use chrono::{Datelike, Duration, Offset, TimeZone, Utc};
+use chrono::{Datelike, Duration, Offset, TimeZone, Timelike, Utc};
 use std::cmp::Ordering;
 
 pub(super) const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
@@ -854,6 +854,10 @@ impl<H: Host> Vm<H> {
             self.temporal_plain_date_time_construct(p, &date_time_args, date_time_constructor)?;
         let mut date_duration = duration;
         date_duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..].fill(0.0);
+        let has_date_duration = date_duration
+            [..=super::temporal_date_arithmetic::DURATION_DAYS_FIELD]
+            .iter()
+            .any(|field| *field != 0.0);
         let date_duration_args = date_duration.map(Value::number);
         let date_duration = self.temporal_duration_construct(p, &date_duration_args)?;
         let internal_options = self.object();
@@ -868,8 +872,12 @@ impl<H: Host> Vm<H> {
             &[date_duration, internal_options],
         )?;
         let (date, time, _) = self.temporal_plain_date_time_slots(p, local_date_time)?;
-        let date_epoch = zoned_local_epoch_from_iso_fields(date, time, &time_zone, "compatible")
-            .ok_or_else(|| self.range_error(p, "Invalid local date-time".into()))?;
+        let date_epoch = if has_date_duration {
+            zoned_local_epoch_from_iso_fields(date, time, &time_zone, "compatible")
+                .ok_or_else(|| self.range_error(p, "Invalid local date-time".into()))?
+        } else {
+            epoch_nanoseconds
+        };
         let time_delta = duration[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..]
             .iter()
             .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
@@ -1916,7 +1924,12 @@ impl<H: Host> Vm<H> {
         let offset = if options.offset == "never" {
             String::new()
         } else {
-            format_offset_nanoseconds(offset)
+            let display_offset = if fixed_time_zone_offset_nanoseconds(&time_zone).is_some() {
+                offset
+            } else {
+                offset / NANOSECONDS_PER_MINUTE * NANOSECONDS_PER_MINUTE
+            };
+            format_offset_nanoseconds(display_offset)
         };
         let result = format!(
             "{}-{:02}-{:02}T{time}{offset}{zone_annotation}{calendar_annotation}",
@@ -3042,9 +3055,33 @@ pub(super) fn zoned_date_time_fields(epoch: i128, zone: &str) -> Option<[i32; 9]
             super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
         return zoned_fields_from_date_and_time(date, local.rem_euclid(NANOSECONDS_PER_DAY));
     }
-    zone.parse::<chrono_tz::Tz>().ok()?;
-    let offset = timezone_offset_nanoseconds(zone, epoch).unwrap_or_default();
-    let local = epoch.checked_add(offset)?;
+    let timezone = zone.parse::<chrono_tz::Tz>().ok()?;
+    let seconds = epoch.div_euclid(NANOSECONDS_PER_SECOND);
+    let nanoseconds = epoch.rem_euclid(NANOSECONDS_PER_SECOND) as u32;
+    if let Some(utc) = i64::try_from(seconds)
+        .ok()
+        .and_then(|seconds| Utc.timestamp_opt(seconds, nanoseconds).single())
+    {
+        let offset = timezone
+            .offset_from_utc_datetime(&utc.naive_utc())
+            .fix()
+            .local_minus_utc();
+        let local = utc
+            .naive_utc()
+            .checked_add_signed(Duration::seconds(i64::from(offset)))?;
+        let subsecond = local.and_utc().timestamp_subsec_nanos();
+        let date = super::temporal_date::checked_iso_date(
+            local.year(),
+            i32::try_from(local.month()).ok()?,
+            i32::try_from(local.day()).ok()?,
+        )?;
+        let time = i128::from(local.hour()) * NANOSECONDS_PER_HOUR
+            + i128::from(local.minute()) * NANOSECONDS_PER_MINUTE
+            + i128::from(local.second()) * NANOSECONDS_PER_SECOND
+            + i128::from(subsecond);
+        return zoned_fields_from_date_and_time(date, time);
+    }
+    let local = epoch.checked_add(timezone_offset_nanoseconds(zone, epoch).unwrap_or_default())?;
     let date_days = i64::try_from(local.div_euclid(NANOSECONDS_PER_DAY)).ok()?;
     let date = quench_temporal::civil_from_days(date_days)?;
     let date = super::temporal_date::checked_iso_date(date.year, date.month as i32, date.day as i32)?;
