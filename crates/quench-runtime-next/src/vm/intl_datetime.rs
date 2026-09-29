@@ -1718,7 +1718,7 @@ fn append_range_parts(
 const RANGE_SEPARATOR_PARTS: usize = 1;
 const DATE_TIME_SEPARATOR_PARTS: usize = 1;
 
-fn time_zone_name_for(style: &str, zone: &str) -> String {
+fn time_zone_name_for(style: &str, zone: &str, fields: &DateTimeFields) -> String {
     let zone = match zone {
         "Asia/Calcutta" => "Asia/Kolkata",
         other => other,
@@ -1729,11 +1729,11 @@ fn time_zone_name_for(style: &str, zone: &str) -> String {
             _ => "UTC".into(),
         };
     }
-    if zone.starts_with(['+', '-']) {
-        return match style {
-            "longOffset" => format!("GMT{zone}"),
-            _ => format!("GMT{zone}"),
-        };
+    if let Some(name) = offset_time_zone_name(style, zone) {
+        return name;
+    }
+    if let Some(name) = time_zone_name_from_zone(style, zone, fields) {
+        return name;
     }
     match style {
         "long" | "longGeneric" if zone == DEFAULT_TIME_ZONE => {
@@ -1847,10 +1847,7 @@ fn canonical_time_zone(zone: &str) -> Option<String> {
             total_minutes % MINUTES_PER_HOUR
         ));
     }
-    chrono_tz::TZ_VARIANTS
-        .iter()
-        .find(|timezone| timezone.name().eq_ignore_ascii_case(zone))
-        .map(|timezone| timezone.name().to_string())
+    quench_intl::canonical_time_zone_name(zone)
 }
 
 fn date_in_time_zone(
