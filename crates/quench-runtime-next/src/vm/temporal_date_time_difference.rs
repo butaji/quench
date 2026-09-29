@@ -89,14 +89,10 @@ impl<H: Host> Vm<H> {
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime difference".into()))?;
             let mut fields = [0.0; 10];
-            fields[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] =
-                difference.0 as f64;
-            fields[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] =
-                difference.1 as f64;
-            fields[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] =
-                difference.2 as f64;
-            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] =
-                difference.3 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_YEARS_FIELD] = difference.0 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_MONTHS_FIELD] = difference.1 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_WEEKS_FIELD] = difference.2 as f64;
+            fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = difference.3 as f64;
             return self.make_temporal_duration(p, fields);
         }
         let direction = if native == Native::TemporalPlainDateTimeSince {
@@ -291,7 +287,8 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime".into()))?;
             let anchor_total = datetime_nanos(anchor, receiver.1);
             let target_total = datetime_nanos(target.0, target.1);
-            if (anchor_from_receiver && receiver_is_end && anchor_total < target_total)
+            if anchor.day != receiver.0.day
+                || (anchor_from_receiver && receiver_is_end && anchor_total < target_total)
                 || (anchor_from_receiver && !receiver_is_end && anchor_total > target_total)
                 || (!anchor_from_receiver
                     && datetime_nanos(anchor, start.1) > datetime_nanos(end.0, end.1))
