@@ -538,11 +538,7 @@ impl<H: Host> Vm<H> {
             );
         }
         if native == Native::TemporalZonedDateTimeToLocaleString {
-            return self.temporal_zoned_date_time_to_string(
-                p,
-                this,
-                ZonedDateTimeStringOptions::default(),
-            );
+            return self.temporal_to_locale_string(p, this, args);
         }
         if matches!(
             native,

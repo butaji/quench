@@ -21,8 +21,8 @@ pub use locale_canonicalization::{
     canonical_region, canonicalize_locale_identifier, language_alias, titlecase_script,
 };
 pub use locale_data::{
-    calendar_alias, default_numbering_system, sanitize_datetime_locale, valid_calendar,
-    valid_numbering_system, valid_unicode_type, CALENDARS, NUMBERING_SYSTEMS,
+    calendar_alias, default_numbering_system, sanitize_datetime_locale, unicode_extension_value,
+    valid_calendar, valid_numbering_system, valid_unicode_type, CALENDARS, NUMBERING_SYSTEMS,
 };
 pub use locale_case::locale_case;
 pub use plural::{
