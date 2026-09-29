@@ -706,7 +706,7 @@ impl<H: Host> Vm<H> {
             None if calendar.is_undefined() => "iso8601".to_owned(),
             Some(Cell::String(value)) => {
                 let value = value.host_string();
-                temporal_date_parse::parse_calendar_identifier(value)
+                temporal_date_parse::calendar_identifier_from_string(value)
                     .ok_or_else(|| self.range_error(p, "Invalid calendar".into()))?
             }
             Some(Cell::TemporalPlainDate { calendar, .. })
