@@ -395,9 +395,8 @@ impl<H: Host> Vm<H> {
         if let Some(identifier) = time_zone_from_datetime_identifier(&text) {
             return Ok(identifier);
         }
-        text.parse::<chrono_tz::Tz>()
-            .map(|zone| zone.to_string())
-            .map_err(|_| self.range_error(p, "Invalid time zone".into()))
+        quench_intl::canonical_time_zone_name(&text)
+            .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))
     }
 
     fn temporal_zoned_date_time_intrinsic_constructor(
@@ -2723,10 +2722,7 @@ fn canonical_time_zone(value: &str) -> Option<String> {
         let minutes = seconds / SECONDS_PER_MINUTE as u32 % SECONDS_PER_MINUTE as u32;
         return Some(format!("{sign}{hours:02}:{minutes:02}"));
     }
-    value
-        .parse::<chrono_tz::Tz>()
-        .ok()
-        .map(|zone| zone.to_string())
+    quench_intl::canonical_time_zone_name(value)
 }
 
 fn valid_time_zone_offset(value: &str) -> bool {

@@ -30,8 +30,8 @@ pub use plural::{
     plural_category_range, plural_category_range_decimal,
 };
 pub use supported_values::{
-    collation_supported, currency_fraction_digits, supported_time_zones, COLLATIONS, CURRENCIES,
-    UNITS,
+    canonical_time_zone_name, collation_supported, currency_fraction_digits, supported_time_zones,
+    COLLATIONS, CURRENCIES, UNITS,
 };
 
 pub const NUMBER_FORMAT_OPTION_KEYS: &[&str] = &[
