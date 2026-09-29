@@ -314,7 +314,9 @@ impl<H: Host> Vm<H> {
                 return Ok(self.heap.alloc(Cell::String(calendar.into())));
             }
             Native::TemporalPlainDateTimeYearGetter => i64::from(
-                calendar_fields.as_ref().map_or(date.year, |fields| fields.year),
+                calendar_fields
+                    .as_ref()
+                    .map_or(date.year, |fields| fields.year),
             ),
             Native::TemporalPlainDateTimeMonthGetter => i64::from(
                 calendar_fields
@@ -322,14 +324,18 @@ impl<H: Host> Vm<H> {
                     .map_or(date.month, |fields| fields.month),
             ),
             Native::TemporalPlainDateTimeDayGetter => i64::from(
-                calendar_fields.as_ref().map_or(date.day, |fields| fields.day),
+                calendar_fields
+                    .as_ref()
+                    .map_or(date.day, |fields| fields.day),
             ),
             Native::TemporalPlainDateTimeMonthCodeGetter => {
                 return Ok(self.heap.alloc(Cell::String(
-                    calendar_fields.map_or_else(
-                        || format!("M{:0width$}", date.month, width = MONTH_CODE_DIGITS),
-                        |fields| fields.month_code,
-                    ).into(),
+                    calendar_fields
+                        .map_or_else(
+                            || format!("M{:0width$}", date.month, width = MONTH_CODE_DIGITS),
+                            |fields| fields.month_code,
+                        )
+                        .into(),
                 )));
             }
             Native::TemporalPlainDateTimeHourGetter => i64::from(time[0]),
@@ -370,30 +376,39 @@ impl<H: Host> Vm<H> {
             Native::TemporalPlainDateTimeDaysInWeekGetter => {
                 super::temporal_date::ISO_DAYS_PER_WEEK
             }
-            Native::TemporalPlainDateTimeDaysInMonthGetter => i64::from(
-                calendar_fields.as_ref().map_or_else(
-                    || super::temporal_date::iso_days_in_month(date.year, date.month as i32).unwrap_or(31) as u32,
+            Native::TemporalPlainDateTimeDaysInMonthGetter => {
+                i64::from(calendar_fields.as_ref().map_or_else(
+                    || {
+                        super::temporal_date::iso_days_in_month(date.year, date.month as i32)
+                            .unwrap_or(31) as u32
+                    },
                     |fields| fields.days_in_month,
-                ),
-            ),
-            Native::TemporalPlainDateTimeDaysInYearGetter => i64::from(calendar_fields
-                .as_ref()
-                .map_or_else(|| super::temporal_date::iso_days_in_year(date.year) as i32, |fields| fields.days_in_year as i32)),
-            Native::TemporalPlainDateTimeMonthsInYearGetter => {
-                i64::from(calendar_fields.as_ref().map_or(
-                    super::temporal_date::ISO_MONTHS_PER_YEAR as u32,
-                    |fields| fields.months_in_year,
                 ))
             }
+            Native::TemporalPlainDateTimeDaysInYearGetter => {
+                i64::from(calendar_fields.as_ref().map_or_else(
+                    || super::temporal_date::iso_days_in_year(date.year) as i32,
+                    |fields| fields.days_in_year as i32,
+                ))
+            }
+            Native::TemporalPlainDateTimeMonthsInYearGetter => i64::from(
+                calendar_fields
+                    .as_ref()
+                    .map_or(super::temporal_date::ISO_MONTHS_PER_YEAR as u32, |fields| {
+                        fields.months_in_year
+                    }),
+            ),
             Native::TemporalPlainDateTimeInLeapYearGetter => {
-                return Ok(if calendar_fields.map_or_else(
-                    || super::temporal_date::iso_is_leap_year(date.year),
-                    |fields| fields.is_leap_year,
-                ) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                });
+                return Ok(
+                    if calendar_fields.map_or_else(
+                        || super::temporal_date::iso_is_leap_year(date.year),
+                        |fields| fields.is_leap_year,
+                    ) {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                );
             }
             _ => unreachable!("not a Temporal.PlainDateTime native"),
         };
@@ -630,9 +645,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "Missing day".into()))?;
         let month_code = fields
             .month_code
-            .map(|month| {
-                self.calendarized_month_code(p, month, &fields.calendar, year)
-            })
+            .map(|month| self.calendarized_month_code(p, month, &fields.calendar, year, constrain))
             .transpose()?;
         let month = match (fields.month, month_code) {
             (Some(month), Some(code)) if month != code => {
@@ -831,7 +844,7 @@ impl<H: Host> Vm<H> {
         let days = i64::try_from(
             duration[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] as i128 + carry_days,
         )
-            .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
+        .map_err(|_| self.range_error(p, "Invalid PlainDateTime".into()))?;
         let date = quench_intl::calendar_date_add(
             (date.year, date.month, date.day),
             (
@@ -967,7 +980,9 @@ impl<H: Host> Vm<H> {
 
         let calendar_fields =
             quench_intl::calendar_fields_from_iso(date.year, date.month, date.day, &calendar);
-        let mut year = calendar_fields.as_ref().map_or(date.year, |fields| fields.year);
+        let mut year = calendar_fields
+            .as_ref()
+            .map_or(date.year, |fields| fields.year);
         let base_year = year;
         let mut month = calendar_fields
             .as_ref()
@@ -1086,9 +1101,7 @@ impl<H: Host> Vm<H> {
         let constrain = overflow == "constrain";
         let month_code = month_code_text
             .as_deref()
-            .map(|text| {
-                self.parse_plain_date_month_code(p, text, &calendar, year, constrain)
-            })
+            .map(|text| self.parse_plain_date_month_code(p, text, &calendar, year, constrain))
             .transpose()?;
         if let Some(code_month) = month_code {
             if month_was_provided && month != code_month {
@@ -1099,10 +1112,14 @@ impl<H: Host> Vm<H> {
             }
         }
         let month = if constrain {
-            month.clamp(1, calendar_fields.as_ref().map_or(
-                super::temporal_date::ISO_MONTHS_PER_YEAR as i32,
-                |fields| fields.months_in_year as i32,
-            ))
+            month.clamp(
+                1,
+                calendar_fields
+                    .as_ref()
+                    .map_or(super::temporal_date::ISO_MONTHS_PER_YEAR as i32, |fields| {
+                        fields.months_in_year as i32
+                    }),
+            )
         } else {
             month
         };

@@ -15,6 +15,7 @@ const BASIC_ISO_YEAR_LENGTH: usize = 4;
 const EXTENDED_ISO_YEAR_LENGTH: usize = 7;
 const BASIC_ISO_TIME_MINUTES_LENGTH: usize = 4;
 const BASIC_ISO_TIME_SECONDS_LENGTH: usize = 6;
+
 const PLAIN_MONTH_DAY_GETTERS: &[(&str, Native)] = &[
     ("calendarId", Native::TemporalPlainMonthDayCalendarIdGetter),
     ("day", Native::TemporalPlainMonthDayDayGetter),
@@ -457,10 +458,7 @@ impl<H: Host> Vm<H> {
                     }) if *other_month == month
                         && *other_day == day
                         && *other_calendar == calendar
-                        && *other_year == reference_year =>
-                    {
-                        Value::TRUE
-                    }
+                        && *other_year == reference_year => Value::TRUE,
                     _ => Value::FALSE,
                 })
             }
@@ -1072,14 +1070,14 @@ impl<H: Host> Vm<H> {
             let plain_date_constructor = self.native_value(Native::TemporalPlainDate);
             let date =
                 self.temporal_plain_date_from(p, plain_date_constructor, &[value, options])?;
-            let (_, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
-            return self.make_plain_month_day(
+            let (year, month, day, calendar) = self.temporal_plain_date_slots(p, date)?;
+            let constrain = self.plain_date_overflow(p, options)?;
+            return self.make_plain_month_day_from_iso_date(
                 p,
                 constructor,
-                month,
-                day,
+                (year, month, day),
                 calendar,
-                DEFAULT_REFERENCE_ISO_YEAR,
+                constrain,
             );
         }
         self.temporal_plain_month_day_from_bag(p, constructor, value, options)
@@ -1133,6 +1131,25 @@ impl<H: Host> Vm<H> {
         if non_iso_calendar && !year_value.is_undefined() {
             if let Some(code) = month_code_text.as_deref() {
                 let ordinal = quench_intl::calendar_month_from_code(year, code, &calendar)
+                    .or_else(|| {
+                        (constrain && code.ends_with('L'))
+                            .then(|| &code[..code.len() - 1])
+                            .and_then(|code| {
+                                quench_intl::calendar_month_from_code(year, code, &calendar)
+                            })
+                    })
+                    .or_else(|| {
+                        (constrain
+                            && matches!(calendar.as_str(), "chinese" | "dangi")
+                            && code.ends_with('L'))
+                        .then(|| {
+                            code.strip_prefix('M')?
+                                .strip_suffix('L')?
+                                .parse::<u32>()
+                                .ok()
+                        })
+                        .flatten()
+                    })
                     .ok_or_else(|| self.range_error(p, "Invalid monthCode".into()))?;
                 if month.is_some_and(|month| month != ordinal as i32) {
                     return Err(self.range_error(p, "month and monthCode must agree".into()));
@@ -1141,7 +1158,59 @@ impl<H: Host> Vm<H> {
                     year, ordinal, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
-                return self.make_plain_month_day_from_iso_date(p, constructor, iso, calendar);
+                return self.make_plain_month_day_from_iso_date(
+                    p,
+                    constructor,
+                    iso,
+                    calendar,
+                    constrain,
+                );
+            }
+            if matches!(calendar.as_str(), "chinese" | "dangi")
+                && let Some(ordinal) = month
+            {
+                let code = if constrain
+                    && ordinal > super::temporal_date::ISO_MONTHS_PER_YEAR
+                {
+                    format!(
+                        "M{:02}",
+                        super::temporal_date::ISO_MONTHS_PER_YEAR
+                    )
+                } else {
+                    let ordinal = if constrain { ordinal.max(1) } else { ordinal };
+                    quench_intl::calendar_month_code_for_ordinal(
+                        year,
+                        ordinal as u32,
+                        &calendar,
+                    )
+                    .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?
+                };
+                let maximum_day = quench_intl::calendar_days_in_month_for_code(
+                    year,
+                    &code,
+                    &calendar,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                if day < 1 || (!constrain && day as u32 > maximum_day) {
+                    return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+                }
+                let day = if constrain {
+                    (day as u32).min(maximum_day)
+                } else {
+                    day as u32
+                };
+                let reference = quench_intl::calendar_reference_date_from_code(
+                    &code, day, &calendar, constrain,
+                )
+                .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
+                return self.make_plain_month_day(
+                    p,
+                    constructor,
+                    reference.1,
+                    reference.2,
+                    calendar,
+                    reference.0,
+                );
             }
         }
         if month.is_none()
@@ -1153,7 +1222,14 @@ impl<H: Host> Vm<H> {
                     code, day as u32, &calendar, constrain,
                 )
                 .ok_or_else(|| self.range_error(p, "Invalid PlainMonthDay".into()))?;
-                return self.make_plain_month_day(p, constructor, iso.1, iso.2, calendar, iso.0);
+                return self.make_plain_month_day(
+                    p,
+                    constructor,
+                    iso.1,
+                    iso.2,
+                    calendar,
+                    iso.0,
+                );
             }
         }
         let month_code = month_code
@@ -1336,19 +1412,29 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         (year, month, day): (i32, u32, u32),
         calendar: String,
+        constrain: bool,
     ) -> Result<Value, JsError> {
-        let reference = quench_intl::calendar_fields_from_iso(year, month, day, &calendar)
-            .and_then(|fields| {
-                quench_intl::calendar_reference_date_from_code(
-                    &fields.month_code,
-                    fields.day,
-                    &calendar,
-                    false,
-                )
-            });
-        let (iso_year, iso_month, iso_day) =
-            reference.unwrap_or((DEFAULT_REFERENCE_ISO_YEAR, month, day));
-        self.make_plain_month_day(p, constructor, iso_month, iso_day, calendar, iso_year)
+        let fields = quench_intl::calendar_fields_from_iso(year, month, day, &calendar);
+        let reference = fields.as_ref().and_then(|fields| {
+            quench_intl::calendar_reference_date_from_code(
+                &fields.month_code,
+                fields.day,
+                &calendar,
+                constrain,
+            )
+        });
+        if !constrain && fields.is_some() && reference.is_none() {
+            return Err(self.range_error(p, "Invalid PlainMonthDay".into()));
+        }
+        let reference = reference.unwrap_or((DEFAULT_REFERENCE_ISO_YEAR, month, day));
+        self.make_plain_month_day(
+            p,
+            constructor,
+            reference.1,
+            reference.2,
+            calendar,
+            reference.0,
+        )
     }
 
     fn make_plain_year_month(
@@ -1649,14 +1735,9 @@ pub(super) fn to_plain_month_day<H: Host>(
     p: &ResidualProgram,
     this: Value,
 ) -> Result<Value, JsError> {
-    let (_year, month, day, calendar) = vm.temporal_plain_date_slots(p, this)?;
-    Ok(vm.heap.alloc(Cell::TemporalPlainMonthDay {
-        object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_month_day_proto)),
-        month,
-        day,
-        calendar,
-        reference_iso_year: DEFAULT_REFERENCE_ISO_YEAR,
-    }))
+    let (year, month, day, calendar) = vm.temporal_plain_date_slots(p, this)?;
+    let constructor = vm.native_value(Native::TemporalPlainMonthDay);
+    vm.make_plain_month_day_from_iso_date(p, constructor, (year, month, day), calendar, true)
 }
 
 pub(super) fn to_plain_year_month<H: Host>(
