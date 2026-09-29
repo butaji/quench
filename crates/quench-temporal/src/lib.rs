@@ -154,6 +154,8 @@ const DAYS_PER_CENTURY: i64 = 36_524;
 const DAYS_BEFORE_LAST_400_YEAR_DAY: i64 = 146_096;
 const DAYS_PER_MONTH_TRANSFORM_CYCLE: i64 = 153;
 const MONTH_TRANSFORM_DIVISOR: i64 = 5;
+const ISO_MONTHS_PER_YEAR: i64 = 12;
+const ISO_DAYS_PER_WEEK: i64 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IsoDate {
@@ -174,6 +176,35 @@ pub fn days_in_month(year: i32, month: u32) -> Option<u32> {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         _ => return None,
     })
+}
+
+/// Add calendar units, regulate the day, then add weeks and days. Bounds on
+/// Temporal values belong to the caller, rather than intermediate ISO dates.
+pub fn add_iso_date(
+    date: IsoDate,
+    (years, months, weeks, days): (i64, i64, i64, i64),
+    constrain: bool,
+) -> Option<IsoDate> {
+    if !(1..=days_in_month(date.year, date.month)?).contains(&date.day) {
+        return None;
+    }
+    let month_index = i64::from(date.year)
+        .checked_add(years)?
+        .checked_mul(ISO_MONTHS_PER_YEAR)?
+        .checked_add(i64::from(date.month) - 1)?
+        .checked_add(months)?;
+    let year = i32::try_from(month_index.div_euclid(ISO_MONTHS_PER_YEAR)).ok()?;
+    let month = u32::try_from(month_index.rem_euclid(ISO_MONTHS_PER_YEAR)).ok()? + 1;
+    let last_day = days_in_month(year, month)?;
+    let day = if constrain {
+        date.day.min(last_day)
+    } else if date.day <= last_day {
+        date.day
+    } else {
+        return None;
+    };
+    let days = weeks.checked_mul(ISO_DAYS_PER_WEEK)?.checked_add(days)?;
+    civil_from_days(days_from_civil(IsoDate { year, month, day }).checked_add(days)?)
 }
 
 pub fn days_from_civil(date: IsoDate) -> i64 {

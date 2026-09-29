@@ -200,11 +200,7 @@ pub fn calendar_month_from_code(year: i32, code: &str, calendar: &str) -> Option
     (date.month().to_input().code().0 == code).then_some(u32::from(date.month().ordinal))
 }
 
-pub fn calendar_month_code_for_ordinal(
-    year: i32,
-    ordinal: u32,
-    calendar: &str,
-) -> Option<String> {
+pub fn calendar_month_code_for_ordinal(year: i32, ordinal: u32, calendar: &str) -> Option<String> {
     let kind = calendar_kind(calendar)?;
     (FIRST_MONTH_OF_YEAR..=MAX_CALENDAR_MONTHS_PER_YEAR).find_map(|number| {
         [Month::new(number as u8), Month::leap(number as u8)]
@@ -262,12 +258,17 @@ pub fn calendar_reference_date_from_code(
     }
     let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
     let exact = years.clone().find_map(|year| {
-        (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).rev().find_map(|month| {
-            (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).rev().find_map(|iso_day| {
-                let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
-                (fields.month_code == code && fields.day == day).then_some((year, month, iso_day))
+        (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR)
+            .rev()
+            .find_map(|month| {
+                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT)
+                    .rev()
+                    .find_map(|iso_day| {
+                        let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+                        (fields.month_code == code && fields.day == day)
+                            .then_some((year, month, iso_day))
+                    })
             })
-        })
     });
     if exact.is_some() || !constrain {
         return exact;
@@ -306,13 +307,17 @@ pub fn calendar_reference_date_from_code(
     let exact_constrained = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END)
         .rev()
         .find_map(|year| {
-            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).rev().find_map(|month| {
-                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).rev().find_map(|iso_day| {
-                    let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
-                    (fields.month_code == code && fields.day == target_day)
-                        .then_some((year, month, iso_day))
+            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR)
+                .rev()
+                .find_map(|month| {
+                    (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT)
+                        .rev()
+                        .find_map(|iso_day| {
+                            let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
+                            (fields.month_code == code && fields.day == target_day)
+                                .then_some((year, month, iso_day))
+                        })
                 })
-            })
         });
     if exact_constrained.is_some() {
         return exact_constrained;
@@ -410,11 +415,19 @@ pub fn calendar_date_add(
     calendar: &str,
     constrain: bool,
 ) -> Option<(i32, u32, u32)> {
-    let kind = if calendar == "iso8601" {
-        AnyCalendarKind::Iso
-    } else {
-        calendar_kind(calendar)?
-    };
+    if matches!(calendar, "iso8601" | "gregory") {
+        let result = quench_temporal::add_iso_date(
+            quench_temporal::IsoDate {
+                year: date.0,
+                month: date.1,
+                day: date.2,
+            },
+            duration,
+            constrain,
+        )?;
+        return Some((result.year, result.month, result.day));
+    }
+    let kind = calendar_kind(calendar)?;
     let values = [duration.0, duration.1, duration.2, duration.3];
     let Some(first_nonzero) = values.iter().copied().find(|value| *value != 0) else {
         return Some(date);
