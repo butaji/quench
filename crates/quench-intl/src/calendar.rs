@@ -34,6 +34,8 @@ pub enum CalendarDifferenceDirection {
     Since,
 }
 
+pub const MAX_CALENDAR_MONTHS_PER_YEAR: u32 = 13;
+
 pub fn calendar_fields_from_iso(
     year: i32,
     month: u32,
@@ -204,7 +206,7 @@ pub fn calendar_month_code_for_ordinal(
     calendar: &str,
 ) -> Option<String> {
     let kind = calendar_kind(calendar)?;
-    (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|number| {
+    (FIRST_MONTH_OF_YEAR..=MAX_CALENDAR_MONTHS_PER_YEAR).find_map(|number| {
         [Month::new(number as u8), Month::leap(number as u8)]
             .into_iter()
             .find_map(|month| {
@@ -260,8 +262,8 @@ pub fn calendar_reference_date_from_code(
     }
     let years = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END).rev();
     let exact = years.clone().find_map(|year| {
-        (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
-            (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+        (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).rev().find_map(|month| {
+            (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).rev().find_map(|iso_day| {
                 let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
                 (fields.month_code == code && fields.day == day).then_some((year, month, iso_day))
             })
@@ -304,8 +306,8 @@ pub fn calendar_reference_date_from_code(
     let exact_constrained = (REFERENCE_YEAR_START..=REFERENCE_YEAR_END)
         .rev()
         .find_map(|year| {
-            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).find_map(|month| {
-                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).find_map(|iso_day| {
+            (FIRST_MONTH_OF_YEAR..=MONTHS_PER_YEAR).rev().find_map(|month| {
+                (FIRST_DAY_OF_MONTH_VALUE..=REFERENCE_MONTH_DAY_LIMIT).rev().find_map(|iso_day| {
                     let fields = calendar_fields_from_iso(year, month, iso_day, calendar)?;
                     (fields.month_code == code && fields.day == target_day)
                         .then_some((year, month, iso_day))
