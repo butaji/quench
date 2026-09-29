@@ -115,3 +115,13 @@ pub fn supported_time_zones() -> Vec<String> {
         .collect::<BTreeSet<_>>();
     names.into_iter().collect()
 }
+
+pub fn canonical_time_zone_name(value: &str) -> Option<String> {
+    if value.eq_ignore_ascii_case("utc") {
+        return Some("UTC".into());
+    }
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|timezone| timezone.name().eq_ignore_ascii_case(value))
+        .map(|timezone| quench_temporal::timezone_primary_name(timezone.name()).to_owned())
+}
