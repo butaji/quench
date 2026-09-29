@@ -871,7 +871,15 @@ impl<H: Host> Vm<H> {
         });
         let changed_code = changed_code
             .map(|code| self.heap.alloc(Cell::String(code.into())))
-            .map(|code| self.plain_date_month_code(p, code, &calendar, changed_year.unwrap_or(year)))
+            .map(|code| {
+                self.plain_date_month_code(
+                    p,
+                    code,
+                    &calendar,
+                    changed_year.unwrap_or(year),
+                    constrain,
+                )
+            })
             .transpose()?;
         let month = match (changed_month, changed_code) {
             (Some(month), Some(code)) if month != code => {
@@ -1271,7 +1279,7 @@ impl<H: Host> Vm<H> {
         let era_year = self.plain_date_optional_integer(p, era_year_value)?;
         let year = self.resolve_calendar_year(p, &calendar, year, era.as_deref(), era_year)?;
         let month_code = month_code_text
-            .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year))
+            .map(|text| self.parse_plain_date_month_code(p, &text, &calendar, year, false))
             .transpose()?;
         Ok((calendar, year, month, month_code))
     }
