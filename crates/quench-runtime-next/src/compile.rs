@@ -845,6 +845,15 @@ impl Engine {
                 })
                 .collect());
         }
+        if let Some(span) =
+            annex_b_targets::invalid_target(&parsed.program, &annex_b_call_target_marker)
+        {
+            return Err(vec![Diagnostic {
+                source: name.into(),
+                message: "SyntaxError: invalid assignment target".into(),
+                span,
+            }]);
+        }
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any => true,
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
