@@ -1,7 +1,8 @@
 use std::{
     env,
+    io::{self, Read},
     path::{Path, PathBuf},
-    process::{Command, ExitCode, Stdio},
+    process::{ChildStderr, Command, ExitCode, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Mutex,
@@ -17,6 +18,7 @@ use wait_timeout::ChildExt;
 
 const MAX_CASES_PER_BATCH: usize = 100;
 const MAX_FAILURE_EXAMPLES_PER_FAMILY: usize = 3;
+const MAX_FAILURE_FAMILY_CHARS: usize = 240;
 
 fn main() -> ExitCode {
     if let Err(error) = required_timeout_ms() {
@@ -152,7 +154,7 @@ fn print_failure_families(failures: &[(&PathBuf, String)]) {
 }
 
 fn failure_family(reason: &str) -> String {
-    reason
+    let family = reason
         .split_once("text: \"")
         .and_then(|(_, rest)| rest.split_once("\", thrown:").map(|(message, _)| message))
         .map(str::to_owned)
@@ -163,7 +165,11 @@ fn failure_family(reason: &str) -> String {
                 .map(|message| format!("compiler diagnostic: {message}"))
         })
         .or_else(|| reason.lines().next().map(str::to_owned))
-        .unwrap_or_else(|| "unknown failure".into())
+        .unwrap_or_else(|| "unknown failure".into());
+    let Some((end, _)) = family.char_indices().nth(MAX_FAILURE_FAMILY_CHARS) else {
+        return family;
+    };
+    format!("{}…", &family[..end])
 }
 
 fn required_timeout_ms() -> Result<u64, String> {
@@ -214,28 +220,44 @@ fn run_test_with_timeout(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("next stage test process failed: {error}"))?;
-    if child
-        .wait_timeout(timeout)
-        .map_err(|error| format!("next stage test process wait failed: {error}"))?
-        .is_none()
-    {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Ok(Err(format!(
-            "test timed out after {}ms",
-            timeout.as_millis()
-        )));
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("next stage test process collect failed: {error}"))?;
-    if output.status.success() {
+    let stderr = child.stderr.take().expect("piped worker stderr");
+    let stderr_reader = drain_stderr(stderr);
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_reader.join();
+            return Ok(Err(format!(
+                "test timed out after {}ms",
+                timeout.as_millis()
+            )));
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stderr_reader.join();
+            return Err(format!("next stage test process wait failed: {error}"));
+        }
+    };
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "next stage test stderr reader panicked".to_string())?
+        .map_err(|error| format!("next stage test stderr read failed: {error}"))?;
+    if status.success() {
         Ok(Ok(()))
     } else {
-        Ok(Err(String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .to_string()))
+        Ok(Err(String::from_utf8_lossy(&stderr).trim().to_string()))
     }
+}
+
+fn drain_stderr(stderr: ChildStderr) -> thread::JoinHandle<io::Result<Vec<u8>>> {
+    thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut output = Vec::new();
+        stderr.read_to_end(&mut output)?;
+        Ok(output)
+    })
 }
 
 fn run_batch(

@@ -408,6 +408,12 @@ impl<H: Host> Vm<H> {
             }
         }
         let target = self.proxy_target(source);
+        if self.typed_array_length_is_variable(target) {
+            return Err(self.type_error(
+                p,
+                "cannot prevent extensions on a variable-length typed array".into(),
+            ));
+        }
         if let Some(object) = self.object_data_mut(target) {
             object.set_extensible(false);
         }
@@ -523,6 +529,16 @@ impl<H: Host> Vm<H> {
                     self.set_property(descriptor, writable_atom, Value::FALSE)?;
                 }
                 self.object_define_property(p, &[target, key, descriptor])?;
+            }
+            return Ok(target);
+        }
+        if !freeze && matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+            self.object_prevent_extensions(p, &[target])?;
+            if self.typed_array_length(target).is_some_and(|length| length > 0) {
+                return Err(self.type_error(
+                    p,
+                    "cannot seal a typed array with indexed elements".into(),
+                ));
             }
             return Ok(target);
         }

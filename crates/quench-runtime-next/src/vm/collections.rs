@@ -1,4 +1,5 @@
 use super::*;
+use crate::heap::WeakMapEntries;
 
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
@@ -124,7 +125,7 @@ impl<H: Host> Vm<H> {
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
                 object: Self::empty_object(prototype),
-                entries: Vec::new(),
+                entries: WeakMapEntries::default(),
             },
             Native::WeakSet => Cell::WeakSet {
                 object: Self::empty_object(prototype),
@@ -1144,27 +1145,19 @@ impl<H: Host> Vm<H> {
                 if !self.is_weak_key_value(key) {
                     return Ok(Value::UNDEFINED);
                 }
-                let Some(index) = self.weak_map_entry_index(this, key) else {
-                    return Ok(Value::UNDEFINED);
-                };
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                Ok(entries[index].1)
+                Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
             }
             Native::WeakMapSet => {
                 self.validate_weak_map_receiver(p, this)?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let index = self.weak_map_entry_index(this, key);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                if let Some(index) = index {
-                    entries[index].1 = value;
-                } else {
-                    entries.push((key, value));
-                }
+                entries.insert(key, value);
                 Ok(this)
             }
             Native::WeakMapHas => {
@@ -1173,7 +1166,10 @@ impl<H: Host> Vm<H> {
                 if !self.is_weak_key_value(key) {
                     return Ok(Value::FALSE);
                 }
-                Ok(if self.weak_map_entry_index(this, key).is_some() {
+                let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
+                    return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
+                };
+                Ok(if entries.get(key).is_some() {
                     Value::TRUE
                 } else {
                     Value::FALSE
@@ -1185,29 +1181,35 @@ impl<H: Host> Vm<H> {
                 if !self.is_weak_key_value(key) {
                     return Ok(Value::FALSE);
                 }
-                let Some(index) = self.weak_map_entry_index(this, key) else {
-                    return Ok(Value::FALSE);
-                };
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
                 };
-                entries.remove(index);
-                Ok(Value::TRUE)
+                Ok(if entries.remove(key) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
             }
             Native::WeakMapGetOrInsert => {
                 self.validate_weak_map_receiver(p, this)?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if let Some(index) = self.weak_map_entry_index(this, key) {
-                    let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
-                        return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
-                    };
-                    return Ok(entries[index].1);
+                if let Some(value) = self
+                    .heap
+                    .get(this)
+                    .and_then(|cell| match cell {
+                        Cell::WeakMap { entries, .. } => entries.get(key),
+                        _ => None,
+                    })
+                {
+                    return Ok(value);
                 }
                 let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                    return Err(
+                        self.type_error(p, "WeakMap method called on incompatible receiver".into())
+                    );
                 };
-                entries.push((key, value));
+                entries.insert(key, value);
                 Ok(value)
             }
             Native::WeakMapGetOrInsertComputed => {
@@ -1360,7 +1362,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn validate_weak_set_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<(), JsError> {
+    fn validate_weak_set_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<(), JsError> {
         if matches!(self.heap.get(receiver), Some(Cell::WeakSet { .. })) {
             Ok(())
         } else {
@@ -1381,14 +1387,6 @@ impl<H: Host> Vm<H> {
         } else {
             Err(self.type_error(p, "weak collection keys must be objects".into()))
         }
-    }
-    fn weak_map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
-        let Some(Cell::WeakMap { entries, .. }) = self.heap.get(map) else {
-            return None;
-        };
-        entries
-            .iter()
-            .position(|(candidate, _)| self.same_value_zero(*candidate, key))
     }
     fn weak_set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
         let Some(Cell::WeakSet { entries, .. }) = self.heap.get(set) else {
