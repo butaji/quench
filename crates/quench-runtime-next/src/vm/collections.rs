@@ -1101,7 +1101,7 @@ impl<H: Host> Vm<H> {
             Native::IteratorProtocolReturn => self.iterator_protocol_return(p, this),
             Native::IteratorFrom => self.iterator_from(p, args),
             Native::IteratorDispose => self.iterator_dispose(p, this),
-            Native::IteratorHelperNext => self.iterator_next_with_args(p, this, args),
+            Native::IteratorHelperNext => self.iterator_helper_next(p, this, args),
             Native::IteratorHelperReturn => self.iterator_helper_return(p, this),
             Native::IteratorMap
             | Native::IteratorFilter

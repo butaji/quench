@@ -1026,15 +1026,19 @@ impl<H: Host> Vm<H> {
         iterator: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (source, state, running) = match self.heap.get(iterator) {
+        let (source, state, running, done) = match self.heap.get(iterator) {
             Some(Cell::Iterator {
                 source,
                 helper: Some(helper),
                 helper_running,
+                done,
                 ..
-            }) => (*source, helper.as_ref().clone(), *helper_running),
+            }) => (*source, helper.as_ref().clone(), *helper_running, *done),
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
+        if done {
+            return self.iterator_result(Value::UNDEFINED, true);
+        }
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
@@ -1200,9 +1204,9 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         source: Value,
-        args: &[Value],
+        _args: &[Value],
     ) -> Result<Option<Value>, IteratorHelperFailure> {
-        self.iterator_helper_step(p, source, args)
+        self.iterator_helper_step(p, source, &[])
             .map_err(IteratorHelperFailure::Step)
     }
 
@@ -1401,7 +1405,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, IteratorHelperFailure> {
         loop {
             if let Some(current) = inner.take() {
-                if let Some(value) = self.iterator_helper_step_for_helper(p, current, &[])? {
+                let inner_step = self
+                    .iterator_helper_step(p, current, &[])
+                    .map_err(IteratorHelperFailure::Abrupt)?;
+                if let Some(value) = inner_step {
                     inner = Some(current);
                     self.update_iterator_helper(
                         iterator,
@@ -1529,6 +1536,9 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(p, "iterator helper receiver is not an object".into()));
+        }
         let (kind, helper) = match native {
             Native::IteratorMap | Native::IteratorFilter | Native::IteratorFlatMap => {
                 let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1556,11 +1566,6 @@ impl<H: Host> Vm<H> {
                 (kind, helper)
             }
             Native::IteratorTake | Native::IteratorDrop => {
-                if !self.is_object_like(receiver) {
-                    return Err(
-                        self.type_error(p, "iterator helper receiver is not an object".into())
-                    );
-                }
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let count = match self.to_number(p, value) {
                     Ok(count) => count,
@@ -1588,7 +1593,7 @@ impl<H: Host> Vm<H> {
             }
             _ => unreachable!(),
         };
-        let source = self.iterator_from(p, &[receiver])?;
+        let source = self.iterator_get_direct(p, receiver)?;
         self.iterator_helper(p, source, kind, helper)
     }
 
@@ -1770,7 +1775,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         input: Value,
     ) -> Result<Vec<Value>, JsError> {
-        let outer = self.iterator_get_direct(p, input)?;
+        let outer = self.get_iterator(p, input)?;
         let outer_root = self.heap.root(outer);
         let mut roots = Vec::new();
         let mut iterators = Vec::new();
@@ -1987,7 +1992,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(values);
         }
-        let iterator = match self.iterator_get_direct(p, padding) {
+        let iterator = match self.get_iterator(p, padding) {
             Ok(iterator) => iterator,
             Err(error) => return Err(error),
         };
@@ -2038,9 +2043,11 @@ impl<H: Host> Vm<H> {
     fn iterator_get_direct(
         &mut self,
         p: &ResidualProgram,
-        iterable: Value,
+        iterator: Value,
     ) -> Result<Value, JsError> {
-        let iterator = self.get_iterator(p, iterable)?;
+        if !self.is_object_like(iterator) {
+            return Err(self.type_error(p, "iterator receiver is not an object".into()));
+        }
         let iterator_root = self.heap.root(iterator);
         let next_atom = self.intern_atom("next");
         let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
@@ -2357,7 +2364,7 @@ impl<H: Host> Vm<H> {
         if !matches!(consumer, IteratorConsumer::ToArray) && !self.is_function(callback) {
             return self.close_iterator_argument(p, receiver, "iterator callback is not callable");
         }
-        let iterator = self.iterator_from(p, &[receiver])?;
+        let iterator = self.iterator_get_direct(p, receiver)?;
         let initial = (consumer == IteratorConsumer::Reduce)
             .then(|| args.get(1).copied())
             .flatten();
