@@ -71,21 +71,21 @@ impl<H: Host> Vm<H> {
             && options.increment == 1
             && options.rounding_mode == "trunc"
         {
-            let (start, end) = if native == Native::TemporalPlainDateTimeSince {
-                (right_date, left_date)
-            } else {
-                (left_date, right_date)
-            };
             let largest_unit = if options.largest == "year" {
                 quench_intl::CalendarDifferenceUnit::Years
             } else {
                 quench_intl::CalendarDifferenceUnit::Months
             };
             let difference = quench_intl::calendar_date_difference(
-                (start.year, start.month, start.day),
-                (end.year, end.month, end.day),
+                (left_date.year, left_date.month, left_date.day),
+                (right_date.year, right_date.month, right_date.day),
                 &left_calendar,
                 largest_unit,
+                if native == Native::TemporalPlainDateTimeSince {
+                    quench_intl::CalendarDifferenceDirection::Since
+                } else {
+                    quench_intl::CalendarDifferenceDirection::Until
+                },
             )
             .ok_or_else(|| self.range_error(p, "Invalid PlainDateTime difference".into()))?;
             let mut fields = [0.0; 10];
