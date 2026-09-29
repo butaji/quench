@@ -141,17 +141,19 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_typed_array_species(
         &mut self,
         constructor: Value,
+        prototype: Value,
+        realm: Value,
     ) -> Result<(), JsError> {
         let to_string_tag = self.native_with_realm(
             Native::TypedArrayToStringTag,
             Value::NULL,
-            self.realm.globals,
+            realm,
         );
         self.set_builtin_function_name(to_string_tag, "get [Symbol.toStringTag]")?;
         let tag_symbol = self.well_known_symbols.get("toStringTag").copied().unwrap();
-        self.set_symbol_property(self.typed_array_proto, tag_symbol, Value::UNDEFINED)?;
+        self.set_symbol_property(prototype, tag_symbol, Value::UNDEFINED)?;
         self.set_property_attributes(
-            self.typed_array_proto,
+            prototype,
             PropertyKey::symbol(tag_symbol),
             PropertyAttributes {
                 writable: false,
@@ -163,7 +165,7 @@ impl<H: Host> Vm<H> {
             },
         );
         let species = self.well_known_symbols.get("species").copied().unwrap();
-        let getter = self.native_value(Native::ArraySpecies);
+        let getter = self.native_with_realm(Native::ArraySpecies, realm, realm);
         self.set_builtin_function_name(getter, "get [Symbol.species]")?;
         self.set_symbol_property(constructor, species, Value::UNDEFINED)?;
         self.set_property_attributes(
@@ -182,7 +184,7 @@ impl<H: Host> Vm<H> {
             ("from", Native::TypedArrayFrom),
             ("of", Native::TypedArrayOf),
         ] {
-            let method = self.native_with_realm(native, Value::NULL, self.realm.globals);
+            let method = self.native_with_realm(native, Value::NULL, realm);
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(constructor, name, method)?;
         }

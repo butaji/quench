@@ -77,6 +77,7 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));
         self.set_builtin_value_named(typed_array, "prototype", typed_array_proto)?;
         self.set_builtin_value_named(typed_array_proto, "constructor", typed_array)?;
+        self.install_typed_array_species(typed_array, typed_array_proto, global)?;
         self.set_builtin_value_named(global, "TypedArray", typed_array)?;
 
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
