@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
             }
         }
         let new_target_atom = self.intern_atom("\0rqj:new-target");
-        if !arrow {
+        if !arrow && id != super::ROOT_FUNCTION_ID {
             frame.dynamic_bindings.push((
                 new_target_atom,
                 self.construct_target.unwrap_or(Value::UNDEFINED),
@@ -366,7 +366,7 @@ impl<H: Host> Vm<H> {
         frame.with_base = self.with_stack.len();
         self.with_stack.extend(self.captured_with_objects(parent));
         let new_target_atom = self.intern_atom("\0rqj:new-target");
-        if !arrow {
+        if !arrow && id != super::ROOT_FUNCTION_ID {
             frame.dynamic_bindings.push((
                 new_target_atom,
                 self.construct_target.unwrap_or(Value::UNDEFINED),

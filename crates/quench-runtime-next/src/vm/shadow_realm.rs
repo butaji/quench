@@ -181,6 +181,7 @@ impl<H: Host> Vm<H> {
             "<ShadowRealm>",
             &atom_prefix,
             false,
+            false,
         )
         .is_err();
         let prior_global = self.switch_realm_global(realm_global);
