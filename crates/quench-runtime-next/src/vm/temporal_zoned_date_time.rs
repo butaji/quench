@@ -1924,12 +1924,7 @@ impl<H: Host> Vm<H> {
         let offset = if options.offset == "never" {
             String::new()
         } else {
-            let display_offset = if fixed_time_zone_offset_nanoseconds(&time_zone).is_some() {
-                offset
-            } else {
-                offset / NANOSECONDS_PER_MINUTE * NANOSECONDS_PER_MINUTE
-            };
-            format_offset_nanoseconds(display_offset)
+            format_offset_nanoseconds(time_zone_display_offset(&time_zone, offset))
         };
         let result = format!(
             "{}-{:02}-{:02}T{time}{offset}{zone_annotation}{calendar_annotation}",
@@ -2865,6 +2860,15 @@ pub(super) fn format_offset_nanoseconds(offset: i128) -> String {
         format!("{sign}{hours:02}:{minutes:02}")
     } else {
         format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+    }
+}
+
+pub(super) fn time_zone_display_offset(time_zone: &str, offset: i128) -> i128 {
+    if fixed_time_zone_offset_nanoseconds(time_zone).is_some() {
+        offset
+    } else {
+        round_temporal_nanoseconds(offset, NANOSECONDS_PER_MINUTE, "halfExpand")
+            * NANOSECONDS_PER_MINUTE
     }
 }
 
