@@ -955,7 +955,7 @@ impl<H: Host> Vm<H> {
             self.truthy(unicode_sets_value) || flags.contains('v')
         };
         let last_index = self.intern_atom("lastIndex");
-        self.set_property(receiver, last_index, Value::number(0.0))?;
+        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
         let mut matches = Vec::new();
         loop {
             let result = self.regexp_exec_value(p, receiver, input_value)?;
