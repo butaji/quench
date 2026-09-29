@@ -900,12 +900,19 @@ impl<H: Host> Vm<H> {
         let Some(mut fields) = date else {
             return Err(self.range_error(p, "Invalid time value".into()));
         };
+        if matches!(self.heap.get(value), Some(Cell::TemporalInstant { .. })) {
+            fields.temporal_kind = Some(TemporalKind::Instant);
+        }
         fields.has_date = self
             .date_time_slot(formatter, DATE_TIME_FORMAT_DATE_SLOT)
             .is_some_and(|value| value == Value::TRUE);
         fields.has_time = self
             .date_time_slot(formatter, DATE_TIME_FORMAT_TIME_SLOT)
-            .is_some_and(|value| value == Value::TRUE);
+            .is_some_and(|value| value == Value::TRUE)
+            || fields.temporal_kind == Some(TemporalKind::Instant)
+                && self
+                    .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
+                    .is_some_and(|value| value == Value::TRUE);
         self.calendarize_date_time_fields(formatter, &mut fields);
         Ok(fields)
     }
@@ -1128,7 +1135,10 @@ impl<H: Host> Vm<H> {
         if self
             .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
             .is_some_and(|value| value == Value::TRUE)
-            && fields.temporal_kind == Some(TemporalKind::PlainDateTime)
+            && matches!(
+                fields.temporal_kind,
+                Some(TemporalKind::Instant | TemporalKind::PlainDateTime)
+            )
         {
             options.hour = Some("numeric".into());
             options.minute = Some("2-digit".into());
