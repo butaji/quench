@@ -861,7 +861,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let comparator = args.first().copied().filter(|value| !value.is_undefined());
         if let Some(value) = comparator
-            && !matches!(self.heap.get(value), Some(Cell::Function { .. }))
+            && !self.is_function(value)
         {
             return Err(self.type_error(p, "sort comparator is not callable".into()));
         }
