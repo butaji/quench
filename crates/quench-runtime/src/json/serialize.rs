@@ -31,6 +31,7 @@ pub(crate) fn stringify(arguments: &[Value]) -> Result<Value, VmError> {
 
 impl Serializer {
     fn property(&mut self, key: &str, holder: &Value) -> Result<Option<String>, VmError> {
+        let _stack = crate::value::error::enter_stack()?;
         let holder = crate::locals::resolved_replacement(holder.clone());
         let mut value = crate::execute::get_property_result(&holder, key)?;
         value = crate::locals::resolved_replacement(value);

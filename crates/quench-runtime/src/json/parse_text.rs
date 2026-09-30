@@ -4,6 +4,29 @@
 // primitive node so the `json-parse-with-source` reviver context can report
 // `context.source` for parsed primitives.
 
+#[derive(Debug)]
+pub(crate) enum ParseError {
+    Syntax,
+    StackExhausted,
+}
+
+impl From<()> for ParseError {
+    fn from((): ()) -> Self {
+        Self::Syntax
+    }
+}
+
+impl ParseError {
+    fn into_vm_error(self) -> VmError {
+        match self {
+            Self::Syntax => crate::value::error::throw_syntax_error("Invalid JSON text"),
+            Self::StackExhausted => {
+                crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+            }
+        }
+    }
+}
+
 pub(crate) struct Parsed {
     pub value: Value,
     pub source: Option<String>,
@@ -15,13 +38,13 @@ pub(crate) fn source_key(key: &str) -> String {
     format!("{SOURCE_PREFIX}{key}")
 }
 
-pub(crate) fn parse_text(text: &str) -> Result<Parsed, ()> {
+pub(crate) fn parse_text(text: &str) -> Result<Parsed, ParseError> {
     let mut parser = Parser { text, pos: 0 };
     parser.skip_whitespace();
     let parsed = parser.value()?;
     parser.skip_whitespace();
     if parser.pos != text.len() {
-        return Err(());
+        return Err(ParseError::Syntax);
     }
     Ok(parsed)
 }
@@ -46,7 +69,8 @@ impl<'a> Parser<'a> {
         self.pos += skipped;
     }
 
-    fn value(&mut self) -> Result<Parsed, ()> {
+    fn value(&mut self) -> Result<Parsed, ParseError> {
+        let _stack = quench_stack::StackGuard::enter().map_err(|()| ParseError::StackExhausted)?;
         let start = self.pos;
         let parsed = match self.rest().chars().next().ok_or(())? {
             '{' => self.object()?,
@@ -56,7 +80,7 @@ impl<'a> Parser<'a> {
             'f' => self.literal("false", Value::Boolean(false))?,
             'n' => self.literal("null", Value::Null)?,
             '-' | '0'..='9' => self.number()?,
-            _ => return Err(()),
+            _ => return Err(ParseError::Syntax),
         };
         if parsed.source.is_none() {
             return Ok(parsed);
@@ -67,15 +91,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn literal(&mut self, word: &str, value: Value) -> Result<Parsed, ()> {
+    fn literal(&mut self, word: &str, value: Value) -> Result<Parsed, ParseError> {
         if !self.rest().starts_with(word) {
-            return Err(());
+            return Err(ParseError::Syntax);
         }
         self.pos += word.len();
         Ok(leaf(value))
     }
 
-    fn object(&mut self) -> Result<Parsed, ()> {
+    fn object(&mut self) -> Result<Parsed, ParseError> {
         self.pos += 1;
         let mut properties = Vec::new();
         self.skip_whitespace();
@@ -89,7 +113,7 @@ impl<'a> Parser<'a> {
             let key = self.string()?;
             self.skip_whitespace();
             if !self.consume(':') {
-                return Err(());
+                return Err(ParseError::Syntax);
             }
             self.skip_whitespace();
             let child = self.value()?;
@@ -99,7 +123,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             if !self.consume(',') {
-                return Err(());
+                return Err(ParseError::Syntax);
             }
         }
         Ok(container(Value::Object(Rc::new(
@@ -107,7 +131,7 @@ impl<'a> Parser<'a> {
         ))))
     }
 
-    fn array(&mut self) -> Result<Parsed, ()> {
+    fn array(&mut self) -> Result<Parsed, ParseError> {
         self.pos += 1;
         let mut values = Vec::new();
         let mut named = Vec::new();
@@ -126,7 +150,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 if !self.consume(',') {
-                    return Err(());
+                    return Err(ParseError::Syntax);
                 }
             }
         }
@@ -137,7 +161,7 @@ impl<'a> Parser<'a> {
         Ok(container(Value::Array(Rc::new(data))))
     }
 
-    fn number(&mut self) -> Result<Parsed, ()> {
+    fn number(&mut self) -> Result<Parsed, ParseError> {
         let start = self.pos;
         self.consume('-');
         self.digits_whole()?;
@@ -148,12 +172,12 @@ impl<'a> Parser<'a> {
         Ok(leaf(Value::Number(value)))
     }
 
-    fn digits_whole(&mut self) -> Result<(), ()> {
+    fn digits_whole(&mut self) -> Result<(), ParseError> {
         if self.consume('0') {
             return Ok(());
         }
         if !matches!(self.rest().chars().next(), Some('1'..='9')) {
-            return Err(());
+            return Err(ParseError::Syntax);
         }
         self.pos += 1;
         self.skip_digits();
@@ -169,14 +193,14 @@ impl<'a> Parser<'a> {
         self.pos += digits;
     }
 
-    fn fraction(&mut self) -> Result<(), ()> {
+    fn fraction(&mut self) -> Result<(), ParseError> {
         if !self.consume('.') {
             return Ok(());
         }
         self.digits_run()
     }
 
-    fn exponent(&mut self) -> Result<(), ()> {
+    fn exponent(&mut self) -> Result<(), ParseError> {
         if !self.consume('e') && !self.consume('E') {
             return Ok(());
         }
@@ -186,11 +210,11 @@ impl<'a> Parser<'a> {
         self.digits_run()
     }
 
-    fn digits_run(&mut self) -> Result<(), ()> {
+    fn digits_run(&mut self) -> Result<(), ParseError> {
         let start = self.pos;
         self.skip_digits();
         if self.pos == start {
-            return Err(());
+            return Err(ParseError::Syntax);
         }
         Ok(())
     }
@@ -203,9 +227,9 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn string(&mut self) -> Result<String, ()> {
+    fn string(&mut self) -> Result<String, ParseError> {
         if !self.consume('"') {
-            return Err(());
+            return Err(ParseError::Syntax);
         }
         let mut value = String::new();
         loop {
@@ -214,13 +238,13 @@ impl<'a> Parser<'a> {
             match character {
                 '"' => return Ok(value),
                 '\\' => self.escape(&mut value)?,
-                '\u{0}'..='\u{1F}' => return Err(()),
+                '\u{0}'..='\u{1F}' => return Err(ParseError::Syntax),
                 _ => value.push(character),
             }
         }
     }
 
-    fn escape(&mut self, value: &mut String) -> Result<(), ()> {
+    fn escape(&mut self, value: &mut String) -> Result<(), ParseError> {
         let character = self.rest().chars().next().ok_or(())?;
         self.pos += character.len_utf8();
         match character {
@@ -233,12 +257,12 @@ impl<'a> Parser<'a> {
             'r' => value.push('\r'),
             't' => value.push('\t'),
             'u' => self.unicode_escape(value)?,
-            _ => return Err(()),
+            _ => return Err(ParseError::Syntax),
         }
         Ok(())
     }
 
-    fn unicode_escape(&mut self, value: &mut String) -> Result<(), ()> {
+    fn unicode_escape(&mut self, value: &mut String) -> Result<(), ParseError> {
         let unit = self.hex_quad()?;
         if (0xD800..0xDC00).contains(&unit) && self.rest().starts_with("\\u") {
             self.pos += 2;
@@ -256,11 +280,11 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn hex_quad(&mut self) -> Result<u16, ()> {
+    fn hex_quad(&mut self) -> Result<u16, ParseError> {
         let digits = self.rest().get(..4).ok_or(())?;
         let value = u16::from_str_radix(digits, 16).map_err(|_| ())?;
         if digits.len() != 4 || !digits.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(());
+            return Err(ParseError::Syntax);
         }
         self.pos += 4;
         Ok(value)

@@ -10,6 +10,7 @@ execution-trace = []
 legacy-native-tests = []
 
 [dependencies]
+quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 icu_collator = { version = "2.3", features = ["compiled_data"] }

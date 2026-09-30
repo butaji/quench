@@ -1,7 +1,15 @@
 use rqj::{Engine, Runtime, SystemHost};
 
 fn main() {
-    if let Err(error) = run() {
+    let result = std::thread::Builder::new()
+        .name("quench-next".into())
+        .stack_size(rqj::WORKER_STACK_SIZE)
+        .spawn(run)
+        .map_err(|error| format!("runtime worker thread: {error}"))
+        .and_then(|worker| {
+            worker.join().unwrap_or_else(|_| Err("runtime worker panicked".into()))
+        });
+    if let Err(error) = result {
         eprintln!("quench-next: {error}");
         std::process::exit(1);
     }
