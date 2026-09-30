@@ -376,6 +376,64 @@ fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
 }
 
 #[test]
+fn indexed_and_ordinary_descriptors_fold_partial_updates_identically() {
+    let source = r#"
+      var ordinary = { value: 1 };
+      var indexed = [1];
+      Object.defineProperty(ordinary, "value", { writable: false });
+      Object.defineProperty(indexed, "0", { writable: false });
+      var ordinaryData = Object.getOwnPropertyDescriptor(ordinary, "value");
+      var indexedData = Object.getOwnPropertyDescriptor(indexed, "0");
+      print(ordinaryData.value);
+      print(ordinaryData.writable);
+      print(ordinaryData.enumerable);
+      print(ordinaryData.configurable);
+      print(indexedData.value);
+      print(indexedData.writable);
+      print(indexedData.enumerable);
+      print(indexedData.configurable);
+
+      var ordinaryAccessor = {};
+      var indexedAccessor = [];
+      Object.defineProperty(ordinaryAccessor, "value", {
+        get: function() { return 2; }, enumerable: true, configurable: true
+      });
+      Object.defineProperty(indexedAccessor, "0", {
+        get: function() { return 2; }, enumerable: true, configurable: true
+      });
+      Object.defineProperty(ordinaryAccessor, "value", { value: 3, writable: true });
+      Object.defineProperty(indexedAccessor, "0", { value: 3, writable: true });
+      var ordinaryConverted = Object.getOwnPropertyDescriptor(ordinaryAccessor, "value");
+      var indexedConverted = Object.getOwnPropertyDescriptor(indexedAccessor, "0");
+      print(ordinaryConverted.value);
+      print(ordinaryConverted.writable);
+      print(ordinaryConverted.enumerable);
+      print(ordinaryConverted.configurable);
+      print(indexedConverted.value);
+      print(indexedConverted.writable);
+      print(indexedConverted.enumerable);
+      print(indexedConverted.configurable);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "indexed-descriptor-folding.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "1", "false", "true", "true", "1", "false", "true", "true", "3", "true", "true",
+                "true", "3", "true", "true", "true",
+            ],
+            "{mode}"
+        );
+    }
+}
+
+#[test]
 fn field_cache_fallback_preserves_accessor_reentry() {
     let source = r#"
       var count = 0;
