@@ -27,22 +27,59 @@ pub(crate) mod regexp;
 mod register_profile;
 mod rewrite;
 mod sequence;
+mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiagnosticKind {
+    Compilation,
+    StackExhausted,
+}
+#[derive(Clone)]
 pub struct Diagnostic {
+    kind: DiagnosticKind,
     source: String,
     message: String,
     span: Span,
 }
 impl Diagnostic {
+    fn message(&self) -> &str {
+        match self.kind {
+            DiagnosticKind::Compilation => &self.message,
+            DiagnosticKind::StackExhausted => crate::stack::STACK_EXHAUSTED_MESSAGE,
+        }
+    }
+
+    pub(crate) fn is_stack_exhausted(&self) -> bool {
+        self.kind == DiagnosticKind::StackExhausted
+    }
+
+    fn stack_exhausted(source: &str) -> Self {
+        Self {
+            kind: DiagnosticKind::StackExhausted,
+            source: source.into(),
+            message: String::new(),
+            span: Span::default(),
+        }
+    }
+
     pub(crate) fn unsupported(source: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
+            kind: DiagnosticKind::Compilation,
             source: source.into(),
             message: message.into(),
             span: Span::default(),
         }
+    }
+}
+impl fmt::Debug for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Diagnostic")
+            .field("source", &self.source)
+            .field("message", &self.message())
+            .field("span", &self.span)
+            .finish()
     }
 }
 impl fmt::Display for Diagnostic {
@@ -50,7 +87,10 @@ impl fmt::Display for Diagnostic {
         write!(
             f,
             "{}:{}..{}: {}",
-            self.source, self.span.start, self.span.end, self.message
+            self.source,
+            self.span.start,
+            self.span.end,
+            self.message()
         )
     }
 }
@@ -97,6 +137,9 @@ impl Engine {
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
             return None;
         }
@@ -128,6 +171,9 @@ impl Engine {
     pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         parsed
             .diagnostics
             .is_empty()
@@ -138,6 +184,9 @@ impl Engine {
     pub(crate) fn eval_var_names(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -166,6 +215,9 @@ impl Engine {
     pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -187,6 +239,9 @@ impl Engine {
     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -205,6 +260,9 @@ impl Engine {
     pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -230,6 +288,9 @@ impl Engine {
     pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return true;
+        }
         !parsed.diagnostics.is_empty()
             || parsed.program.body.iter().any(|statement| {
                 matches!(
@@ -258,6 +319,9 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return false;
+        }
         if !parsed.diagnostics.is_empty() {
             return true;
         }
@@ -273,6 +337,9 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -339,6 +406,9 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -395,6 +465,9 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return None;
         }
@@ -758,17 +831,20 @@ impl Engine {
                 .diagnostics
                 .into_iter()
                 .map(|error| Diagnostic {
+                    kind: DiagnosticKind::Compilation,
                     source: name.into(),
                     message: error.to_string(),
                     span: Span::default(),
                 })
                 .collect());
         }
+        stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
         if capture_script_completion
             && source_type.is_commonjs()
             && let Some(span) = early::eval_return_outside_function(&parsed.program)
         {
             return Err(vec![Diagnostic {
+                kind: DiagnosticKind::Compilation,
                 source: name.into(),
                 message: "SyntaxError: return outside function in eval".into(),
                 span,
@@ -783,6 +859,7 @@ impl Engine {
             annex_b_targets::invalid_target(&parsed.program, &annex_b_call_target_marker)
         {
             return Err(vec![Diagnostic {
+                kind: DiagnosticKind::Compilation,
                 source: name.into(),
                 message: "SyntaxError: invalid assignment target".into(),
                 span,
@@ -826,6 +903,7 @@ impl Engine {
                 .diagnostics
                 .into_iter()
                 .map(|error| Diagnostic {
+                    kind: DiagnosticKind::Compilation,
                     source: name.into(),
                     message: format!("SyntaxError: {error}"),
                     span: Span::default(),
@@ -860,6 +938,9 @@ impl Engine {
     pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
         }
@@ -876,6 +957,9 @@ impl Engine {
         };
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate(&parsed.program).is_err() {
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             if parsed.diagnostics.iter().any(|diagnostic| {
                 diagnostic
@@ -1891,6 +1975,7 @@ impl<'a> Compiler<'a> {
     }
     fn reject(&mut self, span: Span, message: impl Into<String>) {
         self.errors.push(Diagnostic {
+            kind: DiagnosticKind::Compilation,
             source: self.source.into(),
             message: message.into(),
             span,
