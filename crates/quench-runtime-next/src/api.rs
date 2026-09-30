@@ -629,6 +629,96 @@ mod tests {
             &["39"],
         );
     }
+
+    #[test]
+    fn regression_regexp_preserves_raw_utf16_patterns_across_entry_points() {
+        assert_output_in_execution_modes(
+            r#"
+            var lone = '\uD83D';
+            var pair = '\uD83D\uDC38';
+            print(new RegExp(lone, 'u').exec(lone)[0].charCodeAt(0));
+            print(new RegExp(lone, 'u').source.charCodeAt(0));
+            print(eval('/' + lone + '/u').exec(lone)[0].charCodeAt(0));
+            print(eval('/[' + pair + ']/').exec(pair)[0].charCodeAt(0));
+            print(eval('/[' + pair + ']/u').exec(pair)[0].length);
+            print(eval('/' + pair + '?/').exec('') === null);
+            print(new RegExp(pair + '?').exec('') === null);
+            print(new RegExp('\\uD83D\uDC38', 'u').test(pair));
+            print(new RegExp('\uD83D\\uDC38', 'u').test(pair));
+            print(new RegExp('\\uD83D\uDC38').test(pair));
+            print(new RegExp('\uD83D\\uDC38').test(pair));
+            print(new RegExp('\\' + lone).test(lone));
+            try { new RegExp('\\' + lone, 'u'); }
+            catch (error) { print(error.name); }
+            var expression = /a/;
+            expression.compile('[' + lone + ']', 'u');
+            print(expression.exec(lone)[0].charCodeAt(0));
+            print(new RegExp(expression).exec(lone)[0].charCodeAt(0));
+            "#,
+            &[
+                "55357",
+                "55357",
+                "55357",
+                "55357",
+                "2",
+                "true",
+                "true",
+                "false",
+                "false",
+                "true",
+                "true",
+                "true",
+                "SyntaxError",
+                "55357",
+                "55357",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_control_letters_work_in_classes_and_ranges() {
+        assert_output_in_execution_modes(
+            r#"
+            print(/[\cA]/u.test('\u0001'));
+            print(/[\cz]/u.exec('\u001A')[0].charCodeAt(0));
+            print(/[\cA-\cZ]/u.test('\u0007'));
+            print(/[\cA-\cZ]/u.test('A'));
+            print(/[\cA]/v.test('\u0001'));
+            print(/[\cA]/.test('\u0001'));
+            print(/[\\cA]/u.test('c'));
+            "#,
+            &["true", "26", "true", "false", "true", "true", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_eval_regexp_class_delimiters_share_literal_scanning() {
+        assert_output_in_execution_modes(
+            r#"
+            print(eval(' /[/]/ ').source);
+            print(eval(' /[/]/ ').test('/'));
+            print(eval('(/[/]/)').source);
+            "#,
+            &["[/]", "true", "[/]"],
+        );
+    }
+
+    #[test]
+    fn regression_eval_name_reads_do_not_borrow_bytecode_cache_sites() {
+        assert_output_in_execution_modes(
+            r#"
+            print(eval('(42)'));
+            print(eval('({answer: 42})').answer);
+            var expression = eval('(/a/)');
+            print(expression.source);
+            print(expression.test('a'));
+            var visible = 7;
+            print(eval('visible'));
+            "#,
+            &["42", "42", "a", "true", "7"],
+        );
+    }
+
 }
 
 #[cfg(test)]
