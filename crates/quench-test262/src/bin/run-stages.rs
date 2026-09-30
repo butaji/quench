@@ -59,7 +59,7 @@ fn run_stages_entry() -> ExitCode {
         Ok(selected) => selected,
         Err(error) => return fail(error),
     };
-    run_stages(&args.root, selected, &args)
+    run_stages(&args.root, selected, &stages, &args)
 }
 
 fn select_stages(stages: &[ResolvedStage], args: &Args) -> Result<Vec<ResolvedStage>, String> {
@@ -219,12 +219,17 @@ fn parse_cli_token(parser: &mut CliParser) -> Result<(), String> {
     Ok(())
 }
 
-fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode {
+fn run_stages(
+    root: &Path,
+    stages: Vec<ResolvedStage>,
+    inventory: &[ResolvedStage],
+    args: &Args,
+) -> ExitCode {
     let mut overall = StageReport::default();
     let mut has_failure = false;
     for stage in &stages {
         print_stage_start(stage);
-        let report = match run_single_stage(root, stage, args.max_failures) {
+        let report = match run_single_stage(root, stage, inventory, args.max_failures) {
             Ok(report) => report,
             Err(error) => return fail(error),
         };
@@ -293,9 +298,13 @@ fn list_stages(stages: &[ResolvedStage]) {
 fn run_single_stage(
     root: &Path,
     stage: &ResolvedStage,
+    inventory: &[ResolvedStage],
     max_failures: usize,
 ) -> Result<StageReport, String> {
-    let files = discover_js_files(&stage.root)?;
+    let files = discover_js_files(&stage.root)?
+        .into_iter()
+        .filter(|file| stage.owns_file(file, inventory))
+        .collect::<Vec<_>>();
     if files.is_empty() {
         println!(
             "stage {:>3}: {} ({}): no files",
