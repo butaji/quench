@@ -1255,7 +1255,7 @@ impl<H: Host> Vm<H> {
                     (source, flags)
                 }
             };
-            let regex = Self::compile_regexp(pattern.host_string(), &flags)?;
+            let regex = Self::compile_regexp(&pattern, &flags)?;
             drop(regex);
             let object = self.heap.alloc(Cell::RegExp {
                 object: Self::empty_object(prototype),
@@ -1322,7 +1322,7 @@ impl<H: Host> Vm<H> {
             (source, flags)
         };
 
-        if let Err(error) = Self::compile_regexp(source.host_string(), &flags) {
+        if let Err(error) = Self::compile_regexp(&source, &flags) {
             let message = error.to_string();
             let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
             return self.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
@@ -1416,7 +1416,7 @@ impl<H: Host> Vm<H> {
         let last_index = regexp_to_length(self.to_number(p, last_index)?);
         let (source, flags) = match self.heap.get(this) {
             Some(Cell::RegExp { source, flags, .. }) => {
-                (source.host_string().to_owned(), flags.clone())
+                (source.clone(), flags.clone())
             }
             _ => {
                 return Err(
@@ -1562,13 +1562,14 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    pub(super) fn compile_regexp(source: &str, flags: &str) -> Result<CompiledRegexp, JsError> {
+    pub(super) fn compile_regexp(source: &JsString, flags: &str) -> Result<CompiledRegexp, JsError> {
         quench_regexp::validate_flags(flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
-        crate::compile::regexp::validate_pattern(source, flags)
+        let parser_source = regexp_parser_source(source, flags.contains('u') || flags.contains('v'))?;
+        crate::compile::regexp::validate_pattern(&parser_source, flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         let regex = catch_unwind(AssertUnwindSafe(|| {
-            quench_regexp::Regex::with_flags(source, quench_regexp::Flags::from(flags))
+            quench_regexp::Regex::with_flags(&parser_source, quench_regexp::Flags::from(flags))
         }))
         .map_err(|_| JsError("SyntaxError: invalid regular expression".into()))?
         .map_err(|error| {
@@ -1576,6 +1577,56 @@ impl<H: Host> Vm<H> {
         })?;
         Ok(CompiledRegexp(regex))
     }
+}
+
+fn regexp_parser_source(source: &JsString, unicode: bool) -> Result<std::borrow::Cow<'_, str>, JsError> {
+    let needs_projection = if unicode {
+        char::decode_utf16(source.units().iter().copied()).any(|character| character.is_err())
+    } else {
+        source.units().iter().any(|unit| (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit))
+    };
+    if !needs_projection {
+        return Ok(std::borrow::Cow::Borrowed(source.host_string()));
+    }
+    use std::fmt::Write;
+    let mut projected = String::with_capacity(source.host_string().len());
+    let mut escaped = false;
+    for character in char::decode_utf16(source.units().iter().copied()) {
+        match character {
+            Ok(character) if unicode || character.len_utf16() == 1 => {
+                projected.push(character);
+                escaped = character == '\\' && !escaped;
+            }
+            character => {
+                if escaped {
+                    if unicode {
+                        return Err(JsError("SyntaxError: invalid identity escape".into()));
+                    }
+                    projected.pop();
+                }
+                const MAX_CODE_POINT_UNITS: usize = char::MAX.len_utf16();
+                let mut buffer = [0; MAX_CODE_POINT_UNITS];
+                let units = match character {
+                    Ok(character) => character.encode_utf16(&mut buffer),
+                    Err(error) => {
+                        buffer[0] = error.unpaired_surrogate();
+                        &mut buffer[..1]
+                    }
+                };
+                for unit in units {
+                    if unicode {
+                        // Braces prevent raw/escaped surrogate merging.
+                        write!(&mut projected, "\\u{{{unit:X}}}").unwrap();
+                    } else {
+                        // Legacy quantifiers bind to one UTF-16 unit.
+                        write!(&mut projected, "\\u{unit:04X}").unwrap();
+                    }
+                }
+                escaped = false;
+            }
+        }
+    }
+    Ok(std::borrow::Cow::Owned(projected))
 }
 
 fn escape_regexp_source(source: &JsString) -> JsString {
