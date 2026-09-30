@@ -446,16 +446,33 @@ impl<H: Host> Vm<H> {
                         .flatten(),
                 )
                 .chain(self.frames.iter().flat_map(|frame| {
+                    // A missing map means the function uses a register form
+                    // the liveness pass cannot represent; keep the safe
+                    // conservative scan for that activation.
+                    let register_mask = self.programs.get(frame.program).and_then(|program| {
+                        let function = program.functions.get(frame.function as usize)?;
+                        (function.register_root_offset != u32::MAX)
+                            .then(|| {
+                                program
+                                    .register_roots
+                                    .get(function.register_root_offset as usize + frame.pc)
+                            })
+                            .flatten()
+                            .copied()
+                    });
                     [frame.env, frame.this]
                         .into_iter()
                         .chain(frame.locals.iter().copied())
                         .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
-                        // Register-root masks are an optimization over the
-                        // canonical activation state. Keep every live-frame
-                        // register rooted until the mask proof is complete;
-                        // dropping a closure still referenced by a call-site
-                        // argument is a semantic use-after-collection.
-                        .chain(frame.registers.iter().copied())
+                        .chain(frame.registers.iter().enumerate().filter_map(
+                            move |(register, value)| {
+                                register_mask
+                                    .is_none_or(|mask| {
+                                        register < u64::BITS as usize && mask & (1 << register) != 0
+                                    })
+                                    .then_some(*value)
+                            },
+                        ))
                 }));
         let shapes = &self.shapes;
         let finalization_jobs = self.heap.collect_with_shape_roots(roots, |shape, roots| {

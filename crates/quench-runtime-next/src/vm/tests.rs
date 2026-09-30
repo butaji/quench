@@ -232,6 +232,32 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
 }
 
 #[test]
+fn object_method_home_survives_collection_with_precise_register_roots() {
+    let source = r#"
+      var base = { answer: 42 };
+      var receiver = {
+        __proto__: base,
+        answer() { return super.answer; }
+      };
+      var i = 0;
+      while (i < 5000) { var temporary = {}; i = i + 1; }
+      print(receiver.answer());
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "object-home-gc.js").unwrap();
+        if let Err(error) = vm.execute(&program) {
+            panic!("{mode}: {}", vm.format_error(&program, &error));
+        }
+        assert_eq!(output.borrow().as_slice(), ["42"], "{mode}");
+    }
+}
+
+#[test]
 fn untaken_closure_branch_does_not_allocate_environments() {
     let source = r#"
       function maybe(make) {
