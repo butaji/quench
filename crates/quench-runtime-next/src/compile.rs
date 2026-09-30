@@ -79,10 +79,6 @@ pub(crate) struct EvalRegExpLiteral {
     pub(crate) span: Range<usize>,
     pub(crate) flags: String,
 }
-pub(crate) struct EvalVarNames {
-    pub(crate) bindings: Vec<String>,
-    pub(crate) declarations: Vec<String>,
-}
 pub(crate) enum StaticModuleThrow {
     Value(Constant),
     Error {
@@ -139,14 +135,13 @@ impl Engine {
             .flatten()
     }
 
-    pub(crate) fn eval_var_names(source: &str) -> Option<EvalVarNames> {
+    pub(crate) fn eval_var_names(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if !parsed.diagnostics.is_empty() {
             return None;
         }
-        let bindings = early::collect_var_names(&parsed.program.body);
-        let mut declarations = bindings.clone();
+        let mut declarations = early::collect_var_names(&parsed.program.body);
         declarations.extend(parsed.program.body.iter().filter_map(|statement| {
             match statement {
                 Statement::FunctionDeclaration(function) => function
@@ -165,10 +160,7 @@ impl Engine {
         );
         declarations.sort();
         declarations.dedup();
-        Some(EvalVarNames {
-            bindings,
-            declarations,
-        })
+        Some(declarations)
     }
 
     pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
@@ -210,36 +202,6 @@ impl Engine {
         source.get(span.start as usize..span.end as usize)
     }
 
-    pub(crate) fn eval_block_completion(source: &str) -> Option<(&str, &str)> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 2 {
-            return None;
-        }
-        let Statement::BlockStatement(block) = &parsed.program.body[0] else {
-            return None;
-        };
-        if !block.body.iter().all(|statement| {
-            matches!(
-                statement,
-                Statement::EmptyStatement(_) | Statement::ExpressionStatement(_)
-            )
-        }) {
-            return None;
-        }
-        let Statement::ExpressionStatement(expression) = &parsed.program.body[1] else {
-            return None;
-        };
-        let block_start = block.span.start as usize;
-        let block_end = block.span.end as usize;
-        let expression_start = expression.span.start as usize;
-        let expression_end = expression.span.end as usize;
-        Some((
-            source.get(block_start + 1..block_end.checked_sub(1)?)?,
-            source.get(expression_start..expression_end)?,
-        ))
-    }
-
     pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -265,14 +227,15 @@ impl Engine {
         Some(statements)
     }
 
-    pub(crate) fn eval_requires_compiled_completion(source: &str) -> bool {
+    pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         !parsed.diagnostics.is_empty()
             || parsed.program.body.iter().any(|statement| {
                 matches!(
                     statement,
-                    Statement::ClassDeclaration(_)
+                    Statement::VariableDeclaration(_)
+                        | Statement::ClassDeclaration(_)
                         | Statement::FunctionDeclaration(_)
                         | Statement::BlockStatement(_)
                         | Statement::DoWhileStatement(_)
@@ -285,51 +248,10 @@ impl Engine {
                         | Statement::TryStatement(_)
                         | Statement::LabeledStatement(_)
                         | Statement::WithStatement(_)
-                ) || matches!(statement, Statement::VariableDeclaration(declaration)
-                    if is_lexical_binding_declaration(declaration.kind))
-                    || matches!(statement, Statement::ExpressionStatement(statement)
+                ) || matches!(statement, Statement::ExpressionStatement(statement)
                         if matches!(statement.expression.without_parentheses(), Expression::UnaryExpression(unary)
                             if unary.operator == oxc_syntax::operator::UnaryOperator::Delete))
             })
-    }
-
-    pub(crate) fn eval_is_function_declaration(source: &str) -> bool {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        parsed.diagnostics.is_empty()
-            && matches!(
-                parsed.program.body.as_slice(),
-                [Statement::FunctionDeclaration(_)]
-            )
-    }
-
-    pub(crate) fn eval_block_statement(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
-            return None;
-        }
-        let Statement::BlockStatement(block) = &parsed.program.body[0] else {
-            return None;
-        };
-        source.get(block.span.start as usize + 1..block.span.end as usize - 1)
-    }
-
-    pub(crate) fn eval_labeled_expression(source: &str) -> Option<&str> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
-            return None;
-        }
-        let Statement::LabeledStatement(labeled) = &parsed.program.body[0] else {
-            return None;
-        };
-        let Statement::ExpressionStatement(expression) = &labeled.body else {
-            return None;
-        };
-        source.get(
-            expression.expression.span().start as usize..expression.expression.span().end as usize,
-        )
     }
 
     pub(crate) fn static_module_has_early_error(source: &str) -> bool {
@@ -1713,6 +1635,29 @@ impl<'a> Compiler<'a> {
             root.global_var_atoms = global_var_atoms;
             root.global_function_atoms = global_function_atoms;
             root.global_annex_b_var_atoms = global_annex_b_var_atoms;
+            if !self.module_goal {
+                let lower_global_var = |op, slot| {
+                    let replacement = match op {
+                        Op::LoadLocal => Op::LoadEnvLocal,
+                        Op::StoreLocal => Op::StoreEnvLocal,
+                        _ => return None,
+                    };
+                    root.local_atoms
+                        .get(slot)
+                        .is_some_and(|atom| root.global_var_atoms.contains(atom))
+                        .then_some(replacement)
+                };
+                for instruction in &mut root.code {
+                    if let Some(op) = lower_global_var(instruction.op(), instruction.local_slot()) {
+                        instruction.set_op(op);
+                    }
+                }
+                for instruction in &mut root.wide {
+                    if let Some(op) = lower_global_var(instruction.op(), instruction.local_slot()) {
+                        instruction.set_op(op);
+                    }
+                }
+            }
         }
         if !self.errors.is_empty() {
             return Err(self.errors);
