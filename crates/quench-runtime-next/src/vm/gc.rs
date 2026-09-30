@@ -31,7 +31,7 @@ fn active_shape_attributes(
                 }
             }
             ShapeTransition::Vacant => entries.push(None),
-            ShapeTransition::Root => {}
+            ShapeTransition::Root | ShapeTransition::Dictionary { .. } => {}
         }
     }
     entries
@@ -67,7 +67,16 @@ fn append_compacted_shape(
         return *shape;
     }
     let shape = u32::try_from(shapes.len()).expect("object shape table exhausted");
-    shapes.push(Shape::child(Some(parent), transition, storage_len));
+    let dictionary_trigger = match transition {
+        ShapeTransition::Dictionary { trigger } => Some(trigger),
+        _ => shapes[parent as usize].dictionary_trigger,
+    };
+    shapes.push(Shape::child(
+        Some(parent),
+        transition,
+        storage_len,
+        dictionary_trigger,
+    ));
     if let ShapeTransition::Add {
         key: key @ property_key::PropertyKey::String(_),
         ..
@@ -107,6 +116,15 @@ fn rebuild_shape(
                 storage_len,
             );
         }
+    }
+    if let Some(trigger) = old_shapes[old_shape as usize].dictionary_trigger {
+        parent = append_compacted_shape(
+            shapes,
+            transitions,
+            parent,
+            ShapeTransition::Dictionary { trigger },
+            old_shapes[old_shape as usize].storage_len,
+        );
     }
     parent
 }

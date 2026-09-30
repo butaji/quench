@@ -2,6 +2,7 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const PRIVATE_NAME_PREFIX: &str = "\0rqj:private:";
+pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
 fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
@@ -30,7 +31,9 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                     attributes.insert(slot, value);
                 }
             }
-            ShapeTransition::Root | ShapeTransition::Vacant => {}
+            ShapeTransition::Root
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {}
         }
         current = shape.parent;
     }
@@ -54,6 +57,12 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     pub(super) fn property_shape_slot(&self, shape: u32, key: PropertyKey) -> Option<usize> {
+        if self.shape_is_dictionary(shape) {
+            let index = self.shapes[shape as usize]
+                .lookup_index
+                .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
+            return index.slots.get(&key).map(|slot| *slot as usize);
+        }
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return index.slots.get(&key).map(|slot| *slot as usize);
         }
@@ -74,7 +83,8 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
-                | ShapeTransition::Descriptor { .. } => current = shape.parent,
+                | ShapeTransition::Descriptor { .. }
+                | ShapeTransition::Dictionary { .. } => current = shape.parent,
             }
         }
         None
@@ -115,7 +125,8 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
-                | ShapeTransition::Descriptor { .. } => current = shape.parent,
+                | ShapeTransition::Descriptor { .. }
+                | ShapeTransition::Dictionary { .. } => current = shape.parent,
             }
         }
         None
@@ -139,10 +150,36 @@ impl<H: Host> Vm<H> {
         storage_len: usize,
     ) -> u32 {
         let next = u32::try_from(self.shapes.len()).expect("object shape table exhausted");
-        self.shapes
-            .push(Shape::child(Some(parent), transition, storage_len));
+        let dictionary_trigger = match transition {
+            ShapeTransition::Dictionary { trigger } => Some(trigger),
+            _ => self.shapes[parent as usize].dictionary_trigger,
+        };
+        self.shapes.push(Shape::child(
+            Some(parent),
+            transition,
+            storage_len,
+            dictionary_trigger,
+        ));
         self.heap.register_property_shape(next, storage_len);
         next
+    }
+    pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
+        self.shapes[shape as usize].dictionary_trigger.is_some()
+    }
+    pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
+        let Some(shape) = self.object_data(object).map(Object::shape) else {
+            return;
+        };
+        if self.shape_is_dictionary(shape) {
+            return;
+        }
+        let storage_len = self.shapes[shape as usize].storage_len;
+        let dictionary_shape =
+            self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
+        self.object_data_mut(object)
+            .expect("object survived dictionary transition")
+            .set_shape(dictionary_shape);
+        self.profile.dictionary_transition(trigger);
     }
     #[inline(always)]
     pub(super) fn property_attributes(
@@ -400,6 +437,9 @@ impl<H: Host> Vm<H> {
             return self.get_property(p, object, atom);
         };
         let receiver_shape = receiver.shape();
+        if self.shape_is_dictionary(receiver_shape) {
+            return self.get_property(p, object, atom);
+        }
         // SAFETY: cache-site ids are emitted only by the compiler and execute
         // against the exactly-sized cache vector initialized for this program.
         let cache = unsafe { *self.field_caches.get_unchecked(site as usize) };
@@ -478,7 +518,12 @@ impl<H: Host> Vm<H> {
             if let Some(slot) = self.shape_slot(current.shape(), atom)
                 && let Some(value) = self.heap.property_get(current, slot)
             {
-                if slot <= u16::MAX as usize {
+                if slot < FIELD_CACHE_SLOT_CAPACITY
+                    && !self.shape_is_dictionary(current.shape())
+                    && !self
+                        .object_data(object)
+                        .is_some_and(|receiver| self.shape_is_dictionary(receiver.shape()))
+                {
                     let receiver = self
                         .object_data(object)
                         .map(Object::shape)
@@ -1213,7 +1258,21 @@ impl<H: Host> Vm<H> {
             .filter(|length| u32::try_from(*length).is_ok())
             .expect("object property storage exhausted");
         let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
-        let next = self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
+        let mut next =
+            self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
+        if self.shapes[next as usize].dictionary_trigger.is_none()
+            && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
+        {
+            next = self.append_shape(
+                next,
+                ShapeTransition::Dictionary {
+                    trigger: DictionaryTrigger::PropertyCount,
+                },
+                next_storage_len,
+            );
+            self.profile
+                .dictionary_transition(DictionaryTrigger::PropertyCount);
+        }
         if matches!(key, PropertyKey::String(_)) {
             self.transitions.insert((shape, key), next);
         }
@@ -1235,6 +1294,20 @@ impl<H: Host> Vm<H> {
             },
             storage_len,
         );
+        let next_id = if self.shapes[next_id as usize].dictionary_trigger.is_none() {
+            let dictionary_shape = self.append_shape(
+                next_id,
+                ShapeTransition::Dictionary {
+                    trigger: DictionaryTrigger::DeletionPattern,
+                },
+                storage_len,
+            );
+            self.profile
+                .dictionary_transition(DictionaryTrigger::DeletionPattern);
+            dictionary_shape
+        } else {
+            next_id
+        };
         self.object_data_mut(object)
             .expect("object survived property deletion")
             .set_shape(next_id);
