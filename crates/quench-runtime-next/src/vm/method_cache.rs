@@ -386,7 +386,7 @@ impl<H: Host> Vm<H> {
                 .heap
                 .property_get(owner_data, entry.guard.slot as usize)?;
             let target = entry.target?;
-            (self.call_target(callee).ok() == Some(target)).then_some((callee, target, tier))
+            Some((callee, target, tier))
         });
         self.profile.method_cache(cached_call.is_some());
         #[cfg(feature = "profile-aggregate")]
