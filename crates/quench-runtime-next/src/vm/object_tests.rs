@@ -189,3 +189,37 @@ fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
         );
     }
 }
+
+#[test]
+fn field_cache_fallback_preserves_accessor_reentry() {
+    let source = r#"
+      var count = 0;
+      var receiver = {
+        get value() { count += 1; return count; }
+      };
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      print(count);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "field-cache-accessor-reentry.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
+
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .all(|entry| entry.atom != value || entry.receiver == u32::MAX),
+                "accessor lookup must use the generic re-entrant path"
+            );
+        }
+    }
+}
