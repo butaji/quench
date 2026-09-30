@@ -3,7 +3,8 @@
 The runner parses these ordered entries as data. Keep stage IDs and paths
 stable, resolve them against the pinned checkout, and compare observable
 execution. Stages are ordering only; they are not progress claims or a skip
-list.
+list. Each runnable file belongs to the most specific declared stage root;
+parent stages retain files outside separately declared child stages.
 
 - Stage 0: `test/harness`
 - Stage 1: `language/arguments-object`
@@ -121,5 +122,7 @@ list.
 - Stage 113: `intl402/TypedArray`
 - Stage 114: `staging`
 
-The 22 files directly under `intl402/` belong to no directory stage; the
-uncapped `run-all-next` run covers them.
+- Stage 115: `intl402`
+
+Stage 115 owns the 22 files directly under `intl402/`; its declared child
+stages retain their existing order and ownership.

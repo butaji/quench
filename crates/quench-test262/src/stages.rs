@@ -24,6 +24,19 @@ pub struct ResolvedStage {
     pub root: PathBuf,
 }
 
+impl ResolvedStage {
+    /// The most specific declared root owns each test, including tests directly
+    /// in a parent directory that also contains separately ordered child stages.
+    pub fn owns_file(&self, file: &Path, stages: &[Self]) -> bool {
+        file.starts_with(&self.root)
+            && !stages.iter().any(|nested| {
+                nested.root != self.root
+                    && nested.root.starts_with(&self.root)
+                    && file.starts_with(&nested.root)
+            })
+    }
+}
+
 /// Parse all stage entries from [`STAGE_SPEC`].
 pub fn list_stages() -> Vec<ConformanceStage> {
     STAGE_SPEC.lines().filter_map(parse_stage_line).collect()
@@ -79,4 +92,40 @@ fn resolve_stage_root(test262_root: &Path, path: &str) -> Result<PathBuf, String
         ));
     }
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_stages_partition_parent_files_and_directory_boundaries() {
+        let stages: Vec<_> = [
+            "test/intl402",
+            "test/intl402/DateTimeFormat",
+            "test/built-ins",
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(id, path)| ResolvedStage {
+            id: id as u32,
+            path: path.into(),
+            root: path.into(),
+        })
+        .collect();
+        for (path, owner) in [
+            ("test/intl402/default-locale.js", Some(0)),
+            ("test/intl402/DateTimeFormat/prototype/format.js", Some(1)),
+            ("test/intl402/DateTimeFormat-extra/test.js", Some(0)),
+            ("test/built-ins/Array/test.js", Some(2)),
+            ("test/language/test.js", None),
+        ] {
+            let owners: Vec<_> = stages
+                .iter()
+                .filter(|stage| stage.owns_file(Path::new(path), &stages))
+                .map(|stage| stage.id)
+                .collect();
+            assert_eq!(owners, owner.into_iter().collect::<Vec<_>>(), "{path}");
+        }
+    }
 }
