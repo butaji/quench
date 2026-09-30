@@ -234,6 +234,7 @@ fn append_date(
     fields: &DateTimeFields,
     options: &DateTimePartOptions,
 ) {
+    let date_parts_start = parts.len();
     if let Some(style) = &options.weekday {
         let value = format_weekday(fields, style);
         push(parts, "weekday", value);
@@ -352,6 +353,59 @@ fn append_date(
     if let (Some(style), Some(code)) = (&options.era, fields.era.as_deref()) {
         push(parts, "literal", " ");
         push(parts, "era", era_code_value(code, style));
+    }
+    reorder_numeric_date_parts(parts, date_parts_start, fields, options);
+}
+
+fn reorder_numeric_date_parts(
+    parts: &mut Vec<(String, String)>,
+    date_parts_start: usize,
+    fields: &DateTimeFields,
+    options: &DateTimePartOptions,
+) {
+    if options.weekday.is_some()
+        || options.era.is_some()
+        || fields.related_year.is_some()
+        || !options
+            .month
+            .as_deref()
+            .is_some_and(|style| matches!(style, "numeric" | "2-digit"))
+        || !options
+            .day
+            .as_deref()
+            .is_some_and(|style| matches!(style, "numeric" | "2-digit"))
+        || !options
+            .year
+            .as_deref()
+            .is_some_and(|style| matches!(style, "numeric" | "2-digit"))
+    {
+        return;
+    }
+    let Some(pattern) = quench_intl::numeric_date_pattern(options.locale.as_deref()) else {
+        return;
+    };
+    let [month, first_separator, day, second_separator, year] = &parts[date_parts_start..] else {
+        return;
+    };
+    if month.0 != "month"
+        || first_separator.0 != "literal"
+        || day.0 != "day"
+        || second_separator.0 != "literal"
+        || year.0 != "year"
+    {
+        return;
+    }
+    let ordered = pattern.field_order.map(|field| match field {
+        quench_intl::NumericDateField::Day => day.clone(),
+        quench_intl::NumericDateField::Month => month.clone(),
+        quench_intl::NumericDateField::Year => year.clone(),
+    });
+    parts.truncate(date_parts_start);
+    for (index, part) in ordered.into_iter().enumerate() {
+        if index != 0 {
+            push(parts, "literal", pattern.separator);
+        }
+        parts.push(part);
     }
 }
 

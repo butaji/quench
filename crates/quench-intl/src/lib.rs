@@ -25,9 +25,9 @@ pub use locale_canonicalization::{
 };
 pub use locale_case::locale_case;
 pub use locale_data::{
-    CALENDARS, NUMBERING_SYSTEMS, calendar_alias, default_numbering_system,
-    sanitize_datetime_locale, unicode_extension_value, valid_calendar, valid_numbering_system,
-    valid_unicode_type,
+    CALENDARS, NUMBERING_SYSTEMS, NumericDateField, NumericDatePattern, calendar_alias,
+    default_numbering_system, numeric_date_pattern, sanitize_datetime_locale,
+    unicode_extension_value, valid_calendar, valid_numbering_system, valid_unicode_type,
 };
 pub use plural::{
     plural_categories, plural_category, plural_category_compact, plural_category_decimal,

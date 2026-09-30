@@ -45,6 +45,34 @@ const DEFAULT_NUMBERING_SYSTEMS: &[(&str, &str)] = &[
 ];
 
 const UNICODE_EXTENSION_KEY_LENGTH: usize = 2;
+const GERMAN_LANGUAGE_SUBTAG: &str = "de";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NumericDateField {
+    Day,
+    Month,
+    Year,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NumericDatePattern {
+    pub field_order: [NumericDateField; 3],
+    pub separator: &'static str,
+}
+
+const GERMAN_NUMERIC_DATE_PATTERN: NumericDatePattern = NumericDatePattern {
+    field_order: [
+        NumericDateField::Day,
+        NumericDateField::Month,
+        NumericDateField::Year,
+    ],
+    separator: ".",
+};
+
+pub fn numeric_date_pattern(locale: Option<&str>) -> Option<NumericDatePattern> {
+    let language = locale?.split(['-', '_']).next().unwrap_or_default();
+    (language == GERMAN_LANGUAGE_SUBTAG).then_some(GERMAN_NUMERIC_DATE_PATTERN)
+}
 
 pub fn unicode_extension_value(locale: &str, key: &str) -> Option<String> {
     let (_, extension) = locale.split_once("-u-")?;
