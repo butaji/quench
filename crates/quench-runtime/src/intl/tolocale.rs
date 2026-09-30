@@ -193,45 +193,46 @@ pub(crate) mod value {
         }
     }
     pub(crate) fn type_of(value: &Value) -> &'static str {
-        if crate::conversion::is_html_dda(value) {
-            return "undefined";
-        }
-        match value {
-            Value::BindingCell(value) => type_of(&value.borrow()),
-            Value::Undefined => "undefined",
-            Value::Null => "object",
-            Value::Proxy(proxy) => type_of(&proxy.target),
-            value if object_value(value) => "object",
-            Value::Boolean(_) => "boolean",
-            Value::Number(_) => "number",
-            Value::String(value)
-                if value.starts_with("Symbol.") || value.starts_with("Symbol.for.") =>
-            {
-                "symbol"
+        crate::conversion::classify_wrapped_value(value, |value| {
+            if crate::conversion::is_html_dda(value) {
+                return "undefined";
             }
-            Value::String(_) => "string",
-            Value::StringUnits(_) => "string",
-            Value::Builtin(builtin) => builtin_type(*builtin),
-            Value::BoundFunction(bound)
-                if matches!(
-                    bound.target,
-                    Value::Builtin(target)
-                        if crate::builtins::object::is_intrinsic_prototype(target)
-                ) =>
-            {
-                "object"
+            match value {
+                Value::Undefined => "undefined",
+                Value::Null => "object",
+                value if object_value(value) => "object",
+                Value::Boolean(_) => "boolean",
+                Value::Number(_) => "number",
+                Value::String(value)
+                    if value.starts_with("Symbol.") || value.starts_with("Symbol.for.") =>
+                {
+                    "symbol"
+                }
+                Value::String(_) => "string",
+                Value::StringUnits(_) => "string",
+                Value::Builtin(builtin) => builtin_type(*builtin),
+                Value::BoundFunction(bound)
+                    if matches!(
+                        bound.target,
+                        Value::Builtin(target)
+                            if crate::builtins::object::is_intrinsic_prototype(target)
+                    ) =>
+                {
+                    "object"
+                }
+                Value::Function(_) | Value::BoundFunction(_) => "function",
+                Value::BigInt(_) => "bigint",
+                Value::Promise(_)
+                | Value::Map(_)
+                | Value::Set(_)
+                | Value::Iterator(_)
+                | Value::Generator(_) => "object",
+                Value::ObjectAlias(_) => "object",
+                Value::HostCapability(_) => "object",
+                _ => "object",
             }
-            Value::Function(_) | Value::BoundFunction(_) => "function",
-            Value::BigInt(_) => "bigint",
-            Value::Promise(_)
-            | Value::Map(_)
-            | Value::Set(_)
-            | Value::Iterator(_)
-            | Value::Generator(_) => "object",
-            Value::ObjectAlias(_) => "object",
-            Value::HostCapability(_) => "object",
-            _ => "object",
-        }
+        })
+        .unwrap_or("undefined")
     }
 
     fn builtin_type(builtin: crate::ops::Builtin) -> &'static str {
