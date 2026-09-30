@@ -135,7 +135,7 @@ impl<H: Host> Vm<H> {
             if mapped {
                 let mapping = (0..function.params.min(args.len() as u16)).collect();
                 if let Some(object) = self.object_data_mut(arguments) {
-                    object.arguments_map = Some(mapping);
+                    object.set_arguments_map(mapping);
                 }
             }
         }
@@ -337,7 +337,7 @@ impl<H: Host> Vm<H> {
             if mapped {
                 let mapping = (0..function.params.min(args.len() as u16)).collect();
                 if let Some(object) = self.object_data_mut(arguments) {
-                    object.arguments_map = Some(mapping);
+                    object.set_arguments_map(mapping);
                 }
             }
         }
@@ -397,7 +397,7 @@ impl<H: Host> Vm<H> {
         mapped: bool,
     ) -> Result<(), JsError> {
         if let Some(object) = self.object_data_mut(arguments) {
-            object.arguments_object = true;
+            object.set_arguments_object();
         }
         let length = self.intern_atom("length");
         self.set_property(arguments, length, Value::number(args.len() as f64))?;

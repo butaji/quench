@@ -3,23 +3,16 @@ use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 fn plain_object() -> Object {
-    Object {
-        proto: Value::NULL,
-        properties: ValueVec::new(),
-        arguments_map: None,
-        arguments_object: false,
-        module_namespace: false,
-        module_bindings: vec![],
-        deferred_module: None,
-        private_names: vec![],
-    }
+    Object::new(Value::NULL, ValueVec::new())
 }
 
 #[test]
-fn compact_object_header_reduces_gc_slot() {
-    assert_eq!(size_of::<Object>(), 16);
-    assert_eq!(size_of::<Cell>(), 48);
-    assert_eq!(size_of::<Slot>(), 48);
+fn object_side_metadata_is_out_of_line() {
+    assert_eq!(
+        size_of::<Object>(),
+        size_of::<Value>() + size_of::<ValueVec>() + size_of::<Option<Box<()>>>()
+    );
+    assert_eq!(size_of::<Cell>(), size_of::<Slot>());
 }
 
 #[test]
@@ -178,4 +171,67 @@ fn object_integrity_metadata_survives_collection() {
         matches!(heap.get(object), Some(Cell::Object(data)) if !data.is_extensible() && data.is_frozen())
     );
     assert!(garbage.iter().all(|value| heap.get(*value).is_none()));
+}
+
+#[test]
+fn object_property_storage_migration_preserves_writes_and_gc_roots() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, 2);
+    let first = heap.alloc(Cell::String("first".into()));
+    let replaced = heap.alloc(Cell::String("replaced".into()));
+    let replacement = heap.alloc(Cell::String("replacement".into()));
+    let object = heap.alloc_object_pair(Value::NULL, 1, first, replaced);
+    heap.get_mut(object)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .set_extensible(false);
+
+    let mut properties = heap.get(object).unwrap().object().unwrap().properties;
+    heap.properties
+        .migrate_to_dictionary_for_test(&mut properties);
+    heap.get_mut(object)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .properties = properties;
+    heap.property_set(object, 1, replacement);
+
+    heap.collect([object]);
+    let data = heap.get(object).unwrap().object().unwrap();
+    assert_eq!(data.shape(), 1);
+    assert!(!data.is_extensible());
+    assert_eq!(heap.property_get(data, 0), Some(first));
+    assert_eq!(heap.property_get(data, 1), Some(replacement));
+    assert!(heap.get(first).is_some());
+    assert!(heap.get(replaced).is_none());
+    assert!(heap.get(replacement).is_some());
+
+    heap.collect([]);
+    assert!(heap.get(object).is_none());
+    assert!(heap.get(first).is_none());
+    assert!(heap.get(replacement).is_none());
+}
+
+#[cfg(feature = "profile-memory")]
+#[test]
+fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(plain_object()));
+    let before = heap.memory_stats().3;
+    let data = heap.get_mut(object).unwrap().object_mut().unwrap();
+    data.set_arguments_object();
+    data.set_arguments_map(vec![0; 32]);
+    data.set_module_namespace();
+    data.set_module_bindings(vec![(0, crate::vm::program_store::ProgramId::MAIN, 0)]);
+    data.set_deferred_module(Some(crate::ModuleSource {
+        name: "module.js".into(),
+        source: "export const value = 1;".into(),
+        bytes: vec![1, 2, 3],
+    }));
+    data.add_private_name(PrivateBrand {
+        home: object,
+        name: 0,
+    });
+
+    assert!(heap.memory_stats().3 > before);
+    assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
 }

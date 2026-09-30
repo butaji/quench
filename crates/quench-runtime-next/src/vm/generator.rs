@@ -123,8 +123,7 @@ impl<H: Host> Vm<H> {
             self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
             if mapped {
                 if let Some(object) = self.object_data_mut(arguments) {
-                    object.arguments_map =
-                        Some((0..function.params.min(args.len() as u16)).collect());
+                    object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
             }
         }

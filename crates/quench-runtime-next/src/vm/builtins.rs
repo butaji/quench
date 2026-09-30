@@ -942,16 +942,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn empty_object(proto: Value) -> Object {
-        Object {
-            proto,
-            properties: ValueVec::new(),
-            arguments_map: None,
-            arguments_object: false,
-            module_namespace: false,
-            module_bindings: Vec::new(),
-            deferred_module: None,
-            private_names: Vec::new(),
-        }
+        Object::new(proto, ValueVec::new())
     }
     fn native(&mut self, kind: Native) -> Value {
         self.native_with_env(kind, Value::NULL)
