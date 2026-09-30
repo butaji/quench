@@ -213,7 +213,7 @@ impl ValueArena {
             return;
         }
         if len == self.capacity(*vector) {
-            self.grow(vector);
+            self.grow(vector, MAX_ARENA_START);
             if vector.is_dictionary() {
                 self.dictionaries
                     .get_mut(&vector.dictionary_id())
@@ -230,7 +230,7 @@ impl ValueArena {
             start: EMPTY_START,
             auxiliary,
         };
-        if let Some(start) = self.allocate(MIN_CAPACITY) {
+        if let Some(start) = self.allocate(MIN_CAPACITY, MAX_ARENA_START) {
             vector.start = start as u32;
             self.values[start] = first;
             self.values[start + 1] = second;
@@ -342,7 +342,7 @@ impl ValueArena {
         )
     }
 
-    fn grow(&mut self, vector: &mut ValueVec) {
+    fn grow(&mut self, vector: &mut ValueVec, max_start: usize) {
         let len = self.len(*vector);
         let capacity = self.capacity(*vector);
         let next = if capacity == 0 {
@@ -352,7 +352,7 @@ impl ValueArena {
                 .checked_mul(2)
                 .expect("property arena capacity overflow")
         };
-        let Some(start) = self.allocate(next) else {
+        let Some(start) = self.allocate(next, max_start) else {
             let values = if self.has_compact_range(*vector) {
                 self.values[vector.start()..vector.start() + len].to_vec()
             } else {
@@ -392,13 +392,13 @@ impl ValueArena {
         }
     }
 
-    fn allocate(&mut self, capacity: usize) -> Option<usize> {
+    fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {
             return Some(start as usize);
         }
         let start = self.values.len();
-        if start >= MAX_ARENA_START {
+        if start >= max_start {
             return None;
         }
         let required = start.checked_add(capacity)?;
@@ -458,5 +458,40 @@ mod tests {
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
         assert_eq!(arena.vector_stats(values), (9, 16));
+    }
+
+    #[test]
+    fn arena_exhaustion_migrates_live_slots_to_dictionary_storage() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 2);
+        let mut vector = arena.pair(1, Value::number(11.0), Value::number(22.0));
+
+        let start = vector.start();
+        let range_count = arena.values.len();
+        // A zero address limit exercises the same checked exhaustion branch
+        // without allocating billions of arena entries in a unit test.
+        arena.grow(&mut vector, 0);
+        let dictionary_id = vector.dictionary_id();
+
+        assert!(vector.is_dictionary());
+        assert_eq!(arena.get(vector, 0).unwrap().as_number(), Some(11.0));
+        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(22.0));
+        arena.set(vector, 1, Value::number(33.0));
+        assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(33.0));
+
+        let mut live = Vec::new();
+        arena.append_live_values(vector, &mut live);
+        assert_eq!(live.len(), 2);
+        assert_eq!(arena.values.len(), range_count);
+        assert!(
+            arena
+                .free
+                .iter()
+                .any(|bucket| bucket.contains(&(start as u32)))
+        );
+
+        arena.release(vector);
+        assert!(arena.dictionaries.is_empty());
+        assert_eq!(arena.free_dictionaries, vec![dictionary_id]);
     }
 }
