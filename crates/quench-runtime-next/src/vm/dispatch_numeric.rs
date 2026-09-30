@@ -151,7 +151,7 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
-        frame.registers.resize(register_count, Value::UNDEFINED);
+        frame.prepare_registers(register_count);
         self.frames.push(frame);
         let result = self.run_frame_numeric(p, self.frames.len() - 1);
         let frame = self.frames.pop().unwrap();
