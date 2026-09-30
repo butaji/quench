@@ -842,6 +842,17 @@ impl Engine {
                 .collect());
         }
         stack::validate(&parsed.program).map_err(|()| vec![Diagnostic::stack_exhausted(name)])?;
+        if let Some(error) = early::regexp_early_error(&parsed.program) {
+            return Err(vec![match error {
+                early::RegExpEarlyError::StackExhausted => Diagnostic::stack_exhausted(name),
+                early::RegExpEarlyError::Syntax(message) => Diagnostic {
+                    kind: DiagnosticKind::Compilation,
+                    source: name.into(),
+                    message,
+                    span: Span::default(),
+                },
+            }]);
+        }
         if capture_script_completion
             && source_type.is_commonjs()
             && let Some(span) = early::eval_return_outside_function(&parsed.program)
@@ -1550,9 +1561,6 @@ impl<'a> Compiler<'a> {
         if self.root_strict
             && let Some(error) = early::strict_octal_numeric_early_error(program)
         {
-            self.reject(Span::default(), error);
-        }
-        if let Some(error) = early::regexp_early_error(program) {
             self.reject(Span::default(), error);
         }
         if let Some(error) = early::block_early_error(program, self.root_strict) {

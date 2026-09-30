@@ -33,7 +33,7 @@ pub(crate) fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool
 }
 
 pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
-    if parsed.stack_exhausted {
+    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors) {
         return Err(crate::compiler_stack::errors());
     }
     if parsed.panicked {
@@ -125,6 +125,13 @@ pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(
     };
     oxc::ast::visit::walk::walk_program(&mut regexp_validator, program);
     if !regexp_validator.errors.is_empty() {
+        if regexp_validator.errors.iter().any(|error| {
+            error
+                .strip_prefix("SyntaxError: ")
+                .is_some_and(quench_regexp::is_stack_exhaustion_message)
+        }) {
+            return Err(crate::compiler_stack::errors());
+        }
         return Err(regexp_validator.errors);
     }
     let mut import_validator = DynamicImportValidator {

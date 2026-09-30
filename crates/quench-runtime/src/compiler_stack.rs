@@ -19,6 +19,12 @@ pub(crate) fn is_exhaustion(errors: &[String]) -> bool {
     })
 }
 
+pub(crate) fn parser_errors_are_exhaustion(errors: &[oxc::diagnostics::OxcDiagnostic]) -> bool {
+    errors
+        .iter()
+        .any(oxc::regular_expression::is_stack_exhaustion)
+}
+
 #[derive(Default)]
 struct Validator {
     exhausted: bool,

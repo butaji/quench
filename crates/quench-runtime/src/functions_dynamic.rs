@@ -59,14 +59,19 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     }
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
-    if parsed.stack_exhausted {
+    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors) {
         return Err(crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE));
     }
     if parsed.panicked || !parsed.errors.is_empty() {
         return Err(syntax_error("Invalid function source"));
     }
-    crate::compiler_stack::validate(&parsed.program)
-        .map_err(|_| crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE))?;
+    crate::reduce_support::validate_program(&parsed.program).map_err(|errors| {
+        if crate::compiler_stack::is_exhaustion(&errors) {
+            crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+        } else {
+            syntax_error(&errors.join("; "))
+        }
+    })?;
     let Some(oxc::ast::ast::Statement::FunctionDeclaration(function)) = parsed.program.body.first()
     else {
         return Err(syntax_error("Invalid function source"));
