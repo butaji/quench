@@ -1,9 +1,6 @@
 /// Peel `BindingCell` so construct and Get see the same identity.
 pub(crate) fn peel_construct_value(value: &Value) -> Value {
-    match value {
-        Value::BindingCell(cell) => peel_construct_value(&cell.borrow()),
-        value => value.clone(),
-    }
+    crate::module_bindings::unwrap_cells(value)
 }
 
 /// BoundFunction [[Construct]]: if newTarget is the bound function, use [[BoundTargetFunction]].
@@ -35,28 +32,36 @@ pub(crate) fn get_prototype_from_constructor(
 }
 
 pub(crate) fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
-    fn value_realm(value: &Value) -> Option<crate::ops::RealmId> {
-        match value {
-            Value::Function(function) => Some(function_realm_id(function)),
-            Value::BoundFunction(bound) => bound
-                .properties
-                .borrow()
-                .iter()
-                .rev()
-                .find_map(|(key, value)| {
-                    (key == "\0realm").then(|| match value {
-                        Value::HostCapability(token) => Some(token.realm()),
-                        Value::Number(number) => Some(crate::ops::RealmId::new(*number as u64)),
-                        _ => None,
-                    })?
-                })
-                .or_else(|| match &bound.receiver {
-                    Value::HostCapability(capability) => Some(capability.realm()),
-                    receiver => value_realm(receiver),
-                })
-                .or_else(|| value_realm(&bound.target)),
-            Value::Proxy(proxy) => value_realm(&proxy.target),
-            _ => None,
+    fn value_realm(mut value: &Value) -> Option<crate::ops::RealmId> {
+        let mut targets = Vec::new();
+        loop {
+            match value {
+                Value::Function(function) => return Some(function_realm_id(function)),
+                Value::BoundFunction(bound) => {
+                    if let Some(realm) = bound
+                        .properties
+                        .borrow()
+                        .iter()
+                        .rev()
+                        .find_map(|(key, value)| {
+                            (key == "\0realm").then(|| match value {
+                                Value::HostCapability(token) => Some(token.realm()),
+                                Value::Number(number) => Some(crate::ops::RealmId::new(*number as u64)),
+                                _ => None,
+                            })?
+                        })
+                    {
+                        return Some(realm);
+                    }
+                    if let Value::HostCapability(capability) = &bound.receiver {
+                        return Some(capability.realm());
+                    }
+                    targets.push(&bound.target);
+                    value = &bound.receiver;
+                }
+                Value::Proxy(proxy) => value = &proxy.target,
+                _ => value = targets.pop()?,
+            }
         }
     }
     value_realm(constructor).unwrap_or(crate::ops::RealmId::ROOT)
@@ -66,8 +71,8 @@ pub(crate) fn function_realm_id(
     function: &crate::value::FunctionValue,
 ) -> crate::ops::RealmId {
     fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
-        match value {
-            Value::BindingCell(cell) => global_realm(&cell.borrow()),
+        let value = peel_construct_value(value);
+        match &value {
             Value::ObjectAlias(alias) => alias
                 .0
                 .borrow()
@@ -194,4 +199,62 @@ fn construct_bound_in_realm(
             .unwrap_or_else(|| Err(crate::vm::not_callable()));
     }
     construct_builtin(builtin, arguments)
+}
+
+#[cfg(test)]
+mod realm_stack_tests {
+    use super::*;
+    use crate::value::{BoundFunctionValue, ProxyValue};
+    use std::{cell::RefCell, rc::Rc};
+
+    const REALM_STRESS_DEPTH: usize = 20_000;
+
+    #[test]
+    fn regression_constructor_realm_walk_preserves_receiver_precedence_without_recursion() {
+        let receiver_realm = crate::ops::RealmId::new(7);
+        let target_realm = crate::ops::RealmId::new(9);
+        let realm_value = |realm: crate::ops::RealmId| {
+            Value::BoundFunction(Rc::new(BoundFunctionValue {
+                realm: crate::ops::RealmId::ROOT,
+                target: Value::Undefined,
+                receiver: Value::Undefined,
+                arguments: Vec::new(),
+                properties: RefCell::new(vec![("\0realm".into(), Value::Number(realm.get() as f64))]),
+            }))
+        };
+        let mut value = realm_value(receiver_realm);
+        let mut owners = Vec::new();
+        for _ in 0..REALM_STRESS_DEPTH {
+            owners.push(value.clone());
+            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+                realm: crate::ops::RealmId::ROOT,
+                target: realm_value(target_realm),
+                receiver: value,
+                arguments: Vec::new(),
+                properties: RefCell::new(Vec::new()),
+            }));
+        }
+        assert_eq!(constructor_realm(&value), receiver_realm);
+        for _ in 0..REALM_STRESS_DEPTH {
+            owners.push(value.clone());
+            value = Value::Proxy(Rc::new(ProxyValue {
+                target: value,
+                handler: Value::Undefined,
+                revoked: Rc::new(RefCell::new(true)),
+                private_slots: Default::default(),
+            }));
+        }
+        assert_eq!(constructor_realm(&value), receiver_realm);
+        drop(value);
+        while owners.pop().is_some() {}
+        let fallback = Value::BoundFunction(Rc::new(BoundFunctionValue {
+            realm: crate::ops::RealmId::ROOT,
+            target: realm_value(target_realm),
+            receiver: Value::Undefined,
+            arguments: Vec::new(),
+            properties: RefCell::new(Vec::new()),
+        }));
+        assert_eq!(constructor_realm(&fallback), target_realm);
+        assert_eq!(constructor_realm(&Value::Undefined), crate::ops::RealmId::ROOT);
+    }
 }
