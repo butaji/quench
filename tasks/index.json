@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "56",
+  "next_task": "20",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": ["01", "02", "03", "04", "05", "06", "52", "56", "20", "48", "08", "07", "09", "10", "37", "41", "40", "23", "24", "27", "46", "60", "47", "59", "25", "26", "61", "28"],
@@ -116,7 +116,7 @@
     {"id":"53","file":"53.md","title":"Drive the Node event loop from OS readiness as an explicit phase machine","lane":"host","status":"pending","depends_on":["43"]},
     {"id":"54","file":"54.md","title":"Read the host time zone and default locale from the OS as one host fact","lane":"host","status":"pending","depends_on":["43"]},
     {"id":"55","file":"55.md","title":"Read process and os host facts from the OS","lane":"host","status":"pending","depends_on":["43"]},
-    {"id":"56","file":"56.md","title":"Bound guest recursion by a runtime-owned stack budget","lane":"critical_path","status":"in_progress","depends_on":["06"]},
+    {"id":"56","file":"56.md","title":"Bound guest recursion by a runtime-owned stack budget","lane":"critical_path","status":"done","depends_on":["06"]},
     {"id":"57","file":"57.md","title":"Derive value-kind facts as static binding times","lane":"specializers","status":"pending","depends_on":["47","59"]},
     {"id":"58","file":"58.md","title":"Own the runtime unit-suite failures","lane":"conformance","status":"pending","depends_on":["05"]},
     {"id":"59","file":"59.md","title":"Reduce the kernel to a metacircular fundamental set","lane":"critical_path","status":"pending","depends_on":["11","12","13","14","15","16","17","18","35","36","39","44","45","47"]},
