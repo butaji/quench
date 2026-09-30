@@ -258,6 +258,41 @@ fn object_method_home_survives_collection_with_precise_register_roots() {
 }
 
 #[test]
+fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
+    let mut program = Engine::specialize("print(0);", "wide-roots.js").unwrap();
+    program.functions[0].registers = 65;
+    program.functions[0].register_root_offset = u32::MAX;
+
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    let live = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("live register".into()));
+    let mut registers = vec![Value::UNDEFINED; 65];
+    registers[64] = live;
+    vm.frames.push(super::Frame {
+        program: super::program_store::ProgramId::MAIN,
+        function: 0,
+        pc: 0,
+        env: Value::NULL,
+        this: Value::UNDEFINED,
+        locals: vec![],
+        dynamic_bindings: vec![],
+        captured: false,
+        registers,
+        active_iterators: vec![],
+        with_base: 0,
+    });
+
+    vm.collect_now(&program);
+    assert!(vm.heap.get(live).is_some());
+
+    vm.frames.pop();
+    vm.collect_now(&program);
+    assert!(vm.heap.get(live).is_none());
+}
+
+#[test]
 fn untaken_closure_branch_does_not_allocate_environments() {
     let source = r#"
       function maybe(make) {
