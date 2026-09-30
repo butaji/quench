@@ -1240,14 +1240,9 @@ impl<H: Host> Vm<H> {
         let regexp_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.regexp_prototypes.insert(global, regexp_prototype);
+        self.install_regexp_intrinsics(global, regexp, regexp_prototype)?;
         self.install_regexp_accessors(program, regexp_prototype, global)?;
         self.install_regexp_legacy_accessors(program, regexp, global)?;
-        let regexp_compile = self.native_with_realm(Native::RegExpCompile, global, global);
-        self.set_builtin_function_name(regexp_compile, "compile")?;
-        self.set_builtin_value_named(regexp_prototype, "compile", regexp_compile)?;
-        self.set_builtin_value_named(regexp, "prototype", regexp_prototype)?;
-        self.set_builtin_value_named(regexp_prototype, "constructor", regexp)?;
         self.install_regexp_symbol_properties(regexp, regexp_prototype, global)?;
         let regexp_name = self.heap.alloc(Cell::String("RegExp".into()));
         self.set_builtin_value_named(regexp, "name", regexp_name)?;

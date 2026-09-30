@@ -1,3 +1,5 @@
+pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0rqj:intrinsic-regexp";
+
 pub type Atom = u32;
 pub type Register = u16;
 

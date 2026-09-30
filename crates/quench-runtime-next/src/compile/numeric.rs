@@ -182,6 +182,7 @@ mod tests {
         let make_function = || Function {
             parent: None,
             name: None,
+            source_text: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -235,6 +236,7 @@ mod tests {
         let make_function = || Function {
             parent: None,
             name: None,
+            source_text: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,

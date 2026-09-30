@@ -152,7 +152,11 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
                 atom: 0,
                 proto: crate::Value::NULL,
                 guard: super::EMPTY_CACHE,
-                target: Some(CallTarget::User(shape, crate::Value::NULL)),
+                target: Some(CallTarget::User(
+                    super::program_store::ProgramId::MAIN,
+                    shape,
+                    crate::Value::NULL,
+                )),
             },
         );
     }
@@ -186,21 +190,29 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             atom: 0,
             proto: crate::Value::NULL,
             guard: super::EMPTY_CACHE,
-            target: Some(CallTarget::User(1, live)),
+            target: Some(CallTarget::User(
+                super::program_store::ProgramId::MAIN,
+                1,
+                live,
+            )),
         },
         MethodCache {
             shape: 2,
             atom: 0,
             proto: crate::Value::NULL,
             guard: super::EMPTY_CACHE,
-            target: Some(CallTarget::User(2, dead)),
+            target: Some(CallTarget::User(
+                super::program_store::ProgramId::MAIN,
+                2,
+                dead,
+            )),
         },
     ]);
     vm.heap.collect([live]);
     vm.retain_live_method_caches();
     assert!(matches!(
         vm.method_caches[0][0].target,
-        Some(CallTarget::User(1, env)) if env == live
+        Some(CallTarget::User(_, 1, env)) if env == live
     ));
     assert!(vm.method_caches[0][1].target.is_none());
 
@@ -249,6 +261,8 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         with_objects: vec![],
     });
     let id = vm.suspend_continuation(Continuation {
+        program: super::program_store::ProgramId::MAIN,
+        active_iterators: vec![],
         function: 0,
         pc: 0,
         env: live,
@@ -266,4 +280,31 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     assert!(vm.resume_continuation(id).is_none());
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_none());
+}
+
+#[test]
+fn regression_collection_preserves_unused_regexp_iterator_prototype() {
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(
+            "function later() { print((/a/g)[Symbol.matchAll]('a').next().value[0]); }",
+            "regexp-after-collection.js",
+        )
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("later");
+        let callback = vm.own_property(vm.realm.globals, atom).unwrap();
+        let root = vm.root(callback);
+        vm.collect_now(&program);
+        vm.enqueue_job(vm.root_value(root).unwrap(), vec![]);
+        if let Err(error) = vm.drain_jobs(&program) {
+            panic!("{mode}: {}", vm.format_error(&program, &error));
+        }
+        assert_eq!(output.borrow().as_slice(), ["a"], "{mode}");
+        assert!(vm.release_root(root));
+    }
 }

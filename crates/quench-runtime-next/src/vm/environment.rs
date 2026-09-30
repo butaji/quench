@@ -1014,6 +1014,9 @@ impl<H: Host> Vm<H> {
         if name == "\0rqj:dynamic-import" {
             return Ok(self.native_value(Native::DynamicImport));
         }
+        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+            return Ok(self.regexp_intrinsic_constructor());
+        }
         if name == "\0rqj:intrinsic-promise" {
             return Ok(self.native_value(Native::Promise));
         }

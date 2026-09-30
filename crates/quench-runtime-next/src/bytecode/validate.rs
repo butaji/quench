@@ -407,13 +407,13 @@ impl ResidualProgram {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
 
     fn function(code: Vec<Instr>, registers: u16, root: u32) -> Function {
         Function {
             parent: None,
             name: None,
+            source_text: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -426,6 +426,7 @@ mod tests {
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
+            parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 0,

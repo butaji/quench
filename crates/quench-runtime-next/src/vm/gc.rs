@@ -178,6 +178,7 @@ impl<H: Host> Vm<H> {
                     self.promise.proto,
                     self.iterator_proto,
                     self.string_iterator_proto,
+                    self.regexp_string_iterator_proto,
                     self.generator_proto,
                     self.iterator_helper_proto,
                     self.wrap_for_valid_iterator_proto,
@@ -194,9 +195,11 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.regexp_prototypes
+                    self.regexp_intrinsics
                         .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                        .flat_map(|(realm, intrinsics)| {
+                            [*realm, intrinsics.constructor, intrinsics.prototype]
+                        }),
                 )
                 .chain(
                     self.intl_number_format_constructors

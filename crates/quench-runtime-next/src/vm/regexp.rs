@@ -23,6 +23,23 @@ const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
 
 pub(super) struct CompiledRegexp(quench_regexp::Regex);
 
+#[derive(Clone, Copy)]
+pub(super) struct RegExpIntrinsics {
+    pub(super) constructor: Value,
+    pub(super) prototype: Value,
+}
+
+enum RegExpConstructorInput {
+    Internal {
+        source: JsString,
+        original_flags: Option<String>,
+    },
+    Observable {
+        source: Value,
+        flags: Value,
+    },
+}
+
 struct RegExpReplaceMatch {
     capture_roots: Vec<RootId>,
     groups_root: Option<RootId>,
@@ -41,16 +58,27 @@ impl CompiledRegexp {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_regexp(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        for name in ["source", "flags", "lastIndex", "index", "input"] {
-            self.intern_atom(name);
-        }
-        let constructor = self.native_value(Native::RegExp);
-        self.regexp_proto = self.object();
-        self.regexp_prototypes
-            .insert(self.realm.globals, self.regexp_proto);
-        self.set_named(program, constructor, "prototype", self.regexp_proto)?;
-        self.set_builtin_named(program, constructor, "escape", Native::RegExpEscape)?;
+    pub(super) fn regexp_intrinsic_constructor(&self) -> Value {
+        self.regexp_intrinsics
+            .get(&self.realm.globals)
+            .expect("RegExp intrinsics are installed for the active realm")
+            .constructor
+    }
+
+    pub(super) fn install_regexp_intrinsics(
+        &mut self,
+        realm: Value,
+        constructor: Value,
+        prototype: Value,
+    ) -> Result<(), JsError> {
+        self.regexp_intrinsics.insert(
+            realm,
+            RegExpIntrinsics {
+                constructor,
+                prototype,
+            },
+        );
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             constructor,
@@ -64,16 +92,33 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_builtin_named(program, self.regexp_proto, "constructor", Native::RegExp)?;
-        self.set_builtin_named(program, self.regexp_proto, "compile", Native::RegExpCompile)?;
-        self.set_builtin_named(program, self.regexp_proto, "exec", Native::RegExpExec)?;
-        self.set_builtin_named(program, self.regexp_proto, "test", Native::RegExpTest)?;
-        self.set_builtin_named(
-            program,
-            self.regexp_proto,
-            "toString",
-            Native::RegExpToString,
-        )?;
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        let initial_constructor = self.native_value(Native::RegExp);
+        for (name, native) in [
+            ("compile", Native::RegExpCompile),
+            ("exec", Native::RegExpExec),
+            ("test", Native::RegExpTest),
+            ("toString", Native::RegExpToString),
+        ] {
+            let method = if constructor == initial_constructor {
+                self.native_value(native)
+            } else {
+                self.native_with_realm(native, realm, realm)
+            };
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn install_regexp(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        for name in ["source", "flags", "lastIndex", "index", "input"] {
+            self.intern_atom(name);
+        }
+        let constructor = self.native_value(Native::RegExp);
+        self.regexp_proto = self.object();
+        self.install_regexp_intrinsics(self.realm.globals, constructor, self.regexp_proto)?;
+        self.set_builtin_named(program, constructor, "escape", Native::RegExpEscape)?;
         self.install_regexp_symbol_properties(constructor, self.regexp_proto, self.realm.globals)?;
         self.install_regexp_accessors(program, self.regexp_proto, self.realm.globals)?;
         self.install_regexp_legacy_accessors(program, constructor, self.realm.globals)?;
@@ -677,8 +722,10 @@ impl<H: Host> Vm<H> {
                 "RegExp.prototype[@@split] receiver is not an object".into(),
             ));
         }
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
         let constructor = self.regexp_split_species_constructor(p, receiver)?;
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
@@ -789,8 +836,7 @@ impl<H: Host> Vm<H> {
             self.get_index(p, constructor, species_symbol)?
         };
         let intrinsic = if species.is_undefined() || species.is_null() {
-            let regexp_atom = self.intern_atom("RegExp");
-            self.get_property(p, self.realm.globals, regexp_atom)?
+            self.regexp_intrinsic_constructor()
         } else {
             species
         };
@@ -825,8 +871,10 @@ impl<H: Host> Vm<H> {
                 "RegExp.prototype[@@matchAll] receiver is not an object".into(),
             ));
         }
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
         let flags = self.to_string(p, flags_value)?;
@@ -875,8 +923,7 @@ impl<H: Host> Vm<H> {
         } else {
             Value::UNDEFINED
         };
-        let regexp_atom = self.intern_atom("RegExp");
-        let intrinsic = self.get_property(p, self.realm.globals, regexp_atom)?;
+        let intrinsic = self.regexp_intrinsic_constructor();
         let flags_value = self.heap.alloc(Cell::String(flags.into()));
         if species.is_undefined() || species.is_null() {
             return self.construct_value(p, intrinsic, &[receiver, flags_value]);
@@ -925,8 +972,10 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Err(self.type_error(p, "RegExp.prototype[@@match] called on non-object".into()));
         }
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
         let input_value = self.heap.alloc(Cell::String(input.clone()));
         let flags_atom = self.intern_atom("flags");
         let flags_value = self.get_property(p, receiver, flags_atom)?;
@@ -1021,7 +1070,10 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
             }
             (Native::RegExpSource, _)
-                if self.regexp_prototypes.get(&self.realm.globals) == Some(&this) =>
+                if self
+                    .regexp_intrinsics
+                    .get(&self.realm.globals)
+                    .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
                 Ok(self.heap.alloc(Cell::String("(?:)".into())))
             }
@@ -1037,7 +1089,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
             Some(Cell::RegExp { flags, .. }) => flags.clone(),
-            _ if self.regexp_prototypes.get(&self.realm.globals) == Some(&this) => {
+            _ if self
+                .regexp_intrinsics
+                .get(&self.realm.globals)
+                .is_some_and(|intrinsics| intrinsics.prototype == this) =>
+            {
                 return Ok(Value::UNDEFINED);
             }
             _ => {
@@ -1114,9 +1170,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<(), JsError> {
-        let regexp = self.intern_atom("RegExp");
-        let constructor = self.own_property(self.realm.globals, regexp);
-        if constructor.is_some_and(|constructor| self.same_value(receiver, constructor)) {
+        if self.same_value(receiver, self.regexp_intrinsic_constructor()) {
             Ok(())
         } else {
             Err(self.type_error(p, "RegExp legacy accessor called on incompatible receiver".into()))
@@ -1136,57 +1190,96 @@ impl<H: Host> Vm<H> {
         if new_target.is_none() && flags_omitted && pattern_is_regexp {
             let constructor_atom = self.intern_atom("constructor");
             let constructor = self.get_property(p, pattern_value, constructor_atom)?;
-            let regexp_atom = self.intern_atom("RegExp");
-            let intrinsic = self.get_property(p, self.realm.globals, regexp_atom)?;
+            let intrinsic = self.regexp_intrinsic_constructor();
             if self.same_value(constructor, intrinsic) {
                 return Ok(pattern_value);
             }
         }
-        let source_value = if pattern_value.is_undefined() {
-            self.heap.alloc(Cell::String(String::new().into()))
-        } else if pattern_is_regexp {
-            let source_atom = self.intern_atom("source");
-            self.get_property(p, pattern_value, source_atom)?
-        } else {
-            pattern_value
-        };
-        let pattern = self.regexp_input_string(p, source_value)?;
-        let prototype = if let Some(new_target) = new_target {
-            self.regexp_prototype_from_new_target(p, new_target)?
-        } else {
-            self.regexp_proto
-        };
-        let flags = if flags_omitted && pattern_is_regexp {
-            let flags_atom = self.intern_atom("flags");
-            let value = self.get_property(p, pattern_value, flags_atom)?;
-            self.to_string(p, value)?
-        } else if flags_omitted {
-            String::new()
-        } else {
-            self.to_string(p, flags_value)?
-        };
-        let regex = Self::compile_regexp(pattern.host_string(), &flags)?;
-        drop(regex);
-        let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(prototype),
-            source: pattern,
-            flags,
-        });
-        let last_index_atom = self.intern_atom("lastIndex");
-        self.set_property(object, last_index_atom, Value::number(0.0))?;
-        self.set_property_attributes(
-            object,
-            PropertyKey::string(last_index_atom),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        Ok(object)
+        let roots_start = self.active_call_roots.len();
+        let result = (|| {
+            let input =
+                if let Some(Cell::RegExp { source, flags, .. }) = self.heap.get(pattern_value) {
+                    RegExpConstructorInput::Internal {
+                        source: source.clone(),
+                        original_flags: flags_omitted.then(|| flags.clone()),
+                    }
+                } else {
+                    let source = if pattern_is_regexp {
+                        let source_atom = self.intern_atom("source");
+                        self.get_property(p, pattern_value, source_atom)?
+                    } else {
+                        pattern_value
+                    };
+                    self.active_call_roots.push(source);
+                    let flags = if flags_omitted && pattern_is_regexp {
+                        let flags_atom = self.intern_atom("flags");
+                        self.get_property(p, pattern_value, flags_atom)?
+                    } else {
+                        flags_value
+                    };
+                    self.active_call_roots.push(flags);
+                    RegExpConstructorInput::Observable { source, flags }
+                };
+            let prototype = if let Some(new_target) = new_target {
+                self.regexp_prototype_from_new_target(p, new_target)?
+            } else {
+                self.regexp_intrinsics
+                    .get(&self.realm.globals)
+                    .expect("RegExp intrinsics are installed for the active realm")
+                    .prototype
+            };
+            self.active_call_roots.push(prototype);
+            let (pattern, flags) = match input {
+                RegExpConstructorInput::Internal {
+                    source,
+                    original_flags,
+                } => {
+                    let flags = if let Some(flags) = original_flags {
+                        flags
+                    } else {
+                        self.to_string(p, flags_value)?
+                    };
+                    (source, flags)
+                }
+                RegExpConstructorInput::Observable { source, flags } => {
+                    let source = if source.is_undefined() {
+                        JsString::from_str("")
+                    } else {
+                        self.regexp_input_string(p, source)?
+                    };
+                    let flags = if flags.is_undefined() {
+                        String::new()
+                    } else {
+                        self.to_string(p, flags)?
+                    };
+                    (source, flags)
+                }
+            };
+            let regex = Self::compile_regexp(pattern.host_string(), &flags)?;
+            drop(regex);
+            let object = self.heap.alloc(Cell::RegExp {
+                object: Self::empty_object(prototype),
+                source: pattern,
+                flags,
+            });
+            let last_index_atom = self.intern_atom("lastIndex");
+            self.set_property(object, last_index_atom, Value::number(0.0))?;
+            self.set_property_attributes(
+                object,
+                PropertyKey::string(last_index_atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            Ok(object)
+        })();
+        self.active_call_roots.truncate(roots_start);
+        result
     }
 
     pub(super) fn regexp_compile_native(
@@ -1199,10 +1292,10 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
         };
         let is_intrinsic_instance = self
-            .regexp_prototypes
+            .regexp_intrinsics
             .get(&self.realm.globals)
-            .is_some_and(|prototype| {
-                matches!(self.heap.get(receiver), Some(Cell::RegExp { object, .. }) if object.proto == *prototype)
+            .is_some_and(|intrinsics| {
+                matches!(self.heap.get(receiver), Some(Cell::RegExp { object, .. }) if object.proto == intrinsics.prototype)
             });
         if !is_intrinsic_instance {
             return Err(self.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
@@ -1292,8 +1385,10 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Err(self.type_error(p, "RegExp.prototype.test called on non-object".into()));
         }
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
         let input = self.heap.alloc(Cell::String(input));
         let result = self.regexp_exec_value(p, receiver, input)?;
         Ok(if result.is_null() {
@@ -1312,8 +1407,10 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(this), Some(Cell::RegExp { .. })) {
             return Err(self.type_error(p, "RegExp method called on incompatible receiver".into()));
         }
-        let input =
-            self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let input = self.regexp_input_string(
+            p,
+            args.first().copied().unwrap_or(Value::UNDEFINED),
+        )?;
         let last_index_atom = self.intern_atom("lastIndex");
         let last_index = self.get_property(p, this, last_index_atom)?;
         let last_index = regexp_to_length(self.to_number(p, last_index)?);
@@ -1479,7 +1576,6 @@ impl<H: Host> Vm<H> {
         })?;
         Ok(CompiledRegexp(regex))
     }
-
 }
 
 fn escape_regexp_source(source: &JsString) -> JsString {

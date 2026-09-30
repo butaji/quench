@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
             async_generator_proto: Value::NULL,
             async_from_sync_iterator_proto: Value::NULL,
             regexp_proto: Value::NULL,
-            regexp_prototypes: FxHashMap::default(),
+            regexp_intrinsics: FxHashMap::default(),
             intl_number_format_constructors: FxHashMap::default(),
             intl_number_format_prototypes: FxHashMap::default(),
             intl_number_format_fallback_symbols: FxHashMap::default(),

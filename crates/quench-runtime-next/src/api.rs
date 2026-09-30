@@ -145,8 +145,31 @@ mod tests {
             self.0.borrow_mut().push(text.into());
         }
 
+        fn globals(&self) -> &'static [crate::HostGlobal] {
+            &[crate::HostGlobal {
+                name: "$262",
+                capability: crate::CapabilityId::CreateRealm,
+            }]
+        }
+
         fn clock_millis(&mut self) -> f64 {
             0.0
+        }
+    }
+
+    fn assert_output_in_execution_modes(source: &str, expected: &[&str]) {
+        for (mode, compile) in [
+            ("specialized", Engine::specialize as fn(&str, &str) -> _),
+            ("unspecialized", Engine::specialize_unspecialized),
+        ] {
+            let host = Capture::default();
+            let view = host.clone();
+            let mut runtime = Runtime::new(host);
+            let program = compile(source, "regression.js").unwrap();
+            if let Err(error) = runtime.execute(&program) {
+                panic!("{mode}: {}", runtime.format_error(&program, &error));
+            }
+            assert_eq!(view.0.borrow().as_slice(), expected, "{mode}");
         }
     }
 
@@ -415,6 +438,156 @@ mod tests {
         assert_eq!(
             view.0.borrow().as_slice(),
             ["0,1", "0,1,length", "0,1,length"]
+        );
+    }
+
+    #[test]
+    fn regression_eval_defaults_capture_caller_and_infer_function_names() {
+        assert_output_in_execution_modes(
+            r#"
+            function caller() {
+                var offset = 39;
+                function value() { return offset + 3; }
+                eval('var f = function named([a = value(), ...rest]) { return a; };');
+                print(f([]));
+                print(f.name);
+                eval('var inferred = function() {};');
+                print(inferred.name);
+            }
+            caller();
+            "#,
+            &["42", "named", "inferred"],
+        );
+    }
+
+    #[test]
+    fn regression_eval_global_bindings_follow_property_descriptors() {
+        assert_output_in_execution_modes(
+            r#"
+            var initial;
+            var x = 23;
+            eval('initial = x; var x = 45;');
+            print(initial);
+            print(x);
+            var descriptor = Object.getOwnPropertyDescriptor(this, 'x');
+            print(descriptor.value);
+            print(descriptor.writable);
+            print(descriptor.enumerable);
+            print(descriptor.configurable);
+            var reads = 0;
+            var writes = 0;
+            eval('var visible = 1; Object.defineProperty(this, "visible", {get: function() { reads++; return 71; }, set: function(v) { writes = v; }}); print(visible); visible = 12; print(writes); print(visible);');
+            print(reads);
+            var frozen = 2;
+            Object.defineProperty(this, 'frozen', {writable: false});
+            frozen = 5;
+            print(frozen);
+            print(eval('frozen'));
+            try { eval('"use strict"; frozen = 7;'); }
+            catch (error) { print(error.name); }
+            "#,
+            &[
+                "23",
+                "45",
+                "45",
+                "true",
+                "true",
+                "false",
+                "71",
+                "12",
+                "71",
+                "2",
+                "2",
+                "2",
+                "TypeError",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_eval_property_sites_use_the_executing_program() {
+        assert_output_in_execution_modes(
+            r#"
+            eval('var object = {a: 2, b: 3, c: 4}; object.a = object.b + object.c; print(object.a); print(object.b); print(object.c);');
+            "#,
+            &["7", "3", "4"],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_literals_and_species_use_realm_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+            var original = RegExp;
+            RegExp = null;
+            var expression = /a/g;
+            print(Object.getPrototypeOf(expression) === original.prototype);
+            print(original(expression) === expression);
+            expression.constructor = undefined;
+            print(expression[Symbol.matchAll]('a').next().value[0]);
+            print(expression[Symbol.split]('ba')[0]);
+            function shadowed(RegExp) { return /b/.test('b'); }
+            print(shadowed(null));
+            "#,
+            &["true", "true", "a", "b", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_foreign_regexp_realm_has_intrinsic_methods_and_descriptors() {
+        assert_output_in_execution_modes(
+            r#"
+            var other = $262.createRealm().global;
+            other.eval('var intrinsic = RegExp; RegExp = null; var expression = /a/g;');
+            print(Object.getPrototypeOf(other.expression) === other.intrinsic.prototype);
+            print(other.expression.toString());
+            print(other.expression.test('a'));
+            var descriptor = Object.getOwnPropertyDescriptor(other.intrinsic, 'prototype');
+            print(descriptor.writable);
+            print(descriptor.enumerable);
+            print(descriptor.configurable);
+            "#,
+            &["true", "/a/g", "true", "false", "false", "false"],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_constructor_uses_internal_source_and_flags() {
+        assert_output_in_execution_modes(
+            r#"
+            var expression = /a/g;
+            var gets = 0;
+            Object.defineProperty(expression, 'source', {get: function() { gets++; return 'wrong'; }});
+            Object.defineProperty(expression, 'flags', {get: function() { gets++; return 'i'; }});
+            var cloned = new RegExp(expression);
+            print(cloned.source);
+            print(cloned.flags);
+            print(gets);
+            "#,
+            &["a", "g", "0"],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_constructor_orders_getters_prototype_and_coercions() {
+        assert_output_in_execution_modes(
+            r#"
+            var events = [];
+            var like = {};
+            Object.defineProperty(like, Symbol.match, {get: function() { events.push('match'); return true; }});
+            Object.defineProperty(like, 'source', {get: function() { events.push('source'); return {toString: function() { events.push('source coercion'); return 'a'; }}; }});
+            Object.defineProperty(like, 'flags', {get: function() { events.push('flags'); return {toString: function() { events.push('flags coercion'); return 'g'; }}; }});
+            var target = new Proxy(function() {}, {get: function(t, key) { if (key === 'prototype') events.push('prototype'); return Reflect.get(t, key); }});
+            var result = Reflect.construct(RegExp, [like], target);
+            print(events.join(','));
+            print(result.source);
+            print(result.flags);
+            "#,
+            &[
+                "match,source,flags,prototype,source coercion,flags coercion",
+                "undefined",
+                "undefined",
+            ],
         );
     }
 }

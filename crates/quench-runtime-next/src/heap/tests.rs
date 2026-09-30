@@ -2,6 +2,19 @@ use super::*;
 use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
+fn plain_object() -> Object {
+    Object {
+        proto: Value::NULL,
+        properties: ValueVec::new(),
+        arguments_map: None,
+        arguments_object: false,
+        module_namespace: false,
+        module_bindings: vec![],
+        deferred_module: None,
+        private_names: vec![],
+    }
+}
+
 #[test]
 fn compact_object_header_reduces_gc_slot() {
     assert_eq!(size_of::<Object>(), 16);
@@ -36,10 +49,7 @@ fn forged_heap_indices_are_rejected_at_the_access_boundary() {
 fn array_buffer_backing_is_accounted_until_owner_collection() {
     let mut heap = Heap::new();
     let buffer = heap.alloc(Cell::ArrayBuffer {
-        object: Object {
-            proto: Value::NULL,
-            properties: ValueVec::new(),
-        },
+        object: plain_object(),
         bytes: Rc::new(vec![0; 16]),
         shared: false,
         detached: false,
@@ -57,16 +67,10 @@ fn array_buffer_backing_is_accounted_until_owner_collection() {
 #[test]
 fn finalization_jobs_are_created_for_unmarked_targets() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(Object {
-        proto: Value::NULL,
-        properties: ValueVec::new(),
-    }));
+    let target = heap.alloc(Cell::Object(plain_object()));
     let target = heap.weak_handle(target).unwrap();
     let registry = heap.alloc(Cell::FinalizationRegistry {
-        object: Object {
-            proto: Value::NULL,
-            properties: ValueVec::new(),
-        },
+        object: plain_object(),
         callback: Value::number(1.0),
         entries: Box::new(FinalizationEntries(vec![FinalizationEntry {
             target,
@@ -84,16 +88,10 @@ fn finalization_jobs_are_created_for_unmarked_targets() {
 fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {
-        object: Object {
-            proto: Value::NULL,
-            properties: ValueVec::new(),
-        },
+        object: plain_object(),
         entries: WeakMapEntries::default(),
     });
-    let key = heap.alloc(Cell::Object(Object {
-        proto: Value::NULL,
-        properties: ValueVec::new(),
-    }));
+    let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::String("value".into()));
     if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
         entries.insert(key, value);
@@ -113,16 +111,10 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
 #[test]
 fn weak_ref_target_is_cleared_after_collection() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::Object(Object {
-        proto: Value::NULL,
-        properties: ValueVec::new(),
-    }));
+    let target = heap.alloc(Cell::Object(plain_object()));
     let target_handle = heap.weak_handle(target).unwrap();
     let reference = heap.alloc(Cell::WeakRef {
-        object: Object {
-            proto: Value::NULL,
-            properties: ValueVec::new(),
-        },
+        object: plain_object(),
         target: Some(target_handle),
     });
     let reference_root = heap.root(reference);
@@ -151,10 +143,7 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
 #[test]
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
-    let object = heap.alloc(Cell::Object(Object {
-        proto: Value::NULL,
-        properties: ValueVec::new(),
-    }));
+    let object = heap.alloc(Cell::Object(plain_object()));
     if let Some(Cell::Object(data)) = heap.get_mut(object) {
         data.set_extensible(false);
         data.set_frozen(true);
