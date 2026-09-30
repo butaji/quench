@@ -186,6 +186,11 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
                     .any(|entry| entry.atom == method && entry.target.is_some()),
                 "specialized method site should populate its method cache"
             );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(
+                vm.profile.method_cache_hits > 0,
+                "specialized method site should take its method-cache hit path"
+            );
         }
     }
 }
