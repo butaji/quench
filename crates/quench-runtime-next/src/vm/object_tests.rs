@@ -240,6 +240,8 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
       print(callMethod(second));
       print(callMethod(third));
       print(callMethod(fourth));
+      third.method = function() { return this.value + 10; };
+      print(callMethod(third));
     "#;
     for (mode, compile) in [
         ("specialized", Engine::specialize as fn(&str, &str) -> _),
@@ -252,14 +254,29 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
-            ["1", "2", "3", "4", "1", "2", "3", "4"],
+            ["1", "2", "3", "4", "1", "2", "3", "4", "13"],
             "{mode}"
         );
 
         if vm.specialized {
             assert!(
-                vm.megamorphic_methods.iter().any(|set| set.len == 4),
-                "four receiver shapes should reach the megamorphic method cache"
+                vm.megamorphic_methods.is_empty(),
+                "mutation should clear the megamorphic method cache"
+            );
+            let third_atom = vm.intern_atom("third");
+            let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
+            let third_shape = vm.object_data(third).unwrap().shape();
+            let method_atom = vm.intern_atom("method");
+            let target = vm
+                .call_target(vm.own_property(third, method_atom).unwrap())
+                .unwrap();
+            assert!(
+                vm.method_caches[0]
+                    .iter()
+                    .any(|entry| entry.shape == third_shape
+                        && entry.atom == method_atom
+                        && entry.target == Some(target)),
+                "the replacement should refill the receiver's method cache"
             );
             #[cfg(feature = "profile-aggregate")]
             assert!(
