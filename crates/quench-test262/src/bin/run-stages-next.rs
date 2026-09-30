@@ -63,10 +63,13 @@ fn run() -> Result<(), String> {
     let executable = env::current_exe()
         .map_err(|error| format!("next stage executable lookup failed: {error}"))?;
     for stage in stages
-        .into_iter()
+        .iter()
         .filter(|stage| stage.id >= from && stage.id <= to)
     {
-        let files = discover_js_files(&stage.root)?;
+        let files = discover_js_files(&stage.root)?
+            .into_iter()
+            .filter(|file| stage.owns_file(file, &stages))
+            .collect::<Vec<_>>();
         let files = if let Some(needle) = filter.as_ref() {
             files
                 .into_iter()
