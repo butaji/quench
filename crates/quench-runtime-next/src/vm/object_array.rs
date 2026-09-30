@@ -276,7 +276,11 @@ impl<H: Host> Vm<H> {
                 .filter(|value| !value.is_deleted()),
             _ => None,
         }
-        .or_else(|| self.heap.sparse_get(target, index));
+        .or_else(|| {
+            self.heap
+                .sparse_get(target, index)
+                .filter(|value| !value.is_deleted())
+        });
         let is_new = existing.is_none()
             && !self
                 .descriptors
