@@ -60,6 +60,14 @@ reports, and keep stage batches capped at 100. The fixture comparison scripts
 `tools/diff-next.mjs` and `tools/run-all-next.mjs` require positive
 `DIFF_TIMEOUT_MS` values.
 
+`run-all-next` writes its full per-test report to
+`target/test262-next-report.json` and compares a full-inventory run against
+`target/test262-next-ratchet.json`. A first complete all-pass run freezes the
+baseline; a later lost pass is reported as a regression and fails the command.
+Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
+`TEST262_BATCH_SIZE` subset still writes its report but does not update or
+compare the full-inventory ratchet.
+
 For long runs, advance one stage at a time with `run-stages-next`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
 discovery order. Do not use the legacy `run-all` batch wrapper for the current
