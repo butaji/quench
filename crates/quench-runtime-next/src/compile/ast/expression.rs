@@ -143,7 +143,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn regexp_literal(&mut self, value: &oxc_ast::ast::RegExpLiteral<'_>) -> Register {
-        let callee = self.load_name("RegExp");
+        let callee = self.load_name(crate::bytecode::INTRINSIC_REGEXP_BINDING);
         let pattern = self.literal(Constant::String(value.regex.pattern.text.to_string()));
         let mut flags = String::new();
         for (flag, bit) in [

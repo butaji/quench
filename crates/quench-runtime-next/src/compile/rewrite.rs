@@ -412,8 +412,8 @@ mod tests {
     #[test]
     fn producer_move_requires_the_original_register_to_be_dead() {
         let live = [Instr::new(Op::Return, 3, 0, 0, 0)];
-        assert!(!register_dead_in_suffix(3, &live, &[]));
-        assert!(register_dead_in_suffix(2, &live, &[]));
+        assert!(!register_dead_in_suffix(3, &live, &[], &[], &[]));
+        assert!(register_dead_in_suffix(2, &live, &[], &[], &[]));
     }
 
     #[test]

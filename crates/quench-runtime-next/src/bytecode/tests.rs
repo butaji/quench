@@ -14,6 +14,7 @@ fn decoder_rejects_out_of_range_local_load() {
         functions: vec![Function {
             parent: None,
             name: None,
+            source_text: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -26,6 +27,7 @@ fn decoder_rejects_out_of_range_local_load() {
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
+            parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 1,
@@ -74,6 +76,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         functions: vec![Function {
             parent: None,
             name: None,
+            source_text: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -86,6 +89,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
+            parameter_eval_arguments_error: false,
             arguments_slot: None,
             strict: false,
             locals: 0,
