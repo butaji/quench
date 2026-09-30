@@ -1182,10 +1182,14 @@ impl Drop for ObjectData {
         // re-entering RefCell's dynamic borrow state while teardown releases
         // a cyclic replacement graph.
         let replacement = self.replacement.get_mut().take();
-        stacker::maybe_grow(64 * 1024, 4 * 1024 * 1024, || {
-            drop(properties);
-            drop(replacement);
-        });
+        stacker::maybe_grow(
+            OBJECT_TEARDOWN_STACK_RED_ZONE_BYTES,
+            OBJECT_TEARDOWN_STACK_SIZE_BYTES,
+            || {
+                drop(properties);
+                drop(replacement);
+            },
+        );
     }
 }
 
@@ -1855,6 +1859,11 @@ impl PartialEq for ObjectData {
         std::ptr::eq(self, other)
     }
 }
+
+// This stack segment is confined to Rust object teardown, where Drop cannot
+// return a guest RangeError. Guest execution uses quench-stack's shared budget.
+const OBJECT_TEARDOWN_STACK_RED_ZONE_BYTES: usize = 64 * 1024;
+const OBJECT_TEARDOWN_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
 
 #[cfg(test)]
 mod object_identity_tests {
