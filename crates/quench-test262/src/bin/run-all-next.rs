@@ -20,11 +20,18 @@ fn main() -> ExitCode {
         return fail(error);
     }
     if env::args().nth(1).as_deref() == Some("--case") {
-        return run_case_entry();
+        return match thread::Builder::new()
+            .name("next-test262-case".into())
+            .stack_size(rqj::WORKER_STACK_SIZE)
+            .spawn(run_case_entry)
+        {
+            Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+            Err(error) => fail(format!("next test worker thread: {error}")),
+        };
     }
     let handle = thread::Builder::new()
         .name("run-all-next-main".into())
-        .stack_size(32 * 1024 * 1024)
+        .stack_size(rqj::WORKER_STACK_SIZE)
         .spawn(run)
         .unwrap_or_else(|error| panic!("run-all-next thread: {error}"));
     handle.join().unwrap_or(ExitCode::from(1))

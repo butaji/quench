@@ -1150,22 +1150,23 @@ impl<H: Host> Vm<H> {
                 if self.call_target(callback).is_err() {
                     return Err(self.type_error(p, "WeakMap callback must be callable".into()));
                 }
-                if let Some(index) = self.weak_map_entry_index(this, key) {
-                    let Some(Cell::WeakMap { entries, .. }) = self.heap.get(this) else {
-                        return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
-                    };
-                    return Ok(entries[index].1);
+                if let Some(value) = self
+                    .heap
+                    .get(this)
+                    .and_then(|cell| match cell {
+                        Cell::WeakMap { entries, .. } => entries.get(key),
+                        _ => None,
+                    })
+                {
+                    return Ok(value);
                 }
                 let value = self.call_value(p, callback, Value::UNDEFINED, &[key])?;
-                let index = self.weak_map_entry_index(this, key);
                 let Some(Cell::WeakMap { entries, .. }) = self.heap.get_mut(this) else {
-                    return Err(self.type_error(p, "WeakMap method called on incompatible receiver".into()));
+                    return Err(
+                        self.type_error(p, "WeakMap method called on incompatible receiver".into())
+                    );
                 };
-                if let Some(index) = index {
-                    entries[index].1 = value;
-                } else {
-                    entries.push((key, value));
-                }
+                entries.insert(key, value);
                 Ok(value)
             }
             Native::WeakSetAdd => {

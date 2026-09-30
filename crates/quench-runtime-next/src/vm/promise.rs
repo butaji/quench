@@ -243,6 +243,7 @@ fn native_length(kind: Native) -> Option<f64> {
     Some(match kind {
         Native::FunctionPrototype
         | Native::IsHTMLDDA
+        | Native::CollectGarbage
         | Native::FunctionToString
         | Native::FunctionCaller
         | Native::TypedArray
@@ -324,7 +325,9 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::BigIntAsIntN | Native::BigIntAsUintN => 2.0,
         Native::BigIntValueOf | Native::BigIntToString | Native::BigIntToLocaleString => 0.0,
         Native::IntlNumberFormat | Native::IntlNumberFormatFormatGetter => 0.0,
+        Native::IntlNumberFormatSupportedLocalesOf => 1.0,
         Native::IntlNumberFormatFormat | Native::IntlNumberFormatFormatToParts => 1.0,
+        Native::IntlNumberFormatFormatRange | Native::IntlNumberFormatFormatRangeToParts => 2.0,
         Native::IntlNumberFormatResolvedOptions => 0.0,
         Native::IntlRelativeTimeFormat => 0.0,
         Native::IntlRelativeTimeFormatSupportedLocalesOf => 1.0,
@@ -1123,7 +1126,10 @@ impl<H: Host> Vm<H> {
         };
         let previous_global = self.switch_realm_global(realm);
         self.promise.active_native.push(callee);
-        let result = self.call_native(p, native, this, args);
+        let result = (|| {
+            let _stack = self.enter_stack()?;
+            self.call_native(p, native, this, args)
+        })();
         self.promise.active_native.pop();
         self.switch_realm_global(previous_global);
         result

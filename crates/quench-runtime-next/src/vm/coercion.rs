@@ -250,6 +250,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         hint: &str,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         if !self.is_object_like(value) {
             return Ok(value);
         }

@@ -26,7 +26,17 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     if env::args().nth(1).as_deref() == Some("--test-worker") {
-        return run_test_worker();
+        return match thread::Builder::new()
+            .name("next-test262-case".into())
+            .stack_size(rqj::WORKER_STACK_SIZE)
+            .spawn(run_test_worker)
+        {
+            Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+            Err(error) => {
+                eprintln!("FAIL: next test worker thread: {error}");
+                ExitCode::from(1)
+            }
+        };
     }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
