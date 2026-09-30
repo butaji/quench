@@ -153,6 +153,12 @@ pub(super) struct Frame {
     active_iterators: Vec<ActiveIterator>,
     with_base: usize,
 }
+impl Frame {
+    fn prepare_registers(&mut self, register_count: usize) {
+        self.registers.resize(register_count, Value::UNDEFINED);
+        self.registers.fill(Value::UNDEFINED);
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveIterator {
     pub(crate) iterator: u16,

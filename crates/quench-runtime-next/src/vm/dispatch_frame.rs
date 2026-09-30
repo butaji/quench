@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
                 .push((super_called_atom, Value::FALSE));
         }
         let register_count = function.registers as usize;
-        frame.registers.resize(register_count, Value::UNDEFINED);
+        frame.prepare_registers(register_count);
         self.frames.push(frame);
         if id == super::ROOT_FUNCTION_ID
             && self.programs.is_module(self.frames.last().unwrap().program)
@@ -382,7 +382,7 @@ impl<H: Host> Vm<H> {
                 .push((super_called_atom, Value::FALSE));
         }
         let register_count = function.registers as usize;
-        frame.registers.resize(register_count, Value::UNDEFINED);
+        frame.prepare_registers(register_count);
         self.frames[frame_index] = frame;
         Ok(())
     }

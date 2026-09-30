@@ -391,6 +391,33 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
 }
 
 #[test]
+fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
+    let mut frame = super::Frame {
+        program: super::program_store::ProgramId::MAIN,
+        function: 0,
+        pc: 0,
+        env: Value::NULL,
+        this: Value::UNDEFINED,
+        locals: vec![],
+        dynamic_bindings: vec![],
+        captured: false,
+        registers: vec![Value::heap(11), Value::heap(12)],
+        active_iterators: vec![],
+        with_base: 0,
+    };
+
+    frame.prepare_registers(1);
+    assert_eq!(frame.registers, [Value::UNDEFINED]);
+
+    frame.registers[0] = Value::heap(13);
+    frame.prepare_registers(3);
+    assert_eq!(
+        frame.registers,
+        [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
+    );
+}
+
+#[test]
 fn regression_collection_preserves_unused_regexp_iterator_prototype() {
     for (mode, compile) in [
         ("specialized", Engine::specialize as fn(&str, &str) -> _),
