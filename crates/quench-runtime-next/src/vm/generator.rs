@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
-        frame.registers.resize(register_count, Value::UNDEFINED);
+        frame.prepare_registers(register_count);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until(
