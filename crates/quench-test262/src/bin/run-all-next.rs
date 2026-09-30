@@ -481,9 +481,12 @@ fn update_ratchet_at(
         let passes = baseline["passes"]
             .as_array()
             .ok_or_else(|| format!("Test262 ratchet {} has no pass set", path.display()))?;
-        regressions = newly_failing(passes, &current_passes)?;
+        if outcomes.len() == files.len() && !files.is_empty() {
+            regressions = newly_failing(passes, &current_passes)?;
+        }
     }
-    let clean = outcomes.iter().all(Result::is_ok) && !files.is_empty();
+    let clean =
+        outcomes.len() == files.len() && outcomes.iter().all(Result::is_ok) && !files.is_empty();
     if regressions.is_empty() && clean {
         let mut passes = current_passes.into_iter().collect::<Vec<_>>();
         passes.sort();
@@ -633,6 +636,11 @@ mod tests {
             serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
         saved["test_marker"] = serde_json::json!("keep on incomplete run");
         fs::write(&baseline, format!("{saved}\n")).unwrap();
+
+        let truncated =
+            update_ratchet_at(&baseline, &root, &files, &[Ok(())], timeout, true).unwrap();
+        assert_eq!(truncated.verdict, "incomplete");
+        assert!(truncated.regressions.is_empty());
 
         let added_file = root.join("test/c.js");
         let incomplete = update_ratchet_at(
