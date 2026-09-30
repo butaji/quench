@@ -176,6 +176,7 @@ pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
@@ -365,6 +366,7 @@ pub(crate) fn execute_target(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     match target {
         crate::value::Value::BindingCell(cell) => {
+            let _stack = crate::value::error::enter_stack()?;
             let value = cell.load();
             execute_target(&value, receiver, arguments)
         }

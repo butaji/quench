@@ -554,6 +554,7 @@ pub(crate) fn execute_direct(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let _stack = enter_function_stack(function)?;
     if let Some(value) = try_execute_physical(function, arguments)? {
         return Ok(value);
     }
@@ -568,6 +569,7 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    let _stack = enter_function_stack(function)?;
     let specialized = try_execute_specialized(function, this_value, arguments);
     match specialized {
         Ok(Some(result)) => Ok(result),

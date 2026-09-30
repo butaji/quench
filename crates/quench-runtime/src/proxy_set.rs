@@ -4,6 +4,7 @@ pub(crate) fn proxy_set(
     value: &Value,
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "set")? {

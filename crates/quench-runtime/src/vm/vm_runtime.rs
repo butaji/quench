@@ -7496,6 +7496,7 @@ pub fn execute_builtin_with_receiver(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Some(result) = stateful_builtin(builtin, receiver, arguments) {
         return result;
     }
