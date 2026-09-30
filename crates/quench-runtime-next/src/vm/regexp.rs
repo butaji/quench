@@ -1584,27 +1584,42 @@ fn escape_regexp_source(source: &JsString) -> JsString {
     }
     let mut escaped = Vec::new();
     let mut after_odd_backslashes = false;
+    let mut in_character_class = false;
     for &unit in source.units() {
         match unit {
-            REGEXP_DELIMITER if !after_odd_backslashes => {
+            REGEXP_DELIMITER if !after_odd_backslashes && !in_character_class => {
                 escaped.extend([REGEXP_ESCAPE, REGEXP_DELIMITER]);
             }
-            REGEXP_NEWLINE if !after_odd_backslashes => {
-                escaped.extend([REGEXP_ESCAPE, b'n' as u16]);
+            REGEXP_NEWLINE | REGEXP_CARRIAGE_RETURN => {
+                if !after_odd_backslashes {
+                    escaped.push(REGEXP_ESCAPE);
+                }
+                escaped.push(if unit == REGEXP_NEWLINE {
+                    u16::from(b'n')
+                } else {
+                    u16::from(b'r')
+                });
             }
-            REGEXP_CARRIAGE_RETURN if !after_odd_backslashes => {
-                escaped.extend([REGEXP_ESCAPE, b'r' as u16]);
-            }
-            REGEXP_LINE_SEPARATOR | REGEXP_PARAGRAPH_SEPARATOR if !after_odd_backslashes => {
+            REGEXP_LINE_SEPARATOR | REGEXP_PARAGRAPH_SEPARATOR => {
                 let escape = if unit == REGEXP_LINE_SEPARATOR {
                     [b'2' as u16, b'0' as u16, b'2' as u16, b'8' as u16]
                 } else {
                     [b'2' as u16, b'0' as u16, b'2' as u16, b'9' as u16]
                 };
-                escaped.extend([REGEXP_ESCAPE, b'u' as u16]);
+                if !after_odd_backslashes {
+                    escaped.push(REGEXP_ESCAPE);
+                }
+                escaped.push(u16::from(b'u'));
                 escaped.extend(escape);
             }
             _ => escaped.push(unit),
+        }
+        if !after_odd_backslashes {
+            if unit == u16::from(b'[') {
+                in_character_class = true;
+            } else if unit == u16::from(b']') {
+                in_character_class = false;
+            }
         }
         after_odd_backslashes = if unit == REGEXP_ESCAPE {
             !after_odd_backslashes

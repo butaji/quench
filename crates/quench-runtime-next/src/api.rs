@@ -590,6 +590,45 @@ mod tests {
             ],
         );
     }
+
+    #[test]
+    fn regression_legacy_braced_unicode_uses_identity_escape_and_quantifier() {
+        assert_output_in_execution_modes(
+            r#"
+            print(/\u{3}/.exec('Auuu')[0]);
+            print(/\u{41}/u.exec('Auuu')[0]);
+            print(/\u{3}/.test('uuu'));
+            print(/\u{3}/.test('A'));
+            print(/\u{4A}/.exec('u{4A}')[0]);
+            "#,
+            &["uuu", "A", "true", "false", "u{4A}"],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_source_escapes_line_terminators_and_preserves_classes() {
+        assert_output_in_execution_modes(
+            r#"
+            var rows = [
+                ['\n', '\\n'], ['\\\n', '\\n'], ['\\\\\n', '\\\\\\n'],
+                ['\r', '\\r'], ['\\\r', '\\r'],
+                ['\u2028', '\\u2028'], ['\\\u2028', '\\u2028'],
+                ['\u2029', '\\u2029'], ['\\\u2029', '\\u2029'],
+                ['/', '\\/'], ['[/]', '[/]'], ['[\\/]', '[\\/]'],
+                ['\\[/\\]', '\\[\\/\\]']
+            ];
+            var passed = 0;
+            for (var row of rows) {
+                var expression = new RegExp(row[0]);
+                if (expression.source === row[1]) passed++;
+                if (eval('/' + expression.source + '/').source === row[1]) passed++;
+                if (expression.toString() === '/' + row[1] + '/') passed++;
+            }
+            print(passed);
+            "#,
+            &["39"],
+        );
+    }
 }
 
 #[cfg(test)]
