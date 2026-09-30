@@ -838,7 +838,7 @@ impl<H: Host> Vm<H> {
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * (size_of::<(u32, Atom)>() + size_of::<u32>()),
+            self.transitions.capacity() * size_of::<((u32, property_key::PropertyKey), u32)>(),
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>(),
             self.megamorphic_fields.len(),
