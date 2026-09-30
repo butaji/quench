@@ -3,6 +3,7 @@
 mod duration;
 mod duration_total;
 mod offset;
+mod rounding;
 
 pub use duration::parse_duration;
 pub use duration_total::{relative_duration_nanoseconds, total_duration};
@@ -10,6 +11,7 @@ pub use offset::{
     offset_minutes, offset_seconds, valid_date_time_offset, valid_string_offset,
     valid_timezone_offset,
 };
+pub use rounding::round_temporal_nanoseconds;
 
 pub fn timezone_primary_name(text: &str) -> &str {
     match text {

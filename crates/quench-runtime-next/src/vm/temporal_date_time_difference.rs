@@ -204,11 +204,9 @@ impl<H: Host> Vm<H> {
         fields: &mut [f64; 10],
     ) -> Result<(), JsError> {
         let quantum = unit_nanos(options.smallest) * options.increment;
-        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            total,
-            quantum,
-            &options.rounding_mode,
-        ) * quantum;
+        let rounded =
+            quench_temporal::round_temporal_nanoseconds(total, quantum, &options.rounding_mode)
+                * quantum;
         let sign = rounded.signum();
         let mut remainder = rounded.unsigned_abs() as i128;
         let mut values = [0_i128; 6];
@@ -397,7 +395,7 @@ impl<H: Host> Vm<H> {
             _ => None,
         };
         if let Some((value, unit_nanos)) = rounded_calendar_unit {
-            let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            let rounded = quench_temporal::round_temporal_nanoseconds(
                 value * sign,
                 unit_nanos * options.increment,
                 &options.rounding_mode,
@@ -432,7 +430,7 @@ impl<H: Host> Vm<H> {
                 - temporal_date::days_from_iso_date(anchor);
             let residual = i128::from(residual_days) * nanos_per_day + subday;
             let quantum = unit_nanos(options.smallest) * options.increment;
-            let rounded_residual = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            let rounded_residual = quench_temporal::round_temporal_nanoseconds(
                 residual * sign,
                 quantum,
                 &options.rounding_mode,
@@ -450,7 +448,7 @@ impl<H: Host> Vm<H> {
         if options.smallest == "day" {
             let day = super::temporal_date_arithmetic::NANOS_PER_DAY;
             let quantity = days as f64 + time as f64 / day as f64;
-            let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            let rounded = quench_temporal::round_temporal_nanoseconds(
                 (quantity * day as f64) as i128 * sign,
                 day * options.increment,
                 &options.rounding_mode,
@@ -461,7 +459,7 @@ impl<H: Host> Vm<H> {
             time = 0;
         } else {
             let quantum = unit_nanos(options.smallest) * options.increment;
-            time = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+            time = quench_temporal::round_temporal_nanoseconds(
                 time * sign,
                 quantum,
                 &options.rounding_mode,

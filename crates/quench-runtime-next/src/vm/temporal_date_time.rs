@@ -904,9 +904,7 @@ impl<H: Host> Vm<H> {
             .map(|(value, scale)| i128::from(*value) * scale)
             .sum::<i128>();
         let quantum = scale * increment;
-        let rounded =
-            super::temporal_zoned_date_time::round_temporal_nanoseconds(total, quantum, mode)
-                * quantum;
+        let rounded = quench_temporal::round_temporal_nanoseconds(total, quantum, mode) * quantum;
         let carry = rounded.div_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let remainder = rounded.rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let days = i64::try_from(carry)

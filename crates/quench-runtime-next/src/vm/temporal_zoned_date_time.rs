@@ -1561,7 +1561,7 @@ impl<H: Host> Vm<H> {
             let quantum = zoned_date_time_unit_nanoseconds(options.smallest)
                 .expect("validated time rounding unit")
                 * options.increment;
-            let rounded_delta = round_temporal_nanoseconds(
+            let rounded_delta = quench_temporal::round_temporal_nanoseconds(
                 (right.epoch_nanoseconds - left.epoch_nanoseconds) * sign,
                 quantum,
                 &options.rounding_mode,
@@ -1908,7 +1908,7 @@ impl<H: Host> Vm<H> {
         let quantum = zoned_date_time_unit_nanoseconds(options.smallest)
             .ok_or_else(|| self.range_error(p, "Invalid smallestUnit".into()))?
             * options.increment;
-        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
+        let rounded = quench_temporal::round_temporal_nanoseconds(
             difference,
             quantum,
             &options.rounding_mode,
@@ -2922,7 +2922,8 @@ fn round_zoned_date_time_epoch(
         + i128::from(fields[7]) * i128::from(NANOSECONDS_PER_MICROSECOND)
         + i128::from(fields[8]);
     let rounded =
-        round_temporal_nanoseconds(nanoseconds, quantum, &options.rounding_mode) * quantum;
+        quench_temporal::round_temporal_nanoseconds(nanoseconds, quantum, &options.rounding_mode)
+            * quantum;
     let date = if rounded >= NANOSECONDS_PER_DAY {
         date.succ_opt()?
     } else {
@@ -2946,31 +2947,6 @@ fn normalize_smallest_unit(unit: &str) -> &str {
     unit.strip_suffix('s')
         .filter(|singular| SMALLEST_UNITS.contains(singular))
         .unwrap_or(unit)
-}
-
-pub(super) fn round_temporal_nanoseconds(value: i128, quantum: i128, mode: &str) -> i128 {
-    let quotient = value / quantum;
-    let remainder = value % quantum;
-    if remainder == 0 {
-        return quotient;
-    }
-    let sign = value.signum();
-    let distance = remainder.abs();
-    let tie = distance * ROUNDING_TIE_FACTOR == quantum;
-    let above_tie = distance * ROUNDING_TIE_FACTOR > quantum;
-    let adjust = match mode {
-        "trunc" => false,
-        "floor" => sign < 0,
-        "ceil" => sign > 0,
-        "expand" => true,
-        "halfTrunc" => above_tie,
-        "halfExpand" => above_tie || tie,
-        "halfFloor" => above_tie || tie && sign < 0,
-        "halfCeil" => above_tie || tie && sign > 0,
-        "halfEven" => above_tie || tie && quotient % ROUNDING_TIE_FACTOR != 0,
-        _ => false,
-    };
-    quotient + if adjust { sign } else { 0 }
 }
 
 fn format_fraction(nanoseconds: i32, digits: usize) -> String {
@@ -3038,7 +3014,7 @@ pub(super) fn time_zone_display_offset(time_zone: &str, offset: i128) -> i128 {
     if fixed_time_zone_offset_nanoseconds(time_zone).is_some() {
         offset
     } else {
-        round_temporal_nanoseconds(offset, NANOSECONDS_PER_MINUTE, "halfExpand")
+        quench_temporal::round_temporal_nanoseconds(offset, NANOSECONDS_PER_MINUTE, "halfExpand")
             * NANOSECONDS_PER_MINUTE
     }
 }

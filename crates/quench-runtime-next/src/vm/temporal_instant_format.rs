@@ -152,11 +152,7 @@ pub(super) fn format_temporal_datetime(
     let day_number = total_nanoseconds.div_euclid(NANOSECONDS_PER_DAY);
     let time = total_nanoseconds.rem_euclid(NANOSECONDS_PER_DAY);
     let rounded_time = options.quantum().map_or(time, |quantum| {
-        super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            time,
-            quantum,
-            &options.rounding_mode,
-        ) * quantum
+        quench_temporal::round_temporal_nanoseconds(time, quantum, &options.rounding_mode) * quantum
     });
     let (day_number, time) = if rounded_time >= NANOSECONDS_PER_DAY {
         (
