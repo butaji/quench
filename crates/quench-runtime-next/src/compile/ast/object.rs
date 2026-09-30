@@ -26,7 +26,12 @@ impl FunctionCompiler<'_, '_> {
         }
         self.emit(Op::MakeObject, dst, 0, 0, 0);
         let super_atom = self.hidden_local("\0rqj:super");
-        self.store_atom(super_atom, dst);
+        if value.properties.iter().any(|property| {
+            matches!(property, ObjectPropertyKind::ObjectProperty(property)
+                if property.method || property.kind != PropertyKind::Init)
+        }) {
+            self.store_atom(super_atom, dst);
+        }
         for property in &value.properties {
             let property = match property {
                 ObjectPropertyKind::ObjectProperty(property) => property,
