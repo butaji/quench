@@ -152,3 +152,40 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
         }
     }
 }
+
+#[test]
+fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
+    let source = r#"
+      var values = [];
+      values[1000] = 1;
+      delete values[1000];
+      Object.defineProperty(values, "1000", { value: 2 });
+      var descriptor = Object.getOwnPropertyDescriptor(values, "1000");
+      print(descriptor.value);
+      print(descriptor.writable);
+      print(descriptor.enumerable);
+      print(descriptor.configurable);
+      var accessors = [];
+      accessors[1000] = 1;
+      delete accessors[1000];
+      Object.defineProperty(accessors, "1000", { get: function() { return 3; } });
+      var accessorDescriptor = Object.getOwnPropertyDescriptor(accessors, "1000");
+      print(typeof accessorDescriptor.get);
+      print(accessorDescriptor.enumerable);
+      print(accessorDescriptor.configurable);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "deleted-sparse-array-descriptor.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["2", "false", "false", "false", "function", "false", "false"],
+            "{mode}"
+        );
+    }
+}
