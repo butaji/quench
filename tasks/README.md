@@ -9,9 +9,9 @@ Start with `next_task`. A task may start only after every `depends_on` item is
 a lane when their dependencies allow it; `next_task` names the current
 priority, not the only active task. Every `in_progress` item must have all its
 dependencies `done`. Task 24 is the explicit convergence gate and task 27 is
-the only production cutover. Pre-cutover work uses separately named
-development binaries; production must never choose an engine through a flag
-or environment variable.
+the only production cutover; it deletes the legacy runtime at the correctness
+gate. Pre-cutover work uses separately named development binaries; production
+must never choose an engine through a flag or environment variable.
 
 Statuses are `pending`, `in_progress`, and `done`. `next_task` must identify a
 non-done task whose dependencies are done. On completion, retain its Markdown
@@ -28,14 +28,19 @@ is done.
   local Node oracle and relevant pinned upstream source.
 - Keep one authoritative value, heap, object, activation, opcode, and host-root
   representation. Derived metadata must be generated or validated from it.
+- Keep formatter-only churn out of semantic diffs where practical; isolate
+  broad formatting changes so behavior and review evidence stay clear.
 - Treat allocation failure, malformed residual data, interruption, re-entry,
   and unsupported platform mechanisms as explicit checked transitions.
 - Store raw measurements and large reports under ignored `target/` paths with
   source, binary, toolchain, host, and command provenance.
-- During the current Test262-first phase, do not add Quench-owned tests or run
-  unit-test suites. Use the pinned existing Test262 inventory and its unchanged
-  harness for semantic verification. Later Node/Wasm gates likewise use their
-  existing tracked/upstream suites; this rule does not waive those gates.
+- Cover fixed regressions with Rust unit tests, including specialized and
+  unspecialized execution where caches or lowering can affect behavior. This
+  follows the user's 2026-09-29 instruction to add regression coverage. The
+  pinned Test262 inventory and unchanged harness remain the conformance gate;
+  unit tests do not replace it. Later Node/Wasm gates retain their existing
+  tracked/upstream suites. Task 58 owns the runtime unit suite's existing
+  failures; no test is ignored, deleted to go green, or weakened.
 - A conformance command that discovers no tests is a failure, not evidence.
 - Performance measurements never replace correctness evidence. Functional work
   may complete without a speed claim unless the task explicitly owns a
@@ -80,8 +85,8 @@ not a semantic authority (see task 44).
 
 Task 24 (Test262 100%, Wasm 100%, and the frozen Node set green in one build)
 comes before any performance tuning. Task 25's lab, the specializer lane
-(29–34), Wasm materialization (38), and the Score/RSS gate (26) all depend on
-it. Before that point, a "Performance evidence" section asks for measurement
+(29–34, 57), Wasm materialization (38), and the Score/RSS gate (26) all depend on
+it. Task 26 also follows cutover (27), so parity is reached on the single core. Before that point, a "Performance evidence" section asks for measurement
 only: record the numbers and do not change code to move them. Existing
 specializations (field/method caches, numeric arming, superinstruction rows)
 stay as they are, frozen, and must pass task 42's
@@ -92,10 +97,24 @@ lowering (37, 39–41) is structural, not tuning, and may proceed.
 ## Kernel watermark
 
 The next core is layered like a metacircular Lisp: a small kernel of primitive
-operations, with every other semantic defined on top of it. Task 46 declares
-the watermark early, so builtins move only once. Task 47 derives the
-generating extension from it and proves the Futamura equation. Task 48 makes
-the full Test262 run fast enough to gate every kernel change.
+operations, with every other semantic defined on top of it. The plan was to
+declare the watermark before porting builtins. Instead, Test262 was closed first
+with every builtin inside `impl Vm`. The order is now explicit, and each family
+still moves only once:
+
+1. Task 20 closes Test262 at 100%, and task 48 freezes that pass set as a fast
+   ratchet.
+2. Task 46 declares the watermark tables and splits the kernel and library
+   crates. Tasks 12–17 move their families onto the kernel API. Every move is
+   a ratchet diff with zero regressions.
+3. Task 47 derives the generating extension from the tables and proves the
+   Futamura equation against the reference kernel.
+4. Task 59 reduces the kernel to a closed, named fundamental set. Every other
+   kernel entry is accelerated, with a library reference definition, and the
+   reference kernel alone passes all three conformance inventories.
+5. Task 27 deletes the legacy runtime at the correctness gate (task 24). What
+   remains is one core: a minimal metacircular kernel, a library defined
+   through its API, and shared algorithm crates behind `AlgorithmBoundary`.
 
 | Layer | Owns | May use |
 | ----- | ---- | ------- |
@@ -122,16 +141,20 @@ library edits is a change to the primitive table and is reviewed as one.
 
 ## Migrating legacy semantics
 
-Test262 is not rewritten, and legacy semantics are not reimplemented from
-scratch. Legacy `quench-runtime` already passes most of the suite; the next
-core's job is to host that proven behavior on v2's representations. The next
+Test262 is not rewritten, and nothing is implemented twice. The next core now
+passes stages 0–113, and for most areas it holds the authoritative
+implementation. Legacy code is a source only for behavior the next core still
+lacks, and it is deleted at task 27. As of 2026-09-29, Temporal, Intl and Date
+are next-core authorities. Task 45 extracts them from the next core, not from
+legacy (next `vm/temporal*.rs` is about 14.2k lines, legacy `temporal/` about
+21k, and they share 26 of 374 function names). The next
 core never calls into the legacy crate or shares its heap/value types, so
 behavior moves by one of three routes, chosen by how coupled the legacy code
 is to its engine:
 
 | Legacy code | Examples | Route |
 | ----------- | -------- | ----- |
-| Algorithm behind a narrow value boundary (no interpreter, environment, or storage access; only conversions, property reads, errors, and intrinsic ids) | RegExp matcher, Intl/ICU, Temporal, Date, number/string conversion, BigInt, URI, Unicode casing/normalization | Move into a shared crate generic over the algorithm boundary trait (task 45); both runtimes implement the trait; one authority, no copy |
+| Algorithm behind a narrow value boundary (no interpreter, environment, or storage access; only conversions, property reads, errors, and intrinsic ids) | RegExp matcher, Intl/ICU, Temporal, Date, number/string conversion, BigInt, URI, Unicode casing/normalization | Move the passing implementation (next core where it exists, otherwise legacy) into a shared crate generic over the algorithm boundary trait (task 45); one authority, no copy |
 | Builtin written against spec operations | Array, Object, String, Promise, TypedArray, Proxy, collection methods | Port file by file onto the kernel API (task 46): Get, Set, DefineOwnProperty, HasProperty, Delete, OwnPropertyKeys, Call, Construct; keep the algorithm, replace storage access |
 | Evaluator, environments, heap, legacy reducer | — | Replaced by the v2 core (tasks 07–11); legacy is a behavioral reference only, and only proven edge-case logic is carried over |
 
@@ -157,31 +180,29 @@ owned by the runtime, not in named properties) and rooting (a value held
 across a `reenters` operation must be rooted by the next core's boundary
 implementation).
 
-The worklist is data, not directory order: task 48 freezes per-test legacy
-Test262 outcomes and diffs them against the latest next-core run, giving every
-test that legacy passes and the next core fails (task 19 freezes the Wasm and
-Node outcomes). Each cluster in that diff names legacy code that already
-implements the behavior; port it before writing new code. Tests legacy also
-fails are the only ones that need fresh implementation.
+The worklist is data, not directory order. For Test262 it is now the next
+core's own failure report (task 20's frontier, then task 48's per-test
+ratchet). For Wasm and Node it is still the legacy-pass/next-fail set that
+task 19 freezes. Where a cluster names legacy code that already implements the
+behavior, port that code before writing new code.
 
-Migration order:
+Migration order (from 2026-09-29):
 
-1. Freeze legacy Test262 outcomes and publish the legacy-pass/next-fail diff
-   (task 48).
-2. Declare the algorithm boundary trait; its operations are kernel primitive
-   table rows (task 46) and its first implementations are legacy and next
-   (task 45).
-3. Pilot the route on legacy `temporal/duration.rs`, then move the rest of
-   Temporal, Intl, and Date (tasks 45 and 15).
-4. Seed the library registry's names, lengths, and attributes from legacy
-   `builtin_meta/` (task 46).
-5. Port the spec-operation builtin families onto the kernel API in parallel
-   (tasks 12–17), each checked against the ratchet.
+1. Close Test262 on the next core (task 20). The legacy-pass/next-fail
+   worklist is retired, because no stage is left in which legacy passes and
+   the next core fails.
+2. Freeze the next core's 100% pass set as the ratchet (task 48).
+3. Declare the watermark and the `AlgorithmBoundary` rows (task 46). Extract
+   next-core Temporal, Intl and Date into the shared crates, piloting on
+   Temporal Duration (task 45).
+4. Move the builtin families onto the kernel API (tasks 12–17), then reduce the
+   kernel (task 59).
+5. Delete legacy at cutover (task 27).
 
 ## Conformance ratchet
 
-Task 19 freezes per-test legacy outcomes for Test262, Wasm, and
-`tests/node-compat`. From then on every change that touches the next engine,
+Task 48 freezes the next core's 100% Test262 pass set when task 20 closes.
+Task 19 freezes per-test legacy outcomes for Wasm and `tests/node-compat`. From then on every change that touches the next engine,
 the host facade, or a runner is checked against the latest recorded pass set
 for each suite it can affect: newly failing tests are regressions and block the
 change. Feature tasks close on their mapped conformance slices (task 20 maps
