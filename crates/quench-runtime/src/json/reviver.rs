@@ -12,6 +12,7 @@ pub(crate) fn internalize(parsed: Parsed, reviver: &Value) -> Result<Value, VmEr
 }
 
 fn walk(holder: Value, key: &str, reviver: &Value) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     let value = crate::execute::get_property_result(&holder, key)?;
     let value = crate::locals::resolved_replacement(resolve_alias(value));
     let value = revive_children(&value, reviver)?;

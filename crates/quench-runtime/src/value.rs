@@ -107,6 +107,11 @@ pub(crate) mod error {
     pub(crate) fn throw_syntax_error(message: &str) -> crate::execute::VmError {
         throw(Kind::Syntax, message)
     }
+    pub(crate) fn enter_stack() -> Result<quench_stack::StackGuard, crate::execute::VmError> {
+        quench_stack::StackGuard::enter()
+            .map_err(|()| throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE))
+    }
+
     #[cold]
     #[inline(never)]
     pub(crate) fn throw_range_error(message: &str) -> crate::execute::VmError {

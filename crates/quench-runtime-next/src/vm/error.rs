@@ -3,6 +3,18 @@ use super::*;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 
+const ERROR_CONSTRUCTORS: &[(&str, Native)] = &[
+    ("Error", Native::Error),
+    ("AggregateError", Native::AggregateError),
+    ("SuppressedError", Native::SuppressedError),
+    ("EvalError", Native::EvalError),
+    ("RangeError", Native::RangeError),
+    ("ReferenceError", Native::ReferenceError),
+    ("SyntaxError", Native::SyntaxError),
+    ("TypeError", Native::TypeError),
+    ("URIError", Native::URIError),
+];
+
 pub(super) fn error_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::ErrorIsError => 1.0,
@@ -1555,20 +1567,12 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        let constructors = [
-            ("Error", Native::Error),
-            ("AggregateError", Native::AggregateError),
-            ("SuppressedError", Native::SuppressedError),
-            ("EvalError", Native::EvalError),
-            ("RangeError", Native::RangeError),
-            ("ReferenceError", Native::ReferenceError),
-            ("SyntaxError", Native::SyntaxError),
-            ("TypeError", Native::TypeError),
-            ("URIError", Native::URIError),
-        ];
+    pub(super) fn install_error_intrinsics(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
         let error_prototype = self.object();
-        for (index, (name, native)) in constructors.iter().enumerate() {
+        for (index, (name, native)) in ERROR_CONSTRUCTORS.iter().enumerate() {
             let constructor = self.native_value(*native);
             let prototype = if index == 0 {
                 error_prototype
@@ -1613,23 +1617,13 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(prototype, "name", name_value)?;
             let empty_message = self.heap.alloc(Cell::String(JsString::from_str("")));
             self.set_builtin_value_named(prototype, "message", empty_message)?;
-            self.global(program, name, constructor)?;
         }
         let error_constructor = self.native_value(Native::Error);
-        for (_, native) in constructors.iter().skip(1) {
+        for (_, native) in ERROR_CONSTRUCTORS.iter().skip(1) {
             let constructor = self.native_value(*native);
             if let Some(function) = self.object_data_mut(constructor) {
                 function.proto = error_constructor;
             }
-        }
-        if let Some(error) = self
-            .lookup_atom("Error")
-            .and_then(|atom| self.own_property(self.realm.globals, atom))
-            && let Some(aggregate) = self
-                .lookup_atom("AggregateError")
-                .and_then(|atom| self.own_property(self.realm.globals, atom))
-        {
-            self.object_data_mut(aggregate).unwrap().proto = error;
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
         let error_constructor = self.native_value(Native::Error);
@@ -1662,6 +1656,13 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::String(JsString::from_str("TypeError")));
         self.set_named(program, realm_prototype, "name", realm_name)?;
+        Ok(())
+    }
+
+    pub(super) fn install_errors(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        for &(name, native) in ERROR_CONSTRUCTORS {
+            self.global(program, name, self.native_value(native))?;
+        }
         Ok(())
     }
 

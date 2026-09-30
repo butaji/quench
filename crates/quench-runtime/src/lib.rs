@@ -33,6 +33,7 @@ mod bigint;
 mod binding_patterns;
 mod blocks;
 mod bounded_resource;
+pub use quench_stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 mod branch;
 mod builtin_meta;
 pub mod builtins;

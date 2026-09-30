@@ -174,6 +174,38 @@ mod tests {
     }
 
     #[test]
+    fn regression_error_bootstrap_preserves_global_binding_order() {
+        assert_output_in_execution_modes(
+            "print(Object.getOwnPropertyNames(globalThis).filter(name => ['Object', 'Date', 'RangeError', 'RegExp'].includes(name)).join(','));",
+            &["Object,Date,RangeError,RegExp"],
+        );
+    }
+
+    #[test]
+    fn regression_runtime_owners_share_recursion_budget() {
+        let program = Engine::specialize("print(42);", "reentry.js").unwrap();
+        let mut runtimes = [
+            Runtime::new(Capture::default()),
+            Runtime::new(Capture::default()),
+        ];
+        let mut guards = Vec::new();
+        while let Ok(guard) = quench_stack::StackGuard::enter() {
+            guards.push(guard);
+        }
+        let errors = runtimes
+            .iter_mut()
+            .map(|runtime| runtime.execute(&program).unwrap_err())
+            .collect::<Vec<_>>();
+        drop(guards);
+        for (runtime, error) in runtimes.iter_mut().zip(errors) {
+            assert!(error.thrown_value().is_some());
+            assert_eq!(runtime.format_error(&program, &error),
+                format!("RangeError: {}", quench_stack::STACK_EXHAUSTED_MESSAGE));
+            runtime.execute(&program).unwrap();
+        }
+    }
+
+    #[test]
     fn regression_recursive_guest_transitions_throw_and_release_stack_budget() {
         std::thread::Builder::new()
             .name("recursion-regression".into())

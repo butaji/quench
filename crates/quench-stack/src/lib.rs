@@ -12,7 +12,7 @@ pub const WORKER_STACK_SIZE: usize = STACK_BUDGET_BYTES + STACK_HEADROOM_BYTES;
 // largest recursive frame chains on the supported toolchain/platform.
 const STACK_TRANSITION_RESERVE_BYTES: usize = 64 * 1024;
 const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
-pub(crate) const STACK_EXHAUSTED_MESSAGE: &str = "Maximum call stack size exceeded";
+pub const STACK_EXHAUSTED_MESSAGE: &str = "Maximum call stack size exceeded";
 
 thread_local! {
     static ACTIVE_TRANSITIONS: Cell<usize> = const { Cell::new(0) };
@@ -20,10 +20,10 @@ thread_local! {
 
 /// A transition is released on every return path, including Rust unwinding.
 /// Thread affinity keeps the counter correct across reentrant runtime owners.
-pub(crate) struct StackGuard(PhantomData<Rc<()>>);
+pub struct StackGuard(PhantomData<Rc<()>>);
 
 impl StackGuard {
-    pub(crate) fn enter() -> Result<Self, ()> {
+    pub fn enter() -> Result<Self, ()> {
         ACTIVE_TRANSITIONS.with(|depth| {
             let current = depth.get();
             if current == MAX_RECURSIVE_TRANSITIONS {
@@ -44,6 +44,31 @@ impl Drop for StackGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn independent_threads_do_not_consume_each_others_budget() {
+        let guards = (0..MAX_RECURSIVE_TRANSITIONS)
+            .map(|_| StackGuard::enter().unwrap())
+            .collect::<Vec<_>>();
+        std::thread::spawn(|| assert!(StackGuard::enter().is_ok()))
+            .join()
+            .unwrap();
+        assert!(StackGuard::enter().is_err());
+        drop(guards);
+    }
+
+    #[test]
+    fn unwinding_releases_recursive_transitions() {
+        let result = std::panic::catch_unwind(|| {
+            let _guards = (0..MAX_RECURSIVE_TRANSITIONS)
+                .map(|_| StackGuard::enter().unwrap())
+                .collect::<Vec<_>>();
+            panic!("host callback unwinds");
+        });
+        assert!(result.is_err());
+        assert_eq!(ACTIVE_TRANSITIONS.with(Cell::get), 0);
+        assert!(StackGuard::enter().is_ok());
+    }
 
     #[test]
     fn recursion_budget_recovers_after_exhaustion() {

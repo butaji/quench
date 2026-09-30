@@ -70,8 +70,7 @@ pub(crate) fn method_property(builtin: Builtin, key: &str) -> Value {
 
 fn parse_builtin(arguments: &[Value]) -> Result<Value, VmError> {
     let text = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
-    let parsed = parse_text(&text)
-        .map_err(|()| crate::value::error::throw_syntax_error("Invalid JSON text"))?;
+    let parsed = parse_text(&text).map_err(ParseError::into_vm_error)?;
     let reviver = arguments.get(1).unwrap_or(&Value::Undefined);
     if !crate::conversion::is_callable(reviver) {
         return Ok(parsed.value);
@@ -83,12 +82,17 @@ fn raw_json(arguments: &[Value]) -> Result<Value, VmError> {
     let text = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
     let valid = !text.is_empty()
         && !text.chars().next().is_some_and(is_json_whitespace)
-        && !text.chars().last().is_some_and(is_json_whitespace)
-        && parse_text(&text).is_ok();
+        && !text.chars().last().is_some_and(is_json_whitespace);
     if !valid {
         return Err(crate::value::error::throw_syntax_error(
             "Invalid raw JSON text",
         ));
+    }
+    if let Err(error) = parse_text(&text) {
+        return Err(match error {
+            ParseError::Syntax => crate::value::error::throw_syntax_error("Invalid raw JSON text"),
+            error => error.into_vm_error(),
+        });
     }
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("\0prototype".to_string(), Value::Null),
@@ -107,4 +111,72 @@ fn is_raw_json(value: Option<&Value>) -> Value {
         _ => false,
     };
     Value::Boolean(is_raw)
+}
+
+#[cfg(test)]
+mod stack_tests {
+    use super::*;
+
+    const STRESS_NESTING: usize = 10_000;
+
+    fn assert_stack_error(result: Result<Value, VmError>) {
+        let Err(VmError::Thrown(error)) = result else {
+            panic!("expected a catchable stack error");
+        };
+        assert_eq!(
+            crate::execute::get_property_result(&error, "name").unwrap(),
+            Value::String("RangeError".into())
+        );
+        assert_eq!(
+            crate::execute::get_property_result(&error, "message").unwrap(),
+            Value::String(quench_stack::STACK_EXHAUSTED_MESSAGE.into())
+        );
+    }
+
+    #[test]
+    fn regression_json_recursion_throws_and_releases_shared_budget() {
+        std::thread::Builder::new()
+            .name("legacy-json-recursion".into())
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                let text = format!(
+                    "{}0{}",
+                    "[".repeat(STRESS_NESTING),
+                    "]".repeat(STRESS_NESTING)
+                );
+                let arguments = [Value::String(text)];
+                assert_stack_error(parse_builtin(&arguments));
+                assert_stack_error(raw_json(&arguments));
+                assert_eq!(
+                    parse_builtin(&[Value::String("42".into())]).unwrap(),
+                    Value::Number(42.0)
+                );
+
+                let mut nested = Value::Number(0.0);
+                for _ in 0..STRESS_NESTING {
+                    nested = Value::array(vec![nested]);
+                }
+                assert_stack_error(stringify(&[nested.clone()]));
+                assert_stack_error(internalize(
+                    container(nested),
+                    &Value::Builtin(Builtin::Number),
+                ));
+                assert_eq!(
+                    stringify(&[Value::Number(42.0)]).unwrap(),
+                    Value::String("42".into())
+                );
+
+                let Err(VmError::Thrown(error)) = parse_builtin(&[Value::String("[".into())])
+                else {
+                    panic!("malformed JSON must remain a syntax error");
+                };
+                assert_eq!(
+                    crate::execute::get_property_result(&error, "name").unwrap(),
+                    Value::String("SyntaxError".into())
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
