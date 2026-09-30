@@ -1050,7 +1050,7 @@ impl<H: Host> Vm<H> {
             .shape_slot(data.shape(), atom)
             .expect("property transition records the new shape slot");
         let data_shape = data.shape();
-        if slot <= u16::MAX as usize {
+        if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
             self.record_field_cache(
                 site,
                 FieldCache {
