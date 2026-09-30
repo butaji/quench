@@ -10,12 +10,9 @@ use std::{
 use walkdir::WalkDir;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Compact CallN trampolines, but remaining Slow CallMethod still rust-recurses.
-    // Scheme-style fixtures (Earley-Boyer) overflow the default stack (~8MiB).
-    const STACK: usize = 2048 * 1024 * 1024;
     let worker = std::thread::Builder::new()
         .name("quench-node".into())
-        .stack_size(STACK)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(|| {
             let result = run_cli().map_err(|error| error.to_string());
             quench_runtime::execution_trace::emit();

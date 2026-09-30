@@ -3,6 +3,17 @@ use std::{env, path::PathBuf, process::ExitCode};
 use quench_test262::{HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
 
 fn main() -> ExitCode {
+    match std::thread::Builder::new()
+        .name("run-test-main".into())
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
+        .spawn(run)
+    {
+        Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
+        Err(error) => fail(format!("run-test worker thread: {error}")),
+    }
+}
+
+fn run() -> ExitCode {
     if !env::var("TEST262_TEST_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
