@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
         first: Value,
         second: Value,
     ) -> Value {
-        if !self.specialized {
+        if !self.specialized || !program.specialized {
             let [first_atom, second_atom] = program.object_sites[site].atoms;
             let one = self.transition_shape(0, first_atom);
             let two = self.transition_shape(one, second_atom);
@@ -384,7 +384,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
             return self.get_property(p, object, atom);
         }
-        if !self.specialized {
+        if !self.specialized || !p.specialized {
             return self.get_property(p, object, atom);
         }
         if !object.is_heap()
@@ -957,7 +957,7 @@ impl<H: Host> Vm<H> {
             self.set_property(object, atom, value)?;
             return Ok(());
         }
-        if !self.specialized {
+        if !self.specialized || !p.specialized {
             return self.set_property_with_program(p, object, atom, value);
         }
         let existing = self

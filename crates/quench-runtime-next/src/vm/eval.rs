@@ -250,6 +250,20 @@ impl<H: Host> Vm<H> {
                     .iter()
                     .copied()
                 {
+                    if caller_scope
+                        && self.parameter_eval
+                        && self
+                            .frames
+                            .last()
+                            .and_then(|frame| p.functions.get(frame.function as usize))
+                            .is_some_and(|function| function.parameter_atoms.contains(&atom))
+                    {
+                        return self.syntax_error_result(
+                            p,
+                            "eval var declaration conflicts with parameter binding",
+                        );
+                    }
+
                     if global_function_atoms.contains(&atom) {
                         continue;
                     }
@@ -279,7 +293,7 @@ impl<H: Host> Vm<H> {
                         if attributes.is_some_and(|attributes| attributes.configurable) {
                             self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
                         } else if self.own_property(globals, *atom).is_some() {
-                            self.set_field_cached(p, globals, *atom, Value::UNDEFINED, 0, false)?;
+                            self.set_property_with_program(p, globals, *atom, Value::UNDEFINED)?;
                         } else {
                             self.define_global_eval_binding(p, *atom, Value::UNDEFINED)?;
                         }
@@ -368,9 +382,7 @@ impl<H: Host> Vm<H> {
         let eval_source_strict =
             inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
         let eval_var_names = if self.direct_eval && !eval_source_strict {
-            crate::Engine::eval_var_names(source)
-                .map(|names| names.declarations)
-                .unwrap_or_default()
+            crate::Engine::eval_var_names(source).unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -383,7 +395,13 @@ impl<H: Host> Vm<H> {
                 && (self.realm.global_lexical_declarations.contains(&atom)
                     || self
                         .direct_eval_lexical_binding(p, atom)
-                        .is_some_and(|binding| !binding.catch_parameter));
+                        .is_some_and(|binding| !binding.catch_parameter)
+                    || (!self.parameter_eval
+                        && self
+                            .frames
+                            .last()
+                            .and_then(|frame| p.functions.get(frame.function as usize))
+                            .is_some_and(|function| function.lexical_atoms.contains(&atom))));
             retained_var_bindings.push(atom);
         }
         let result = if lexical_conflict {
@@ -454,7 +472,7 @@ impl<H: Host> Vm<H> {
         {
             return self.syntax_error_result(p, "invalid statement in eval code");
         }
-        if crate::Engine::eval_requires_compiled_completion(source) {
+        if crate::Engine::eval_requires_compiled_program(source) {
             return self.eval_global_script(p, source);
         }
         if is_empty_eval_statement(source.trim()) {
@@ -483,201 +501,7 @@ impl<H: Host> Vm<H> {
             let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
             return self.syntax_error_result(p, message);
         }
-        let has_eval_declarations =
-            contains_eval_identifier(source, "var") || contains_eval_identifier(source, "function");
-        if has_eval_declarations
-            && !source_strict
-            && self
-                .frames
-                .last()
-                .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID)
-        {
-            let global_lexicals = p
-                .functions
-                .first()
-                .map(|root| root.global_lexical_atoms.clone())
-                .unwrap_or_default();
-            let eval_var_names = crate::Engine::eval_var_names(source)
-                .map(|names| names.declarations)
-                .unwrap_or_default();
-            for name in eval_var_names {
-                let atom = self.intern_atom(&name);
-                let declared_lexically = self.realm.global_lexical_declarations.contains(&atom)
-                    || global_lexicals.contains(&atom);
-                if declared_lexically {
-                    return self.syntax_error_result(
-                        p,
-                        "var declaration conflicts with global lexical binding",
-                    );
-                }
-            }
-        }
-        if self.direct_eval && !source_strict {
-            let globals = self.realm.globals;
-            for statement in &statements {
-                let Some(declarations) = statement.trim().strip_prefix("var ") else {
-                    continue;
-                };
-                for declaration in split_commas(declarations) {
-                    let name = declaration
-                        .split_once('=')
-                        .map_or(declaration.trim(), |(name, _)| name.trim());
-                    let atom = self.intern_atom(name);
-                    let parameter_conflict = self.parameter_eval
-                        && self
-                            .frames
-                            .last()
-                            .and_then(|frame| p.functions.get(frame.function as usize))
-                            .is_some_and(|function| function.parameter_atoms.contains(&atom));
-                    if parameter_conflict {
-                        return self.syntax_error_result(
-                            p,
-                            "var declaration conflicts with parameter binding",
-                        );
-                    }
-                    if !self.parameter_eval
-                        && self.current_frame_has_lexical_conflict(p, atom)
-                        && self.own_property(globals, atom).is_none()
-                    {
-                        return self.syntax_error_result(
-                            p,
-                            "var declaration conflicts with global lexical binding",
-                        );
-                    }
-                }
-            }
-        }
-        if !self.direct_eval && !source_strict {
-            let globals = self.realm.globals;
-            if statements.iter().any(|statement| {
-                statement
-                    .trim()
-                    .strip_prefix("var ")
-                    .is_some_and(|declarations| {
-                        split_commas(declarations).into_iter().any(|declaration| {
-                            let name = declaration
-                                .split_once('=')
-                                .map_or(declaration.trim(), |(name, _)| name.trim());
-                            let atom = self.intern_atom(name);
-                            self.current_frame_declares_global_lexical(p, atom)
-                                && self.own_property(globals, atom).is_none()
-                        })
-                    })
-            }) {
-                return self.syntax_error_result(
-                    p,
-                    "var declaration conflicts with global lexical binding",
-                );
-            }
-        }
-        if !source_strict
-            && (!self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0))
-        {
-            let globals = self.realm.globals;
-            for statement in &statements {
-                let statement = statement.trim();
-                if let Some(name) = function_declaration_name(statement) {
-                    self.check_global_eval_declaration(p, globals, name, true)?;
-                }
-                if let Some(rest) = statement.strip_prefix("var ") {
-                    for declaration in split_commas(rest) {
-                        let name = declaration
-                            .split_once('=')
-                            .map_or(declaration.trim(), |(name, _)| name.trim());
-                        self.check_global_eval_declaration(p, globals, name, false)?;
-                        let lexical_atom = self.intern_atom(name);
-                        let lexical_conflict = self.direct_eval
-                            && self.current_frame_has_lexical_conflict(p, lexical_atom)
-                            && self.own_property(globals, lexical_atom).is_none();
-                        if lexical_conflict && !source_strict {
-                            return self.syntax_error_result(
-                                p,
-                                "var declaration conflicts with global lexical binding",
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        let generator_eval_arguments = self.direct_eval
-            && self
-                .frames
-                .last()
-                .and_then(|frame| p.functions.get(frame.function as usize))
-                .is_some_and(|function| function.is_generator)
-            && statements.iter().any(|statement| {
-                statement
-                    .trim()
-                    .strip_prefix("var ")
-                    .is_some_and(|declarations| {
-                        split_commas(declarations).into_iter().any(|declaration| {
-                            declaration
-                                .split_once('=')
-                                .map_or(declaration.trim(), |(name, _)| name.trim())
-                                == "arguments"
-                        })
-                    })
-            });
-        if generator_eval_arguments {
-            return self
-                .syntax_error_result(p, "arguments binding is not allowed in generator eval");
-        }
         let strict = source_strict;
-        if strict && self.direct_eval {
-            let atoms = crate::Engine::eval_var_names(source)
-                .map(|names| names.bindings)
-                .unwrap_or_default()
-                .into_iter()
-                .map(|name| self.intern_atom(&name))
-                .collect::<Vec<_>>();
-            if let Some(frame) = self.frames.last_mut() {
-                frame
-                    .dynamic_bindings
-                    .extend(atoms.into_iter().map(|atom| (atom, Value::UNDEFINED)));
-            }
-            self.sync_dynamic_bindings();
-        }
-        if self.direct_eval && !strict {
-            let declarations = crate::Engine::eval_var_names(source)
-                .map(|names| names.declarations)
-                .unwrap_or_default();
-            for name in declarations {
-                let atom = self.intern_atom(&name);
-                if self.load_eval_name(p, atom).is_err() {
-                    self.store_eval_name(p, atom, Value::UNDEFINED, false, true)?;
-                }
-            }
-        }
-        for statement in &statements {
-            if function_declaration_name(statement.trim()).is_some() {
-                self.install_eval_function(p, statement.trim(), strict)?;
-            }
-        }
-        if !strict {
-            for statement in &statements {
-                let statement = statement.trim();
-                let Some(declarations) = statement.strip_prefix("var ") else {
-                    continue;
-                };
-                for declaration in split_commas(declarations) {
-                    let name = declaration
-                        .split_once('=')
-                        .map_or(declaration.trim(), |(name, _)| name.trim());
-                    let atom = self.intern_atom(name);
-                    if self.load_eval_name(p, atom).is_err() {
-                        if let Err(error) =
-                            self.store_eval_name(p, atom, Value::UNDEFINED, false, true)
-                        {
-                            return Err(if error.thrown_value().is_some() {
-                                error
-                            } else {
-                                self.type_error(p, error.into_message())
-                            });
-                        }
-                    }
-                }
-            }
-        }
         let mut result = crate::Engine::eval_directives(source)
             .and_then(|directives| directives.last().cloned())
             .map(|directive| self.heap.alloc(Cell::String(directive.into())))
@@ -687,95 +511,7 @@ impl<H: Host> Vm<H> {
             if statement.is_empty() || is_use_strict(statement) {
                 continue;
             }
-            if statement.starts_with("class ") {
-                continue;
-            }
             if is_empty_eval_statement(statement) {
-                continue;
-            }
-            if crate::Engine::eval_is_function_declaration(statement) {
-                continue;
-            }
-            if let Some(declarations) = statement
-                .strip_prefix("var ")
-                .or_else(|| statement.strip_prefix("let "))
-                .or_else(|| statement.strip_prefix("const "))
-            {
-                let lexical = statement.starts_with("let ") || statement.starts_with("const ");
-                for declaration in split_commas(declarations) {
-                    let (name, expression) = declaration
-                        .split_once('=')
-                        .map_or((declaration.trim(), "undefined"), |(name, expression)| {
-                            (name.trim(), expression.trim())
-                        });
-                    if strict && is_strict_reserved(name) {
-                        return self.syntax_error_result(p, "reserved binding in strict eval");
-                    }
-                    let atom = self.intern_atom(name);
-                    if self.direct_eval && name == "arguments" {
-                        let parameter_binding = self
-                            .frames
-                            .last()
-                            .and_then(|frame| p.functions.get(frame.function as usize))
-                            .and_then(|function| {
-                                function
-                                    .local_atoms
-                                    .iter()
-                                    .position(|candidate| *candidate == atom)
-                                    .map(|slot| slot < usize::from(function.params))
-                            })
-                            .unwrap_or(false);
-                        if parameter_binding {
-                            return self.syntax_error_result(
-                                p,
-                                "arguments binding conflicts with parameter",
-                            );
-                        }
-                    }
-                    if lexical && let Some(frame) = self.frames.last_mut() {
-                        frame.dynamic_bindings.push((atom, Value::DELETED));
-                    }
-                    let value = self.eval_simple_expression(p, expression, strict)?;
-                    if lexical {
-                        if let Some(frame) = self.frames.last_mut()
-                            && let Some((_, binding)) = frame
-                                .dynamic_bindings
-                                .iter_mut()
-                                .rev()
-                                .find(|(candidate, _)| *candidate == atom)
-                        {
-                            *binding = value;
-                        }
-                    } else {
-                        if strict {
-                            if self.direct_eval
-                                && let Some((_, binding)) =
-                                    self.frames.last_mut().and_then(|frame| {
-                                        frame
-                                            .dynamic_bindings
-                                            .iter_mut()
-                                            .rev()
-                                            .find(|(candidate, _)| *candidate == atom)
-                                    })
-                            {
-                                *binding = value;
-                                self.sync_dynamic_bindings();
-                            }
-                            continue;
-                        }
-                        if self.direct_eval && !self.parameter_eval {
-                            self.store_eval_local(p, atom, value);
-                            self.store_eval_outer_local(p, atom, value);
-                        }
-                        if let Err(error) = self.store_eval_name(p, atom, value, strict, true) {
-                            return Err(if error.thrown_value().is_some() {
-                                error
-                            } else {
-                                self.type_error(p, error.into_message())
-                            });
-                        }
-                    }
-                }
                 continue;
             }
             if let Some(inner) = statement.strip_prefix("eval(")
@@ -792,27 +528,6 @@ impl<H: Host> Vm<H> {
             if let Some(expression) = statement.strip_prefix("throw ") {
                 let value = self.eval_simple_expression(p, expression, strict)?;
                 return Err(JsError::thrown(value, "eval throw".into()));
-            }
-            if let Some((block, expression)) = crate::Engine::eval_block_completion(statement) {
-                let _ = self.eval_source_simple(p, block, strict)?;
-                result = self.eval_simple_expression(p, expression, strict)?;
-                continue;
-            }
-            if let Some(block) = crate::Engine::eval_block_statement(statement) {
-                if !block.trim().is_empty() {
-                    result = self.eval_source_simple(p, block, strict)?;
-                }
-                continue;
-            }
-            if let Some(expression) = crate::Engine::eval_labeled_expression(statement) {
-                result = self.eval_simple_expression(p, expression, strict)?;
-                continue;
-            }
-            if let Some((label, expression)) = statement.split_once(':')
-                && is_eval_identifier(label.trim())
-            {
-                result = self.eval_simple_expression(p, expression, strict)?;
-                continue;
             }
             if let Some((name, expression)) = split_assignment(statement) {
                 if strict && is_strict_reserved(name) {
@@ -939,6 +654,9 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>();
             return self.construct_value(p, callee, &arguments);
         }
+        if expression.starts_with("function") {
+            return self.eval_compiled_expression(p, expression, strict);
+        }
         if let Some((left, operator, right)) = find_unquoted_operator(expression) {
             let left = self.eval_simple_expression(p, left, strict)?;
             if operator == "&&" {
@@ -1032,18 +750,6 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(vec![marker, key, home, receiver]),
             });
             return Ok(self.native_with_env(Native::DynamicFunction, env));
-        }
-        if expression.starts_with("function") {
-            let Some(body_start) = expression.find('{') else {
-                return Ok(Value::UNDEFINED);
-            };
-            let Some(body_end) = expression.rfind('}') else {
-                return Ok(Value::UNDEFINED);
-            };
-            let body = self.heap.alloc(Cell::String(
-                expression[body_start + 1..body_end].trim().into(),
-            ));
-            return Ok(self.native_with_env(Native::DynamicFunction, body));
         }
         if let Some(rest) = expression.strip_prefix("typeof") {
             let separated = rest
@@ -1361,66 +1067,6 @@ impl<H: Host> Vm<H> {
             .map(Some)
     }
 
-    fn install_eval_function(
-        &mut self,
-        p: &ResidualProgram,
-        statement: &str,
-        strict: bool,
-    ) -> Result<(), JsError> {
-        let rest = statement
-            .strip_prefix("function ")
-            .or_else(|| statement.strip_prefix("function* "))
-            .unwrap_or_default();
-        let Some(open) = rest.find('(') else {
-            return Ok(());
-        };
-        let name = rest[..open].trim();
-        let Some(body_start) = statement.find('{') else {
-            return Ok(());
-        };
-        let Some(body_end) = statement.rfind('}') else {
-            return Ok(());
-        };
-        if name.is_empty() || body_end <= body_start {
-            return Ok(());
-        }
-        if strict {
-            return Ok(());
-        }
-        let body = self.heap.alloc(Cell::String(
-            statement[body_start + 1..body_end].trim().into(),
-        ));
-        let function = self.native_with_env(Native::DynamicFunction, body);
-        let atom = self.intern_atom(name);
-        if !self.direct_eval || self.frames.last().is_some_and(|frame| frame.function == 0) {
-            if let Some(attributes) = self.property_attributes(
-                self.realm.globals,
-                crate::vm::property_key::PropertyKey::string(atom),
-            ) {
-                if attributes.configurable {
-                    self.set_property_attributes(
-                        self.realm.globals,
-                        crate::vm::property_key::PropertyKey::string(atom),
-                        PropertyAttributes {
-                            writable: true,
-                            enumerable: true,
-                            configurable: true,
-                            accessor: false,
-                            getter: None,
-                            setter: None,
-                        },
-                    );
-                } else if !attributes.writable || attributes.accessor {
-                    return Err(self.type_error(p, "cannot redefine global eval function".into()));
-                }
-                self.set_field_cached(p, self.realm.globals, atom, function, 0, false)?;
-                return Ok(());
-            }
-            return self.define_global_eval_binding(p, atom, function);
-        }
-        self.store_eval_name(p, atom, function, false, true)
-    }
-
     fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
         if self.direct_eval {
             let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
@@ -1473,7 +1119,7 @@ impl<H: Host> Vm<H> {
             }
             return Ok(value);
         }
-        let value = self.get_field_cached(p, self.realm.globals, atom, 0)?;
+        let value = self.get_property(p, self.realm.globals, atom)?;
         if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
@@ -1676,7 +1322,13 @@ impl<H: Host> Vm<H> {
             }
             if self.own_property(self.realm.globals, atom).is_some() {
                 self.store_frame_local(p, atom, value);
-                return self.set_field_cached(p, self.realm.globals, atom, value, 0, false);
+                return self.set_property_with_program_mode(
+                    p,
+                    self.realm.globals,
+                    atom,
+                    value,
+                    strict,
+                );
             }
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
@@ -1703,7 +1355,13 @@ impl<H: Host> Vm<H> {
             if global_frame {
                 self.store_frame_local(p, atom, value);
                 if self.own_property(self.realm.globals, atom).is_some() {
-                    return self.set_field_cached(p, self.realm.globals, atom, value, 0, false);
+                    return self.set_property_with_program_mode(
+                        p,
+                        self.realm.globals,
+                        atom,
+                        value,
+                        strict,
+                    );
                 }
                 return self.define_global_eval_binding(p, atom, value);
             }
@@ -1712,7 +1370,13 @@ impl<H: Host> Vm<H> {
             {
                 self.store_frame_local(p, atom, value);
                 self.store_eval_outer_local(p, atom, value);
-                return self.set_field_cached(p, self.realm.globals, atom, value, 0, false);
+                return self.set_property_with_program_mode(
+                    p,
+                    self.realm.globals,
+                    atom,
+                    value,
+                    strict,
+                );
             } else if let Some(frame) = self.frames.last_mut()
                 && let Some((_, current)) = frame
                     .dynamic_bindings
@@ -1731,7 +1395,7 @@ impl<H: Host> Vm<H> {
                 self.sync_dynamic_bindings();
             } else {
                 return self
-                    .set_field_cached(p, self.realm.globals, atom, value, 0, false)
+                    .set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
                     .map_err(|_| self.type_error(p, "cannot define global eval binding".into()));
             }
         } else {
@@ -1753,7 +1417,7 @@ impl<H: Host> Vm<H> {
         if self.direct_eval {
             Ok(())
         } else {
-            self.set_field_cached(p, self.realm.globals, atom, value, 0, false)
+            self.set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
                 .map_err(|_| self.type_error(p, "cannot define global eval binding".into()))
         }
     }
@@ -1778,35 +1442,6 @@ impl<H: Host> Vm<H> {
         self.object_define_property(p, &[self.realm.globals, key, descriptor])
             .map(|_| ())
             .map_err(|_| self.type_error(p, "cannot define global eval binding".into()))
-    }
-
-    fn store_eval_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
-        let Some(frame) = self.frames.last() else {
-            return;
-        };
-        let Some(function) = p.functions.get(frame.function as usize) else {
-            return;
-        };
-        let Some(slot) = function
-            .local_atoms
-            .iter()
-            .position(|candidate| *candidate == atom)
-        else {
-            return;
-        };
-        if frame.captured {
-            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env)
-                && let Some(local) = slots.get_mut(slot)
-            {
-                *local = value;
-            }
-        } else if let Some(local) = self
-            .frames
-            .last_mut()
-            .and_then(|frame| frame.locals.get_mut(slot))
-        {
-            *local = value;
-        }
     }
 
     fn store_eval_outer_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
@@ -1871,9 +1506,7 @@ impl<H: Host> Vm<H> {
                 continue;
             };
             for (slot, candidate) in function.local_atoms.iter().enumerate() {
-                if p.kind == crate::bytecode::ProgramKind::Eval
-                    && self.root_global_var_atom(p, frame.function, slot).is_some()
-                {
+                if self.root_global_var_atom(p, frame.function, slot).is_some() {
                     // Object-environment bindings must read the property,
                     // including its accessor, rather than a frame-local copy.
                     continue;
@@ -1941,29 +1574,6 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn current_frame_has_lexical_conflict(&self, p: &ResidualProgram, atom: Atom) -> bool {
-        if self.current_frame_has_lexical_alias(p, atom) {
-            return true;
-        }
-        let Some(frame) = self.frames.last() else {
-            return false;
-        };
-        p.functions
-            .get(frame.function as usize)
-            .is_some_and(|function| function.lexical_atoms.contains(&atom))
-    }
-
-    fn current_frame_declares_global_lexical(&self, p: &ResidualProgram, atom: Atom) -> bool {
-        let Some(frame) = self.frames.last() else {
-            return false;
-        };
-        frame.function == 0
-            && !self.current_frame_has_lexical_alias(p, atom)
-            && p.functions
-                .get(frame.function as usize)
-                .is_some_and(|function| function.lexical_atoms.contains(&atom))
-    }
-
     pub(super) fn sync_dynamic_bindings(&mut self) {
         let Some(frame) = self.frames.last() else {
             return;
@@ -2001,6 +1611,9 @@ impl<H: Host> Vm<H> {
                 else {
                     continue;
                 };
+                if self.root_global_var_atom(p, frame.function, slot).is_some() {
+                    return false;
+                }
                 (frame.captured, frame.env, slot)
             };
             if captured {
@@ -2512,15 +2125,6 @@ fn is_strict_reserved(name: &str) -> bool {
     )
 }
 
-fn function_declaration_name(statement: &str) -> Option<&str> {
-    let rest = statement
-        .strip_prefix("function ")
-        .or_else(|| statement.strip_prefix("function* "))?;
-    rest.split_once('(')
-        .map(|(name, _)| name.trim())
-        .filter(|name| !name.is_empty())
-}
-
 fn split_assignment(statement: &str) -> Option<(&str, &str)> {
     let mut quote = None;
     for (index, character) in statement.char_indices() {
@@ -2553,25 +2157,6 @@ fn is_eval_identifier(name: &str) -> bool {
         character == '_' || character == '$' || character.is_ascii_alphabetic()
     }) && characters
         .all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
-}
-
-fn split_commas(source: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    for (index, character) in source.char_indices() {
-        match (quote, character) {
-            (None, '\'' | '"') => quote = Some(character),
-            (Some(current), character) if current == character => quote = None,
-            (None, ',') => {
-                result.push(source[start..index].trim());
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    result.push(source[start..].trim());
-    result
 }
 
 fn split_statements(source: &str) -> Vec<&str> {
