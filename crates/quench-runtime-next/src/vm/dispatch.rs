@@ -63,7 +63,7 @@ impl<H: Host> Vm<H> {
                     self.root_global_lexical_value(p, self.frames[f].function, slot)
                 {
                     value
-                } else if let Some(atom) = self.global_eval_var_atom(f, slot) {
+                } else if let Some(atom) = self.global_object_var_atom(f, slot) {
                     self.get_property(p, self.realm.globals, atom)?
                 } else if let Some(value) =
                     self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
@@ -174,7 +174,7 @@ impl<H: Host> Vm<H> {
                     self.root_global_lexical_value(p, self.frames[f].function, slot)
                 {
                     value
-                } else if let Some(atom) = self.global_eval_var_atom(f, slot) {
+                } else if let Some(atom) = self.global_object_var_atom(f, slot) {
                     self.get_property(p, self.realm.globals, atom)?
                 } else if let Some(value) =
                     self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
@@ -239,18 +239,22 @@ impl<H: Host> Vm<H> {
                 }
                 let global_var = self.root_global_var_atom(p, self.frames[f].function, slot);
                 if let Some(atom) = global_var {
-                    if !self.set_property_with_receiver(
+                    let written = self.set_property_with_receiver(
                         p,
                         self.realm.globals,
                         atom,
                         value,
                         self.realm.globals,
-                    )? && p.functions[self.frames[f].function as usize].strict
-                    {
+                    )?;
+                    if !written && p.functions[self.frames[f].function as usize].strict {
                         return Err(
                             self.type_error(p, "cannot assign to read-only global binding".into())
                         );
                     }
+                    if let Some(register) = i.optional_register_b() {
+                        self.write(f, register, value);
+                    }
+                    return Ok(StepResult::Continue);
                 }
                 if self.eval_script_context
                     && let Some(atom) =
