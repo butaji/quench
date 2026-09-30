@@ -341,8 +341,11 @@ fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
       Object.defineProperty(indexed, "0", { get: getter });
       Object.defineProperty(ordinarySetter, "value", { set: setter });
       Object.defineProperty(indexedSetter, "0", { set: setter });
+      Object.defineProperty(ordinarySetter, "value", { get: undefined });
+      Object.defineProperty(indexedSetter, "0", { get: undefined });
       print(ordinary.value);
       print(indexed[0]);
+      print("undefined-getters-accepted");
       try { Object.defineProperty(ordinary, "value", { get: function() { return 8; } }); }
       catch (error) { print("ordinary-rejected"); }
       try { Object.defineProperty(indexed, "0", { get: function() { return 8; } }); }
@@ -365,6 +368,7 @@ fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
             [
                 "7",
                 "7",
+                "undefined-getters-accepted",
                 "ordinary-rejected",
                 "indexed-rejected",
                 "ordinary-setter-rejected",
