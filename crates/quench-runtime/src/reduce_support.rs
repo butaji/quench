@@ -33,6 +33,9 @@ pub(crate) fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool
 }
 
 pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
+    if parsed.stack_exhausted {
+        return Err(crate::compiler_stack::errors());
+    }
     if parsed.panicked {
         return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
     }
@@ -115,6 +118,7 @@ impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportValidator<'a> {
 }
 
 pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(), Vec<String>> {
+    crate::compiler_stack::validate(program)?;
     let mut regexp_validator = RegexpLiteralValidator {
         errors: Vec::new(),
         marker: std::marker::PhantomData,

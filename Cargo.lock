@@ -2088,8 +2088,6 @@ dependencies = [
 [[package]]
 name = "oxc_parser"
 version = "0.47.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08e83d2a08991efc1a79c3b42fcc77344f3de58d27c53cd9b184d17b1ed4ace3"
 dependencies = [
  "assert-unchecked",
  "bitflags",
@@ -2104,6 +2102,7 @@ dependencies = [
  "oxc_regular_expression 0.47.1",
  "oxc_span 0.47.1",
  "oxc_syntax 0.47.1",
+ "quench-stack",
  "rustc-hash",
  "seq-macro",
 ]

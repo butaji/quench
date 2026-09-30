@@ -428,7 +428,7 @@ fn evaluate(
         ("\0script_this".to_string(), 0),
     ];
     let program = crate::reduce::reduce_eval_source(&source, strict, true, false, &bindings, &[])
-        .map_err(|errors| syntax_error(errors, error_realm))?;
+        .map_err(|errors| compilation_error(errors, error_realm))?;
     match realm {
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.code()),
         None => crate::vm::execute_indirect_eval(program.code()),
@@ -463,7 +463,7 @@ fn evaluate_direct(
             grammar,
         },
     )
-    .map_err(|errors| syntax_error(errors, None))?;
+    .map_err(|errors| compilation_error(errors, None))?;
     let local_slot = program
         .local_slots
         .values()
@@ -505,7 +505,12 @@ fn execute_direct_eval(
     )
 }
 
-fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
+fn compilation_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
+    if crate::compiler_stack::is_exhaustion(&errors) {
+        return realm.and_then(|realm| crate::vm::with_realm(realm, || {
+            crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+        })).unwrap_or_else(|| crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE));
+    }
     let error = crate::builtins::error(
         crate::ops::Builtin::SyntaxError,
         &[Value::String(errors.join("; "))],

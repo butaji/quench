@@ -115,6 +115,9 @@ fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
 }
 
 fn reject_parse_errors(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
+    if parsed.stack_exhausted {
+        return Err(crate::compiler_stack::errors());
+    }
     if parsed.panicked || !parsed.errors.is_empty() {
         return Err(vec!["SyntaxError: OXC parser rejected source".to_string()]);
     }

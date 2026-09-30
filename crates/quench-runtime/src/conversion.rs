@@ -328,16 +328,29 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
 }
 
 pub(crate) fn is_html_dda(value: &Value) -> bool {
-    match value {
-        Value::BindingCell(cell) => is_html_dda(&cell.borrow()),
-        Value::Builtin(crate::ops::Builtin::HostCapability(
-            crate::ops::HostCapabilityKind::IsHTMLDDA,
-        )) => true,
-        Value::HostCapability(token) => {
-            token.descriptor.kind == crate::ops::HostCapabilityKind::IsHTMLDDA
+    let mut owner = std::borrow::Cow::Borrowed(value);
+    let mut bindings = std::collections::HashSet::new();
+    loop {
+        let mut value = owner.as_ref();
+        while let Value::BoundFunction(bound) = value {
+            value = &bound.target;
         }
-        Value::BoundFunction(bound) => is_html_dda(&bound.target),
-        _ => false,
+        if let Value::BindingCell(cell) = value {
+            if !bindings.insert(std::rc::Rc::as_ptr(cell)) {
+                return false;
+            }
+            owner = std::borrow::Cow::Owned(cell.load());
+            continue;
+        }
+        return match value {
+            Value::Builtin(crate::ops::Builtin::HostCapability(
+                crate::ops::HostCapabilityKind::IsHTMLDDA,
+            )) => true,
+            Value::HostCapability(token) => {
+                token.descriptor.kind == crate::ops::HostCapabilityKind::IsHTMLDDA
+            }
+            _ => false,
+        };
     }
 }
 
