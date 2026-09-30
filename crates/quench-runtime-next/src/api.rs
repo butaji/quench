@@ -1018,6 +1018,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn regression_intl_german_date_format_ignores_string_split_override() {
+        assert_output_in_execution_modes(
+            r#"
+            var possibleAnswers = ["1.1.1970", "2.1.1970", "3.1.1970"];
+            var replacements = ["", "x-foo", "de-u-co", "en-US"];
+            for (var index = 0; index < replacements.length; index++) {
+                String.prototype[Symbol.split] = function() { return [replacements[index]]; };
+                var formatted = Intl.DateTimeFormat("de", {}).format(86400000);
+                print(formatted);
+                print(possibleAnswers.includes(formatted));
+            }
+            "#,
+            &[
+                "1.1.1970",
+                "true",
+                "1.1.1970",
+                "true",
+                "1.1.1970",
+                "true",
+                "1.1.1970",
+                "true",
+            ],
+        );
+    }
+
 }
 
 #[cfg(test)]
