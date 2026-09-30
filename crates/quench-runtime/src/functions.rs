@@ -7,8 +7,8 @@ include!("functions_properties.rs");
 
 pub(crate) fn enter_function_stack(
     function: &crate::value::FunctionValue,
-) -> Result<quench_stack::StackGuard, crate::execute::VmError> {
-    quench_stack::StackGuard::enter().map_err(|()| {
+) -> Result<(quench_stack::GuestCallGuard, quench_stack::StackGuard), crate::execute::VmError> {
+    let exhaustion = || {
         let realm = crate::construct::function_realm_id(function);
         crate::vm::with_realm(realm, || {
             crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
@@ -16,7 +16,10 @@ pub(crate) fn enter_function_stack(
         .unwrap_or_else(|| {
             crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
         })
-    })
+    };
+    let guest_call = quench_stack::GuestCallGuard::enter().map_err(|()| exhaustion())?;
+    let native_stack = quench_stack::StackGuard::enter().map_err(|()| exhaustion())?;
+    Ok((guest_call, native_stack))
 }
 
 const NEW_TARGET: &str = "\0new_target";

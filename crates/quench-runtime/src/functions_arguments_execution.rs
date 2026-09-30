@@ -558,9 +558,7 @@ pub(crate) fn execute_direct(
     if let Some(value) = try_execute_physical(function, arguments)? {
         return Ok(value);
     }
-    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-        execute_interpreter(function, this_value, arguments)
-    })
+    execute_interpreter(function, this_value, arguments)
 }
 
 #[inline(never)]
@@ -573,9 +571,7 @@ pub(crate) fn execute(
     let specialized = try_execute_specialized(function, this_value, arguments);
     match specialized {
         Ok(Some(result)) => Ok(result),
-        Ok(None) => stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-            execute_interpreter(function, this_value, arguments)
-        }),
+        Ok(None) => execute_interpreter(function, this_value, arguments),
         Err(error) => Err(error),
     }
 }

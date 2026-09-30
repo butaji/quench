@@ -376,40 +376,47 @@ fn every_json_contract_matches_hot_ir() {
 /// may continue to use the generic `Slow` fallback until a new row is proven.
 #[test]
 fn every_profile_cold_operation_uses_declared_opcode_row() {
-    if std::env::var_os(PROFILE_CHILD_PROCESS).is_some()
-        || std::env::var_os("QUENCH_EXECUTION_PROFILE_PHYSICAL_INVENTORY").is_some()
-    {
-        return;
-    }
-    for name in fixture_names() {
-        let case = ExecutionCase::load(&name);
-        let (_, _, raw, _) = execute_case(&case)
-            .unwrap_or_else(|error| panic!("{name} physical lowering failed: {error}"));
-        for instruction in raw {
-            if instruction.cold_variant.is_some() {
-                if instruction.opcode == crate::ir::Opcode::Slow {
-                    assert_eq!(
-                        instruction.generic_fallback, instruction.cold_variant,
-                        "{name} pc {} has an unnamed generic fallback",
-                        instruction.pc
-                    );
-                } else {
-                    assert!(
-                        instruction.opcode.is_typed_cold_marker(),
-                        "{name} pc {} uses generic {:?} for cold {}",
-                        instruction.pc,
-                        instruction.opcode,
-                        instruction.cold_variant.unwrap_or("unknown")
-                    );
-                    assert_eq!(
-                        instruction.generic_fallback, None,
-                        "{name} pc {} typed cold row also reported generic fallback",
-                        instruction.pc
-                    );
+    std::thread::Builder::new()
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(|| {
+            if std::env::var_os(PROFILE_CHILD_PROCESS).is_some()
+                || std::env::var_os("QUENCH_EXECUTION_PROFILE_PHYSICAL_INVENTORY").is_some()
+            {
+                return;
+            }
+            for name in fixture_names() {
+                let case = ExecutionCase::load(&name);
+                let (_, _, raw, _) = execute_case(&case)
+                    .unwrap_or_else(|error| panic!("{name} physical lowering failed: {error}"));
+                for instruction in raw {
+                    if instruction.cold_variant.is_some() {
+                        if instruction.opcode == crate::ir::Opcode::Slow {
+                            assert_eq!(
+                                instruction.generic_fallback, instruction.cold_variant,
+                                "{name} pc {} has an unnamed generic fallback",
+                                instruction.pc
+                            );
+                        } else {
+                            assert!(
+                                instruction.opcode.is_typed_cold_marker(),
+                                "{name} pc {} uses generic {:?} for cold {}",
+                                instruction.pc,
+                                instruction.opcode,
+                                instruction.cold_variant.unwrap_or("unknown")
+                            );
+                            assert_eq!(
+                                instruction.generic_fallback, None,
+                                "{name} pc {} typed cold row also reported generic fallback",
+                                instruction.pc
+                            );
+                        }
+                    }
                 }
             }
-        }
-    }
+        })
+        .expect("spawn profile worker")
+        .join()
+        .expect("profile worker joins");
 }
 
 fn emit_physical_inventory(names: &[String]) {
@@ -462,7 +469,13 @@ fn emit_route_inventory(names: &[String]) {
 
 fn emit_selected_mismatch() {
     let name = std::env::var(PROFILE_CASE_FILTER).expect("selected profile case");
-    if let Some(mismatch) = case_mismatch(&name) {
+    let mismatch = std::thread::Builder::new()
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(move || case_mismatch(&name))
+        .expect("spawn profile case worker")
+        .join()
+        .expect("profile case worker joins");
+    if let Some(mismatch) = mismatch {
         println!("{PROFILE_MISMATCH_MARKER}{mismatch}");
     }
 }

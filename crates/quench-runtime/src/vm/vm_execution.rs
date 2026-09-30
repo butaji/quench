@@ -989,18 +989,27 @@ mod tests {
 
     #[test]
     fn ordinary_calls_preserve_semantics_at_bounded_depth() {
-        let source = r#"
-            function descend(n) {
-                if (n === 0) return 7;
-                return descend(n - 1);
-            }
-            if (descend(32) !== 7) throw "bounded ordinary call returned the wrong value";
-        "#;
-        let program = crate::reduce::reduce_source(source).expect("source reduces");
-        let result =
-            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+        std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                let source = r#"
+                    function descend(n) {
+                        if (n === 0) return 7;
+                        return descend(n - 1);
+                    }
+                    if (descend(32) !== 7) throw "bounded ordinary call returned the wrong value";
+                "#;
+                let program = crate::reduce::reduce_source(source).expect("source reduces");
+                let result = crate::vm::execute_code_with_context(
+                    program.code(),
+                    &crate::vm::VmContext::default(),
+                )
                 .expect("bounded ordinary calls run");
-        assert_eq!(result, Value::Undefined);
+                assert_eq!(result, Value::Undefined);
+            })
+            .expect("spawn runtime worker")
+            .join()
+            .expect("runtime worker joins");
     }
 
     #[test]

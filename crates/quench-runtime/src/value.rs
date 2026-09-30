@@ -1862,6 +1862,16 @@ mod object_identity_tests {
     use std::rc::Rc;
 
     #[test]
+    fn deeply_nested_object_teardown_survives_small_host_stacks() {
+        const NESTING: usize = 20_000;
+        let mut value = Value::Undefined;
+        for _ in 0..NESTING {
+            value = Value::Object(Rc::new(ObjectData::new(vec![("child".into(), value)])));
+        }
+        drop(value);
+    }
+
+    #[test]
     fn fresh_objects_have_distinct_stable_identities() {
         let first = ObjectData::new(Vec::new());
         let second = ObjectData::new(Vec::new());
