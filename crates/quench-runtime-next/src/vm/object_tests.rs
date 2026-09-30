@@ -325,6 +325,39 @@ fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
 }
 
 #[test]
+fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
+    let source = r#"
+      var getter = function() { return 7; };
+      var ordinary = {};
+      var indexed = [];
+      Object.defineProperty(ordinary, "value", { get: getter, configurable: false });
+      Object.defineProperty(indexed, "0", { get: getter, configurable: false });
+      Object.defineProperty(ordinary, "value", { get: getter });
+      Object.defineProperty(indexed, "0", { get: getter });
+      print(ordinary.value);
+      print(indexed[0]);
+      try { Object.defineProperty(ordinary, "value", { get: function() { return 8; } }); }
+      catch (error) { print("ordinary-rejected"); }
+      try { Object.defineProperty(indexed, "0", { get: function() { return 8; } }); }
+      catch (error) { print("indexed-rejected"); }
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "non-configurable-accessor-identity.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["7", "7", "ordinary-rejected", "indexed-rejected"],
+            "{mode}"
+        );
+    }
+}
+
+#[test]
 fn field_cache_fallback_preserves_accessor_reentry() {
     let source = r#"
       var count = 0;
