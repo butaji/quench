@@ -1,0 +1,6 @@
+[package]
+name = "quench-stack"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Shared recursion budget and worker stack policy for Quench runtimes"

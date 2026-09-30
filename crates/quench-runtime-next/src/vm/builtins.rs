@@ -597,6 +597,8 @@ impl<H: Host> Vm<H> {
             let value = self.native(*native);
             self.natives.push((*native, value));
         }
+        // Error intrinsics must exist before any guarded initialization step.
+        self.install_error_intrinsics(program)?;
         self.install_throw_type_error_for_realm(self.realm.globals)?;
         self.install_object(program)?;
         self.install_console(program)?;

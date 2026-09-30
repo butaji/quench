@@ -10,7 +10,7 @@ mod memory_edge;
 mod module_identity;
 mod number_to_string;
 mod profile;
-mod stack;
+pub(crate) use quench_stack as stack;
 mod unicode;
 mod value;
 mod value_vec;
