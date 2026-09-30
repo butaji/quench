@@ -169,6 +169,9 @@ pub(crate) fn function_has_instance(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let _stack = quench_stack::StackGuard::enter().map_err(|()| {
+        crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+    })?;
     let constructor = receiver.unwrap_or(&Value::Undefined);
     if !instanceof_callable(constructor) {
         return Ok(Value::Boolean(false));
