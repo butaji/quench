@@ -732,6 +732,9 @@ impl<H: Host> Vm<H> {
             kind,
         )
         .map_err(|diagnostics| {
+            if diagnostics.iter().any(crate::compile::Diagnostic::is_stack_exhausted) {
+                return self.stack_exhaustion_error();
+            }
             let message = diagnostics
                 .first()
                 .map_or("invalid Function source".to_owned(), ToString::to_string);

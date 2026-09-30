@@ -3303,6 +3303,9 @@ impl<H: Host> Vm<H> {
             &atom_prefix,
         )
         .map_err(|diagnostics| {
+            if diagnostics.iter().any(crate::compile::Diagnostic::is_stack_exhausted) {
+                return self.stack_exhaustion_error();
+            }
             self.type_error(
                 p,
                 format!("dynamic module compilation failed: {diagnostics:?}"),
@@ -3543,6 +3546,9 @@ impl<H: Host> Vm<H> {
             &atom_prefix,
         )
         .map_err(|diagnostics| {
+            if diagnostics.iter().any(crate::compile::Diagnostic::is_stack_exhausted) {
+                return self.stack_exhaustion_error();
+            }
             self.type_error(
                 p,
                 format!("dynamic module compilation failed: {diagnostics:?}"),

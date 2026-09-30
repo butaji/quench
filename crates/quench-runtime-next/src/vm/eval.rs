@@ -42,6 +42,12 @@ impl<H: Host> Vm<H> {
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
+                if diagnostics
+                    .iter()
+                    .any(crate::compile::Diagnostic::is_stack_exhausted)
+                {
+                    return Err(self.stack_exhaustion_error());
+                }
                 let message = diagnostics
                     .first()
                     .map_or("invalid script source".to_owned(), ToString::to_string);
@@ -187,6 +193,12 @@ impl<H: Host> Vm<H> {
             self.direct_eval_function_context(p),
         )
         .map_err(|diagnostics| {
+            if diagnostics
+                .iter()
+                .any(crate::compile::Diagnostic::is_stack_exhausted)
+            {
+                return self.stack_exhaustion_error();
+            }
             let message = diagnostics
                 .first()
                 .map_or("invalid eval source".to_owned(), ToString::to_string);
@@ -875,6 +887,13 @@ impl<H: Host> Vm<H> {
             &atom_prefix,
         ) {
             Ok(residual) => residual,
+            Err(diagnostics)
+                if diagnostics
+                    .iter()
+                    .any(crate::compile::Diagnostic::is_stack_exhausted) =>
+            {
+                return Err(self.stack_exhaustion_error());
+            }
             Err(diagnostics) if self.direct_eval => {
                 let Some((home, private_names)) = self.direct_eval_private_names(p) else {
                     return Err(self.mark_eval_syntax_error(p, diagnostics));
@@ -982,6 +1001,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         diagnostics: Vec<crate::compile::Diagnostic>,
     ) -> JsError {
+        if diagnostics
+            .iter()
+            .any(crate::compile::Diagnostic::is_stack_exhausted)
+        {
+            return self.stack_exhaustion_error();
+        }
         let message = diagnostics
             .first()
             .map_or("invalid eval expression".to_owned(), ToString::to_string);

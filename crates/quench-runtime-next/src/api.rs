@@ -174,6 +174,47 @@ mod tests {
     }
 
     #[test]
+    fn regression_dynamic_compiler_exhaustion_is_catchable_and_recovers() {
+        std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                assert_output_in_execution_modes(
+                    r#"
+                    var intrinsicRangeError = RangeError;
+                    RangeError = function() { throw 'replaced'; };
+                    var source = Array(20000).fill('1').join('+');
+                    for (var mode = 0; mode < 3; mode++) {
+                        try {
+                            if (mode === 0) eval(source);
+                            else if (mode === 1) (0, eval)(source);
+                            else Function('return ' + source);
+                            print('missing error');
+                        } catch (error) {
+                            print(error instanceof intrinsicRangeError);
+                            print(error.message);
+                        }
+                        print(eval('1 + 2'));
+                    }
+                    "#,
+                    &[
+                        "true",
+                        crate::stack::STACK_EXHAUSTED_MESSAGE,
+                        "3",
+                        "true",
+                        crate::stack::STACK_EXHAUSTED_MESSAGE,
+                        "3",
+                        "true",
+                        crate::stack::STACK_EXHAUSTED_MESSAGE,
+                        "3",
+                    ],
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn regression_error_bootstrap_preserves_global_binding_order() {
         assert_output_in_execution_modes(
             "print(Object.getOwnPropertyNames(globalThis).filter(name => ['Object', 'Date', 'RangeError', 'RegExp'].includes(name)).join(','));",
