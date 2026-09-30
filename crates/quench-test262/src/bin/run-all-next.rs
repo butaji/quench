@@ -19,6 +19,12 @@ use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-next-report.json";
 const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
+const METADATA_TEST_BASENAMES: [&str; 4] = [
+    "name.js",
+    "length.js",
+    "prop-desc.js",
+    "not-a-constructor.js",
+];
 
 struct RatchetResult {
     verdict: &'static str,
@@ -330,8 +336,14 @@ fn write_report(
         })
         .collect::<Vec<_>>();
     let mut families = BTreeMap::<String, usize>::new();
+    let mut metadata_families = BTreeMap::<String, usize>::new();
     for (_, reason) in &report.failures {
         *families.entry(normalize_failure(reason)).or_default() += 1;
+    }
+    for (path, _) in &report.failures {
+        if let Some(basename) = metadata_test_basename(path) {
+            *metadata_families.entry(basename).or_default() += 1;
+        }
     }
     let stages = stage_counts
         .into_iter()
@@ -367,6 +379,7 @@ fn write_report(
         "failed": report.failed,
         "failures": failures,
         "families": families,
+        "metadata_families": metadata_families,
         "stages": stages,
         "outcomes": outcomes,
         "ratchet": ratchet.verdict,
@@ -380,6 +393,13 @@ fn report_path(path: &Path, test_root: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+fn metadata_test_basename(path: &Path) -> Option<String> {
+    let basename = path.file_name()?.to_str()?;
+    METADATA_TEST_BASENAMES
+        .contains(&basename)
+        .then(|| basename.to_owned())
 }
 
 fn stage_for(path: &Path, stages: &[ResolvedStage]) -> String {
@@ -603,6 +623,30 @@ mod tests {
         assert_eq!(
             normalize_failure("Expected SameValue(«17», «false») at 'fixture-42.js'"),
             "Expected SameValue(«…», «…») at '…'"
+        );
+    }
+
+    #[test]
+    fn metadata_failures_cluster_by_their_specified_basename() {
+        assert_eq!(
+            metadata_test_basename(Path::new("test/built-ins/Array/prototype/name.js")),
+            Some("name.js".into())
+        );
+        assert_eq!(
+            metadata_test_basename(Path::new("test/built-ins/TypedArray/prototype/length.js")),
+            Some("length.js".into())
+        );
+        assert_eq!(
+            metadata_test_basename(Path::new("test/built-ins/Array/prop-desc.js")),
+            Some("prop-desc.js".into())
+        );
+        assert_eq!(
+            metadata_test_basename(Path::new("test/built-ins/Array/prototype/set.js")),
+            None
+        );
+        assert_eq!(
+            metadata_test_basename(Path::new("test/built-ins/Array/not-a-constructor.js")),
+            Some("not-a-constructor.js".into())
         );
     }
 
