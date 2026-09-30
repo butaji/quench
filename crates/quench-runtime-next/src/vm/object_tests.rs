@@ -225,6 +225,44 @@ fn field_cache_fallback_preserves_accessor_reentry() {
 }
 
 #[test]
+fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
+    let source = r#"
+      var reads = 0;
+      var target = { value: 9 };
+      var proxy = new Proxy(target, {
+        get: function(target, key, receiver) {
+          if (key === "value") { reads += 1; return reads; }
+          return Reflect.get(target, key, receiver);
+        }
+      });
+      function readValue(value) { return value.value; }
+      print(readValue(proxy));
+      print(readValue(proxy));
+      print(reads);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "field-cache-proxy-get.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
+
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .all(|entry| entry.atom != value || entry.receiver == u32::MAX),
+                "Proxy reads must retain the generic trap path"
+            );
+        }
+    }
+}
+
+#[test]
 fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
     let source = r#"
       var reads = 0;
