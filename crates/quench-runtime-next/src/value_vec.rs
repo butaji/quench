@@ -373,6 +373,11 @@ impl ValueArena {
         vector.start = start as u32 | (vector.start & !START_MASK);
     }
 
+    #[cfg(test)]
+    pub(crate) fn migrate_to_dictionary_for_test(&mut self, vector: &mut ValueVec) {
+        self.grow(vector, 0);
+    }
+
     #[cfg(any(test, feature = "profile-memory"))]
     pub(crate) fn vector_stats(&self, vector: ValueVec) -> (usize, usize) {
         (self.len(vector), self.capacity(vector))
@@ -475,7 +480,7 @@ mod tests {
         let range_count = arena.values.len();
         // A zero address limit exercises the same checked exhaustion branch
         // without allocating billions of arena entries in a unit test.
-        arena.grow(&mut vector, 0);
+        arena.migrate_to_dictionary_for_test(&mut vector);
         let dictionary_id = vector.dictionary_id();
 
         assert!(vector.is_dictionary());
@@ -507,7 +512,7 @@ mod tests {
         let mut vector = arena.pair(1, Value::heap(11), Value::heap(12));
         arena.set(vector, 1, Value::DELETED);
 
-        arena.grow(&mut vector, 0);
+        arena.migrate_to_dictionary_for_test(&mut vector);
 
         let mut roots = Vec::new();
         arena.append_live_values(vector, &mut roots);

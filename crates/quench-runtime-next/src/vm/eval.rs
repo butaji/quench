@@ -1053,7 +1053,7 @@ impl<H: Host> Vm<H> {
         let names = self
             .object_data(home)
             .into_iter()
-            .flat_map(|object| &object.private_names)
+            .flat_map(|object| object.private_names())
             .filter_map(|brand| {
                 let identity = self.atom_name(brand.name).to_owned();
                 private_identity_label(&identity).map(|label| (label, identity))

@@ -581,7 +581,7 @@ impl<H: Host> Vm<H> {
                 return self
                     .object_data(target)
                     .is_some_and(|object| {
-                        object.private_names.contains(&PrivateBrand {
+                        object.has_private_name(PrivateBrand {
                             home: *home,
                             name: atom,
                         })
@@ -611,19 +611,15 @@ impl<H: Host> Vm<H> {
             environment = *parent;
         }
         for (_, home) in homes.iter().copied() {
-            let declares_name = self.object_data(home).is_some_and(|object| {
-                object
-                    .private_names
-                    .contains(&PrivateBrand { home, name: atom })
-            });
+            let declares_name = self
+                .object_data(home)
+                .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }));
             if !declares_name {
                 continue;
             }
-            let branded = self.object_data(target).is_some_and(|object| {
-                object
-                    .private_names
-                    .contains(&PrivateBrand { home, name: atom })
-            });
+            let branded = self
+                .object_data(target)
+                .is_some_and(|object| object.has_private_name(PrivateBrand { home, name: atom }));
             return branded.then_some(home);
         }
         None
