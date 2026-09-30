@@ -1,6 +1,6 @@
 use crate::{
     execute::VmError,
-    ops::{Builtin, FunctionKind},
+    ops::Builtin,
     value::{ProxyValue, Value},
 };
 use std::rc::Rc;
@@ -382,22 +382,17 @@ pub(crate) fn proxy_construct(
     crate::construct::construct_value_with_new_target(target, new_target, arguments)
 }
 
-fn is_constructible(value: &Value) -> bool {
-    match value {
-        Value::Function(function) => {
-            !function.is_async
-                && matches!(
-                    function.kind,
-                    FunctionKind::Ordinary | FunctionKind::ClassConstructor
-                )
+fn is_constructible(mut value: &Value) -> bool {
+    loop {
+        match value {
+            Value::BoundFunction(bound) => value = &bound.target,
+            Value::Proxy(proxy) => value = &proxy.target,
+            Value::Function(function) => return crate::functions::is_constructible(function),
+            Value::Builtin(builtin) => {
+                return crate::builtin_meta::constructor_name(*builtin).is_some();
+            }
+            _ => return false,
         }
-        Value::BoundFunction(bound) => is_constructible(&bound.target),
-        // A proxy is constructible exactly when its target is constructible.
-        // The proxy itself does not acquire a [[Construct]] slot merely by
-        // being a proxy.
-        Value::Proxy(proxy) => is_constructible(&proxy.target),
-        Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
-        _ => false,
     }
 }
 
@@ -838,3 +833,59 @@ pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 include!("proxy_reflect.rs");
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+    use crate::value::BoundFunctionValue;
+    use std::cell::RefCell;
+
+    const CLASSIFICATION_STRESS_DEPTH: usize = 20_000;
+
+    #[test]
+    fn regression_deep_proxy_and_bound_classification_is_stack_independent() {
+        for (leaf, callable, type_name) in [
+            (Value::Builtin(Builtin::Number), true, "function"),
+            (Value::Builtin(Builtin::Math), false, "object"),
+            (Value::Builtin(Builtin::FunctionPrototype), true, "function"),
+            (Value::Undefined, false, "undefined"),
+        ] {
+            let constructible = is_constructible(&leaf);
+            let mut value = leaf;
+            let mut owners = Vec::new();
+            for _ in 0..CLASSIFICATION_STRESS_DEPTH {
+                owners.push(value.clone());
+                value = Value::Proxy(Rc::new(ProxyValue {
+                    target: value,
+                    handler: Value::Builtin(Builtin::Math),
+                    revoked: Rc::new(RefCell::new(true)),
+                    private_slots: Default::default(),
+                }));
+            }
+            assert_eq!(crate::conversion::is_callable(&value), callable);
+            assert_eq!(is_constructible(&value), constructible);
+            assert_eq!(crate::intl::tolocale::value::type_of(&value), type_name);
+            drop(value);
+            // Each parent remains owned while its outer wrapper is released.
+            while owners.pop().is_some() {}
+        }
+
+        let mut value = Value::Builtin(Builtin::Number);
+        let mut owners = Vec::new();
+        for _ in 0..CLASSIFICATION_STRESS_DEPTH {
+            owners.push(value.clone());
+            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+                realm: crate::ops::RealmId::ROOT,
+                target: value,
+                receiver: Value::Undefined,
+                arguments: Vec::new(),
+                properties: RefCell::new(Vec::new()),
+            }));
+        }
+        assert!(crate::conversion::is_callable(&value));
+        assert!(is_constructible(&value));
+        assert_eq!(crate::intl::tolocale::value::type_of(&value), "function");
+        drop(value);
+        while owners.pop().is_some() {}
+    }
+}
