@@ -177,11 +177,16 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
     let mut vm = Vm::new(SilentHost);
     vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY;
     let atom = vm.intern_atom("overflow");
-    let shape = vm.transition_property_shape(0, super::property_key::PropertyKey::string(atom));
+    let key = super::property_key::PropertyKey::string(atom);
+    let shape = vm.transition_property_shape(0, key);
     assert!(vm.shape_is_dictionary(shape));
     assert_eq!(
         vm.shapes[shape as usize].dictionary_trigger,
         Some(super::DictionaryTrigger::PropertyCount)
+    );
+    assert_eq!(
+        vm.property_shape_slot(shape, key),
+        Some(super::object::FIELD_CACHE_SLOT_CAPACITY)
     );
     assert_eq!(
         vm.shapes[shape as usize].storage_len,
