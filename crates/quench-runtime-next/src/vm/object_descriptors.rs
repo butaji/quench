@@ -91,6 +91,23 @@ impl PropertyDescriptorRecord {
             && self.has_accessor_fields() != current.accessor;
         changes_kind.then_some(DescriptorConflict::Kind)
     }
+
+    pub(super) fn changes_non_configurable_accessor(
+        self,
+        current: PropertyAttributes,
+        same_value: impl Fn(Value, Value) -> bool,
+    ) -> bool {
+        !current.configurable
+            && current.accessor
+            && [(self.getter, current.getter), (self.setter, current.setter)]
+                .into_iter()
+                .any(|(requested, existing)| {
+                    requested.is_some_and(|requested| {
+                        !(requested.is_undefined() && existing.is_none())
+                            && !existing.is_some_and(|existing| same_value(existing, requested))
+                    })
+                })
+    }
 }
 
 #[derive(Clone, Copy)]
