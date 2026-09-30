@@ -37,6 +37,49 @@ fn run_async(source: &str) {
 }
 
 #[test]
+fn regression_bound_has_instance_exhaustion_is_catchable_and_recovers() {
+    std::thread::Builder::new()
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(|| {
+            let mut reservations = Vec::new();
+            while let Ok(guard) = quench_stack::StackGuard::enter() {
+                reservations.push(guard);
+            }
+            let stress_depth = reservations.len() + 1;
+            drop(reservations);
+            let source = r#"
+                var intrinsicRangeError = RangeError;
+                RangeError = function () { throw "replaced"; };
+                var bound = function Leaf() {}, owners = [], boundStressDepth = BOUND_STRESS_DEPTH;
+                for (var i = 0; i < boundStressDepth; i++) {
+                    owners.push(bound);
+                    bound = bound.bind(null);
+                    Object.defineProperty(bound, "name", { value: "" });
+                }
+                var caught = false;
+                try { Function.prototype[Symbol.hasInstance].call(bound, {}); }
+                catch (error) {
+                    if (!(error instanceof intrinsicRangeError) ||
+                        error.message !== "Maximum call stack size exceeded") throw "bad stack error";
+                    caught = true;
+                }
+                if (!caught) throw "bound chain did not exhaust";
+                bound = null;
+                while (owners.length) owners.pop();
+                function Ordinary() {}
+                var instance = new Ordinary();
+                if (!Function.prototype[Symbol.hasInstance].call(Ordinary.bind(null), instance)) {
+                    throw "ordinary bound instance or budget recovery failed";
+                }
+            "#.replace("BOUND_STRESS_DEPTH", &stress_depth.to_string());
+            run_sync(&source);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn async_loops_resume_every_nested_and_control_phase() {
     run_async(
         r#"
