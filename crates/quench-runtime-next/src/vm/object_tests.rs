@@ -90,3 +90,34 @@ fn cached_field_reads_follow_in_place_writes() {
         }
     }
 }
+
+#[test]
+fn warmed_field_cache_tracks_prototype_changes_and_rejects_cycles() {
+    let source = r#"
+      var first = { value: 1 };
+      var second = { value: 2 };
+      var receiver = Object.create(first);
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      Object.setPrototypeOf(receiver, second);
+      print(readValue(receiver));
+      try { Object.setPrototypeOf(receiver, receiver); print("cycle-accepted"); }
+      catch (error) { print("cycle-rejected"); }
+      print(Object.getPrototypeOf(receiver) === second);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "field-cache-prototype.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "1", "2", "cycle-rejected", "true"],
+            "{mode}"
+        );
+    }
+}
