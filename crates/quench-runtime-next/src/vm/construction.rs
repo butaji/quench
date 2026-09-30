@@ -436,6 +436,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
             return self.proxy_construct(p, callee, new_target, args);
         }

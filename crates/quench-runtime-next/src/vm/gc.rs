@@ -195,6 +195,11 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
+                    self.range_error_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.regexp_intrinsics
                         .iter()
                         .flat_map(|(realm, intrinsics)| {

@@ -525,6 +525,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
+        let _stack = self.enter_stack()?;
         if self.is_private_name(atom) {
             self.check_private_brand(p, target, atom)?;
         }

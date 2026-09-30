@@ -42,7 +42,7 @@ const MATH_FUNCTIONS: &[(&str, Native)] = &[
 ];
 #[rustfmt::skip]
 const NATIVES: &[Native] = &[
-    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
+    Native::Print, Native::HostDone, Native::CreateRealm, Native::IsHTMLDDA, Native::EvalScript, Native::CollectGarbage, Native::RealmTypeError, Native::Eval, Native::ToString, Native::Function, Native::FunctionPrototype, Native::FunctionPrototypeHasInstance, Native::FunctionReturnThis, Native::FunctionReturnName, Native::WithEnter, Native::WithExit, Native::Object, Native::AbstractModuleSource, Native::AbstractModuleSourceToStringTag, Native::ShadowRealm, Native::ShadowRealmEvaluate, Native::ShadowRealmImportValue, Native::ShadowRealmImportValueFulfilled, Native::ShadowRealmWrappedFunction,
     Native::ObjectKeys, Native::ForInKeys, Native::ForInKeyIsEnumerable, Native::ObjectValues, Native::ObjectEntries, Native::ObjectGetOwnPropertyNames, Native::ObjectGetOwnPropertySymbols, Native::ObjectGetOwnPropertyDescriptor, Native::ObjectGetOwnPropertyDescriptors,
     Native::ObjectGroupBy,
     Native::ObjectFromEntries, Native::ObjectIs,
@@ -472,9 +472,11 @@ const NATIVES: &[Native] = &[
     Native::RegExpSource,
     Native::RegExpFlags,
     Native::String, Native::Boolean, Native::BooleanToString, Native::BooleanValueOf, Native::BigInt, Native::BigIntValueOf, Native::BigIntToString, Native::BigIntToLocaleString, Native::BigIntAsIntN, Native::BigIntAsUintN,
-    Native::IntlNumberFormat, Native::IntlNumberFormatFormatGetter,
+    Native::IntlNumberFormat, Native::IntlNumberFormatSupportedLocalesOf,
+    Native::IntlNumberFormatFormatGetter,
     Native::IntlNumberFormatFormat,
-    Native::IntlNumberFormatFormatToParts, Native::IntlNumberFormatResolvedOptions,
+    Native::IntlNumberFormatFormatToParts, Native::IntlNumberFormatFormatRange,
+    Native::IntlNumberFormatFormatRangeToParts, Native::IntlNumberFormatResolvedOptions,
     Native::IntlGetCanonicalLocales,
     Native::IntlSupportedValuesOf, Native::IntlLocale,
     Native::IntlLocaleToString, Native::IntlLocaleMaximize, Native::IntlLocaleMinimize,
