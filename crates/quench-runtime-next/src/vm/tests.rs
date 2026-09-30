@@ -198,6 +198,16 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             vm.shape_is_dictionary(shape),
             "{mode}: dictionary mode survives GC"
         );
+        let atom = vm.intern_atom("deleted");
+        let deleted = vm
+            .own_property(global, atom)
+            .expect("global binding exists");
+        let atom = vm.intern_atom("answer");
+        assert_eq!(
+            vm.own_property(deleted, atom).and_then(Value::as_number),
+            Some(7.0),
+            "{mode}: dictionary-backed property survives GC"
+        );
         assert_eq!(output.borrow().as_slice(), ["42", "42", "7"], "{mode}");
         #[cfg(feature = "profile-aggregate")]
         for trigger in [
