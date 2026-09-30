@@ -128,6 +128,28 @@ fn weak_ref_target_is_cleared_after_collection() {
 }
 
 #[test]
+fn exhausted_heap_generations_retire_slots_without_weak_handle_aliasing() {
+    let mut heap = Heap::new();
+    let target = heap.alloc(Cell::String("old".into()));
+    let slot = target.heap_index().unwrap() as usize;
+    heap.generations[slot] = u32::MAX;
+    let stale = heap.weak_handle(target).unwrap();
+
+    heap.collect([]);
+    assert!(heap.get(target).is_none());
+    assert_eq!(heap.weak_value(stale), None);
+
+    let replacement = heap.alloc(Cell::String("new".into()));
+    assert_ne!(replacement.heap_index(), Some(slot as u32));
+    assert_eq!(heap.weak_value(stale), None);
+    assert_eq!(heap.retired_slots, 1);
+
+    let next = heap.alloc(Cell::String("next".into()));
+    assert_ne!(next.heap_index(), Some(slot as u32));
+    assert_eq!(heap.retired_slots, 1);
+}
+
+#[test]
 fn stale_weak_handles_cannot_resolve_reused_slots() {
     let mut heap = Heap::new();
     let first = heap.alloc(Cell::String("first".into()));

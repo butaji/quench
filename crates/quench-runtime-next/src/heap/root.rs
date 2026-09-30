@@ -29,16 +29,19 @@ struct Entry {
 
 impl RootTable {
     pub(crate) fn insert(&mut self, value: Value) -> RootId {
-        if let Some(slot) = self.free.pop() {
+        while let Some(slot) = self.free.pop() {
             let entry = &mut self.entries[slot as usize];
-            entry.generation = entry.generation.wrapping_add(1).max(1);
+            let Some(generation) = entry.generation.checked_add(1) else {
+                continue;
+            };
+            entry.generation = generation;
             entry.value = Some(value);
             return RootId {
                 slot,
                 generation: entry.generation,
             };
         }
-        let slot = self.entries.len() as u32;
+        let slot = u32::try_from(self.entries.len()).expect("root table exhausted");
         self.entries.push(Entry {
             generation: 1,
             value: Some(value),
@@ -87,7 +90,9 @@ impl RootTable {
         self.free.clear();
         for (slot, entry) in self.entries.iter_mut().enumerate() {
             entry.value = None;
-            self.free.push(slot as u32);
+            if entry.generation.checked_add(1).is_some() {
+                self.free.push(slot as u32);
+            }
         }
     }
 }
@@ -124,5 +129,24 @@ mod tests {
         assert_ne!(old, new);
         assert!(!roots.update(old, Value::number(3.0)));
         assert!(roots.update(new, Value::number(4.0)));
+    }
+
+    #[test]
+    fn exhausted_generations_retire_root_slots_instead_of_wrapping() {
+        let mut roots = RootTable::default();
+        let first = roots.insert(Value::number(1.0));
+        roots.entries[first.slot as usize].generation = u32::MAX;
+        let last_generation = RootId {
+            slot: first.slot,
+            generation: u32::MAX,
+        };
+        assert!(roots.remove(last_generation));
+
+        let replacement = roots.insert(Value::number(2.0));
+        assert_ne!(replacement.slot, last_generation.slot);
+        assert_eq!(roots.get(last_generation), None);
+        assert_eq!(roots.get(replacement), Some(Value::number(2.0)));
+        assert!(!roots.free.contains(&last_generation.slot));
+        assert!(roots.entries[last_generation.slot as usize].value.is_none());
     }
 }

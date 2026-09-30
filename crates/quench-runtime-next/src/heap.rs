@@ -22,6 +22,7 @@ pub(crate) struct Heap {
     slots: SlotArena,
     marks: Vec<u64>,
     free: Vec<u32>,
+    retired_slots: usize,
     generations: Vec<u32>,
     external_bytes: usize,
     allocations: usize,
@@ -141,12 +142,15 @@ impl Heap {
         self.allocations += 1;
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
-        if let Some(index) = self.free.pop() {
+        while let Some(index) = self.free.pop() {
+            let Some(generation) = self.generations[index as usize].checked_add(1) else {
+                self.retired_slots += 1;
+                continue;
+            };
             if let Some(arrays) = &mut self.sparse_arrays {
                 arrays.remove(&index);
             }
-            self.generations[index as usize] =
-                self.generations[index as usize].wrapping_add(1).max(1);
+            self.generations[index as usize] = generation;
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
             #[cfg(feature = "profile-memory")]
             self.memory_profile.allocated(
@@ -158,7 +162,9 @@ impl Heap {
                     .as_ref()
                     .unwrap(),
             );
-            self.peak_live = self.peak_live.max(self.slots.len() - self.free.len());
+            self.peak_live = self
+                .peak_live
+                .max(self.slots.len() - self.free.len() - self.retired_slots);
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -170,7 +176,9 @@ impl Heap {
             self.marks.push(0);
         }
         self.generations.push(1);
-        self.peak_live = self.peak_live.max(self.slots.len() - self.free.len());
+        self.peak_live = self
+            .peak_live
+            .max(self.slots.len() - self.free.len() - self.retired_slots);
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -262,6 +270,7 @@ impl Heap {
         self.slots.clear();
         self.marks.clear();
         self.free.clear();
+        self.retired_slots = 0;
         self.generations.clear();
         self.external_bytes = 0;
         self.allocations = 0;
