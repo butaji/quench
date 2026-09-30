@@ -1863,7 +1863,7 @@ mod object_identity_tests {
 
     #[test]
     fn deeply_nested_object_teardown_survives_small_host_stacks() {
-        const NESTING: usize = 20_000;
+        const NESTING: usize = 100_000;
         let mut value = Value::Undefined;
         for _ in 0..NESTING {
             value = Value::Object(Rc::new(ObjectData::new(vec![("child".into(), value)])));
