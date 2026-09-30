@@ -136,6 +136,24 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
         vm.execute(&program).unwrap();
 
         let global = vm.realm.globals;
+        for name in ["inherited", "deleted"] {
+            let atom = vm.intern_atom(name);
+            let object = vm
+                .own_property(global, atom)
+                .expect("global binding exists");
+            let shape = vm.object_data(object).expect("object value").shape();
+            assert!(
+                vm.field_caches.iter().all(|cache| cache.receiver != shape),
+                "{mode}: dictionary shape entered a monomorphic field cache for {name}"
+            );
+            assert!(
+                vm.megamorphic_fields
+                    .iter()
+                    .all(|cache| cache.get(shape).is_none()),
+                "{mode}: dictionary shape entered a megamorphic field cache for {name}"
+            );
+        }
+
         for (name, trigger) in [
             ("inherited", super::DictionaryTrigger::PrototypeUse),
             ("deleted", super::DictionaryTrigger::DeletionPattern),
