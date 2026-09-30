@@ -508,10 +508,12 @@ fn update_ratchet_at(
     }
     let verdict = if !regressions.is_empty() {
         "regressed"
-    } else if !had_baseline && clean {
+    } else if clean && had_baseline {
+        "clean"
+    } else if clean {
         "baseline_created"
     } else if had_baseline {
-        "clean"
+        "incomplete"
     } else {
         "awaiting_baseline"
     };
@@ -627,6 +629,26 @@ mod tests {
             update_ratchet_at(&baseline, &root, &files, &[Ok(()), Ok(())], timeout, true).unwrap();
         assert_eq!(first.verdict, "baseline_created");
         assert!(first.regressions.is_empty());
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
+        saved["test_marker"] = serde_json::json!("keep on incomplete run");
+        fs::write(&baseline, format!("{saved}\n")).unwrap();
+
+        let added_file = root.join("test/c.js");
+        let incomplete = update_ratchet_at(
+            &baseline,
+            &root,
+            &[files[0].clone(), files[1].clone(), added_file],
+            &[Ok(()), Ok(()), Err("new test failed".into())],
+            timeout,
+            true,
+        )
+        .unwrap();
+        assert_eq!(incomplete.verdict, "incomplete");
+        assert!(incomplete.regressions.is_empty());
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
+        assert_eq!(saved["test_marker"], "keep on incomplete run");
 
         let second = update_ratchet_at(
             &baseline,
