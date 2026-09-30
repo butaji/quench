@@ -1,8 +1,22 @@
 use super::*;
+use crate::Engine;
+use std::{cell::RefCell, rc::Rc};
 
 struct SilentHost;
 impl Host for SilentHost {
     fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+}
+
+struct RecordingHost(Rc<RefCell<Vec<String>>>);
+
+impl Host for RecordingHost {
+    fn write_line(&mut self, line: &str) {
+        self.0.borrow_mut().push(line.into());
+    }
+
     fn clock_millis(&mut self) -> f64 {
         0.0
     }
@@ -43,4 +57,36 @@ fn shape_slot_index_is_derived_from_immutable_shape_keys() {
     assert_eq!(vm.shape_slot(shape, second), Some(1));
     let missing = vm.intern_atom("missing");
     assert_eq!(vm.shape_slot(shape, missing), None);
+}
+
+#[test]
+fn cached_field_reads_follow_in_place_writes() {
+    let source = r#"
+      var receiver = { value: 1 };
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      receiver.value = 2;
+      print(readValue(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "field-cache-write.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
+
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .any(|entry| entry.atom == value && entry.receiver != u32::MAX),
+                "specialized field read should populate its cache"
+            );
+        }
+    }
 }
