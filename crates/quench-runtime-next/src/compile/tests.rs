@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
+    let wide_count = (1..=u16::MAX)
+        .find(|&count| Instr::try_new(Op::MakeConstArray, 0, count, 0, 0).is_none())
+        .unwrap();
+    let wide_array = format!("[{}];", "0,".repeat(usize::from(wide_count)));
+    for suffix in ["", wide_array.as_str()] {
+        let source = format!(
+            "var global = 1; let lexical = 2; global = global + lexical; \
+             function read() {{ return global; }} read(); {suffix}"
+        );
+        for specialize in [false, true] {
+            let program = if specialize {
+                Engine::specialize(&source, "global-lowering.js")
+            } else {
+                Engine::specialize_unspecialized(&source, "global-lowering.js")
+            }
+            .unwrap();
+            let root = &program.functions[0];
+            assert!(
+                root.code
+                    .iter()
+                    .any(|instruction| instruction.op() == Op::StoreEnvLocal)
+            );
+            assert!(!root.global_lexical_atoms.is_empty());
+            assert!(
+                root.global_lexical_atoms
+                    .iter()
+                    .all(|atom| !root.global_var_atoms.contains(atom))
+            );
+            assert_eq!(!root.wide.is_empty(), !suffix.is_empty());
+            program.validate().unwrap();
+        }
+    }
+}
+
+#[test]
 fn scalar_constants_reuse_exact_slots() {
     let mut compiler = Compiler::new_with_mode(
         "test.js",

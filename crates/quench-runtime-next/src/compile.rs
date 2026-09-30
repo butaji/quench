@@ -1723,24 +1723,39 @@ impl<'a> Compiler<'a> {
             root.global_function_atoms = global_function_atoms;
             root.global_annex_b_var_atoms = global_annex_b_var_atoms;
             if !self.module_goal {
-                let lower_global_var = |op, slot| {
+                fn lower_global_var(
+                    op: Op,
+                    slot: impl FnOnce() -> usize,
+                    local_atoms: &[Atom],
+                    global_var_atoms: &[Atom],
+                ) -> Option<Op> {
                     let replacement = match op {
                         Op::LoadLocal => Op::LoadEnvLocal,
                         Op::StoreLocal => Op::StoreEnvLocal,
                         _ => return None,
                     };
-                    root.local_atoms
-                        .get(slot)
-                        .is_some_and(|atom| root.global_var_atoms.contains(atom))
+                    local_atoms
+                        .get(slot())
+                        .is_some_and(|atom| global_var_atoms.contains(atom))
                         .then_some(replacement)
-                };
+                }
                 for instruction in &mut root.code {
-                    if let Some(op) = lower_global_var(instruction.op(), instruction.local_slot()) {
+                    if let Some(op) = lower_global_var(
+                        instruction.op(),
+                        || instruction.local_slot(),
+                        &root.local_atoms,
+                        &root.global_var_atoms,
+                    ) {
                         instruction.set_op(op);
                     }
                 }
                 for instruction in &mut root.wide {
-                    if let Some(op) = lower_global_var(instruction.op(), instruction.local_slot()) {
+                    if let Some(op) = lower_global_var(
+                        instruction.op(),
+                        || instruction.local_slot(),
+                        &root.local_atoms,
+                        &root.global_var_atoms,
+                    ) {
                         instruction.set_op(op);
                     }
                 }
