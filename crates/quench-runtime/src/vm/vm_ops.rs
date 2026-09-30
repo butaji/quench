@@ -75,7 +75,7 @@ pub(crate) fn take_call_continuation(
 /// before returning a VM error, so resource exhaustion cannot leak a moved
 /// register file or panic in Rust allocation code.
 struct ActiveCall {
-    _stack: quench_stack::StackGuard,
+    _stack: (quench_stack::GuestCallGuard, quench_stack::StackGuard),
     continuation: crate::completion::CallContinuation,
     code: crate::machine::FunctionCode,
     registers: crate::register_file::RegisterFile,
@@ -143,9 +143,7 @@ pub fn execute_call_continuation(
     let caller_environment = crate::locals::current();
     let _environment_root = crate::cycle_collector::protect_environment(&caller_environment);
     let _roots = crate::cycle_collector::protect_call(&continuation);
-    stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
-        execute_call_continuation_inner(registers, continuation)
-    })
+    execute_call_continuation_inner(registers, continuation)
 }
 
 fn execute_call_continuation_inner(
