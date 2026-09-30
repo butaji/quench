@@ -90,12 +90,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
-            && let Some(pattern_units) = eval_unflagged_regexp_literal(source_text.units())
+            && let Some((pattern_units, flag_units)) = eval_regexp_literal_units(source_text.units())
         {
             let pattern = self
                 .heap
                 .alloc(Cell::String(JsString::from_units(pattern_units)));
-            return self.construct_regexp_native(p, &[pattern, Value::UNDEFINED], None);
+            let flags = self.heap.alloc(Cell::String(JsString::from_units(flag_units)));
+            return self.construct_regexp_native(p, &[pattern, flags], None);
         }
         if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
         {
@@ -615,7 +616,7 @@ impl<H: Host> Vm<H> {
             let start = expression[..literal.span.start].encode_utf16().count();
             let end = expression[..literal.span.end].encode_utf16().count();
             let units = expression.encode_utf16().collect::<Vec<_>>();
-            if let Some(pattern) = regexp_literal_pattern(&units[start..end]) {
+            if let Some((pattern, _)) = eval_regexp_literal_units(&units[start..end]) {
                 let pattern = self.heap.alloc(Cell::String(JsString::from_units(pattern)));
                 let flags = self.heap.alloc(Cell::String(literal.flags.into()));
                 return self.construct_regexp_native(p, &[pattern, flags], None);
@@ -782,7 +783,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(name) = expression.strip_prefix("++") {
             let atom = self.intern_atom(name.trim());
-            let current = self.load_name(p, atom, 0)?;
+            let current = self.load_name(p, atom, None)?;
             let value = Value::number(current.as_number().unwrap_or(0.0) + 1.0);
             self.store_eval_name(p, atom, value, strict, false)?;
             if !self.direct_eval && !strict {
@@ -793,7 +794,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some((name, rhs)) = expression.split_once("+=") {
             let atom = self.intern_atom(name.trim());
-            let current = self.load_name(p, atom, 0)?;
+            let current = self.load_name(p, atom, None)?;
             let increment = self.eval_simple_expression(p, rhs, strict)?;
             let value = Value::number(
                 current.as_number().unwrap_or(0.0) + increment.as_number().unwrap_or(0.0),
@@ -1090,7 +1091,7 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.load_eval_frame_local(p, atom) {
                 return self.checked_binding_read(p, atom, value);
             }
-            return self.load_name(p, atom, 0);
+            return self.load_name(p, atom, None);
         }
         if let Some(frame) = self.frames.iter().find(|frame| frame.function == 0)
             && let Some(function) = p.functions.first()
@@ -1658,24 +1659,7 @@ fn private_eval_method_body(
     )
 }
 
-fn regexp_literal_pattern(literal: &[u16]) -> Option<&[u16]> {
-    if literal.first().copied() != Some(u16::from(b'/')) {
-        return None;
-    }
-    let mut escaped = false;
-    for (index, unit) in literal.iter().copied().enumerate().skip(1) {
-        if unit == u16::from(b'/') && !escaped {
-            return Some(&literal[1..index]);
-        }
-        escaped = unit == u16::from(b'\\') && !escaped;
-        if unit != u16::from(b'\\') {
-            escaped = false;
-        }
-    }
-    None
-}
-
-fn eval_unflagged_regexp_literal(source: &[u16]) -> Option<&[u16]> {
+fn eval_regexp_literal_units(source: &[u16]) -> Option<(&[u16], &[u16])> {
     let slash = u16::from(b'/');
     let backslash = u16::from(b'\\');
     let left_bracket = u16::from(b'[');
@@ -1701,7 +1685,12 @@ fn eval_unflagged_regexp_literal(source: &[u16]) -> Option<&[u16]> {
             unit if unit == left_bracket => in_character_class = true,
             unit if unit == right_bracket => in_character_class = false,
             unit if unit == slash && !in_character_class => {
-                return (index + 1 == source.len()).then_some(&source[1..index]);
+                let flags = &source[index + 1..];
+                return flags.iter().all(|unit| {
+                    char::from_u32(u32::from(*unit)).is_some_and(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                    })
+                }).then_some((&source[1..index], flags));
             }
             _ => {}
         }

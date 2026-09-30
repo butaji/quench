@@ -289,12 +289,12 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
-                let v = self.load_name(p, i.atom_index(), i.cache_site_index())?;
+                let v = self.load_name(p, i.atom_index(), Some(i.cache_site_index()))?;
                 self.write(f, i.result_register(), v);
             }
             Op::LoadNameCall => {
                 let (callee, this) =
-                    self.load_name_call(p, i.atom_index(), i.cache_site_index())?;
+                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()))?;
                 self.write(f, i.result_register(), callee);
                 self.write(f, i.register_b(), this);
             }

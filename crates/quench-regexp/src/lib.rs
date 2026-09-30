@@ -243,7 +243,8 @@ impl Regex {
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
         let flags_text = flag_text(flags);
-        let normalized_source = normalize_new_unicode_scripts(source);
+        let control_source = normalize_control_letter_escapes(source);
+        let normalized_source = normalize_new_unicode_scripts(&control_source);
         let parsed = LiteralParser::new(
             &allocator,
             &normalized_source,
@@ -481,6 +482,34 @@ const NEW_UNICODE_SCRIPTS: &[UnicodeScriptData] = &[
         ranges: &[(0x11DB0, 0x11DDB), (0x11DE0, 0x11DE9)],
     },
 ];
+
+fn normalize_control_letter_escapes(source: &str) -> std::borrow::Cow<'_, str> {
+    if !source.contains("\\c") {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    use std::fmt::Write;
+    let mut normalized = String::with_capacity(source.len());
+    let mut characters = source.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            if let Some(escaped) = characters.next() {
+                if escaped == 'c' && characters.peek().is_some_and(char::is_ascii_alphabetic) {
+                    let letter = characters.next().unwrap();
+                    let value = u32::from(letter) & CONTROL_CODE_MASK;
+                    // The pinned OXC parser splits class control escapes;
+                    // this equivalent spelling also preserves range endpoints.
+                    write!(&mut normalized, "\\x{value:02X}").unwrap();
+                } else {
+                    normalized.push(character);
+                    normalized.push(escaped);
+                }
+                continue;
+            }
+        }
+        normalized.push(character);
+    }
+    std::borrow::Cow::Owned(normalized)
+}
 
 fn normalize_new_unicode_scripts(pattern: &str) -> String {
     let mut normalized = pattern.to_owned();

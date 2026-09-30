@@ -667,7 +667,7 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         if object == self.realm.globals {
-            return self.load_name_without_with(p, atom, 0);
+            return self.load_name_without_with(p, atom, None);
         }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         if !self.has_property(p, object, key)? {
@@ -999,7 +999,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         atom: Atom,
-        cache: u16,
+        cache: Option<u16>,
     ) -> Result<Value, JsError> {
         self.load_name_call(p, atom, cache).map(|(value, _)| value)
     }
@@ -1008,7 +1008,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         atom: Atom,
-        cache: u16,
+        cache: Option<u16>,
     ) -> Result<Value, JsError> {
         let name = self.atom_name(atom);
         if name == "\0rqj:dynamic-import" {
@@ -1074,7 +1074,10 @@ impl<H: Host> Vm<H> {
                 return self.checked_binding_read(p, atom, value);
             }
         }
-        let value = self.get_field_cached(p, self.realm.globals, atom, cache)?;
+        let value = match cache {
+            Some(cache) => self.get_field_cached(p, self.realm.globals, atom, cache)?,
+            None => self.get_property(p, self.realm.globals, atom)?,
+        };
         if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
@@ -1085,7 +1088,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         atom: Atom,
-        cache: u16,
+        cache: Option<u16>,
     ) -> Result<(Value, Value), JsError> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
