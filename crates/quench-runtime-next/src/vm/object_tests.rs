@@ -223,3 +223,45 @@ fn field_cache_fallback_preserves_accessor_reentry() {
         }
     }
 }
+
+#[test]
+fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
+    let source = r#"
+      var reads = 0;
+      var receiver = {
+        get method() {
+          reads += 1;
+          return function() { return this === receiver; };
+        }
+      };
+      function callMethod(value) { return value.method?.(); }
+      print(callMethod(receiver));
+      print(reads);
+      print(callMethod(receiver));
+      print(reads);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "optional-method-accessor.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["true", "1", "true", "2"],
+            "{mode}"
+        );
+
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .all(|entry| entry.atom != method || entry.receiver == u32::MAX),
+                "optional accessor lookup must retain the generic getter path"
+            );
+        }
+    }
+}
