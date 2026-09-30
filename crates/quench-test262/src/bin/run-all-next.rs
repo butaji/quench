@@ -1,19 +1,24 @@
 use std::{
+    collections::{BTreeMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
 };
 
 use quench_test262::{
-    discover_js_files, HarnessCache, RuntimeNextHost, StageReport, Test262Runner, TestOutcome,
+    HarnessCache, ResolvedStage, RuntimeNextHost, StageReport, Test262Runner, TestOutcome,
+    discover_js_files, resolve_stages,
 };
 use wait_timeout::ChildExt;
+
+const DEFAULT_REPORT: &str = "target/test262-next-report.json";
+const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
 
 fn main() -> ExitCode {
     if let Err(error) = required_timeout_ms() {
@@ -50,6 +55,10 @@ fn run() -> ExitCode {
         Ok(files) => files,
         Err(error) => return fail(error),
     };
+    let stages = match resolve_stages(&root) {
+        Ok(stages) => stages,
+        Err(error) => return fail(error),
+    };
     let executable = match env::current_exe() {
         Ok(executable) => executable,
         Err(error) => return fail(format!("run-all-next executable lookup failed: {error}")),
@@ -62,13 +71,32 @@ fn run() -> ExitCode {
         Ok(outcomes) => outcomes,
         Err(error) => return fail(error),
     };
-    let report = collect_report(&files, outcomes);
-    write_report(&report, discovered);
+    let report = collect_report(&files, &outcomes);
+    let full_inventory = env::var_os("TEST262_BATCH_SIZE").is_none();
+    let regressions = match update_ratchet(&root, &files, &outcomes, timeout, full_inventory) {
+        Ok(regressions) => regressions,
+        Err(error) => return fail(error),
+    };
+    if let Err(error) = write_report(
+        &report,
+        discovered,
+        &root,
+        &stages,
+        &files,
+        &outcomes,
+        &regressions,
+        timeout,
+    ) {
+        return fail(error);
+    }
     println!(
         "next passed={} failed={} total={} discovered={discovered}",
         report.passed, report.failed, report.total
     );
-    if report.failed == 0 && report.total == files.len() {
+    if !regressions.is_empty() {
+        eprintln!("next ratchet regressions={}", regressions.len());
+    }
+    if report.failed == 0 && report.total == files.len() && regressions.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -92,16 +120,18 @@ fn run_parallel_cases(
                 let cursor = &cursor;
                 let completed = &completed;
                 let outcomes = &outcomes;
-                scope.spawn(move || loop {
-                    let index = cursor.fetch_add(1, Ordering::Relaxed);
-                    let Some(path) = files.get(index) else {
-                        break;
-                    };
-                    let result = run_case_process(executable, root, path, timeout);
-                    outcomes.lock().expect("case results poisoned")[index] = Some(result);
-                    let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                    if count % 100 == 0 || count == files.len() {
-                        eprintln!("run-all-next progress={count}/{} jobs={jobs}", files.len());
+                scope.spawn(move || {
+                    loop {
+                        let index = cursor.fetch_add(1, Ordering::Relaxed);
+                        let Some(path) = files.get(index) else {
+                            break;
+                        };
+                        let result = run_case_process(executable, root, path, timeout);
+                        outcomes.lock().expect("case results poisoned")[index] = Some(result);
+                        let count = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count % 100 == 0 || count == files.len() {
+                            eprintln!("run-all-next progress={count}/{} jobs={jobs}", files.len());
+                        }
                     }
                 })
             })
@@ -127,7 +157,7 @@ fn run_parallel_cases(
         .collect()
 }
 
-fn collect_report(files: &[PathBuf], outcomes: Vec<Result<(), String>>) -> StageReport {
+fn collect_report(files: &[PathBuf], outcomes: &[Result<(), String>]) -> StageReport {
     let mut report = StageReport::default();
     for (path, outcome) in files.iter().zip(outcomes) {
         report.total += 1;
@@ -135,7 +165,7 @@ fn collect_report(files: &[PathBuf], outcomes: Vec<Result<(), String>>) -> Stage
             Ok(()) => report.passed += 1,
             Err(reason) => {
                 report.failed += 1;
-                report.failures.push((path.clone(), reason));
+                report.failures.push((path.clone(), reason.clone()));
             }
         }
     }
@@ -210,7 +240,9 @@ fn run_case_process(
         Ok(())
     } else {
         let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if reason.is_empty() {
+        Err(if output.status.code().is_none() {
+            format!("case process exited with {}", output.status)
+        } else if reason.is_empty() {
             format!("case process exited with {}", output.status)
         } else {
             reason
@@ -245,29 +277,310 @@ fn select_batch(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     Ok(files.into_iter().skip(start).take(size).collect())
 }
 
-fn write_report(report: &StageReport, discovered: usize) {
-    let Some(path) = env::var_os("TEST262_REPORT") else {
-        return;
-    };
+fn write_report(
+    report: &StageReport,
+    discovered: usize,
+    root: &Path,
+    stages: &[ResolvedStage],
+    files: &[PathBuf],
+    outcomes: &[Result<(), String>],
+    regressions: &[String],
+    timeout: Duration,
+) -> Result<(), String> {
+    let path = env::var_os("TEST262_REPORT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_REPORT));
+    let test_root = root.join("test");
     let failures = report
         .failures
         .iter()
-        .map(|(path, reason)| serde_json::json!({ "path": path, "reason": reason }))
+        .map(|(path, reason)| {
+            serde_json::json!({
+                "path": report_path(path, &test_root),
+                "reason": reason,
+            })
+        })
         .collect::<Vec<_>>();
+    let mut stage_counts = BTreeMap::<String, (usize, usize, BTreeMap<String, usize>)>::new();
+    let outcomes = files
+        .iter()
+        .zip(outcomes)
+        .map(|(path, outcome)| {
+            let stage = stage_for(path, stages);
+            let counts = stage_counts.entry(stage.clone()).or_default();
+            counts.0 += 1;
+            match outcome {
+                Ok(()) => {
+                    counts.1 += 1;
+                    serde_json::json!({
+                        "path": report_path(path, &test_root),
+                        "stage": stage,
+                        "outcome": "pass",
+                    })
+                }
+                Err(reason) => {
+                    let family = normalize_failure(reason);
+                    *counts.2.entry(family).or_default() += 1;
+                    serde_json::json!({
+                        "path": report_path(path, &test_root),
+                        "stage": stage,
+                        "outcome": classify_outcome(reason),
+                        "reason": reason,
+                    })
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut families = BTreeMap::<String, usize>::new();
+    for (_, reason) in &report.failures {
+        *families.entry(normalize_failure(reason)).or_default() += 1;
+    }
+    let stages = stage_counts
+        .into_iter()
+        .map(|(stage, (total, passed, families))| {
+            (
+                stage,
+                serde_json::json!({
+                    "total": total,
+                    "passed": passed,
+                    "failed": total - passed,
+                    "families": families,
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let binary =
+        env::current_exe().map_err(|error| format!("runner executable lookup failed: {error}"))?;
+    let (source_revision, source_dirty) = source_provenance();
     let value = serde_json::json!({
+        "schema": 1,
         "engine": "next",
+        "provenance": {
+            "source_revision": source_revision,
+            "source_dirty": source_dirty,
+            "binary": binary,
+            "host": format!("{}-{}", env::consts::OS, env::consts::ARCH),
+            "timeout_ms": timeout.as_millis(),
+            "jobs": worker_jobs(),
+        },
         "discovered": discovered,
         "total": report.total,
         "passed": report.passed,
         "failed": report.failed,
         "failures": failures,
+        "families": families,
+        "stages": stages,
+        "outcomes": outcomes,
+        "regressions": regressions,
     });
-    if let Err(error) = fs::write(path, format!("{value}\n")) {
-        eprintln!("TEST262_REPORT write failed: {error}");
+    write_json(path, &value)
+}
+
+fn report_path(path: &Path, test_root: &Path) -> String {
+    path.strip_prefix(test_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn stage_for(path: &Path, stages: &[ResolvedStage]) -> String {
+    stages
+        .iter()
+        .find(|stage| stage.owns_file(path, stages))
+        .map_or_else(|| "unassigned".into(), |stage| stage.id.to_string())
+}
+
+fn classify_outcome(reason: &str) -> &'static str {
+    if reason.starts_with("timed_out") {
+        "timed_out"
+    } else if reason.contains("process exited")
+        || reason.contains("signal:")
+        || reason.contains("panicked at")
+    {
+        "crashed"
+    } else {
+        "failed"
     }
+}
+
+fn normalize_failure(reason: &str) -> String {
+    let mut normalized = String::with_capacity(reason.len());
+    let mut chars = reason.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character.is_ascii_digit() {
+            if !normalized.ends_with('#') {
+                normalized.push('#');
+            }
+            while chars.peek().is_some_and(char::is_ascii_digit) {
+                chars.next();
+            }
+        } else if let Some((close, replacement)) = match character {
+            '\'' => Some(('\'', "'…'")),
+            '"' => Some(('"', "\"…\"")),
+            '«' => Some(('»', "«…»")),
+            _ => None,
+        } {
+            normalized.push_str(replacement);
+            for next in chars.by_ref() {
+                if next == close {
+                    break;
+                }
+            }
+        } else {
+            normalized.push(character);
+        }
+    }
+    normalized
+}
+
+fn update_ratchet(
+    root: &Path,
+    files: &[PathBuf],
+    outcomes: &[Result<(), String>],
+    timeout: Duration,
+    full_inventory: bool,
+) -> Result<Vec<String>, String> {
+    if !full_inventory {
+        return Ok(Vec::new());
+    }
+    let path = env::var_os("TEST262_RATCHET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
+    let test_root = root.join("test");
+    let current_passes = files
+        .iter()
+        .zip(outcomes)
+        .filter_map(|(path, outcome)| outcome.is_ok().then(|| report_path(path, &test_root)))
+        .collect::<HashSet<_>>();
+    let mut regressions = Vec::new();
+    if path.exists() {
+        let contents = fs::read_to_string(&path)
+            .map_err(|error| format!("read Test262 ratchet {}: {error}", path.display()))?;
+        let baseline: serde_json::Value = serde_json::from_str(&contents)
+            .map_err(|error| format!("parse Test262 ratchet {}: {error}", path.display()))?;
+        if baseline["schema"] != 1 || baseline["engine"] != "next" {
+            return Err(format!(
+                "Test262 ratchet {} has an unsupported schema or engine",
+                path.display()
+            ));
+        }
+        let passes = baseline["passes"]
+            .as_array()
+            .ok_or_else(|| format!("Test262 ratchet {} has no pass set", path.display()))?;
+        regressions = newly_failing(passes, &current_passes)?;
+    }
+    if regressions.is_empty() && outcomes.iter().all(Result::is_ok) && files.len() > 0 {
+        let mut passes = current_passes.into_iter().collect::<Vec<_>>();
+        passes.sort();
+        let (revision, source_dirty) = source_provenance();
+        let binary = env::current_exe()
+            .map_err(|error| format!("runner executable lookup failed: {error}"))?;
+        let baseline = serde_json::json!({
+            "schema": 1,
+            "engine": "next",
+            "provenance": {
+                "source_revision": revision,
+                "source_dirty": source_dirty,
+                "binary": binary,
+                "host": format!("{}-{}", env::consts::OS, env::consts::ARCH),
+                "timeout_ms": timeout.as_millis(),
+                "jobs": worker_jobs(),
+            },
+            "discovered": files.len(),
+            "passes": passes,
+        });
+        write_json(path, &baseline)?;
+    }
+    Ok(regressions)
+}
+
+fn source_provenance() -> (String, bool) {
+    let revision = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_else(|| "unknown".into());
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .is_none_or(|output| !output.status.success() || !output.stdout.is_empty());
+    (revision, dirty)
+}
+
+fn newly_failing(
+    baseline: &[serde_json::Value],
+    current_passes: &HashSet<String>,
+) -> Result<Vec<String>, String> {
+    let mut regressions = baseline
+        .iter()
+        .map(|path| {
+            path.as_str()
+                .ok_or_else(|| "Test262 ratchet pass set contains a non-string path".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|path| !current_passes.contains(*path))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    regressions.sort();
+    Ok(regressions)
+}
+
+fn write_json(path: PathBuf, value: &serde_json::Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, format!("{value}\n"))
+        .map_err(|error| format!("write {}: {error}", temporary.display()))?;
+    fs::rename(&temporary, &path).map_err(|error| {
+        format!(
+            "replace Test262 report {} with {}: {error}",
+            path.display(),
+            temporary.display()
+        )
+    })
 }
 
 fn fail(error: String) -> ExitCode {
     eprintln!("FAIL: {error}");
     ExitCode::from(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pass_set_ratchet_finds_only_lost_passes() {
+        let baseline = ["a.js", "b.js", "c.js"]
+            .into_iter()
+            .map(|path| serde_json::Value::String(path.into()))
+            .collect::<Vec<_>>();
+        let current = HashSet::from(["a.js".to_string(), "c.js".to_string(), "new.js".to_string()]);
+
+        assert_eq!(newly_failing(&baseline, &current).unwrap(), ["b.js"]);
+    }
+
+    #[test]
+    fn failure_families_normalize_values_and_numbers() {
+        assert_eq!(
+            normalize_failure("Expected SameValue(«17», «false») at 'fixture-42.js'"),
+            "Expected SameValue(«…», «…») at '…'"
+        );
+    }
+
+    #[test]
+    fn case_failures_keep_timeout_and_crash_categories() {
+        assert_eq!(classify_outcome("timed_out after 15ms"), "timed_out");
+        assert_eq!(
+            classify_outcome("case process exited with signal: 11"),
+            "crashed"
+        );
+        assert_eq!(classify_outcome("next runtime: TypeError"), "failed");
+    }
 }
