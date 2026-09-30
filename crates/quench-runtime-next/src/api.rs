@@ -1045,17 +1045,22 @@ mod tests {
     }
 
     #[test]
-    fn regression_arrow_captures_enclosing_arguments_length() {
+    fn regression_arguments_binding_survives_closure_and_direct_eval() {
         assert_output_in_execution_modes(
             r#"
             function countArguments(a, b, c, d) {
                 return (() => arguments.length)();
             }
+            function evalArgumentsLength() {
+                eval("arguments.length = 42");
+                return arguments.length;
+            }
             print(countArguments());
             print(countArguments(1, 2, 3));
             print(countArguments(1, 2, 3, 4));
+            print(evalArgumentsLength());
             "#,
-            &["0", "3", "4"],
+            &["0", "3", "4", "42"],
         );
     }
 

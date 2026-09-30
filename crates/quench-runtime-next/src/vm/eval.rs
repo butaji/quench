@@ -187,7 +187,9 @@ impl<H: Host> Vm<H> {
                 .last()
                 .and_then(|frame| p.functions.get(frame.function as usize))
                 .is_some_and(|function| function.strict);
-        if let Some(expression) = crate::Engine::eval_single_expression(source) {
+        if !self.direct_eval
+            && let Some(expression) = crate::Engine::eval_single_expression(source)
+        {
             return self.eval_compiled_expression_named(p, expression, strict, &source_name);
         }
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
@@ -858,6 +860,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom(expression);
         match self.load_eval_name(p, atom) {
             Ok(value) => Ok(value),
+            Err(_) if self.direct_eval => self.eval_global_script(p, expression),
             Err(_) => self.eval_compiled_expression(p, expression, strict),
         }
     }
