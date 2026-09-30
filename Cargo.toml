@@ -8,6 +8,7 @@ members = [
     "crates/quench-runtime",
     "crates/quench-runtime-next",
     "crates/quench-stack",
+    "vendor/oxc-parser-next",
     "crates/quench-regexp",
     "crates/quench-intl",
     "crates/quench-temporal",
@@ -69,3 +70,6 @@ strip = "symbols"
 inherits = "release"
 debug = true
 strip = "none"
+
+[patch.crates-io]
+oxc_parser = { path = "vendor/oxc-parser-next" }
