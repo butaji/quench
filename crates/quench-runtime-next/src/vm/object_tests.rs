@@ -224,6 +224,53 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
 }
 
 #[test]
+fn optional_method_cache_executes_megamorphic_receiver_shapes() {
+    let source = r#"
+      var method = function() { return this.value; };
+      var first = { method: method, value: 1 };
+      var second = { extra: 0, method: method, value: 2 };
+      var third = { value: 3, method: method, extra: 0 };
+      var fourth = { extra: 0, value: 4, method: method };
+      function callMethod(value) { return value?.method?.(); }
+      print(callMethod(first));
+      print(callMethod(second));
+      print(callMethod(third));
+      print(callMethod(fourth));
+      print(callMethod(first));
+      print(callMethod(second));
+      print(callMethod(third));
+      print(callMethod(fourth));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "optional-method-cache-megamorphic.js").unwrap();
+        assert_eq!(program.method_sites.len(), 1, "test needs one method site");
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "2", "3", "4", "1", "2", "3", "4"],
+            "{mode}"
+        );
+
+        if vm.specialized {
+            assert!(
+                vm.megamorphic_methods.iter().any(|set| set.len == 4),
+                "four receiver shapes should reach the megamorphic method cache"
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(
+                vm.profile.method_cache_tiers[2] > 0,
+                "calls should hit the megamorphic method-cache tier"
+            );
+        }
+    }
+}
+
+#[test]
 fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
     let source = r#"
       var values = [];
