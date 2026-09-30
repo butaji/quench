@@ -310,6 +310,7 @@ impl<H: Host> Vm<H> {
             self.object_data_mut(target)
                 .expect("object validated")
                 .proto = proto;
+            self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
             self.invalidate_field_caches();
             self.invalidate_method_caches();
         }

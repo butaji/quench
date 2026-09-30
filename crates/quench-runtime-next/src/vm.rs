@@ -245,6 +245,28 @@ enum ShapeTransition {
         slot: u32,
         attributes: PropertyAttributes,
     },
+    Dictionary {
+        trigger: DictionaryTrigger,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DictionaryTrigger {
+    PropertyCount,
+    DeletionPattern,
+    PrototypeUse,
+}
+impl DictionaryTrigger {
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) const COUNT: usize = 3;
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::PropertyCount => 0,
+            Self::DeletionPattern => 1,
+            Self::PrototypeUse => 2,
+        }
+    }
 }
 struct ShapeLookupIndex {
     entries: Vec<(property_key::PropertyKey, u32)>,
@@ -263,18 +285,25 @@ struct Shape {
     parent: Option<u32>,
     transition: ShapeTransition,
     storage_len: usize,
+    dictionary_trigger: Option<DictionaryTrigger>,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
 }
 impl Shape {
     fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0)
+        Self::child(None, ShapeTransition::Root, 0, None)
     }
 
-    fn child(parent: Option<u32>, transition: ShapeTransition, storage_len: usize) -> Self {
+    fn child(
+        parent: Option<u32>,
+        transition: ShapeTransition,
+        storage_len: usize,
+        dictionary_trigger: Option<DictionaryTrigger>,
+    ) -> Self {
         Self {
             parent,
             transition,
             storage_len,
+            dictionary_trigger,
             lookup_index: OnceCell::new(),
         }
     }
