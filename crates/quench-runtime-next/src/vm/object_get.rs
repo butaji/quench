@@ -246,6 +246,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         receiver: Value,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let private_name = self.is_private_name(atom);
         if object.is_null() || object.is_undefined() {
             return Err(self.type_error(

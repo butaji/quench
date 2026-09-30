@@ -174,6 +174,154 @@ mod tests {
     }
 
     #[test]
+    fn regression_recursive_guest_transitions_throw_and_release_stack_budget() {
+        std::thread::Builder::new()
+            .name("recursion-regression".into())
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                assert_output_in_execution_modes(
+                    r#"
+                    function check(operation) {
+                      try { operation(); print('returned'); }
+                      catch (error) {
+                        print(error instanceof RangeError);
+                        print(error.message);
+                      }
+                      print((function () { return 42; })());
+                    }
+                    check(function () { function f() { f(); } f(); });
+                    check(function () {
+                      var object = { get value() { return this.value; } };
+                      object.value;
+                    });
+                    check(function () {
+                      var object = { set value(value) { this.value = value; } };
+                      object.value = 1;
+                    });
+                    check(function () {
+                      function C() { new C(); } new C();
+                    });
+                    check(function () {
+                      var proxy = new Proxy({}, {
+                        get: function (target, key, receiver) { return receiver[key]; }
+                      });
+                      proxy.value;
+                    });
+                    check(function () {
+                      var object = { toString: function () { return String(this); } };
+                      String(object);
+                    });
+                    check(function () {
+                      var nesting = 10000;
+                      JSON.parse('['.repeat(nesting) + '0' + ']'.repeat(nesting));
+                    });
+                    "#,
+                    &[
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                        "true", "Maximum call stack size exceeded", "42",
+                    ],
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn regression_stack_errors_preserve_realm_intrinsics_through_collection() {
+        std::thread::Builder::new()
+            .name("recursion-realm-regression".into())
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                assert_output_in_execution_modes(
+                    r#"
+                    print($262.gc.name);
+                    print($262.gc.length);
+                    var retained = [{ answer: 42 }, /x/];
+                    $262.gc();
+                    print(retained[0].answer);
+                    print(retained[1].test('x'));
+                    var intrinsic = RangeError;
+                    Object.defineProperty(globalThis, 'RangeError', {
+                      get: function () { throw 'guest getter ran'; }, configurable: true
+                    });
+                    function f() { f(); }
+                    try { f(); } catch (error) {
+                      print(Object.getPrototypeOf(error) === intrinsic.prototype);
+                      var descriptor = Object.getOwnPropertyDescriptor(error, 'message');
+                      print(descriptor.value);
+                      print(descriptor.writable && !descriptor.enumerable && descriptor.configurable);
+                    }
+                    var realm = $262.createRealm();
+                    var foreignRangeError = realm.global.RangeError;
+                    var foreign = realm.evalScript('(function f() { f(); })');
+                    realm.evalScript('RangeError = undefined');
+                    realm.gc();
+                    try { foreign(); } catch (error) {
+                      print(Object.getPrototypeOf(error) === foreignRangeError.prototype);
+                      print(error.message);
+                    }
+                    "#,
+                    &[
+                        "gc", "0", "42", "true", "true",
+                        "Maximum call stack size exceeded", "true", "true",
+                        "Maximum call stack size exceeded",
+                    ],
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn regression_array_buffer_slice_rechecks_source_after_guest_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var position of [0, 1]) {
+              var buffer = new ArrayBuffer(8);
+              var order = [];
+              var start = { valueOf: function () {
+                order.push('start');
+                if (position === 0) { $262.detachArrayBuffer(buffer); $262.gc(); }
+                return 1;
+              } };
+              var end = { valueOf: function () {
+                order.push('end');
+                if (position === 1) { $262.detachArrayBuffer(buffer); $262.gc(); }
+                return 4;
+              } };
+              buffer.constructor = { [Symbol.species]: function (length) {
+                order.push('species'); return new ArrayBuffer(length);
+              } };
+              try { buffer.slice(start, end); print('returned'); }
+              catch (error) { print(error instanceof TypeError); }
+              print(order.join(','));
+              print(buffer.byteLength);
+            }
+            var buffer = new ArrayBuffer(3);
+            var view = new Uint8Array(buffer);
+            view.set([1, 2, 3]);
+            buffer.constructor = { [Symbol.species]: function (length) {
+              view[0] = 9; $262.gc(); return new ArrayBuffer(length);
+            } };
+            var start = { valueOf: function () { view[1] = 8; return 0; } };
+            print(new Uint8Array(buffer.slice(start)).join(','));
+            var buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+            new Uint8Array(buffer).set([1, 2, 3, 4]);
+            var start = { valueOf: function () { buffer.resize(2); return 0; } };
+            print(new Uint8Array(buffer.slice(start)).join(','));
+            "#,
+            &["true", "start,end,species", "0", "true", "start,end,species", "0", "9,8,3", "1,2,0,0"],
+        );
+    }
+
+    #[test]
     fn script_requests_use_the_validated_runtime_boundary() {
         let host = Capture::default();
         let view = host.clone();

@@ -278,6 +278,22 @@ impl<H: Host> Vm<H> {
         JsError::thrown(object, format!("ReferenceError: {text}"))
     }
 
+    pub(super) fn enter_stack(&mut self) -> Result<crate::stack::StackGuard, JsError> {
+        crate::stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())
+    }
+
+    pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
+        // Exhaustion must not invoke guest accessors or constructors.
+        let prototype = self.range_error_prototypes[&self.realm.globals];
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
+        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)
+            .expect("fresh error object accepts internal brand");
+        self.set_builtin_value_named(object, "message", message)
+            .expect("fresh error object accepts message");
+        JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
+    }
+
     pub(super) fn range_error(&mut self, program: &ResidualProgram, text: String) -> JsError {
         let message = self.heap.alloc(Cell::String(JsString::from_str(&text)));
         let object = self
@@ -537,6 +553,7 @@ impl<H: Host> Vm<H> {
                         "AbstractModuleSource",
                         self.native_value(Native::AbstractModuleSource),
                     )?;
+                    self.set_builtin_named(program, realm, "gc", Native::CollectGarbage)?;
                     self.install_test262_agent(program, realm)?;
                     self.global(program, global.name, realm)?;
                     continue;
@@ -1320,6 +1337,9 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
+            if native == Native::RangeError {
+                self.range_error_prototypes.insert(global, prototype);
+            }
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let name_value = self.heap.alloc(Cell::String(name.into()));
@@ -1341,6 +1361,7 @@ impl<H: Host> Vm<H> {
         self.install_intl_number_format_for_realm(program, global, object_prototype)?;
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
+        self.set_builtin_named(program, realm, "gc", Native::CollectGarbage)?;
         let eval_script = self.native_with_realm(Native::EvalScript, global, global);
         self.set_builtin_function_name(eval_script, "evalScript")?;
         self.set_builtin_value_named(realm, "evalScript", eval_script)?;
@@ -1555,6 +1576,9 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
+            if *native == Native::RangeError {
+                self.range_error_prototypes.insert(self.realm.globals, prototype);
+            }
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));

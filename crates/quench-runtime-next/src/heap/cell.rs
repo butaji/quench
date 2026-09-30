@@ -65,7 +65,7 @@ impl WeakMapEntries {
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
+    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
@@ -362,8 +362,10 @@ pub(crate) enum Native {
     String, Boolean, BooleanToString, BooleanValueOf,
     Symbol, SymbolToString, SymbolToPrimitive, SymbolValueOf, SymbolDescriptionGetter,
     BigInt, BigIntValueOf, BigIntToString, BigIntToLocaleString, BigIntAsIntN, BigIntAsUintN,
-    IntlNumberFormat, IntlNumberFormatFormatGetter, IntlNumberFormatFormat,
-    IntlNumberFormatFormatToParts,
+    IntlNumberFormat, IntlNumberFormatSupportedLocalesOf,
+    IntlNumberFormatFormatGetter, IntlNumberFormatFormat,
+    IntlNumberFormatFormatToParts, IntlNumberFormatFormatRange,
+    IntlNumberFormatFormatRangeToParts,
     IntlNumberFormatResolvedOptions,
     IntlGetCanonicalLocales, IntlSupportedValuesOf, IntlLocale,
     IntlLocaleToString, IntlLocaleMaximize, IntlLocaleMinimize,

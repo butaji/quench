@@ -9,6 +9,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(proxy).cloned()

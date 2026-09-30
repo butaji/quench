@@ -592,13 +592,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         shared: bool,
     ) -> Result<Value, JsError> {
-        let bytes = match self.heap.get(this) {
+        let length = match self.heap.get(this) {
             Some(Cell::ArrayBuffer {
                 bytes,
                 shared: receiver_shared,
                 detached,
                 ..
-            }) if *receiver_shared == shared && !detached => Rc::clone(bytes),
+            }) if *receiver_shared == shared && !detached => bytes.len(),
             _ => {
                 let name = if shared {
                     "SharedArrayBuffer"
@@ -608,8 +608,6 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, format!("{name}.slice receiver is invalid")));
             }
         };
-        let source_bytes = Rc::clone(&bytes);
-        let length = bytes.len();
         let relative = |number: f64| {
             if number.is_nan() {
                 0
@@ -691,11 +689,18 @@ impl<H: Host> Vm<H> {
         if result_bytes.len() < count {
             return Err(self.type_error(p, "ArrayBuffer species returned a short buffer".into()));
         }
-        if let Some(Cell::ArrayBuffer {
-            bytes: destination, ..
-        }) = self.heap.get_mut(result)
+        // Coercions and species construction can detach, resize, or write the
+        // source. Its current backing store is authoritative at the copy step.
+        let source_bytes = match self.heap.get(this) {
+            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => Rc::clone(bytes),
+            _ => return Err(self.type_error(p, "ArrayBuffer was detached during slice".into())),
+        };
+        let copy_count = count.min(source_bytes.len().saturating_sub(start));
+        if copy_count != 0
+            && let Some(Cell::ArrayBuffer { bytes: destination, .. }) = self.heap.get_mut(result)
         {
-            Rc::make_mut(destination)[..count].copy_from_slice(&source_bytes[start.min(end)..end]);
+            Rc::make_mut(destination)[..copy_count]
+                .copy_from_slice(&source_bytes[start..start + copy_count]);
         }
         Ok(result)
     }

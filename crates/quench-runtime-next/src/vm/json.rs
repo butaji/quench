@@ -129,6 +129,24 @@ fn write_indent(output: &mut String, gap: &str, depth: usize) {
     }
 }
 
+#[derive(Debug)]
+enum JsonParseError {
+    Syntax(String),
+    StackExhausted,
+}
+
+impl From<String> for JsonParseError {
+    fn from(message: String) -> Self {
+        Self::Syntax(message)
+    }
+}
+
+impl From<&str> for JsonParseError {
+    fn from(message: &str) -> Self {
+        Self::Syntax(message.into())
+    }
+}
+
 struct JsonParser<'a> {
     units: &'a [u16],
     index: usize,
@@ -139,7 +157,7 @@ impl<'a> JsonParser<'a> {
         Self { units, index: 0 }
     }
 
-    fn parse(mut self) -> Result<JsonValue, String> {
+    fn parse(mut self) -> Result<JsonValue, JsonParseError> {
         let value = self.value()?;
         self.whitespace();
         (self.index == self.units.len())
@@ -147,7 +165,9 @@ impl<'a> JsonParser<'a> {
             .ok_or_else(|| "trailing characters".into())
     }
 
-    fn value(&mut self) -> Result<JsonValue, String> {
+    fn value(&mut self) -> Result<JsonValue, JsonParseError> {
+        let _stack = crate::stack::StackGuard::enter()
+            .map_err(|()| JsonParseError::StackExhausted)?;
         self.whitespace();
         let start = self.index;
         let value = match self.peek() {
@@ -175,7 +195,7 @@ impl<'a> JsonParser<'a> {
         )
     }
 
-    fn literal(&mut self, expected: &[u8], value: JsonValue) -> Result<JsonValue, String> {
+    fn literal(&mut self, expected: &[u8], value: JsonValue) -> Result<JsonValue, JsonParseError> {
         if expected
             .iter()
             .copied()
@@ -187,7 +207,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn string(&mut self) -> Result<JsString, String> {
+    fn string(&mut self) -> Result<JsString, JsonParseError> {
         self.expect(JSON_QUOTE as u8)?;
         let mut units = Vec::new();
         loop {
@@ -200,7 +220,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn escape(&mut self, output: &mut Vec<u16>) -> Result<(), String> {
+    fn escape(&mut self, output: &mut Vec<u16>) -> Result<(), JsonParseError> {
         let unit = self
             .take()
             .ok_or_else(|| "unterminated escape".to_owned())?;
@@ -219,7 +239,7 @@ impl<'a> JsonParser<'a> {
         Ok(())
     }
 
-    fn hex_escape(&mut self) -> Result<u16, String> {
+    fn hex_escape(&mut self) -> Result<u16, JsonParseError> {
         let mut value = 0;
         for _ in 0..JSON_HEX_ESCAPE_DIGITS {
             let digit = self
@@ -231,7 +251,7 @@ impl<'a> JsonParser<'a> {
         Ok(value)
     }
 
-    fn array(&mut self) -> Result<JsonValue, String> {
+    fn array(&mut self) -> Result<JsonValue, JsonParseError> {
         self.expect(b'[')?;
         let mut values = Vec::new();
         self.whitespace();
@@ -248,7 +268,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn object(&mut self) -> Result<JsonValue, String> {
+    fn object(&mut self) -> Result<JsonValue, JsonParseError> {
         self.expect(b'{')?;
         let mut values = Vec::new();
         self.whitespace();
@@ -269,7 +289,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn number(&mut self) -> Result<JsonValue, String> {
+    fn number(&mut self) -> Result<JsonValue, JsonParseError> {
         let start = self.index;
         self.take_if(b'-');
         match self.take() {
@@ -328,10 +348,10 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn expect(&mut self, expected: u8) -> Result<(), String> {
+    fn expect(&mut self, expected: u8) -> Result<(), JsonParseError> {
         (self.take() == Some(u16::from(expected)))
             .then_some(())
-            .ok_or_else(|| format!("expected `{}`", expected as char))
+            .ok_or_else(|| JsonParseError::Syntax(format!("expected `{}`", expected as char)))
     }
 
     fn take_if(&mut self, expected: u8) -> bool {
@@ -386,7 +406,8 @@ impl<H: Host> Vm<H> {
         }
         let parsed = match JsonParser::new(units).parse() {
             Ok(parsed) => parsed,
-            Err(error) => return self.syntax_error_result(p, &error),
+            Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
+            Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),
         };
         if !matches!(
             match &parsed {
@@ -465,7 +486,8 @@ impl<H: Host> Vm<H> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let parsed = match JsonParser::new(text.units()).parse() {
             Ok(parsed) => parsed,
-            Err(error) => return self.syntax_error_result(p, &error),
+            Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
+            Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),
         };
         let value = self.parse_json_value(&parsed)?;
         let reviver = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -486,6 +508,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn parse_json_value(&mut self, value: &JsonValue) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         Ok(match value {
             JsonValue::Null => Value::NULL,
             JsonValue::Bool(value) => {
@@ -545,6 +568,7 @@ impl<H: Host> Vm<H> {
         source: Option<&JsonValue>,
         reviver_root: crate::heap::RootId,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let holder_root = self.heap.root(holder);
         let key_atom = self.intern_js_atom(key);
         let holder = self.heap.root_value(holder_root).unwrap_or(holder);
@@ -800,6 +824,7 @@ impl<H: Host> Vm<H> {
         key: &JsString,
         state: &mut JsonSerialization,
     ) -> Result<Option<JsonValue>, JsError> {
+        let _stack = self.enter_stack()?;
         let holder_root = self.heap.root(holder);
         let key_value = self.heap.alloc(Cell::String(key.clone()));
         let key_root = self.heap.root(key_value);

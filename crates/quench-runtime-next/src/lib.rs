@@ -10,6 +10,7 @@ mod memory_edge;
 mod module_identity;
 mod number_to_string;
 mod profile;
+mod stack;
 mod unicode;
 mod value;
 mod value_vec;
@@ -21,6 +22,7 @@ pub use heap::RootId;
 pub use host::{CapabilityId, Host, HostContext, HostGlobal, ModuleSource, SystemHost};
 #[cfg(feature = "profile-memory")]
 pub use memory_edge::report_allocator_memory;
+pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
 pub use vm::{JsError, Vm};
 

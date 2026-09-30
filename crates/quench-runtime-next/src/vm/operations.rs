@@ -151,6 +151,10 @@ impl<H: Host> Vm<H> {
             }
             Native::Eval => self.eval_native(p, args),
             Native::EvalScript => self.eval_script_native(p, args),
+            Native::CollectGarbage => {
+                self.collect_now(p);
+                Ok(Value::UNDEFINED)
+            }
             Native::ToString => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let value = self.to_string(p, value)?;

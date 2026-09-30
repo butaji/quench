@@ -93,6 +93,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: NumericArguments<'_>,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         self.profile
             .numeric_arguments(matches!(args, NumericArguments::Registers { .. }));
         self.profile.function(id as usize);
