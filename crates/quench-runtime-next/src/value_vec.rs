@@ -10,6 +10,8 @@ const EMPTY_START: u32 = START_MASK;
 const MAX_ARENA_START: usize = EMPTY_START as usize;
 const MIN_CAPACITY: usize = 4;
 const BUCKETS: usize = 32;
+const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
+const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 
 /// Compact metadata for values owned by the heap's canonical property arena.
 #[derive(Clone, Copy, Debug)]
@@ -406,8 +408,11 @@ impl ValueArena {
         // cross into millions of property slots. Preserve that policy for
         // small programs, then grow by one third so the arena remains dense
         // without turning every object allocation into a reallocation.
-        if required > self.values.capacity() && self.values.capacity() >= 65_536 {
-            let target = required.max(self.values.capacity() + self.values.capacity() / 3);
+        if required > self.values.capacity()
+            && self.values.capacity() >= DENSE_ARENA_RESERVE_THRESHOLD
+        {
+            let target = required
+                .max(self.values.capacity() + self.values.capacity() / DENSE_ARENA_GROWTH_DIVISOR);
             self.values.reserve_exact(target - self.values.len());
         }
         self.values.resize(start + capacity, Value::UNDEFINED);
