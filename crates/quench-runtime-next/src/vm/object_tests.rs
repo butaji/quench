@@ -263,6 +263,58 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
 }
 
 #[test]
+fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
+    let source = r#"
+      var reads = 0;
+      var target = { method: function() { return this === proxy; } };
+      var proxy = new Proxy(target, {
+        get: function(target, key, receiver) {
+          if (key === "method") reads += 1;
+          return Reflect.get(target, key, receiver);
+        }
+      });
+      function callMethod(value) { return value.method(); }
+      print(callMethod(proxy));
+      print(reads);
+      print(callMethod(proxy));
+      print(reads);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "method-cache-proxy-get.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["true", "1", "true", "2"],
+            "{mode}"
+        );
+
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .all(|entry| entry.atom != method),
+                "Proxy method reads must retain the generic trap path"
+            );
+            assert!(
+                vm.megamorphic_methods
+                    .iter()
+                    .all(|cache| cache.entries[..usize::from(cache.len)]
+                        .iter()
+                        .all(|entry| entry.atom != method)),
+                "Proxy method reads must not enter a megamorphic cache"
+            );
+        }
+    }
+}
+
+#[test]
 fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
     let source = r#"
       var reads = 0;
