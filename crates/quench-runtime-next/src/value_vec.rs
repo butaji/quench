@@ -494,4 +494,18 @@ mod tests {
         assert!(arena.dictionaries.is_empty());
         assert_eq!(arena.free_dictionaries, vec![dictionary_id]);
     }
+
+    #[test]
+    fn dictionary_roots_skip_deleted_slots_after_arena_migration() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 2);
+        let mut vector = arena.pair(1, Value::heap(11), Value::heap(12));
+        arena.set(vector, 1, Value::DELETED);
+
+        arena.grow(&mut vector, 0);
+
+        let mut roots = Vec::new();
+        arena.append_live_values(vector, &mut roots);
+        assert_eq!(roots, [Value::heap(11)]);
+    }
 }
