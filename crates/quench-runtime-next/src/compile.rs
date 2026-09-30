@@ -137,7 +137,7 @@ impl Engine {
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() || parsed.program.body.len() != 1 {
@@ -171,7 +171,7 @@ impl Engine {
     pub(crate) fn strict_octal_numeric_early_error(source: &str) -> Option<String> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         parsed
@@ -184,7 +184,7 @@ impl Engine {
     pub(crate) fn eval_var_names(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -215,7 +215,7 @@ impl Engine {
     pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -239,7 +239,7 @@ impl Engine {
     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -260,7 +260,7 @@ impl Engine {
     pub(crate) fn eval_statement_slices(source: &str) -> Option<Vec<&str>> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -288,7 +288,7 @@ impl Engine {
     pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return true;
         }
         !parsed.diagnostics.is_empty()
@@ -319,7 +319,7 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return false;
         }
         if !parsed.diagnostics.is_empty() {
@@ -337,7 +337,7 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -406,7 +406,7 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -465,7 +465,7 @@ impl Engine {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &normalized, SourceType::mjs()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -826,6 +826,9 @@ impl Engine {
         };
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let mut parsed = Parser::new(&allocator, &normalized, source_type).parse();
+        if parsed.stack_exhausted {
+            return Err(vec![Diagnostic::stack_exhausted(name)]);
+        }
         if !parsed.diagnostics.is_empty() {
             return Err(parsed
                 .diagnostics
@@ -938,7 +941,7 @@ impl Engine {
     pub(crate) fn eval_parameter_early_error(source: &str, strict: bool) -> Option<String> {
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::unambiguous()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
@@ -957,7 +960,7 @@ impl Engine {
         };
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate(&parsed.program).is_err() {
+        if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
