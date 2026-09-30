@@ -216,12 +216,20 @@ impl<H: Host> Vm<H> {
         descriptor: Value,
         name: &str,
     ) -> Result<Option<Value>, JsError> {
-        let atom = self.intern_atom(name);
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-        if !self.has_property(p, descriptor, key)? {
-            return Ok(None);
-        }
-        Ok(Some(self.get_property(p, descriptor, atom)?))
+        let descriptor_root = self.heap.root(descriptor);
+        let result = (|| {
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let atom = self.intern_atom(name);
+            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            if !self.has_property(p, descriptor, key)? {
+                return Ok(None);
+            }
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            Ok(Some(self.get_property(p, descriptor, atom)?))
+        })();
+        self.heap.release_root(descriptor_root);
+        result
     }
 
     pub(super) fn object_assign(
