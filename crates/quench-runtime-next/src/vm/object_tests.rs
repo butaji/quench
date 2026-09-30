@@ -196,6 +196,34 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
 }
 
 #[test]
+fn optional_method_cache_invalidates_when_inherited_callable_changes() {
+    let source = r#"
+      var prototype = { method: function() { return this.value; } };
+      var receiver = Object.create(prototype);
+      receiver.value = 1;
+      function callMethod(value) { return value?.method?.(); }
+      print(callMethod(receiver));
+      print(callMethod(receiver));
+      prototype.method = function() { return this.value + 1; };
+      print(callMethod(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "optional-method-cache-inherited-replacement.js").unwrap();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
+    }
+}
+
+#[test]
 fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
     let source = r#"
       var values = [];
