@@ -439,15 +439,26 @@ fn update_ratchet(
     timeout: Duration,
     full_inventory: bool,
 ) -> Result<RatchetResult, String> {
+    let path = env::var_os("TEST262_RATCHET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
+    update_ratchet_at(&path, root, files, outcomes, timeout, full_inventory)
+}
+
+fn update_ratchet_at(
+    path: &Path,
+    root: &Path,
+    files: &[PathBuf],
+    outcomes: &[Result<(), String>],
+    timeout: Duration,
+    full_inventory: bool,
+) -> Result<RatchetResult, String> {
     if !full_inventory {
         return Ok(RatchetResult {
             verdict: "skipped_partial",
             regressions: Vec::new(),
         });
     }
-    let path = env::var_os("TEST262_RATCHET")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
     let had_baseline = path.exists();
     let test_root = root.join("test");
     let current_passes = files
@@ -493,7 +504,7 @@ fn update_ratchet(
             "discovered": files.len(),
             "passes": passes,
         });
-        write_json(path, &baseline)?;
+        write_json(path.to_path_buf(), &baseline)?;
     }
     let verdict = if !regressions.is_empty() {
         "regressed"
@@ -598,5 +609,40 @@ mod tests {
             "crashed"
         );
         assert_eq!(classify_outcome("next runtime: TypeError"), "failed");
+    }
+
+    #[test]
+    fn ratchet_preserves_baseline_and_names_lost_passes() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("quench-test262-ratchet-{unique}"));
+        let baseline = directory.join("ratchet.json");
+        let root = directory.join("suite");
+        let files = [root.join("test/a.js"), root.join("test/b.js")];
+        let timeout = Duration::from_millis(900_000);
+
+        let first =
+            update_ratchet_at(&baseline, &root, &files, &[Ok(()), Ok(())], timeout, true).unwrap();
+        assert_eq!(first.verdict, "baseline_created");
+        assert!(first.regressions.is_empty());
+
+        let second = update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &[Ok(()), Err("expected failure".into())],
+            timeout,
+            true,
+        )
+        .unwrap();
+        assert_eq!(second.verdict, "regressed");
+        assert_eq!(second.regressions, ["b.js"]);
+
+        let contents = fs::read_to_string(&baseline).unwrap();
+        let saved: serde_json::Value = serde_json::from_str(&contents).unwrap();
+        assert_eq!(saved["passes"], serde_json::json!(["a.js", "b.js"]));
+        fs::remove_dir_all(directory).unwrap();
     }
 }
