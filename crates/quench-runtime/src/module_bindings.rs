@@ -43,10 +43,8 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
     if skips_deferred_evaluation(key) {
         return Ok(());
     }
-    if let Value::BindingCell(cell) = value {
-        return exports(&cell.borrow(), key);
-    }
-    let Value::Object(object) = value else {
+    let value = unwrap_cells(value);
+    let Value::Object(object) = &value else {
         return Ok(());
     };
     let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned())
@@ -158,9 +156,9 @@ pub fn is_namespace(value: &Value) -> bool {
     result
 }
 
-fn unwrap_cells(value: &Value) -> Value {
+pub(crate) fn unwrap_cells(value: &Value) -> Value {
     match value {
-        Value::BindingCell(cell) => unwrap_cells(&cell.borrow()),
+        Value::BindingCell(cell) => ModuleBindingCell::from_shared(Rc::clone(cell)).get(),
         value => value.clone(),
     }
 }
@@ -233,18 +231,16 @@ impl ModuleBindingCell {
     }
 
     pub fn get(&self) -> Value {
-        self.get_with_seen(&mut Vec::new())
-    }
-
-    fn get_with_seen(&self, seen: &mut Vec<*const crate::value::BindingCell>) -> Value {
-        let pointer = Rc::as_ptr(&self.cell);
-        if seen.contains(&pointer) {
-            return Value::Undefined;
-        }
-        seen.push(pointer);
-        match self.cell.load() {
-            Value::BindingCell(cell) => Self::from_shared(cell).get_with_seen(seen),
-            value => value,
+        let mut cell = Rc::clone(&self.cell);
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            if !seen.insert(Rc::as_ptr(&cell)) {
+                return Value::Undefined;
+            }
+            match cell.load() {
+                Value::BindingCell(next) => cell = next,
+                value => return value,
+            }
         }
     }
 
@@ -274,6 +270,54 @@ impl ModuleBindingCell {
 mod tests {
     use super::ModuleBindingCell;
     use crate::{environment::Environment, value::Value};
+
+    #[test]
+    fn regression_deep_module_forwarding_preserves_updates_and_breaks_cycles() {
+        const FORWARDING_STRESS_DEPTH: usize = 20_000;
+        let target = ModuleBindingCell::new(Value::Number(1.0));
+        let mut owners = vec![target.clone()];
+        for _ in 0..FORWARDING_STRESS_DEPTH {
+            let cell = ModuleBindingCell::new(Value::Undefined);
+            cell.forward_to(owners.last().unwrap());
+            owners.push(cell);
+        }
+        let importer = owners.last().unwrap();
+        assert_eq!(importer.get(), Value::Number(1.0));
+        target.set(Value::Number(2.0));
+        assert_eq!(importer.get(), Value::Number(2.0));
+        let reference = Value::BindingCell(importer.shared());
+        assert_eq!(
+            crate::construct::peel_construct_value(&reference),
+            Value::Number(2.0)
+        );
+        target.forward_to(importer);
+        assert_eq!(importer.get(), Value::Undefined);
+        assert_eq!(
+            crate::construct::peel_construct_value(&reference),
+            Value::Undefined
+        );
+        target.set(Value::Number(3.0));
+        assert_eq!(importer.get(), Value::Number(3.0));
+        let object = Value::object(Vec::new());
+        target.set(object.clone());
+        let updated_target = target.clone();
+        super::attach_evaluator(
+            &object,
+            std::rc::Rc::new(move || {
+                updated_target.set(Value::Number(4.0));
+            }),
+        );
+        assert!(super::has_evaluator(&reference));
+        super::exports(&reference, "value").expect("deferred alias evaluation");
+        assert_eq!(importer.get(), Value::Number(4.0));
+        assert!(!super::has_evaluator(&reference));
+        let Value::Object(object) = object else {
+            unreachable!()
+        };
+        super::EVALUATORS.with(|map| map.borrow_mut().remove(&std::rc::Rc::as_ptr(&object)));
+        drop(reference);
+        while owners.pop().is_some() {}
+    }
 
     #[test]
     fn module_aliases_observe_one_live_cell() {
