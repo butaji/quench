@@ -154,6 +154,43 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
 }
 
 #[test]
+fn optional_method_cache_observes_callable_replacement_without_shape_change() {
+    let source = r#"
+      var receiver = { value: 1, method: function() { return this.value; } };
+      function callMethod(value) { return value?.method?.(); }
+      print(callMethod(receiver));
+      print(callMethod(receiver));
+      receiver.method = function() { return this.value + 1; };
+      print(callMethod(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "optional-method-cache-callable-replacement.js").unwrap();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
+
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .any(|entry| entry.atom == method && entry.target.is_some()),
+                "specialized method site should populate its method cache"
+            );
+        }
+    }
+}
+
+#[test]
 fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
     let source = r#"
       var values = [];
@@ -273,7 +310,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
           return Reflect.get(target, key, receiver);
         }
       });
-      function callMethod(value) { return value.method(); }
+      function callMethod(value) { return value?.method?.(); }
       print(callMethod(proxy));
       print(reads);
       print(callMethod(proxy));
@@ -286,6 +323,10 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "method-cache-proxy-get.js").unwrap();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -324,7 +365,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
           return function() { return this === receiver; };
         }
       };
-      function callMethod(value) { return value.method?.(); }
+      function callMethod(value) { return value?.method?.(); }
       print(callMethod(receiver));
       print(reads);
       print(callMethod(receiver));
@@ -337,6 +378,10 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-accessor.js").unwrap();
+        assert!(
+            !program.method_sites.is_empty(),
+            "test must exercise CallMethod"
+        );
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
@@ -351,6 +396,13 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
                     .iter()
                     .all(|entry| entry.atom != method || entry.receiver == u32::MAX),
                 "optional accessor lookup must retain the generic getter path"
+            );
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .all(|entry| entry.atom != method),
+                "optional accessor lookup must not enter the method cache"
             );
         }
     }

@@ -91,11 +91,9 @@ impl<H: Host> Vm<H> {
         id: u32,
         parent: Value,
         this: Value,
-        args: NumericArguments<'_>,
+        args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        self.profile
-            .numeric_arguments(matches!(args, NumericArguments::Registers { .. }));
         self.profile.function(id as usize);
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
@@ -117,27 +115,10 @@ impl<H: Host> Vm<H> {
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         for index in 0..fixed {
-            frame.locals[index] = match args {
-                NumericArguments::Values(values) => {
-                    values.get(index).copied().unwrap_or(Value::UNDEFINED)
-                }
-                NumericArguments::Registers { frame, values } => values
-                    .get(index)
-                    .map_or(Value::UNDEFINED, |register| self.read(frame, *register)),
-            };
+            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
         if function.rest {
-            let elements = match args {
-                NumericArguments::Values(values) => {
-                    values.get(fixed..).unwrap_or_default().to_vec()
-                }
-                NumericArguments::Registers { frame, values } => values
-                    .get(fixed..)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|register| self.read(frame, *register))
-                    .collect(),
-            };
+            let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
                 elements: Rc::new(elements),

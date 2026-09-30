@@ -322,180 +322,107 @@ impl<H: Host> Vm<H> {
     pub(super) fn call_method_site_safe(
         &mut self,
         p: &ResidualProgram,
-        _frame: usize,
-        site: usize,
-        this: Value,
-    ) -> Result<Value, JsError> {
-        let metadata = p.method_sites[site];
-        let start = metadata.argument_start as usize;
-        let args = &p.method_arguments[start..start + metadata.argument_count as usize];
-        let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
-        let arguments =
-            CallArguments::from_values(args.iter().map(|register| self.read(_frame, *register)));
-        self.call_value(p, callee, this, arguments.as_slice())
-    }
-
-    #[inline(always)]
-    pub(super) fn call_method_site(
-        &mut self,
-        p: &ResidualProgram,
         frame: usize,
         site: usize,
         this: Value,
     ) -> Result<Value, JsError> {
         let metadata = p.method_sites[site];
         let start = metadata.argument_start as usize;
-        let args = &p.method_arguments[start..start + metadata.argument_count as usize];
-        self.profile.method_args(args.len());
+        let registers = &p.method_arguments[start..start + metadata.argument_count as usize];
+        let arguments = CallArguments::from_values(
+            registers.iter().map(|register| self.read(frame, *register)),
+        );
+        self.profile.method_args(registers.len());
+
         let (shape, proto) = self
             .object_data(this)
             .map(|object| (object.shape(), object.proto))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
-        let mut cached = self
-            .specialized
-            .then(|| {
-                self.method_caches[site]
-                    .iter()
-                    .find(|entry| {
-                        entry.shape == shape
-                            && entry.atom == metadata.atom
-                            && (entry.proto == proto || entry.proto == this)
-                    })
-                    .and_then(|entry| entry.target)
-            })
-            .flatten();
-        #[cfg(feature = "profile-aggregate")]
-        let mut cache_tier = self
-            .specialized
-            .then(|| {
-                self.method_caches[site].iter().position(|entry| {
+
+        let mut candidate = if self.specialized {
+            self.method_caches[site]
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| {
                     entry.shape == shape
                         && entry.atom == metadata.atom
                         && (entry.proto == proto || entry.proto == this)
                 })
-            })
-            .flatten();
-        if self.specialized && cached.is_none() {
-            cached = self
+                .map(|(tier, entry)| (*entry, tier))
+        } else {
+            None
+        };
+        if self.specialized && candidate.is_none() {
+            candidate = self
                 .megamorphic_methods
                 .iter()
                 .find(|set| usize::from(set.site) == site)
                 .and_then(|set| {
-                    set.entries[..usize::from(set.len)].iter().find(|entry| {
-                        entry.shape == shape
-                            && entry.atom == metadata.atom
-                            && (entry.proto == proto || entry.proto == this)
-                    })
-                })
-                .and_then(|entry| entry.target);
-            #[cfg(feature = "profile-aggregate")]
-            if cached.is_some() {
-                cache_tier = Some(2);
-            }
-        }
-        let guard = cached
-            .is_none()
-            .then(|| self.method_cache_guard(this, metadata.atom))
-            .flatten();
-        self.profile.method_cache(cached.is_some());
-        #[cfg(feature = "profile-aggregate")]
-        self.profile.method_cache_tier(cache_tier);
-        let target = if let Some(target) = cached {
-            target
-        } else {
-            let own_callee = self
-                .property_accessor(this, metadata.atom)
-                .is_none()
-                .then(|| self.own_property(this, metadata.atom))
-                .flatten();
-            let callee = match own_callee {
-                Some(value) => value,
-                None => self.get_field_cached(p, this, metadata.atom, metadata.cache)?,
-            };
-            let cache_proto = if own_callee.is_some() { this } else { proto };
-            let target = match self.heap.get(callee) {
-                Some(Cell::Function {
-                    kind: FunctionKind::User(program, id),
-                    env,
-                    ..
-                }) => CallTarget::User(*program, *id, *env),
-                Some(Cell::Function {
-                    kind: FunctionKind::NumericUser(program, id),
-                    env,
-                    ..
-                }) => CallTarget::NumericUser(*program, *id, *env),
-                Some(Cell::Function {
-                    kind: FunctionKind::Native(native),
-                    ..
-                }) => CallTarget::Native(*native),
-                _ if self.is_function(callee) => {
-                    let values = args
+                    set.entries[..usize::from(set.len)]
                         .iter()
-                        .map(|register| self.read(frame, *register))
-                        .collect::<Vec<_>>();
-                    return self.call_value(p, callee, this, &values);
-                }
-                _ => return Err(self.type_error(p, "value is not callable".into())),
-            };
-            if self.specialized
-                && let Some(guard) = guard
-            {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile_method_refill(site, shape, cache_proto, target);
-                self.record_method_cache(
-                    site,
-                    MethodCache {
-                        shape,
-                        atom: metadata.atom,
-                        proto: cache_proto,
-                        guard,
-                        target: Some(target),
-                    },
-                );
+                        .find(|entry| {
+                            entry.shape == shape
+                                && entry.atom == metadata.atom
+                                && (entry.proto == proto || entry.proto == this)
+                        })
+                        .copied()
+                })
+                .map(|entry| (entry, 2));
+        }
+
+        let cached_call = candidate.and_then(|(entry, tier)| {
+            if entry.guard.receiver != shape || entry.guard.atom != metadata.atom {
+                return None;
             }
-            target
-        };
-        let target_kind = match target {
-            CallTarget::Native(_) => 0,
-            CallTarget::User(..) => 1,
-            CallTarget::NumericUser(..) => 2,
-        };
-        self.profile.call_target(target_kind, args.len());
-        if let CallTarget::NumericUser(program_id, id, env) = target {
-            let Some(program) = self.programs.get(program_id) else {
-                return Err(self.type_error(p, "function belongs to an unavailable program".into()));
-            };
-            let active_program = std::mem::replace(&mut self.active_program, program_id);
-            let result = self.call_user_numeric(
-                &program,
-                id,
-                env,
+            let owner = self.field_cache_owner(this, entry.guard)?;
+            if owner != entry.guard.owner {
+                return None;
+            }
+            let owner_data = self.object_data(owner)?;
+            if owner_data.shape() != entry.guard.owner_shape {
+                return None;
+            }
+            let callee = self
+                .heap
+                .property_get(owner_data, entry.guard.slot as usize)?;
+            let target = entry.target?;
+            (self.call_target(callee).ok() == Some(target)).then_some((callee, target, tier))
+        });
+        self.profile.method_cache(cached_call.is_some());
+        #[cfg(feature = "profile-aggregate")]
+        self.profile
+            .method_cache_tier(cached_call.map(|(_, _, tier)| tier));
+        if let Some((callee, target, _)) = cached_call {
+            return self.call_value_with_target(
+                p,
+                callee,
                 this,
-                NumericArguments::Registers {
-                    frame,
-                    values: args,
+                arguments.as_slice(),
+                Some(target),
+            );
+        }
+
+        let guard = self.method_cache_guard(this, metadata.atom);
+        let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
+        if self.specialized
+            && let Some(guard) = guard
+            && matches!(self.heap.get(callee), Some(Cell::Function { .. }))
+            && let Ok(target) = self.call_target(callee)
+        {
+            let cache_proto = if guard.depth == 0 { this } else { proto };
+            #[cfg(feature = "profile-aggregate")]
+            self.profile_method_refill(site, shape, cache_proto, target);
+            self.record_method_cache(
+                site,
+                MethodCache {
+                    shape,
+                    atom: metadata.atom,
+                    proto: cache_proto,
+                    guard,
+                    target: Some(target),
                 },
             );
-            self.active_program = active_program;
-            return result;
         }
-        let arguments =
-            CallArguments::from_values(args.iter().map(|register| self.read(frame, *register)));
-        match target {
-            CallTarget::User(program_id, id, env) => {
-                let Some(program) = self.programs.get(program_id) else {
-                    return Err(
-                        self.type_error(p, "function belongs to an unavailable program".into())
-                    );
-                };
-                let active_program = std::mem::replace(&mut self.active_program, program_id);
-                let result =
-                    self.call_user_maybe_async(&program, id, env, this, arguments.as_slice());
-                self.active_program = active_program;
-                result
-            }
-            CallTarget::NumericUser(..) => unreachable!(),
-            CallTarget::Native(native) => self.call_native(p, native, this, arguments.as_slice()),
-        }
+        self.call_value(p, callee, this, arguments.as_slice())
     }
 }
