@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/oxc-parser-legacy"]
+exclude = ["vendor/oxc-parser-legacy", "vendor/oxc-regexp"]
 members = [
     "quench-bench",
     "crates/quench-js-check",
@@ -75,3 +75,4 @@ strip = "none"
 [patch.crates-io]
 oxc_parser_next = { package = "oxc_parser", path = "vendor/oxc-parser-next" }
 oxc_parser_legacy = { package = "oxc_parser", path = "vendor/oxc-parser-legacy" }
+oxc_regular_expression = { path = "vendor/oxc-regexp" }

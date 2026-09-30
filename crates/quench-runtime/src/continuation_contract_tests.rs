@@ -80,6 +80,45 @@ fn regression_bound_has_instance_exhaustion_is_catchable_and_recovers() {
 }
 
 #[test]
+fn regression_regexp_parser_exhaustion_preserves_syntax_error_and_recovers() {
+    std::thread::Builder::new()
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(|| {
+            run_sync(r#"
+                var intrinsicSyntaxError = SyntaxError;
+                var intrinsicRangeError = RangeError;
+                SyntaxError = function() { throw 'replaced'; };
+                RangeError = function() { throw 'replaced'; };
+                var regexpStressDepth = 20000;
+                var source = '['.repeat(regexpStressDepth) + 'a' + ']'.repeat(regexpStressDepth);
+                var receiver = /a/;
+                receiver.lastIndex = 7;
+                for (var mode = 0; mode < 4; mode++) {
+                    var caught = false;
+                    try {
+                        if (mode === 0) new RegExp(source, 'v');
+                        else if (mode === 1) eval('/' + source + '/v');
+                        else if (mode === 2) Function('return /' + source + '/v');
+                        else receiver.compile(source, 'v');
+                    } catch (error) {
+                        var expectedError = mode === 1 || mode === 2 ? intrinsicRangeError : intrinsicSyntaxError;
+                        if (!(error instanceof expectedError) ||
+                            !error.message.endsWith('Maximum call stack size exceeded')) {
+                            throw 'bad RegExp exhaustion: ' + mode + ':' + error.name + ':' + error.message;
+                        }
+                        caught = true;
+                    }
+                    if (!caught || receiver.source !== 'a' || receiver.lastIndex !== 7 ||
+                        !/a/.test('a')) throw 'RegExp exhaustion did not recover: ' + mode + ':' + caught;
+                }
+            "#);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn async_loops_resume_every_nested_and_control_phase() {
     run_async(
         r#"

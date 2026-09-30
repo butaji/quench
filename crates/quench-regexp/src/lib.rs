@@ -8,6 +8,12 @@ use std::{cell::RefCell, collections::VecDeque, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
+mod stack;
+
+pub fn is_stack_exhaustion_message(message: &str) -> bool {
+    message == quench_stack::STACK_EXHAUSTED_MESSAGE
+}
+
 pub fn is_ecma_whitespace(character: char) -> bool {
     matches!(
         character,
@@ -253,6 +259,7 @@ impl Regex {
         )
         .parse()
         .map_err(|error| error.to_string())?;
+        stack::validate(&parsed)?;
         if contains_invalid_string_property(&parsed.body, flags) {
             return Err("invalid regular expression property of strings".into());
         }
@@ -453,6 +460,7 @@ pub fn validate_property_escapes(source: &str, flags_text: &str) -> Result<(), S
     let parsed = LiteralParser::new(&allocator, &source, Some(flags_text), Options::default())
         .parse()
         .map_err(|error| error.to_string())?;
+    stack::validate(&parsed)?;
     if contains_invalid_string_property(&parsed.body, flags) {
         return Err("invalid regular expression property of strings".into());
     }

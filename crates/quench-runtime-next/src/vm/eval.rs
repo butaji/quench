@@ -98,6 +98,14 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
             && let Some((pattern_units, flag_units)) = eval_regexp_literal_units(source_text.units())
         {
+            if let (Ok(pattern), Ok(flags)) = (
+                String::from_utf16(&pattern_units),
+                String::from_utf16(&flag_units),
+            ) && quench_regexp::validate_property_escapes(&pattern, &flags)
+                .is_err_and(|error| quench_regexp::is_stack_exhaustion_message(&error))
+            {
+                return Err(self.stack_exhaustion_error());
+            }
             let pattern = self
                 .heap
                 .alloc(Cell::String(JsString::from_units(pattern_units)));

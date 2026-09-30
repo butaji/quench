@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
-        let prototype = self.range_error_prototypes[&self.realm.globals];
+        let prototype = self.error_prototypes[&(self.realm.globals, Native::RangeError)];
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
         self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)
@@ -959,6 +959,10 @@ impl<H: Host> Vm<H> {
         let type_error_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(error_prototype)));
+        self.error_prototypes
+            .insert((global, Native::TypeError), type_error_prototype);
+        self.error_prototypes
+            .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named(program, type_error, "prototype", type_error_prototype)?;
         self.set_named(program, type_error_prototype, "constructor", type_error)?;
         let type_error_name = self.heap.alloc(Cell::String("TypeError".into()));
@@ -1352,9 +1356,7 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
-            if native == Native::RangeError {
-                self.range_error_prototypes.insert(global, prototype);
-            }
+            self.error_prototypes.insert((global, native), prototype);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let name_value = self.heap.alloc(Cell::String(name.into()));
@@ -1583,9 +1585,8 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
-            if *native == Native::RangeError {
-                self.range_error_prototypes.insert(self.realm.globals, prototype);
-            }
+            self.error_prototypes
+                .insert((self.realm.globals, *native), prototype);
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
@@ -1696,7 +1697,10 @@ impl<H: Host> Vm<H> {
             self.native_value(native)
         };
         let prototype = self
-            .own_property(constructor, prototype_atom)
+            .error_prototypes
+            .get(&(self.realm.globals, native))
+            .copied()
+            .or_else(|| self.own_property(constructor, prototype_atom))
             .unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
