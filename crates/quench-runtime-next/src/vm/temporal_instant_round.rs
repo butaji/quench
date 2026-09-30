@@ -57,10 +57,9 @@ pub(super) fn round<H: Host>(
         (true, "halfExpand") => "halfCeil",
         _ => mode,
     };
-    let rounded =
-        super::temporal_zoned_date_time::round_temporal_nanoseconds(epoch, scale * increment, mode)
-            * scale
-            * increment;
+    let rounded = quench_temporal::round_temporal_nanoseconds(epoch, scale * increment, mode)
+        * scale
+        * increment;
     let constructor = vm.temporal_instant_constructor(p)?;
     vm.make_temporal_instant(p, rounded, constructor)
 }
