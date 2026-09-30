@@ -183,13 +183,6 @@ struct GlobalLexicalState {
     bindings: FxHashMap<Atom, Value>,
     immutable_bindings: FxHashSet<Atom>,
 }
-enum NumericArguments<'a> {
-    Values(&'a [Value]),
-    Registers {
-        frame: usize,
-        values: &'a [Register],
-    },
-}
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
@@ -965,6 +958,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        self.call_value_with_target(p, callee, this, args, None)
+    }
+
+    fn call_value_with_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+        target: Option<CallTarget>,
+    ) -> Result<Value, JsError> {
         // Operands have already been popped from the VM frame when this
         // boundary is entered. Keep every incoming guest value live while a
         // call can allocate, collect, or re-enter the interpreter.
@@ -978,9 +982,12 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
                 return self.proxy_call(p, callee, this, args);
             }
-            let target = self
-                .call_target(callee)
-                .map_err(|error| self.type_error(p, error.to_string()))?;
+            let target = match target {
+                Some(target) => target,
+                None => self
+                    .call_target(callee)
+                    .map_err(|error| self.type_error(p, error.to_string()))?,
+            };
             match target {
                 CallTarget::Native(native) => {
                     self.profile.call_target(0, args.len());
@@ -1026,13 +1033,7 @@ impl<H: Host> Vm<H> {
                         _ => self.realm.globals,
                     };
                     let current_global = std::mem::replace(&mut self.realm.globals, realm);
-                    let result = self.call_user_numeric(
-                        &program,
-                        id,
-                        env,
-                        this,
-                        NumericArguments::Values(args),
-                    );
+                    let result = self.call_user_numeric(&program, id, env, this, args);
                     self.active_program = active_program;
                     self.realm.globals = current_global;
                     result
