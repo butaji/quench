@@ -44,9 +44,7 @@ pub(super) fn difference<H: Host>(
     let largest = unit(vm, p, &largest)?;
     validate_units(vm, p, smallest, largest, increment, &mode)?;
     let quantum = smallest.1 * increment as i128;
-    let rounded =
-        super::temporal_zoned_date_time::round_temporal_nanoseconds(delta, quantum, &mode)
-            * quantum;
+    let rounded = quench_temporal::round_temporal_nanoseconds(delta, quantum, &mode) * quantum;
     let fields = decompose(rounded, smallest, largest);
     vm.make_temporal_duration(p, fields)
 }

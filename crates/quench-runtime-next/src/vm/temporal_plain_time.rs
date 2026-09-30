@@ -322,10 +322,9 @@ impl<H: Host> Vm<H> {
                 .map(|(value, scale)| i128::from(*value) * scale)
                 .sum::<i128>();
             let quantum = scale * increment;
-            let rounded =
-                (super::temporal_zoned_date_time::round_temporal_nanoseconds(total, quantum, mode)
-                    * quantum)
-                    .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
+            let rounded = (quench_temporal::round_temporal_nanoseconds(total, quantum, mode)
+                * quantum)
+                .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
             let mut time = [0_i32; 6];
             let mut remainder = rounded;
             for (index, scale) in super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES
@@ -442,11 +441,8 @@ impl<H: Host> Vm<H> {
         let rounding_mode =
             super::temporal_instant_round::validate_mode(self, p, Some(&options.rounding_mode))?;
         let quantum = smallest_scale * increment;
-        let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            delta,
-            quantum,
-            rounding_mode,
-        ) * quantum;
+        let rounded =
+            quench_temporal::round_temporal_nanoseconds(delta, quantum, rounding_mode) * quantum;
         let units = super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES;
         let largest_index = units
             .iter()
@@ -596,11 +592,8 @@ impl<H: Host> Vm<H> {
             .zip(super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES)
             .map(|(value, scale)| i128::from(*value) * scale)
             .sum::<i128>();
-        let rounded = (super::temporal_zoned_date_time::round_temporal_nanoseconds(
-            total,
-            quantum,
-            &rounding_mode,
-        ) * quantum)
+        let rounded = (quench_temporal::round_temporal_nanoseconds(total, quantum, &rounding_mode)
+            * quantum)
             .rem_euclid(super::temporal_date_arithmetic::NANOS_PER_DAY);
         let hour = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[0];
         let minute = rounded / super::temporal_date_arithmetic::TIME_UNIT_NANOSECOND_SCALES[1] % 60;

@@ -1447,11 +1447,9 @@ impl<H: Host> Vm<H> {
                 let quantum = unit_quantum
                     .checked_mul(increment)
                     .ok_or_else(|| self.range_error(p, "Invalid roundingIncrement".into()))?;
-                let rounded = super::temporal_zoned_date_time::round_temporal_nanoseconds(
-                    residual, quantum, mode,
-                )
-                .checked_mul(quantum)
-                .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
+                let rounded = quench_temporal::round_temporal_nanoseconds(residual, quantum, mode)
+                    .checked_mul(quantum)
+                    .ok_or_else(|| self.range_error(p, "Duration is out of range".into()))?;
                 let mut result = fields;
                 result[super::temporal_date_arithmetic::DURATION_HOURS_FIELD..].fill(0.0);
                 balance_duration_time_units(
