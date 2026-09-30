@@ -117,10 +117,14 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
 #[test]
 fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
     let source = r#"
-      var prototype = { answer: 42 };
+      var prototype = {
+        answer: 42,
+        getAnswer: function() { return this.answer; }
+      };
       var inherited = {};
       Object.setPrototypeOf(inherited, prototype);
       print(inherited.answer);
+      print(inherited.getAnswer());
       var deleted = { answer: 5 };
       delete deleted.answer;
       deleted.answer = 7;
@@ -152,6 +156,21 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
                     .all(|cache| cache.get(shape).is_none()),
                 "{mode}: dictionary shape entered a megamorphic field cache for {name}"
             );
+            assert!(
+                vm.method_caches
+                    .iter()
+                    .flatten()
+                    .all(|cache| cache.shape != shape),
+                "{mode}: dictionary shape entered a monomorphic method cache for {name}"
+            );
+            assert!(
+                vm.megamorphic_methods.iter().all(|cache| {
+                    cache.entries[..usize::from(cache.len)]
+                        .iter()
+                        .all(|entry| entry.shape != shape)
+                }),
+                "{mode}: dictionary shape entered a megamorphic method cache for {name}"
+            );
         }
 
         for (name, trigger) in [
@@ -179,7 +198,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             vm.shape_is_dictionary(shape),
             "{mode}: dictionary mode survives GC"
         );
-        assert_eq!(output.borrow().as_slice(), ["42", "7"], "{mode}");
+        assert_eq!(output.borrow().as_slice(), ["42", "42", "7"], "{mode}");
         #[cfg(feature = "profile-aggregate")]
         for trigger in [
             super::DictionaryTrigger::DeletionPattern,
