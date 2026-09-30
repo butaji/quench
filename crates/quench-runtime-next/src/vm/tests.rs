@@ -358,6 +358,39 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
 }
 
 #[test]
+fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let continuation = || Continuation {
+        program: super::program_store::ProgramId::MAIN,
+        function: 0,
+        pc: 0,
+        env: Value::NULL,
+        this: Value::UNDEFINED,
+        locals: vec![],
+        registers: vec![],
+        active_iterators: vec![],
+        completion: Completion::Yield(Value::UNDEFINED),
+        captured: false,
+        resume_register: None,
+        promise: Value::UNDEFINED,
+    };
+    let initial = vm.suspend_continuation(continuation());
+    vm.suspended[initial.slot as usize].generation = u32::MAX;
+    let final_generation = super::activation::ContinuationId {
+        slot: initial.slot,
+        generation: u32::MAX,
+    };
+    assert!(vm.resume_continuation(final_generation).is_some());
+
+    let replacement = vm.suspend_continuation(continuation());
+    assert_ne!(replacement.slot, final_generation.slot);
+    assert!(vm.resume_continuation(final_generation).is_none());
+    assert!(vm.resume_continuation(replacement).is_some());
+}
+
+#[test]
 fn regression_collection_preserves_unused_regexp_iterator_prototype() {
     for (mode, compile) in [
         ("specialized", Engine::specialize as fn(&str, &str) -> _),

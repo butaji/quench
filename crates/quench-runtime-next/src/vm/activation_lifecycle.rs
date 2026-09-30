@@ -7,16 +7,20 @@ impl<H: Host> Vm<H> {
     // here gives every producer one generation-checked ownership boundary.
     #[allow(dead_code)]
     pub(crate) fn suspend_continuation(&mut self, continuation: Continuation) -> ContinuationId {
-        if let Some(slot) = self.suspended_free.pop() {
+        while let Some(slot) = self.suspended_free.pop() {
             let entry = &mut self.suspended[slot as usize];
-            entry.generation = entry.generation.wrapping_add(1).max(1);
+            let Some(generation) = entry.generation.checked_add(1) else {
+                continue;
+            };
+            entry.generation = generation;
             entry.continuation = Some(continuation);
             return ContinuationId {
                 slot,
                 generation: entry.generation,
             };
         }
-        let slot = self.suspended.len() as u32;
+        let slot =
+            u32::try_from(self.suspended.len()).expect("suspended continuation table exhausted");
         self.suspended.push(SuspendedEntry {
             generation: 1,
             continuation: Some(continuation),
