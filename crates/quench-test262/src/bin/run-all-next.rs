@@ -20,6 +20,11 @@ use wait_timeout::ChildExt;
 const DEFAULT_REPORT: &str = "target/test262-next-report.json";
 const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
 
+struct RatchetResult {
+    verdict: &'static str,
+    regressions: Vec<String>,
+}
+
 fn main() -> ExitCode {
     if let Err(error) = required_timeout_ms() {
         return fail(error);
@@ -73,30 +78,23 @@ fn run() -> ExitCode {
     };
     let report = collect_report(&files, &outcomes);
     let full_inventory = env::var_os("TEST262_BATCH_SIZE").is_none();
-    let regressions = match update_ratchet(&root, &files, &outcomes, timeout, full_inventory) {
-        Ok(regressions) => regressions,
+    let ratchet = match update_ratchet(&root, &files, &outcomes, timeout, full_inventory) {
+        Ok(ratchet) => ratchet,
         Err(error) => return fail(error),
     };
     if let Err(error) = write_report(
-        &report,
-        discovered,
-        &root,
-        &stages,
-        &files,
-        &outcomes,
-        &regressions,
-        timeout,
+        &report, discovered, &root, &stages, &files, &outcomes, &ratchet, timeout,
     ) {
         return fail(error);
     }
     println!(
-        "next passed={} failed={} total={} discovered={discovered}",
-        report.passed, report.failed, report.total
+        "next passed={} failed={} total={} discovered={discovered} ratchet={}",
+        report.passed, report.failed, report.total, ratchet.verdict
     );
-    if !regressions.is_empty() {
-        eprintln!("next ratchet regressions={}", regressions.len());
+    if !ratchet.regressions.is_empty() {
+        eprintln!("next ratchet regressions={}", ratchet.regressions.len());
     }
-    if report.failed == 0 && report.total == files.len() && regressions.is_empty() {
+    if report.failed == 0 && report.total == files.len() && ratchet.regressions.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -284,7 +282,7 @@ fn write_report(
     stages: &[ResolvedStage],
     files: &[PathBuf],
     outcomes: &[Result<(), String>],
-    regressions: &[String],
+    ratchet: &RatchetResult,
     timeout: Duration,
 ) -> Result<(), String> {
     let path = env::var_os("TEST262_REPORT")
@@ -371,7 +369,8 @@ fn write_report(
         "families": families,
         "stages": stages,
         "outcomes": outcomes,
-        "regressions": regressions,
+        "ratchet": ratchet.verdict,
+        "regressions": ratchet.regressions,
     });
     write_json(path, &value)
 }
@@ -439,13 +438,17 @@ fn update_ratchet(
     outcomes: &[Result<(), String>],
     timeout: Duration,
     full_inventory: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<RatchetResult, String> {
     if !full_inventory {
-        return Ok(Vec::new());
+        return Ok(RatchetResult {
+            verdict: "skipped_partial",
+            regressions: Vec::new(),
+        });
     }
     let path = env::var_os("TEST262_RATCHET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
+    let had_baseline = path.exists();
     let test_root = root.join("test");
     let current_passes = files
         .iter()
@@ -469,7 +472,8 @@ fn update_ratchet(
             .ok_or_else(|| format!("Test262 ratchet {} has no pass set", path.display()))?;
         regressions = newly_failing(passes, &current_passes)?;
     }
-    if regressions.is_empty() && outcomes.iter().all(Result::is_ok) && files.len() > 0 {
+    let clean = outcomes.iter().all(Result::is_ok) && !files.is_empty();
+    if regressions.is_empty() && clean {
         let mut passes = current_passes.into_iter().collect::<Vec<_>>();
         passes.sort();
         let (revision, source_dirty) = source_provenance();
@@ -491,7 +495,19 @@ fn update_ratchet(
         });
         write_json(path, &baseline)?;
     }
-    Ok(regressions)
+    let verdict = if !regressions.is_empty() {
+        "regressed"
+    } else if !had_baseline && clean {
+        "baseline_created"
+    } else if had_baseline {
+        "clean"
+    } else {
+        "awaiting_baseline"
+    };
+    Ok(RatchetResult {
+        verdict,
+        regressions,
+    })
 }
 
 fn source_provenance() -> (String, bool) {
