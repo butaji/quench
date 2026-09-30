@@ -334,24 +334,9 @@ impl<H: Host> Vm<H> {
         let descriptor_value = descriptor.value;
         let descriptor_accessor = descriptor.has_accessor_fields();
         if descriptor_accessor {
-            if !is_new
-                && current.accessor
-                && !current.configurable
-                && ((descriptor.getter.is_some()
-                    && descriptor.getter.is_some_and(|value| {
-                        !(value.is_undefined() && current.getter.is_none())
-                            && !current
-                                .getter
-                                .is_some_and(|old| self.same_value(old, value))
-                    }))
-                    || (descriptor.setter.is_some()
-                        && descriptor.setter.is_some_and(|value| {
-                            !(value.is_undefined() && current.setter.is_none())
-                                && !current
-                                    .setter
-                                    .is_some_and(|old| self.same_value(old, value))
-                        })))
-            {
+            if descriptor.changes_non_configurable_accessor(current, |left, right| {
+                self.same_value(left, right)
+            }) {
                 return Err(
                     self.type_error(p, "cannot change non-configurable array accessor".into())
                 );
