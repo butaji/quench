@@ -139,6 +139,7 @@ pub(crate) fn proxy_get(
     prop: &str,
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "get")? {
@@ -226,6 +227,7 @@ fn proxy_target_property(
 }
 
 pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "has")? {
@@ -273,6 +275,7 @@ fn is_non_configurable_descriptor(descriptor: &Value) -> bool {
 }
 
 pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "deleteProperty")? {
@@ -311,6 +314,7 @@ pub(crate) fn proxy_apply(
     this_arg: &Value,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "apply")? {
@@ -336,6 +340,7 @@ pub(crate) fn proxy_construct(
     arguments: &[Value],
     new_target: Option<&Value>,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Some(new_target) = new_target {
         if !is_constructible(new_target) {
             return Err(VmError::Thrown(crate::builtins::error(
@@ -397,6 +402,7 @@ fn is_constructible(value: &Value) -> bool {
 }
 
 pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf")? {
@@ -422,6 +428,7 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn proxy_set_prototype_of(target: &Value, prototype: &Value) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if matches!(target, Value::Builtin(Builtin::ObjectPrototype)) {
         let current = crate::builtins::object::get_prototype_of(Some(target))?;
         return Ok(Value::Boolean(crate::builtins::same_value(
@@ -496,6 +503,7 @@ fn prototype_contains(prototype: &Value, target: &Value) -> Result<bool, VmError
 }
 
 pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         let proxy_target = crate::locals::resolved_replacement(proxy.target.clone());
@@ -523,6 +531,7 @@ pub(crate) fn proxy_is_extensible(target: &Value) -> Result<Value, VmError> {
 }
 
 pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "preventExtensions")? {
@@ -556,6 +565,7 @@ pub(crate) fn proxy_get_own_property_descriptor(
     target: &Value,
     prop: &str,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor")? {
@@ -678,6 +688,7 @@ pub(crate) fn proxy_define_property(
     prop: &str,
     descriptor: &Value,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "defineProperty")? {

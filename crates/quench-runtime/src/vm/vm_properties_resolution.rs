@@ -940,6 +940,7 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     // Symbols use an encoded string representation internally, but their
     // [[Prototype]] is Symbol.prototype rather than String.prototype.  Route
     // primitive symbol reads through that intrinsic before the ordinary

@@ -32,6 +32,7 @@ fn execute_target_with_receiver_in_realm(
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     };
+    let _stack = enter_function_stack(function)?;
     if matches!(function.kind, FunctionKind::Generator) || function.is_async {
         // If the receiver is already an existing generator, resume it instead
         // of calling generator::create (which would start a fresh generator).

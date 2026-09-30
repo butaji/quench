@@ -288,3 +288,48 @@ fn generator_resumes_init_test_update_and_finally_phases() {
         "#,
     );
 }
+
+#[test]
+fn regression_recursive_transitions_throw_and_recover() {
+    std::thread::Builder::new()
+        .name("legacy-recursive-transitions".into())
+        .stack_size(crate::WORKER_STACK_SIZE)
+        .spawn(|| {
+            run_sync(r#"
+                var checks = 0;
+                var intrinsicRangeError = RangeError;
+                RangeError = function () { throw "guest RangeError constructor called"; };
+                function check(operation) {
+                    checks++;
+                    var caught = false;
+                    try { operation(); }
+                    catch (error) {
+                        if (!(error instanceof intrinsicRangeError) ||
+                            error.message !== "Maximum call stack size exceeded") throw "bad stack error " + checks;
+                        caught = true;
+                    }
+                    if (!caught) throw "recursion returned";
+                    if ((function () { return 42; })() !== 42) throw "budget did not recover";
+                }
+                check(function () { function f() { return 1 + f(); } f(); });
+                check(function () { var object = { get value() { return this.value; } }; object.value; });
+                check(function () { var object = { set value(value) { this.value = value; } }; object.value = 1; });
+                check(function () { function C() { new C(); } new C(); });
+                check(function () {
+                    var proxy = new Proxy({}, { get: function (target, key, receiver) { return receiver[key]; } });
+                    proxy.value;
+                });
+                check(function () { var object = { toString: function () { return String(this); } }; String(object); });
+                check(function () { JSON.parse({ toString: function () { return JSON.parse(this); } }); });
+                var result = 0;
+                with ({}) {
+                    function tail(n) { "use strict"; if (n) return tail(n - 1); return 42; }
+                    result = tail(10000);
+                }
+                if (result !== 42) throw "tail replacement consumed the stack budget";
+            "#);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}

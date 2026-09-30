@@ -4,6 +4,21 @@ use crate::{
 };
 use std::collections::HashMap;
 include!("functions_properties.rs");
+
+pub(crate) fn enter_function_stack(
+    function: &crate::value::FunctionValue,
+) -> Result<quench_stack::StackGuard, crate::execute::VmError> {
+    quench_stack::StackGuard::enter().map_err(|()| {
+        let realm = crate::construct::function_realm_id(function);
+        crate::vm::with_realm(realm, || {
+            crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+        })
+        .unwrap_or_else(|| {
+            crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+        })
+    })
+}
+
 const NEW_TARGET: &str = "\0new_target";
 pub(crate) const FUNCTION_SELF: &str = "\0function_self";
 pub(crate) const FUNCTION_NAME_IMMUTABLE: &str = "\0function_name_immutable";

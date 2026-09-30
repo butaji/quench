@@ -88,6 +88,7 @@ pub(crate) fn to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> 
     if !crate::value::is_object(value) || is_symbol(value) {
         return Ok(value.clone());
     }
+    let _stack = crate::value::error::enter_stack()?;
     let exotic = crate::execute::get_property_result(value, "Symbol.toPrimitive")?;
     if !matches!(exotic, Value::Undefined | Value::Null) {
         return call_primitive(&exotic, value, &[Value::String(hint.to_string())]);

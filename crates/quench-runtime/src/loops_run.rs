@@ -67,6 +67,7 @@ struct LoopRequest<'a> {
 }
 
 fn run_loop(request: LoopRequest<'_>) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     stacker::maybe_grow(64 * 1024 * 1024, 256 * 1024 * 1024, || {
         run_loop_inner(request)
     })

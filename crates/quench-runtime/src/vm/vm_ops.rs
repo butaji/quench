@@ -75,6 +75,7 @@ pub(crate) fn take_call_continuation(
 /// before returning a VM error, so resource exhaustion cannot leak a moved
 /// register file or panic in Rust allocation code.
 struct ActiveCall {
+    _stack: quench_stack::StackGuard,
     continuation: crate::completion::CallContinuation,
     code: crate::machine::FunctionCode,
     registers: crate::register_file::RegisterFile,
@@ -200,6 +201,10 @@ fn execute_call_continuation_inner(
         if crate::with_scope::is_active() {
             return StartedCall::Fallback(continuation);
         }
+        let stack_guard = match crate::functions::enter_function_stack(function) {
+            Ok(guard) => guard,
+            Err(error) => return StartedCall::Error(error, continuation),
+        };
         let receiver = crate::vm::bare_call_receiver(function, &continuation.receiver);
         let (callee_registers, environment) =
             crate::functions::build_registers(function, &receiver, &continuation.arguments);
@@ -209,6 +214,7 @@ fn execute_call_continuation_inner(
         // semantic handler or fallback is duplicated by that plan.
         let _ = function.code.enter_invocation();
         StartedCall::Active(ActiveCall {
+            _stack: stack_guard,
             code: function.code.clone(),
             continuation,
             registers: callee_registers,
@@ -374,6 +380,8 @@ fn execute_call_continuation_inner(
                 // tail call.  Treat it as a frame replacement, not as an
                 // unconsumed completion: otherwise nested assert.throws sees an
                 // internal EvalError instead of the callback's own error value.
+                // Tail calls replace an activation and release its reservation first.
+                drop(current._stack);
                 let parent = current.continuation;
                 let tail = crate::completion::CallContinuation::new(
                     request.callee,

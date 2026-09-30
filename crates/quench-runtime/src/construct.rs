@@ -106,6 +106,7 @@ fn construct_with_new_target(
     new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    let _stack = crate::value::error::enter_stack()?;
     let target = peel_construct_value(target);
     let new_target = peel_construct_value(new_target);
     match &target {
