@@ -341,54 +341,77 @@ pub(crate) fn is_html_dda(value: &Value) -> bool {
     }
 }
 
+/// Walk transparent wrappers without invoking proxy traps or recursing in Rust.
+/// Mutable binding aliases need cycle detection; immutable proxy chains do not.
+pub(crate) fn classify_wrapped_value<T>(
+    value: &Value,
+    classify: impl FnOnce(&Value) -> T,
+) -> Option<T> {
+    let mut owner = std::borrow::Cow::Borrowed(value);
+    let mut bindings = std::collections::HashSet::new();
+    loop {
+        let mut value = owner.as_ref();
+        while let Value::Proxy(proxy) = value {
+            value = &proxy.target;
+        }
+        if let Value::BindingCell(cell) = value {
+            if !bindings.insert(std::rc::Rc::as_ptr(cell)) {
+                return None;
+            }
+            owner = std::borrow::Cow::Owned(cell.load());
+            continue;
+        }
+        return Some(classify(value));
+    }
+}
+
 /// `IsCallable` — hosts query this to validate callback arguments.
 pub fn is_callable(value: &Value) -> bool {
-    if let Value::BindingCell(cell) = value {
-        return is_callable(&cell.borrow());
-    }
-    match value {
-        // Function.prototype is the one intrinsic prototype that is itself
-        // callable; invoking it accepts any arguments and returns undefined.
-        Value::Builtin(crate::ops::Builtin::FunctionPrototype) => true,
-        Value::Builtin(
-            crate::ops::Builtin::Math
-            | crate::ops::Builtin::Json
-            | crate::ops::Builtin::Reflect
-            | crate::ops::Builtin::Atomics
-            | crate::ops::Builtin::Intl
-            | crate::ops::Builtin::Temporal
-            | crate::ops::Builtin::TemporalNow,
-        ) => false,
-        Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
-        Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
-            false
-        }
-        Value::Builtin(_) | Value::Function(_) | Value::HostCapability(_) => true,
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(target) if crate::builtins::object::is_intrinsic_prototype(target)
-            ) =>
-        {
-            false
-        }
-        Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(
+    classify_wrapped_value(value, |value| {
+        match value {
+            // Function.prototype is the one intrinsic prototype that is itself
+            // callable; invoking it accepts any arguments and returns undefined.
+            Value::Builtin(crate::ops::Builtin::FunctionPrototype) => true,
+            Value::Builtin(
+                crate::ops::Builtin::Math
+                | crate::ops::Builtin::Json
+                | crate::ops::Builtin::Reflect
+                | crate::ops::Builtin::Atomics
+                | crate::ops::Builtin::Intl
+                | crate::ops::Builtin::Temporal
+                | crate::ops::Builtin::TemporalNow,
+            ) => false,
+            Value::Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => false,
+            Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
+                false
+            }
+            Value::Builtin(_) | Value::Function(_) | Value::HostCapability(_) => true,
+            Value::BoundFunction(bound)
+                if matches!(
                     bound.target,
-                    Value::Builtin(
-                        crate::ops::Builtin::AsyncFunctionPrototype
-                            | crate::ops::Builtin::GeneratorFunctionPrototype
-                            | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
-                    )
+                    Value::Builtin(target) if crate::builtins::object::is_intrinsic_prototype(target)
                 ) =>
-        {
-            false
+            {
+                false
+            }
+            Value::BoundFunction(bound)
+                if crate::vm::is_intrinsic_bound(bound)
+                    && matches!(
+                        bound.target,
+                        Value::Builtin(
+                            crate::ops::Builtin::AsyncFunctionPrototype
+                                | crate::ops::Builtin::GeneratorFunctionPrototype
+                                | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
+                        )
+                    ) =>
+            {
+                false
+            }
+            Value::BoundFunction(_) => true,
+            _ => false,
         }
-        Value::BoundFunction(_) => true,
-        Value::Proxy(proxy) => is_callable(&proxy.target),
-        _ => false,
-    }
+    })
+    .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -402,6 +425,44 @@ mod tests {
             ));
         }
         Ok(crate::intl::tolocale::value::to_number(Some(value)))
+    }
+
+    #[test]
+    fn regression_callable_binding_walks_are_stack_independent_and_cycle_safe() {
+        const BINDING_STRESS_DEPTH: usize = 20_000;
+        let mut value = Value::Builtin(crate::ops::Builtin::Number);
+        let mut owners = Vec::new();
+        for _ in 0..BINDING_STRESS_DEPTH {
+            owners.push(value.clone());
+            value = Value::BindingCell(crate::value::BindingCell::new(value));
+        }
+        assert!(super::is_callable(&value));
+        assert_eq!(crate::intl::tolocale::value::type_of(&value), "function");
+        drop(value);
+        while owners.pop().is_some() {}
+
+        let cell = crate::value::BindingCell::new(Value::Undefined);
+        cell.store(Value::BindingCell(std::rc::Rc::clone(&cell)));
+        assert!(!super::is_callable(&Value::BindingCell(
+            std::rc::Rc::clone(&cell)
+        )));
+        assert_eq!(
+            crate::intl::tolocale::value::type_of(&Value::BindingCell(std::rc::Rc::clone(&cell))),
+            "undefined"
+        );
+        cell.store(Value::Undefined);
+
+        let cell = crate::value::BindingCell::new(Value::Undefined);
+        let proxy = Value::Proxy(std::rc::Rc::new(crate::value::ProxyValue {
+            target: Value::BindingCell(std::rc::Rc::clone(&cell)),
+            handler: Value::Builtin(crate::ops::Builtin::Math),
+            revoked: std::rc::Rc::new(std::cell::RefCell::new(false)),
+            private_slots: Default::default(),
+        }));
+        cell.store(proxy.clone());
+        assert!(!super::is_callable(&proxy));
+        assert_eq!(crate::intl::tolocale::value::type_of(&proxy), "undefined");
+        cell.store(Value::Undefined);
     }
 
     #[test]
