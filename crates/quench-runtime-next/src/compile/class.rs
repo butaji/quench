@@ -875,6 +875,10 @@ impl Compiler<'_> {
         );
         let allocator = Allocator::with_capacity(source.len().saturating_mul(6));
         let parsed = Parser::new(&allocator, &source, SourceType::script()).parse();
+        if parsed.stack_exhausted {
+            self.errors.push(Diagnostic::stack_exhausted(self.source));
+            return None;
+        }
         if !parsed.diagnostics.is_empty() {
             self.reject(accessor.span, "could not lower class auto-accessor methods");
             return None;

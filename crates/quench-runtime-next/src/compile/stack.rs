@@ -38,6 +38,13 @@ impl<'a> Visit<'a> for Validator {
     }
 }
 
+pub(super) fn validate_parsed(parsed: &oxc_parser::ParserReturn<'_>) -> Result<(), ()> {
+    if parsed.stack_exhausted {
+        return Err(());
+    }
+    validate(&parsed.program)
+}
+
 pub(super) fn validate(program: &Program<'_>) -> Result<(), ()> {
     let mut validator = Validator::default();
     validator.visit_program(program);
@@ -47,6 +54,62 @@ pub(super) fn validate(program: &Program<'_>) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use crate::Engine;
+
+    #[test]
+    fn regression_generated_accessor_parser_preserves_resource_exhaustion() {
+        let source = "class C { accessor x; }";
+        assert!(Engine::specialize(source, "<accessor>").is_ok());
+        for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
+            let mut guards = Vec::new();
+            while let Ok(guard) = crate::stack::StackGuard::enter() {
+                guards.push(guard);
+            }
+            // A class declaration fits in one remaining statement transition;
+            // its generated getter/setter bodies require additional transitions.
+            drop(guards.pop());
+            let errors = specialize(source, "<accessor-budget>").err().unwrap();
+            assert!(
+                errors.iter().any(|error| error.is_stack_exhausted()),
+                "{errors:?}"
+            );
+            drop(guards);
+            assert!(specialize(source, "<recovery>").is_ok());
+        }
+    }
+
+    #[test]
+    fn regression_deep_parser_transitions_fail_as_exhaustion_and_recover() {
+        const PARSER_STRESS_DEPTH: usize = 20_000;
+        std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                let depth = PARSER_STRESS_DEPTH;
+                let cases = [
+                    format!("{}1{}", "(".repeat(depth), ")".repeat(depth)),
+                    format!("{}0", "!".repeat(depth)),
+                    format!("{}Object", "new ".repeat(depth)),
+                    format!("{}0;", "if (true) ".repeat(depth)),
+                    format!("let {}a{} = [];", "[".repeat(depth), "]".repeat(depth)),
+                    format!("{}1;", "a=".repeat(depth)),
+                    format!("{}0;{}", "{".repeat(depth), "}".repeat(depth)),
+                    format!("async {}1{}", "(".repeat(depth), ")".repeat(depth)),
+                    format!("{}a", "++".repeat(depth)),
+                    format!("async function f() {{ {}0; }}", "await ".repeat(depth)),
+                ];
+                for (index, source) in cases.iter().enumerate() {
+                    assert!(!Engine::static_module_has_early_error(source));
+                    for specialize in [Engine::specialize, Engine::specialize_unspecialized] {
+                        let errors = specialize(source, "<deep-parser>").err().unwrap();
+                        assert_eq!(errors.len(), 1, "case {index}");
+                        assert!(errors[0].is_stack_exhausted(), "case {index}: {errors:?}");
+                        assert!(specialize("1 + 2", "<recovery>").is_ok());
+                    }
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn regression_deep_ast_fails_before_semantic_analysis_and_recovers() {
