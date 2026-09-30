@@ -1044,6 +1044,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn regression_arrow_captures_enclosing_arguments_length() {
+        assert_output_in_execution_modes(
+            r#"
+            function countArguments(a, b, c, d) {
+                return (() => arguments.length)();
+            }
+            print(countArguments());
+            print(countArguments(1, 2, 3));
+            print(countArguments(1, 2, 3, 4));
+            "#,
+            &["0", "3", "4"],
+        );
+    }
+
 }
 
 #[cfg(test)]
