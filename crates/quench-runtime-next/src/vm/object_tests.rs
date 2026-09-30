@@ -328,18 +328,29 @@ fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
 fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
     let source = r#"
       var getter = function() { return 7; };
+      var setter = function(value) {};
       var ordinary = {};
       var indexed = [];
+      var ordinarySetter = {};
+      var indexedSetter = [];
       Object.defineProperty(ordinary, "value", { get: getter, configurable: false });
       Object.defineProperty(indexed, "0", { get: getter, configurable: false });
+      Object.defineProperty(ordinarySetter, "value", { set: setter, configurable: false });
+      Object.defineProperty(indexedSetter, "0", { set: setter, configurable: false });
       Object.defineProperty(ordinary, "value", { get: getter });
       Object.defineProperty(indexed, "0", { get: getter });
+      Object.defineProperty(ordinarySetter, "value", { set: setter });
+      Object.defineProperty(indexedSetter, "0", { set: setter });
       print(ordinary.value);
       print(indexed[0]);
       try { Object.defineProperty(ordinary, "value", { get: function() { return 8; } }); }
       catch (error) { print("ordinary-rejected"); }
       try { Object.defineProperty(indexed, "0", { get: function() { return 8; } }); }
       catch (error) { print("indexed-rejected"); }
+      try { Object.defineProperty(ordinarySetter, "value", { set: function(value) {} }); }
+      catch (error) { print("ordinary-setter-rejected"); }
+      try { Object.defineProperty(indexedSetter, "0", { set: function(value) {} }); }
+      catch (error) { print("indexed-setter-rejected"); }
     "#;
     for (mode, compile) in [
         ("specialized", Engine::specialize as fn(&str, &str) -> _),
@@ -351,7 +362,14 @@ fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
-            ["7", "7", "ordinary-rejected", "indexed-rejected"],
+            [
+                "7",
+                "7",
+                "ordinary-rejected",
+                "indexed-rejected",
+                "ordinary-setter-rejected",
+                "indexed-setter-rejected",
+            ],
             "{mode}"
         );
     }
