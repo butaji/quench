@@ -329,7 +329,7 @@ impl<H: Host> Vm<H> {
         let metadata = p.method_sites[site];
         let start = metadata.argument_start as usize;
         let args = &p.method_arguments[start..start + metadata.argument_count as usize];
-        let callee = self.get_property(p, this, metadata.atom)?;
+        let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
         let arguments =
             CallArguments::from_values(args.iter().map(|register| self.read(_frame, *register)));
         self.call_value(p, callee, this, arguments.as_slice())

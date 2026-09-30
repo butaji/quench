@@ -121,3 +121,34 @@ fn warmed_field_cache_tracks_prototype_changes_and_rejects_cycles() {
         );
     }
 }
+
+#[test]
+fn optional_method_call_field_cache_observes_callable_replacement() {
+    let source = r#"
+      var receiver = { method: function() { return 1; } };
+      function callMethod(value) { return value.method?.(); }
+      print(callMethod(receiver));
+      receiver.method = function() { return 2; };
+      print(callMethod(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "optional-method-cache-write.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2"], "{mode}");
+
+        if vm.specialized {
+            let method = vm.intern_atom("method");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .any(|entry| entry.atom == method && entry.receiver != u32::MAX),
+                "optional method lookup should populate its field cache"
+            );
+        }
+    }
+}
