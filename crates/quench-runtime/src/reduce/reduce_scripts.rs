@@ -115,7 +115,7 @@ fn merge_facts(target: &mut ProgramDb, source: ProgramDb) {
 }
 
 fn reject_parse_errors(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
-    if parsed.stack_exhausted {
+    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors) {
         return Err(crate::compiler_stack::errors());
     }
     if parsed.panicked || !parsed.errors.is_empty() {

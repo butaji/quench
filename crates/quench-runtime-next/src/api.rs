@@ -208,6 +208,50 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_parser_exhaustion_preserves_syntax_error_and_recovers() {
+        std::thread::Builder::new()
+            .stack_size(crate::WORKER_STACK_SIZE)
+            .spawn(|| {
+                assert_output_in_execution_modes(
+                    r#"
+                    var intrinsicSyntaxError = SyntaxError;
+                    var intrinsicRangeError = RangeError;
+                    SyntaxError = function() { throw 'replaced'; };
+                    RangeError = function() { throw 'replaced'; };
+                    var regexpStressDepth = 20000;
+                    var source = '['.repeat(regexpStressDepth) + 'a' + ']'.repeat(regexpStressDepth);
+                    var receiver = /a/;
+                    receiver.lastIndex = 7;
+                    for (var mode = 0; mode < 4; mode++) {
+                        try {
+                            if (mode === 0) new RegExp(source, 'v');
+                            else if (mode === 1) eval('/' + source + '/v');
+                            else if (mode === 2) Function('return /' + source + '/v');
+                            else receiver.compile(source, 'v');
+                            print('missing error');
+                        } catch (error) {
+                            print(error instanceof (mode === 1 || mode === 2 ? intrinsicRangeError : intrinsicSyntaxError));
+                            print(error.message.endsWith('Maximum call stack size exceeded'));
+                        }
+                        print(receiver.source);
+                        print(receiver.lastIndex);
+                        print(/a/.test('a'));
+                    }
+                    "#,
+                    &[
+                        "true", "true", "a", "7", "true",
+                        "true", "true", "a", "7", "true",
+                        "true", "true", "a", "7", "true",
+                        "true", "true", "a", "7", "true",
+                    ],
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
     fn regression_dynamic_compiler_exhaustion_is_catchable_and_recovers() {
         std::thread::Builder::new()
             .stack_size(crate::WORKER_STACK_SIZE)

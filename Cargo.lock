@@ -2158,8 +2158,6 @@ dependencies = [
 [[package]]
 name = "oxc_regular_expression"
 version = "0.47.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d495804e1bf588e5e1a2d6fe760ff1ba53ece5cbf04e4dce531da64014869fea"
 dependencies = [
  "oxc_allocator 0.47.1",
  "oxc_ast_macros 0.47.1",
@@ -2167,6 +2165,7 @@ dependencies = [
  "oxc_estree 0.47.1",
  "oxc_span 0.47.1",
  "phf 0.11.3",
+ "quench-stack",
  "rustc-hash",
  "unicode-id-start",
 ]
@@ -2848,6 +2847,7 @@ dependencies = [
  "icu_casemap",
  "icu_properties",
  "oxc",
+ "quench-stack",
  "regex",
 ]
 

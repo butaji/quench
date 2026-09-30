@@ -160,13 +160,18 @@ pub(super) fn block_early_error(program: &Program<'_>, strict: bool) -> Option<S
     validate_nested(&program.body, strict)
 }
 
-pub(super) fn regexp_early_error(program: &Program<'_>) -> Option<String> {
+pub(super) enum RegExpEarlyError {
+    Syntax(String),
+    StackExhausted,
+}
+
+pub(super) fn regexp_early_error(program: &Program<'_>) -> Option<RegExpEarlyError> {
     let mut validator = RegExpEarlyErrors(None);
     validator.visit_program(program);
     validator.0
 }
 
-struct RegExpEarlyErrors(Option<String>);
+struct RegExpEarlyErrors(Option<RegExpEarlyError>);
 
 impl<'a> Visit<'a> for RegExpEarlyErrors {
     fn visit_reg_exp_literal(&mut self, literal: &oxc_ast::ast::RegExpLiteral<'a>) {
@@ -180,11 +185,15 @@ impl<'a> Visit<'a> for RegExpEarlyErrors {
         let pattern = &text[1..separator];
         let flags = &text[separator + 1..];
         if let Err(error) = validate_modifier_groups(pattern) {
-            self.0 = Some(error);
+            self.0 = Some(RegExpEarlyError::Syntax(error));
             return;
         }
         if let Err(error) = super::regexp::validate_pattern(pattern, flags) {
-            self.0 = Some(error);
+            self.0 = Some(if quench_regexp::is_stack_exhaustion_message(&error) {
+                RegExpEarlyError::StackExhausted
+            } else {
+                RegExpEarlyError::Syntax(error)
+            });
         }
     }
 }

@@ -408,7 +408,7 @@ pub struct Vm<H> {
     async_from_sync_iterator_proto: Value,
     regexp_proto: Value,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
-    range_error_prototypes: FxHashMap<Value, Value>,
+    error_prototypes: FxHashMap<(Value, Native), Value>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
     intl_number_format_fallback_symbols: FxHashMap<Value, Value>,
