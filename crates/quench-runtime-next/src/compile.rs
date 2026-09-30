@@ -2231,13 +2231,6 @@ impl<'a> Compiler<'a> {
             .register()
             .unwrap_or_else(|| function.literal(Constant::Undefined));
         function.emit(Op::Return, result, 0, 0, 0);
-        let arguments_slot = arguments_slot.filter(|slot| {
-            function.code.iter().any(|instruction| {
-                instruction.op() == Op::LoadLocal && instruction.local_slot() == usize::from(*slot)
-            }) || function.wide.iter().any(|instruction| {
-                instruction.op() == Op::LoadLocal && instruction.local_slot() == usize::from(*slot)
-            })
-        });
         let captures_locals = function
             .code
             .iter()
@@ -2246,6 +2239,17 @@ impl<'a> Compiler<'a> {
                 .wide
                 .iter()
                 .any(|instruction| instruction.op() == Op::MakeClosure);
+        let arguments_slot = arguments_slot.filter(|slot| {
+            captures_locals
+                || function.code.iter().any(|instruction| {
+                    instruction.op() == Op::LoadLocal
+                        && instruction.local_slot() == usize::from(*slot)
+                })
+                || function.wide.iter().any(|instruction| {
+                    instruction.op() == Op::LoadLocal
+                        && instruction.local_slot() == usize::from(*slot)
+                })
+        });
         if captures_locals {
             for instruction in &mut function.code {
                 let op = match instruction.op() {
