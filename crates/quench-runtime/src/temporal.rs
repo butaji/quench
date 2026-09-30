@@ -12,29 +12,6 @@ pub(crate) mod plain_year_month;
 
 const MAX_EPOCH_NANOSECONDS: i128 = 8_640_000_000_000_000_000_000;
 
-fn round_quotient(delta: i128, quantum: i128, mode: &str) -> i128 {
-    let quotient = delta / quantum;
-    let remainder = delta % quantum;
-    if remainder == 0 {
-        return quotient;
-    }
-    let sign = delta.signum();
-    let distance = remainder.abs();
-    let adjust = match mode {
-        "trunc" => false,
-        "floor" => sign < 0,
-        "ceil" => sign > 0,
-        "expand" => true,
-        "halfTrunc" => distance * 2 > quantum,
-        "halfExpand" => distance * 2 >= quantum,
-        "halfFloor" => distance * 2 > quantum || sign < 0 && distance * 2 == quantum,
-        "halfCeil" => distance * 2 > quantum || sign > 0 && distance * 2 == quantum,
-        "halfEven" => distance * 2 > quantum || distance * 2 == quantum && quotient % 2 != 0,
-        _ => false,
-    };
-    quotient + if adjust { sign } else { 0 }
-}
-
 fn temporal_property_number(
     value: &crate::value::Value,
     name: &str,
@@ -3871,7 +3848,9 @@ mod stubs {
                     return crate::temporal::duration::construct(&fields);
                 }
                 let quantum = 86_400_000_000_000_i128 * increment_number.unwrap_or(1.0) as i128;
-                let rounded = super::round_quotient(delta, quantum, &rounding_mode) * quantum;
+                let rounded =
+                    quench_temporal::round_temporal_nanoseconds(delta, quantum, &rounding_mode)
+                        * quantum;
                 let mut fields = vec![Value::Number(0.0); 10];
                 fields[3] = Value::Number((rounded / 86_400_000_000_000) as f64);
                 return crate::temporal::duration::construct(&fields);
