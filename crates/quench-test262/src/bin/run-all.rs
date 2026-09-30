@@ -3,10 +3,9 @@ use std::{env, path::PathBuf, process::ExitCode};
 use quench_test262::{discover_js_files, HarnessCache, RuntimeHost, Test262Runner};
 
 fn main() -> ExitCode {
-    const STACK_SIZE: usize = 512 * 1024 * 1024;
     let handle = match std::thread::Builder::new()
         .name("run-all-main".to_string())
-        .stack_size(STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run_all_entry)
     {
         Ok(handle) => handle,

@@ -17,10 +17,6 @@ use quench_runtime::vm::OutputSink;
 
 use crate::reader::{NodeFixture, NodeOutcome, NodeRunner};
 
-/// Thread stack for fixture runs; deeply recursive fixtures need
-/// more than the default spawned-thread stack.
-const FIXTURE_STACK_SIZE: usize = 256 * 1024 * 1024;
-
 pub struct NodeTestRunner {
     sink: OutputSink,
 }
@@ -70,7 +66,7 @@ impl NodeTestRunner {
     fn run_fixture(&mut self, fixture: NodeFixture) -> NodeOutcome {
         let sink = self.sink.clone();
         let handle = std::thread::Builder::new()
-            .stack_size(FIXTURE_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(move || NodeRunner::new().with_output_sink(sink).run(&fixture));
         match handle {
             Ok(join) => match join.join() {

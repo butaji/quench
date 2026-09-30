@@ -153,7 +153,7 @@ fn run_self_interleaved(path: &Path, harness_root: &Path, workers: usize) -> Tes
         let last = Arc::clone(&last);
         handles.push(
             thread::Builder::new()
-                .stack_size(128 * 1024 * 1024)
+                .stack_size(quench_runtime::WORKER_STACK_SIZE)
                 .spawn(move || {
                     let outcome = run_one_individually(&path, &harness_root);
                     *last.lock().unwrap() = Some(outcome);
@@ -199,7 +199,7 @@ fn collect_outcomes_in_parallel(files: &[PathBuf], harness_root: &Path) -> Vec<(
         let results = Arc::clone(&results);
         handles.push(
             thread::Builder::new()
-                .stack_size(128 * 1024 * 1024)
+                .stack_size(quench_runtime::WORKER_STACK_SIZE)
                 .spawn(move || {
                     let outcome = run_one_individually(&path, &harness_root);
                     results.lock().unwrap().push((path, outcome));

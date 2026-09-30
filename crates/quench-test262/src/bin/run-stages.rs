@@ -24,10 +24,9 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    const STACK_SIZE: usize = 256 * 1024 * 1024;
     let handle = match std::thread::Builder::new()
         .name("run-stages-main".to_string())
-        .stack_size(STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run_stages_entry)
     {
         Ok(handle) => handle,
