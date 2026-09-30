@@ -239,6 +239,11 @@ fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
         vm.shapes[shape as usize].storage_len,
         super::object::FIELD_CACHE_SLOT_CAPACITY + 1
     );
+    #[cfg(feature = "profile-aggregate")]
+    assert_eq!(
+        vm.profile.dictionary_transitions[super::DictionaryTrigger::PropertyCount.index()],
+        1
+    );
 }
 
 #[test]
