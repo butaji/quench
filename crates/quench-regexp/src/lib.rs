@@ -581,8 +581,14 @@ fn has_bare_dot(source: &str) -> bool {
 
 fn compiled_source_syntax_is_safe(source: &str) -> bool {
     let mut escaped = false;
-    for byte in source.bytes() {
+    let mut bytes = source.bytes().peekable();
+    while let Some(byte) = bytes.next() {
         if escaped {
+            // In legacy mode, \u{n} is identity escape `u` followed by a
+            // quantifier; the backend treats it as a Unicode code point.
+            if byte == b'u' && bytes.peek() == Some(&b'{') {
+                return false;
+            }
             // The byte regexp backend accepts a narrower identity-escape
             // language than ECMAScript. Route legacy identity escapes to the
             // repository matcher instead of changing the matched value.
@@ -818,9 +824,7 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 value: property.value.as_ref().map(ToString::to_string),
             }],
         }),
-        ast::Term::CharacterClass(class) => {
-            Expr::Class(lower_class(class, &lowering.source))
-        }
+        ast::Term::CharacterClass(class) => Expr::Class(lower_class(class, &lowering.source)),
         ast::Term::CapturingGroup(group) => {
             let index = lowering.next_capture;
             lowering.next_capture += 1;
