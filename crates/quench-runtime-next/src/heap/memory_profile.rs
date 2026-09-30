@@ -167,38 +167,48 @@ impl Heap {
 }
 
 fn cell_bytes(cell: &Cell) -> usize {
-    match cell {
-        Cell::Object(_)
-        | Cell::Function { .. }
-        | Cell::ShadowRealm { .. }
-        | Cell::PromiseResolvingState { .. }
-        | Cell::TemporalDuration { .. } => 0,
-        Cell::TemporalInstant { .. } => 0,
-        Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
-        Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
-        Cell::TemporalPlainMonthDay { calendar, .. }
-        | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
-        Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
-        Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-        Cell::TypedArray { .. } => 0,
-        Cell::DataView { .. } => 0,
-        Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
-        Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-        Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-        Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
-        Cell::WeakRef { .. } => 0,
-        Cell::FinalizationRegistry { .. } => 0,
-        Cell::Iterator { .. } | Cell::Proxy { .. } => 0,
-        Cell::ArrayFromAsyncState(_) => 0,
-        Cell::Environment {
-            slots,
-            with_objects,
-            ..
-        } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
-        Cell::String(value) => value.capacity(),
-        Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-        Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
-        Cell::Date { .. } => 0,
-        Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
-    }
+    let object_extra_bytes = cell
+        .object()
+        .map_or(0, |object| object.allocated_extra_bytes());
+    object_extra_bytes
+        + match cell {
+            Cell::Object(_)
+            | Cell::Function { .. }
+            | Cell::ShadowRealm { .. }
+            | Cell::PromiseResolvingState { .. }
+            | Cell::TemporalDuration { .. }
+            | Cell::TemporalInstant { .. }
+            | Cell::TypedArray { .. }
+            | Cell::DataView { .. }
+            | Cell::WeakRef { .. }
+            | Cell::FinalizationRegistry { .. }
+            | Cell::Iterator { .. }
+            | Cell::Proxy { .. }
+            | Cell::ArrayFromAsyncState(_) => 0,
+            Cell::TemporalZonedDateTime {
+                time_zone,
+                calendar,
+                ..
+            } => time_zone.capacity() + calendar.capacity(),
+            Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
+            Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
+            Cell::TemporalPlainMonthDay { calendar, .. }
+            | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
+            Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+            Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+            Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
+            Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+            Cell::Environment {
+                slots,
+                with_objects,
+                ..
+            } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
+            Cell::String(value) => value.capacity(),
+            Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+            Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+            Cell::Date { .. } => 0,
+            Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+        }
 }

@@ -83,10 +83,11 @@ pub(crate) enum CellKind {
     TemporalPlainMonthDay,
     TemporalPlainYearMonth,
     TemporalZonedDateTime,
+    TemporalInstant,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
-    pub(crate) const COUNT: usize = Self::TemporalZonedDateTime as usize + 1;
+    pub(crate) const COUNT: usize = Self::TemporalInstant as usize + 1;
     #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
@@ -112,6 +113,7 @@ impl CellKind {
         "temporal_plain_month_day",
         "temporal_plain_year_month",
         "temporal_zoned_date_time",
+        "temporal_instant",
     ];
 }
 #[derive(Default)]
@@ -189,16 +191,7 @@ impl Heap {
         second: Value,
     ) -> Value {
         let properties = self.properties.pair(shape, first, second);
-        self.alloc(Cell::Object(Object {
-            proto,
-            properties,
-            arguments_map: None,
-            arguments_object: false,
-            module_namespace: false,
-            module_bindings: Vec::new(),
-            deferred_module: None,
-            private_names: Vec::new(),
-        }))
+        self.alloc(Cell::Object(Object::new(proto, properties)))
     }
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
@@ -492,7 +485,7 @@ impl Heap {
         let mut object = |object: &Object| {
             work.push(object.proto);
             shape_roots(object.shape(), work);
-            work.extend(object.private_names.iter().map(|brand| brand.home));
+            work.extend(object.private_names().iter().map(|brand| brand.home));
             properties.append_live_values(object.properties, work);
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
@@ -702,49 +695,55 @@ impl Heap {
             Cell::TemporalPlainMonthDay { .. } => CellKind::TemporalPlainMonthDay,
             Cell::TemporalPlainYearMonth { .. } => CellKind::TemporalPlainYearMonth,
             Cell::TemporalZonedDateTime { .. } => CellKind::TemporalZonedDateTime,
+            Cell::TemporalInstant { .. } => CellKind::TemporalInstant,
         }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_payload_bytes(cell: &Cell) -> usize {
-        match cell {
-            Cell::Object(_)
-            | Cell::ShadowRealm { .. }
-            | Cell::Iterator { .. }
-            | Cell::ArrayFromAsyncState(_)
-            | Cell::Proxy { .. }
-            | Cell::Date { .. }
-            | Cell::PromiseResolvingState { .. } => 0,
-            Cell::TemporalDuration { .. } => 0,
-            Cell::TemporalPlainDate { calendar, .. }
-            | Cell::TemporalPlainDateTime { calendar, .. }
-            | Cell::TemporalPlainMonthDay { calendar, .. }
-            | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
-            Cell::TemporalZonedDateTime {
-                time_zone,
-                calendar,
-                ..
-            } => time_zone.capacity() + calendar.capacity(),
-            Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
-            Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
-            Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
-            Cell::TypedArray { .. } => 0,
-            Cell::DataView { .. } => 0,
-            Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
-            Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
-            Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::WeakRef { .. } => 0,
-            Cell::FinalizationRegistry { .. } => 0,
-            Cell::Function { .. } => size_of::<Object>(),
-            Cell::Environment {
-                slots,
-                with_objects,
-                ..
-            } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
-            Cell::String(value) => value.capacity(),
-            Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
-            Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
-        }
+        let object_extra_bytes = cell
+            .object()
+            .map_or(0, |object| object.allocated_extra_bytes());
+        object_extra_bytes
+            + match cell {
+                Cell::Object(_)
+                | Cell::ShadowRealm { .. }
+                | Cell::Iterator { .. }
+                | Cell::ArrayFromAsyncState(_)
+                | Cell::Proxy { .. }
+                | Cell::Date { .. }
+                | Cell::PromiseResolvingState { .. }
+                | Cell::TemporalDuration { .. }
+                | Cell::TemporalInstant { .. }
+                | Cell::TypedArray { .. }
+                | Cell::DataView { .. }
+                | Cell::WeakRef { .. }
+                | Cell::FinalizationRegistry { .. } => 0,
+                Cell::TemporalPlainDate { calendar, .. }
+                | Cell::TemporalPlainDateTime { calendar, .. }
+                | Cell::TemporalPlainMonthDay { calendar, .. }
+                | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
+                Cell::TemporalZonedDateTime {
+                    time_zone,
+                    calendar,
+                    ..
+                } => time_zone.capacity() + calendar.capacity(),
+                Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+                Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+                Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+                Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+                Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
+                Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
+                Cell::Function { .. } => size_of::<Object>(),
+                Cell::Environment {
+                    slots,
+                    with_objects,
+                    ..
+                } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
+                Cell::String(value) => value.capacity(),
+                Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
+                Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
+            }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn size_bucket(bytes: usize) -> usize {

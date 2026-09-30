@@ -501,7 +501,7 @@ impl<H: Host> Vm<H> {
                     let extensible = self.object_data(object).is_some_and(Object::is_extensible);
                     let already_branded = self
                         .object_data(object)
-                        .is_some_and(|object| object.private_names.contains(&brand));
+                        .is_some_and(|object| object.has_private_name(brand));
                     if !extensible {
                         return Err(self.type_error(
                             p,
@@ -515,10 +515,8 @@ impl<H: Host> Vm<H> {
                         ));
                     }
                 }
-                if let Some(object) = self.object_data_mut(object)
-                    && !object.private_names.contains(&brand)
-                {
-                    object.private_names.push(brand);
+                if let Some(object) = self.object_data_mut(object) {
+                    object.add_private_name(brand);
                 }
             }
             Op::ResolveName => {

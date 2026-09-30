@@ -34,7 +34,7 @@ impl<H: Host> Vm<H> {
         };
         let Some(index) = self
             .object_data(arguments)
-            .and_then(|object| object.arguments_map.as_ref())
+            .and_then(Object::arguments_map)
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
         };
         let Some(index) = self
             .object_data(arguments)
-            .and_then(|object| object.arguments_map.as_ref())
+            .and_then(Object::arguments_map)
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
             if has_arguments
                 && let Some(slot) = self
                     .object_data(object)
-                    .and_then(|object| object.arguments_map.as_ref())
+                    .and_then(Object::arguments_map)
                     .and_then(|mapping| mapping.get(index).copied())
                     .filter(|slot| *slot != u16::MAX)
             {
@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
         if let Some(mapping) = self
             .object_data_mut(object)
-            .and_then(|object| object.arguments_map.as_mut())
+            .and_then(Object::arguments_map_mut)
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

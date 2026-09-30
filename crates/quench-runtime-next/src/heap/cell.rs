@@ -928,12 +928,31 @@ pub(crate) struct Object {
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
-    pub arguments_map: Option<Vec<u16>>,
-    pub arguments_object: bool,
-    pub module_namespace: bool,
-    pub module_bindings: Vec<(Atom, ProgramId, u16)>,
-    pub deferred_module: Option<crate::ModuleSource>,
-    pub private_names: Vec<PrivateBrand>,
+    extras: Option<Box<ObjectExtras>>,
+}
+#[derive(Clone, Debug, Default)]
+struct ObjectExtras {
+    arguments_map: Option<Vec<u16>>,
+    arguments_object: bool,
+    module_namespace: bool,
+    module_bindings: Vec<(Atom, ProgramId, u16)>,
+    deferred_module: Option<crate::ModuleSource>,
+    private_names: Vec<PrivateBrand>,
+}
+impl ObjectExtras {
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self
+                .arguments_map
+                .as_ref()
+                .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
+            + self.module_bindings.capacity() * std::mem::size_of::<(Atom, ProgramId, u16)>()
+            + self.deferred_module.as_ref().map_or(0, |module| {
+                module.name.capacity() + module.source.capacity() + module.bytes.capacity()
+            })
+            + self.private_names.capacity() * std::mem::size_of::<PrivateBrand>()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PrivateBrand {
@@ -961,6 +980,14 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
+    pub(crate) fn new(proto: Value, properties: ValueVec) -> Self {
+        Self {
+            proto,
+            properties,
+            extras: None,
+        }
+    }
+
     pub(crate) fn shape(&self) -> u32 {
         self.properties.auxiliary()
     }
@@ -979,15 +1006,72 @@ impl Object {
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.properties.set_frozen(value);
     }
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        self.extras
+            .get_or_insert_with(|| Box::new(ObjectExtras::default()))
+    }
+    pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
+        self.extras.as_deref()?.arguments_map.as_deref()
+    }
+    pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
+        self.extras.as_deref_mut()?.arguments_map.as_mut()
+    }
+    pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+        self.extras_mut().arguments_map = Some(mapping);
+    }
+    pub(crate) fn set_arguments_object(&mut self) {
+        self.extras_mut().arguments_object = true;
+    }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.arguments_object
+        self.extras
+            .as_deref()
+            .is_some_and(|extras| extras.arguments_object)
     }
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.module_namespace
+        self.extras
+            .as_deref()
+            .is_some_and(|extras| extras.module_namespace)
+    }
+    pub(crate) fn set_module_namespace(&mut self) {
+        self.extras_mut().module_namespace = true;
+    }
+    pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
+        self.extras
+            .as_deref()
+            .map_or(&[], |extras| &extras.module_bindings)
+    }
+    pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
+        self.extras_mut().module_bindings = bindings;
+    }
+    pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
+        self.extras.as_deref()?.deferred_module.as_ref()
+    }
+    pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
+        self.extras_mut().deferred_module = module;
+    }
+    pub(crate) fn private_names(&self) -> &[PrivateBrand] {
+        self.extras
+            .as_deref()
+            .map_or(&[], |extras| &extras.private_names)
+    }
+    pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
+        self.private_names().contains(&brand)
+    }
+    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
+        let names = &mut self.extras_mut().private_names;
+        if !names.contains(&brand) {
+            names.push(brand);
+        }
+    }
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    pub(crate) fn allocated_extra_bytes(&self) -> usize {
+        self.extras
+            .as_deref()
+            .map_or(0, ObjectExtras::allocated_bytes)
     }
 
     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
-        self.module_bindings
+        self.module_bindings()
             .iter()
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
     }

@@ -2163,7 +2163,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
-        object.deferred_module = Some(module.clone());
+        object.set_deferred_module(Some(module.clone()));
         Ok(namespace)
     }
 
@@ -2174,7 +2174,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(module) = self
             .object_data(namespace)
-            .and_then(|object| object.deferred_module.clone())
+            .and_then(|object| object.deferred_module().cloned())
         else {
             return Ok(namespace);
         };
@@ -2225,7 +2225,7 @@ impl<H: Host> Vm<H> {
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
                 if let Some(object) = self.object_data_mut(namespace) {
-                    object.deferred_module = Some(module);
+                    object.set_deferred_module(Some(module));
                 }
                 settled?;
                 Ok(namespace)
@@ -2252,7 +2252,7 @@ impl<H: Host> Vm<H> {
         if triggers_evaluation
             && self
                 .object_data(namespace)
-                .is_some_and(|object| object.deferred_module.is_some())
+                .is_some_and(|object| object.deferred_module().is_some())
         {
             self.evaluate_deferred_module_namespace(p, namespace)?;
         }
@@ -2315,9 +2315,11 @@ impl<H: Host> Vm<H> {
         if let Some(target) = self.object_data_mut(target) {
             target.proto = source.proto;
             target.properties = source.properties;
-            target.module_namespace = source.module_namespace;
-            target.module_bindings = source.module_bindings;
-            target.deferred_module = None;
+            if source.is_module_namespace() {
+                target.set_module_namespace();
+            }
+            target.set_module_bindings(source.module_bindings().to_vec());
+            target.set_deferred_module(None);
         }
         self.invalidate_field_caches();
         self.invalidate_method_caches();
@@ -3140,7 +3142,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let bindings = self
             .object_data(namespace)
-            .map(|object| object.module_bindings.clone())
+            .map(|object| object.module_bindings().to_vec())
             .unwrap_or_default();
         for (atom, program, slot) in bindings {
             let Some(environment) = self.programs.module_environment(program) else {
@@ -4060,7 +4062,7 @@ impl<H: Host> Vm<H> {
         }
         let namespace = self.module_namespace(values)?;
         if let Some(object) = self.object_data_mut(namespace) {
-            object.module_bindings = bindings;
+            object.set_module_bindings(bindings);
         }
         Ok(namespace)
     }
@@ -4068,7 +4070,7 @@ impl<H: Host> Vm<H> {
     fn cached_static_exports(&self, namespace: Value) -> Option<Vec<(String, StaticModuleValue)>> {
         let object = self.object_data(namespace)?;
         let bindings = object
-            .module_bindings
+            .module_bindings()
             .iter()
             .map(|(atom, program, slot)| (*atom, (*program, *slot)))
             .collect::<FxHashMap<_, _>>();
@@ -4188,7 +4190,7 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         if let Some(object) = self.object_data_mut(namespace) {
-            object.module_namespace = true;
+            object.set_module_namespace();
         }
         for (name, value) in exports {
             let atom = self.intern_atom(&name);

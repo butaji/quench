@@ -41,7 +41,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         if let PropertyKey::String(atom) = key
             && let Some(Cell::Object(object)) = self.heap.get(target)
-            && !object.module_namespace
+            && !object.is_module_namespace()
         {
             let exists = self.own_property(target, atom).is_some();
             if exists
