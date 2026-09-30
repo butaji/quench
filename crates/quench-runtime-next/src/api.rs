@@ -1023,3 +1023,7 @@ mod tests {
 #[cfg(test)]
 #[path = "api_promise_tests.rs"]
 mod promise_tests;
+
+#[cfg(test)]
+#[path = "api_iterator_tests.rs"]
+mod iterator_tests;

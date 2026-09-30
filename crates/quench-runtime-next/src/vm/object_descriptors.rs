@@ -105,38 +105,77 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         descriptor: Value,
     ) -> Result<PropertyDescriptorRecord, JsError> {
-        let getter = self.descriptor_field(p, descriptor, "get")?;
-        let setter = self.descriptor_field(p, descriptor, "set")?;
-        let value = self.descriptor_field(p, descriptor, "value")?;
-        let writable = self
-            .descriptor_field(p, descriptor, "writable")?
-            .map(|value| self.truthy(value));
-        let enumerable = self
-            .descriptor_field(p, descriptor, "enumerable")?
-            .map(|value| self.truthy(value));
-        let configurable = self
-            .descriptor_field(p, descriptor, "configurable")?
-            .map(|value| self.truthy(value));
-        for accessor in [getter, setter].into_iter().flatten() {
-            if !accessor.is_undefined() && !self.is_function(accessor) {
-                return Err(self.type_error(p, "Accessor descriptor must be callable".into()));
+        let descriptor_root = self.heap.root(descriptor);
+        let result = (|| {
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let enumerable = self
+                .descriptor_field(p, descriptor, "enumerable")?
+                .map(|value| self.truthy(value));
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let configurable = self
+                .descriptor_field(p, descriptor, "configurable")?
+                .map(|value| self.truthy(value));
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let value = self.descriptor_field(p, descriptor, "value")?;
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let writable = self
+                .descriptor_field(p, descriptor, "writable")?
+                .map(|value| self.truthy(value));
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let getter = self.descriptor_field(p, descriptor, "get")?;
+            let descriptor = self.heap.root_value(descriptor_root).unwrap_or(descriptor);
+            let setter = self.descriptor_field(p, descriptor, "set")?;
+            for accessor in [getter, setter].into_iter().flatten() {
+                if !accessor.is_undefined() && !self.is_function(accessor) {
+                    return Err(self.type_error(p, "Accessor descriptor must be callable".into()));
+                }
             }
-        }
-        let record = PropertyDescriptorRecord {
-            value,
-            writable,
-            enumerable,
-            configurable,
-            getter,
-            setter,
+            let record = PropertyDescriptorRecord {
+                value,
+                writable,
+                enumerable,
+                configurable,
+                getter,
+                setter,
+            };
+            if record.has_accessor_fields() && record.has_data_fields() {
+                return Err(self.type_error(
+                    p,
+                    "Property descriptor cannot mix accessor and data fields".into(),
+                ));
+            }
+            Ok(record)
+        })();
+        self.heap.release_root(descriptor_root);
+        result
+    }
+
+    pub(super) fn complete_property_descriptor(
+        &mut self,
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<Value, JsError> {
+        let enumerable = descriptor.enumerable.unwrap_or(false);
+        let configurable = descriptor.configurable.unwrap_or(false);
+        let attributes = if descriptor.has_accessor_fields() {
+            PropertyAttributes {
+                writable: false,
+                enumerable,
+                configurable,
+                accessor: true,
+                getter: descriptor.getter,
+                setter: descriptor.setter,
+            }
+        } else {
+            PropertyAttributes {
+                writable: descriptor.writable.unwrap_or(false),
+                enumerable,
+                configurable,
+                accessor: false,
+                getter: None,
+                setter: None,
+            }
         };
-        if record.has_accessor_fields() && record.has_data_fields() {
-            return Err(self.type_error(
-                p,
-                "Property descriptor cannot mix accessor and data fields".into(),
-            ));
-        }
-        Ok(record)
+        self.property_descriptor_object(descriptor.value.unwrap_or(Value::UNDEFINED), attributes)
     }
 
     fn own_data_descriptor(
@@ -306,15 +345,39 @@ impl<H: Host> Vm<H> {
                             .into(),
                     ));
                 }
-                let target_descriptor =
-                    self.object_get_own_property_descriptor(p, &[target, key])?;
-                self.validate_proxy_get_own_property_descriptor(
-                    p,
-                    target,
-                    target_descriptor,
-                    Some(result),
-                )?;
-                return Ok(result);
+                let result_root = self.heap.root(result);
+                let normalized = (|| {
+                    let result = self.heap.root_value(result_root).unwrap_or(result);
+                    let record = self.to_property_descriptor(p, result)?;
+                    let normalized = self.complete_property_descriptor(record)?;
+                    let normalized_root = self.heap.root(normalized);
+                    let target_descriptor =
+                        match self.object_get_own_property_descriptor(p, &[target, key]) {
+                            Ok(target_descriptor) => target_descriptor,
+                            Err(error) => {
+                                self.heap.release_root(normalized_root);
+                                return Err(error);
+                            }
+                        };
+                    let target_descriptor_root = self.heap.root(target_descriptor);
+                    let normalized = self.heap.root_value(normalized_root).unwrap_or(normalized);
+                    let target_descriptor = self
+                        .heap
+                        .root_value(target_descriptor_root)
+                        .unwrap_or(target_descriptor);
+                    let validation = self.validate_proxy_get_own_property_descriptor(
+                        p,
+                        target,
+                        target_descriptor,
+                        Some(normalized),
+                    );
+                    self.heap.release_root(target_descriptor_root);
+                    self.heap.release_root(normalized_root);
+                    validation?;
+                    Ok(normalized)
+                })();
+                self.heap.release_root(result_root);
+                return normalized;
             }
             if trap.is_undefined() || trap.is_null() {
                 return self.object_get_own_property_descriptor(
