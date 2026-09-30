@@ -121,6 +121,7 @@ mod proxy;
 pub mod quickening;
 pub mod reduce;
 mod reduce_support;
+mod compiler_stack;
 mod reflect;
 pub mod regexp;
 pub(crate) use quench_regexp as regexp_backend;

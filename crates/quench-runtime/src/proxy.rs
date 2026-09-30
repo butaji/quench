@@ -843,6 +843,41 @@ mod classification_tests {
     const CLASSIFICATION_STRESS_DEPTH: usize = 20_000;
 
     #[test]
+    fn regression_html_dda_bound_aliases_are_iterative_and_preserve_proxy_boundary() {
+        let leaf = Value::Builtin(Builtin::HostCapability(
+            crate::ops::HostCapabilityKind::IsHTMLDDA,
+        ));
+        let mut value = leaf.clone();
+        let mut owners = Vec::new();
+        for _ in 0..CLASSIFICATION_STRESS_DEPTH {
+            owners.push(value.clone());
+            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+                realm: crate::ops::RealmId::ROOT,
+                target: Value::BindingCell(crate::value::BindingCell::new(value)),
+                receiver: Value::Undefined,
+                arguments: Vec::new(),
+                properties: RefCell::new(Vec::new()),
+            }));
+        }
+        assert!(crate::conversion::is_html_dda(&value));
+        assert_eq!(crate::intl::tolocale::value::type_of(&value), "undefined");
+        drop(value);
+        while owners.pop().is_some() {}
+
+        let proxy = Value::Proxy(Rc::new(ProxyValue {
+            target: leaf,
+            handler: Value::Builtin(Builtin::Math),
+            revoked: Rc::new(RefCell::new(false)),
+            private_slots: Default::default(),
+        }));
+        assert!(!crate::conversion::is_html_dda(&proxy));
+        let cell = crate::value::BindingCell::new(Value::Undefined);
+        *cell.borrow_mut() = Value::BindingCell(cell.clone());
+        assert!(!crate::conversion::is_html_dda(&Value::BindingCell(cell.clone())));
+        *cell.borrow_mut() = Value::Undefined;
+    }
+
+    #[test]
     fn regression_deep_proxy_and_bound_classification_is_stack_independent() {
         for (leaf, callable, type_name) in [
             (Value::Builtin(Builtin::Number), true, "function"),

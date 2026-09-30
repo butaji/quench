@@ -75,6 +75,7 @@ fn analyze_with_context(
     program: &oxc::ast::ast::Program<'_>,
     context: EvalGrammarContext,
 ) -> Result<Analysis, Vec<String>> {
+    crate::compiler_stack::validate(program)?;
     crate::semantic_early::validate(program)?;
     for statement in &program.body {
         if matches!(

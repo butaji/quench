@@ -333,3 +333,35 @@ fn regression_recursive_transitions_throw_and_recover() {
         .join()
         .unwrap();
 }
+
+#[test]
+fn regression_legacy_dynamic_compiler_exhaustion_is_catchable_and_recovers() {
+    std::thread::Builder::new().stack_size(crate::WORKER_STACK_SIZE).spawn(|| {
+        run_sync(r#"
+            var intrinsicRangeError = RangeError;
+            RangeError = function () { throw "guest RangeError constructor called"; };
+            var compilerStressDepth = 20000;
+            var sources = [
+                '('.repeat(compilerStressDepth) + '1' + ')'.repeat(compilerStressDepth),
+                Array(compilerStressDepth).fill('1').join('+')
+            ];
+            for (var index = 0; index < sources.length; index++) {
+                var source = sources[index];
+                for (var mode = 0; mode < 3; mode++) {
+                    var caught = false;
+                    try {
+                        if (mode === 0) eval(source);
+                        else if (mode === 1) (0, eval)(source);
+                        else Function('return ' + source);
+                    } catch (error) {
+                        if (!(error instanceof intrinsicRangeError) ||
+                            error.message !== 'Maximum call stack size exceeded') throw 'wrong compiler error';
+                        caught = true;
+                    }
+                    if (!caught) throw 'missing compiler exhaustion';
+                    if (eval('1 + 2') !== 3) throw 'compiler budget did not recover';
+                }
+            }
+        "#);
+    }).unwrap().join().unwrap();
+}

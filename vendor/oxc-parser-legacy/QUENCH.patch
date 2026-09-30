@@ -1,0 +1,119 @@
+--- a/src/cursor.rs
++++ b/src/cursor.rs
+@@ -285,0 +286,3 @@
++        if self.stack_exhausted {
++            return;
++        }
+--- a/src/diagnostics.rs
++++ b/src/diagnostics.rs
+@@ -535,0 +536,5 @@
++
++/// Resource exhaustion follows the shared runtime policy, not syntax recovery.
++pub fn stack_exhausted(span: Span) -> OxcDiagnostic {
++    OxcDiagnostic::error(quench_stack::STACK_EXHAUSTED_MESSAGE).with_label(span)
++}
+--- a/src/js/binding.rs
++++ b/src/js/binding.rs
+@@ -30,0 +31 @@
++        let _stack = self.enter_stack()?;
+--- a/src/js/expression.rs
++++ b/src/js/expression.rs
+@@ -768,0 +769 @@
++        let _stack = self.enter_stack()?;
+@@ -942,0 +944 @@
++        let _stack = self.enter_stack()?;
+@@ -953,0 +956 @@
++        let _stack = self.enter_stack()?;
+@@ -981,0 +985 @@
++        let _stack = self.enter_stack()?;
+@@ -1093,0 +1098 @@
++        let _stack = self.enter_stack()?;
+--- a/src/js/statement.rs
++++ b/src/js/statement.rs
+@@ -82,0 +83 @@
++        let _stack = self.enter_stack()?;
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -178,0 +179,3 @@
++    /// Resource exhaustion is distinct from malformed syntax.
++    pub stack_exhausted: bool,
++
+@@ -283,0 +287,33 @@
++        }
++    }
++
++    #[cfg(test)]
++    mod quench_stack_tests {
++        use super::*;
++
++        #[test]
++        fn exhaustion_survives_checkpoint_rewind_and_fresh_parsing_recovers() {
++            let allocator = Allocator::default();
++            let mut parser = ParserImpl::new(
++                &allocator,
++                "1 + 2",
++                SourceType::default(),
++                ParseOptions::default(),
++                UniquePromise::new(),
++            );
++            let checkpoint = parser.checkpoint();
++            let mut guards = Vec::new();
++            while let Ok(guard) = quench_stack::StackGuard::enter() {
++                guards.push(guard);
++            }
++            assert!(parser.enter_stack().is_err());
++            drop(guards);
++            parser.rewind(checkpoint);
++            assert!(parser.enter_stack().is_err());
++            let result = parser.parse();
++            assert!(result.stack_exhausted);
++            assert!(result.panicked);
++            assert!(result.program.body.is_empty());
++            let fresh = Parser::new(&allocator, "1 + 2", SourceType::default()).parse();
++            assert!(!fresh.stack_exhausted);
++            assert!(fresh.errors.is_empty());
+@@ -355,0 +392,2 @@
++    // Monotone resource state; syntax checkpoints cannot reset exhaustion.
++    stack_exhausted: bool,
+@@ -397,0 +436 @@
++            stack_exhausted: false,
+@@ -414 +453 @@
+-        let (mut program, panicked) = match self.parse_program() {
++        let (mut program, mut panicked) = match self.parse_program() {
+@@ -418,9 +457 @@
+-                let program = self.ast.program(
+-                    Span::default(),
+-                    self.source_type,
+-                    self.source_text,
+-                    self.ast.vec(),
+-                    None,
+-                    self.ast.vec(),
+-                    self.ast.vec(),
+-                );
++                let program = self.empty_program();
+@@ -430,0 +462,7 @@
++        if self.stack_exhausted {
++            self.errors.clear();
++            self.lexer.errors.clear();
++            self.error(diagnostics::stack_exhausted(self.cur_token().span()));
++            program = self.empty_program();
++            panicked = true;
++        }
+@@ -468,0 +507 @@
++            stack_exhausted: self.stack_exhausted,
+@@ -549,0 +589,15 @@
++    }
++
++    fn enter_stack(&mut self) -> Result<quench_stack::StackGuard> {
++        if !self.stack_exhausted {
++            if let Ok(guard) = quench_stack::StackGuard::enter() {
++                return Ok(guard);
++            }
++            self.stack_exhausted = true;
++        }
++        Err(diagnostics::stack_exhausted(self.cur_token().span()))
++    }
++
++    fn empty_program(&self) -> Program<'a> {
++        self.ast.program(Span::default(), self.source_type, self.source_text,
++            self.ast.vec(), None, self.ast.vec(), self.ast.vec())
