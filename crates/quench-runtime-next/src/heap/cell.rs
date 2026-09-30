@@ -56,7 +56,7 @@ impl WeakMapEntries {
         );
     }
 
-    #[cfg(feature = "profile-memory")]
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_bytes(&self) -> usize {
         self.ordered.capacity() * std::mem::size_of::<(Value, Value)>()
             + self.indices.capacity() * std::mem::size_of::<(Value, usize)>()

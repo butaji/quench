@@ -115,6 +115,81 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
 }
 
 #[test]
+fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
+    let source = r#"
+      var prototype = { answer: 42 };
+      var inherited = {};
+      Object.setPrototypeOf(inherited, prototype);
+      print(inherited.answer);
+      var deleted = { answer: 5 };
+      delete deleted.answer;
+      deleted.answer = 7;
+      print(deleted.answer);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "dictionary-shapes.js").unwrap();
+        vm.execute(&program).unwrap();
+
+        let global = vm.realm.globals;
+        for (name, trigger) in [
+            ("inherited", super::DictionaryTrigger::PrototypeUse),
+            ("deleted", super::DictionaryTrigger::DeletionPattern),
+        ] {
+            let atom = vm.intern_atom(name);
+            let object = vm
+                .own_property(global, atom)
+                .expect("global binding exists");
+            let shape = vm.object_data(object).expect("object value").shape();
+            assert!(vm.shape_is_dictionary(shape), "{mode}: {name}");
+            assert_eq!(
+                vm.shapes[shape as usize].dictionary_trigger,
+                Some(trigger),
+                "{mode}: {name} trigger"
+            );
+        }
+
+        vm.collect_now(&program);
+        let atom = vm.intern_atom("inherited");
+        let inherited = vm.own_property(global, atom).unwrap();
+        let shape = vm.object_data(inherited).unwrap().shape();
+        assert!(
+            vm.shape_is_dictionary(shape),
+            "{mode}: dictionary mode survives GC"
+        );
+        assert_eq!(output.borrow().as_slice(), ["42", "7"], "{mode}");
+        #[cfg(feature = "profile-aggregate")]
+        for trigger in [
+            super::DictionaryTrigger::DeletionPattern,
+            super::DictionaryTrigger::PrototypeUse,
+        ] {
+            assert!(vm.profile.dictionary_transitions[trigger.index()] > 0);
+        }
+    }
+}
+
+#[test]
+fn dictionary_shape_starts_when_property_slots_exceed_cache_encoding() {
+    let mut vm = Vm::new(SilentHost);
+    vm.shapes[0].storage_len = super::object::FIELD_CACHE_SLOT_CAPACITY;
+    let atom = vm.intern_atom("overflow");
+    let shape = vm.transition_property_shape(0, super::property_key::PropertyKey::string(atom));
+    assert!(vm.shape_is_dictionary(shape));
+    assert_eq!(
+        vm.shapes[shape as usize].dictionary_trigger,
+        Some(super::DictionaryTrigger::PropertyCount)
+    );
+    assert_eq!(
+        vm.shapes[shape as usize].storage_len,
+        super::object::FIELD_CACHE_SLOT_CAPACITY + 1
+    );
+}
+
+#[test]
 fn untaken_closure_branch_does_not_allocate_environments() {
     let source = r#"
       function maybe(make) {

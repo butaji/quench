@@ -197,6 +197,9 @@ impl<H: Host> Vm<H> {
 impl<H: Host> Vm<H> {
     fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<FieldCache> {
         let receiver_shape = self.object_data(receiver)?.shape();
+        if self.shape_is_dictionary(receiver_shape) {
+            return None;
+        }
         let key = super::property_key::PropertyKey::string(atom);
         let mut owner = receiver;
         let mut depth = 0_u16;
@@ -205,6 +208,9 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             let data = self.object_data(owner)?;
+            if self.shape_is_dictionary(data.shape()) {
+                return None;
+            }
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
                 if slot > u16::MAX as usize
                     || self
