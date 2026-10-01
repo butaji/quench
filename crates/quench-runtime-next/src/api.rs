@@ -599,6 +599,58 @@ mod tests {
     }
 
     #[test]
+    fn regression_buffer_intrinsics_ignore_replaced_globals() {
+        assert_output_in_execution_modes(
+            r#"
+            var constructors = [ArrayBuffer, SharedArrayBuffer, DataView];
+            var prototypes = constructors.map(function(Constructor) {return Constructor.prototype;});
+            var buffer = new ArrayBuffer(8);
+            var reads = 0;
+            for (var name of ['ArrayBuffer', 'SharedArrayBuffer', 'DataView']) {
+                Object.defineProperty(globalThis, name, {configurable: true, get() {reads++; $262.gc(); throw 'global getter';}});
+            }
+            function Target() {}
+            Target.prototype = null;
+            for (var index = 0; index < constructors.length; index++) {
+                var args = index === 2 ? [buffer] : [8];
+                var result = Reflect.construct(constructors[index], args, Target);
+                print(Object.getPrototypeOf(result) === prototypes[index]);
+                print(result.byteLength);
+            }
+            print(new constructors[2](buffer).byteLength);
+            print(reads);
+            "#,
+            &["true", "8", "true", "8", "true", "8", "8", "0"],
+        );
+    }
+
+    #[test]
+    fn regression_buffer_fallback_uses_foreign_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm();
+            var names = ['ArrayBuffer', 'SharedArrayBuffer', 'DataView'];
+            var constructors = [ArrayBuffer, SharedArrayBuffer, DataView];
+            var prototypes = names.map(function(name) {return foreign.global[name].prototype;});
+            foreign.evalScript('globalThis.Target = function Target() {}; Target.prototype = null;');
+            var buffer = new ArrayBuffer(8);
+            var reads = 0;
+            for (var name of names) {
+                Object.defineProperty(foreign.global, name, {configurable: true, get() {reads++; $262.gc(); throw 'foreign getter';}});
+            }
+            $262.gc();
+            for (var index = 0; index < constructors.length; index++) {
+                var result = Reflect.construct(constructors[index], index === 2 ? [buffer] : [8], foreign.global.Target);
+                print(Object.getPrototypeOf(result) === prototypes[index]);
+                print(result.byteLength);
+            }
+            print(reads);
+            "#,
+            &["true", "8", "true", "8", "true", "8", "0"],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"

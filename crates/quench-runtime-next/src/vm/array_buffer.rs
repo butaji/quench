@@ -59,6 +59,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let array_buffer = self.native_value(Native::ArrayBuffer);
         self.array_buffer_proto = self.object();
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::ArrayBuffer), self.array_buffer_proto);
         self.set_named(program, array_buffer, "prototype", self.array_buffer_proto)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -139,6 +143,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::SharedArrayBuffer), prototype);
         let prototype_atom = self.intern_atom("prototype");
         self.set_named(program, constructor, "prototype", prototype)?;
         self.set_property_attributes(
@@ -556,20 +564,18 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        let constructor_atom = self.intern_atom(if shared {
-            "SharedArrayBuffer"
+        let (native, fallback) = if shared {
+            (Native::SharedArrayBuffer, self.shared_array_buffer_proto)
         } else {
-            "ArrayBuffer"
-        });
-        let constructor = self.get_property(p, realm, constructor_atom)?;
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
-        Ok(if self.object_data(prototype).is_some() {
-            prototype
-        } else if shared {
-            self.shared_array_buffer_proto
-        } else {
-            self.array_buffer_proto
-        })
+            (Native::ArrayBuffer, self.array_buffer_proto)
+        };
+        Ok(self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(realm, native))
+            .copied()
+            .unwrap_or(fallback))
     }
 
     pub(super) fn array_buffer_zeroed_bytes(

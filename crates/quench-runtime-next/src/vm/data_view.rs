@@ -60,6 +60,10 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         prototype: Value,
     ) -> Result<(), JsError> {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::DataView), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -153,16 +157,15 @@ impl<H: Host> Vm<H> {
         if offset.saturating_add(length) > buffer_length {
             return Err(self.range_error(p, "DataView length is out of range".into()));
         }
-        let constructor_atom = self.intern_atom("DataView");
-        let prototype_atom = self.intern_atom("prototype");
-        let realm_constructor = self.get_property(p, self.realm.globals, constructor_atom)?;
-        let prototype = self.get_property(p, realm_constructor, prototype_atom)?;
+        let prototype = self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, Native::DataView))
+            .copied()
+            .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
-            object: Self::empty_object(if self.object_data(prototype).is_some() {
-                prototype
-            } else {
-                self.data_view_proto
-            }),
+            object: Self::empty_object(prototype),
             buffer,
             offset,
             length,
