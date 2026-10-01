@@ -219,7 +219,11 @@ mod tests {
             let mut runtime = Runtime::new(host);
             let program = compile(source, "regression.js").unwrap();
             if let Err(error) = runtime.execute(&program) {
-                panic!("{mode}: {}", runtime.format_error(&program, &error));
+                panic!(
+                    "{mode}: {} (output: {:?})",
+                    runtime.format_error(&program, &error),
+                    view.0.borrow().as_slice(),
+                );
             }
             assert_eq!(view.0.borrow().as_slice(), expected, "{mode}");
         }
@@ -263,6 +267,99 @@ mod tests {
             });
             "#,
             &["42", "43", "44"],
+        );
+    }
+
+    #[test]
+    fn regression_eval_preserves_strict_context_for_nested_function_expressions() {
+        assert_output_in_execution_modes(
+            r#"
+            var sink = {};
+            var outcomes = [];
+            for (var binding of ['eval', 'arguments']) {
+                var source = 'sink.fn = function ' + binding + '() {};';
+                for (var mode = 0; mode < 3; mode++) {
+                    try {
+                        if (mode === 0) eval("'use strict'; " + source);
+                        else if (mode === 1) {
+                            (function () { 'use strict'; eval(source); })();
+                        } else (0, eval)("'use strict'; " + source);
+                        outcomes.push(false);
+                    } catch (error) {
+                        outcomes.push(error instanceof SyntaxError);
+                    }
+                    outcomes.push(Object.hasOwn(sink, 'fn'));
+                }
+            }
+            print(outcomes.join(','));
+            eval('sink.fn = function eval() {};');
+            print(sink.fn.name);
+            print(eval("'use strict'; (function () { return this; })()") === undefined);
+            (function () {
+                'use strict';
+                print(eval('(function () { return this; })()') === undefined);
+            })();
+            print(eval("'use strict'; sink.eval = 1; sink.eval"));
+            (function () {
+                'use strict';
+                print(eval('sink.arguments = 2; sink.arguments'));
+            })();
+            "#,
+            &[
+                "true,false,true,false,true,false,true,false,true,false,true,false",
+                "eval",
+                "true",
+                "true",
+                "1",
+                "2",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_strict_assignment_checks_distinguish_bindings_and_properties() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var source of [
+                'eval = 1;', 'eval++;', '++arguments;',
+                '\\u0065val = 1;', '({ value: eval } = { value: 1 });'
+            ]) {
+                try {
+                    eval("'use strict'; " + source);
+                    print(false);
+                } catch (error) {
+                    print(error instanceof SyntaxError);
+                }
+            }
+            print(eval("'use strict'; ({ eval: 1, arguments: 2 }).eval"));
+            print(eval("'use strict'; /eval=/.source"));
+            "#,
+            &["true", "true", "true", "true", "true", "1", "eval="],
+        );
+    }
+
+    #[test]
+    fn regression_strict_eval_retains_method_and_private_syntax_context() {
+        assert_output_in_execution_modes(
+            r#"
+            var Derived = class {
+                #value = 43;
+                field = eval('() => super.value');
+                read() {
+                    print(this.field());
+                    print(eval('super.value'));
+                    try { eval('function inner() { return super.value; }'); }
+                    catch (error) { print(error instanceof SyntaxError); }
+                    try { eval('this.#missing'); }
+                    catch (error) { print(error instanceof SyntaxError); }
+                    try { eval('(() => function eval() {})'); }
+                    catch (error) { print(error instanceof SyntaxError); }
+                }
+            };
+            Object.setPrototypeOf(Derived.prototype, { get value() { return 42; } });
+            new Derived().read();
+            "#,
+            &["42", "42", "true", "true", "true"],
         );
     }
 
