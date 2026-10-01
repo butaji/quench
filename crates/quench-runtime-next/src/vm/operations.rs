@@ -511,7 +511,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayIncludes => self.array_includes_native(p, this, args),
             Native::ArrayJoin => self.array_join_native(p, this, args),
             Native::ArrayConcat => self.array_concat_native(p, this, args),
-            Native::ArrayFlat => self.array_flat_native(p, this, args),
+            Native::ArrayFlat => self.array_flatten_native(p, native, this, args),
             Native::ArrayReverse => self.array_reverse_native(p, this),
             Native::ArrayShift => self.array_shift_native(p, this),
             Native::ArrayUnshift => self.array_unshift_native(p, this, args),

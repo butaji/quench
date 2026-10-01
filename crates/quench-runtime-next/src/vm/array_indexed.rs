@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayGroup | Native::ArrayGroupToMap => {
                 self.array_group_native(p, native, this, args)
             }
-            Native::ArrayFlatMap => self.array_flat_map_native(p, this, args),
+            Native::ArrayFlatMap => self.array_flatten_native(p, native, this, args),
             Native::ArrayReduce | Native::ArrayReduceRight => {
                 self.array_reduce_native(p, native, this, args)
             }
@@ -431,42 +431,6 @@ impl<H: Host> Vm<H> {
             return Ok(0);
         }
         Ok(number.floor().min(MAX_SAFE_INTEGER).min(usize::MAX as f64) as usize)
-    }
-
-    pub(super) fn array_flat_map_native(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let source = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, source)?;
-        let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !self.is_function(callback) {
-            return Err(JsError("flatMap callback is not callable".into()));
-        }
-        let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let target = self.array_species_create(p, source, 0)?;
-        let mut output = Vec::new();
-        for index in 0..length {
-            let key = Value::number(index as f64);
-            if !self.has_property(p, source, key)? {
-                continue;
-            }
-            let value = self.get_index(p, source, key)?;
-            let callback_args = [value, key, source];
-            let result = self.call_value(p, callback, this_arg, &callback_args)?;
-            if self.is_array(p, result)? {
-                let length = self.array_like_length(p, result)?;
-                self.flatten_into(p, result, length, 0, &mut output)?;
-            } else {
-                output.push(result);
-            }
-        }
-        for (index, value) in output.into_iter().enumerate() {
-            self.create_data_property_or_throw(p, target, index, value)?;
-        }
-        Ok(target)
     }
 
     pub(super) fn array_reduce_native(
