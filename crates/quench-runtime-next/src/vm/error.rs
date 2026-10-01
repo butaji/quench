@@ -1305,6 +1305,10 @@ impl<H: Host> Vm<H> {
         self.object_data_mut(array_buffer_prototype)
             .expect("realm ArrayBuffer prototype")
             .proto = self.array_buffer_proto;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::ArrayBuffer), array_buffer_prototype);
         self.set_builtin_value_named(array_buffer, "prototype", array_buffer_prototype)?;
         self.set_builtin_value_named(array_buffer_prototype, "constructor", array_buffer)?;
         let array_buffer_name = self.heap.alloc(Cell::String("ArrayBuffer".into()));
