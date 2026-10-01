@@ -353,6 +353,60 @@ mod tests {
     }
 
     #[test]
+    fn regression_typed_fill_value_survives_collecting_bounds() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var Constructor of [BigInt64Array, BigUint64Array]) {
+                for (var bound of ['start', 'end']) {
+                    var log = [];
+                    var source = new Constructor([1n, 2n, 3n]);
+                    var value = {valueOf() {log.push('value'); return 7n;}};
+                    var index = {valueOf() {log.push(bound); $262.gc(); return bound === 'start' ? 1 : 2;}};
+                    var result = bound === 'start' ? source.fill(value, index) : source.fill(value, 0, index);
+                    print(source.join(','));
+                    print(result === source);
+                    print(log.join(','));
+                }
+            }
+            for (var phase of ['value', 'start', 'end']) {
+                var source = new BigInt64Array(3);
+                var log = [];
+                function step(name, result) {
+                    return {valueOf() {
+                        log.push(name);
+                        if (phase === name) { $262.detachArrayBuffer(source.buffer); $262.gc(); }
+                        return result;
+                    }};
+                }
+                try { source.fill(step('value', 7n), step('start', 0), step('end', 2)); }
+                catch (error) {print(error instanceof TypeError);}
+                print(log.join(','));
+            }
+            "#,
+            &[
+                "1,7,7",
+                "true",
+                "value,start",
+                "7,7,3",
+                "true",
+                "value,end",
+                "1,7,7",
+                "true",
+                "value,start",
+                "7,7,3",
+                "true",
+                "value,end",
+                "true",
+                "value,start,end",
+                "true",
+                "value,start,end",
+                "true",
+                "value,start,end",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_typed_sort_snapshots_survive_collecting_comparators() {
         assert_output_in_execution_modes(
             r#"
