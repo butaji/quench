@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::{Command, ExitCode, Stdio},
+    process::{ChildStderr, Command, ExitCode, Stdio},
     sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -228,30 +229,42 @@ fn run_case_process(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Test262 case process spawn failed: {error}"))?;
-    if child
+    let stderr = child.stderr.take().expect("piped Test262 case stderr");
+    let stderr_reader = drain_stderr(stderr);
+    let status = child
         .wait_timeout(timeout)
-        .map_err(|error| format!("Test262 case process wait failed: {error}"))?
-        .is_none()
-    {
+        .map_err(|error| format!("Test262 case process wait failed: {error}"))?;
+    let Some(status) = status else {
         let _ = child.kill();
         let _ = child.wait();
+        let _ = stderr_reader.join();
         return Err(format!("timed_out after {}ms", timeout.as_millis()));
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Test262 case process collect failed: {error}"))?;
-    if output.status.success() {
+    };
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "Test262 case stderr reader panicked".to_string())?
+        .map_err(|error| format!("Test262 case stderr read failed: {error}"))?;
+    if status.success() {
         Ok(())
     } else {
-        let reason = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(if output.status.code().is_none() {
-            format!("case process exited with {}", output.status)
+        let reason = String::from_utf8_lossy(&stderr).trim().to_string();
+        Err(if status.code().is_none() {
+            format!("case process exited with {status}")
         } else if reason.is_empty() {
-            format!("case process exited with {}", output.status)
+            format!("case process exited with {status}")
         } else {
             reason
         })
     }
+}
+
+fn drain_stderr(stderr: ChildStderr) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut stderr = stderr;
+        stderr.read_to_end(&mut output)?;
+        Ok(output)
+    })
 }
 
 fn select_batch(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
@@ -658,6 +671,27 @@ mod tests {
             "crashed"
         );
         assert_eq!(classify_outcome("next runtime: TypeError"), "failed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stderr_is_drained_while_a_case_process_is_running() {
+        use std::process::Command;
+
+        let mut child = Command::new("sh")
+            .args(["-c", "head -c 131072 /dev/zero >&2"])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr_reader = drain_stderr(child.stderr.take().unwrap());
+        assert!(
+            child
+                .wait_timeout(Duration::from_secs(5))
+                .unwrap()
+                .is_some()
+        );
+        let stderr = stderr_reader.join().unwrap().unwrap();
+        assert_eq!(stderr.len(), 131072);
     }
 
     #[test]
