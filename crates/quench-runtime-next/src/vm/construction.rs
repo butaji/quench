@@ -535,15 +535,7 @@ impl<H: Host> Vm<H> {
                     let result = vm.construct_native_with_new_target(p, native, args, new_target);
                     vm.switch_realm_global(previous_global);
                     let result = result?;
-                    if matches!(
-                        native,
-                        Native::Function
-                            | Native::AsyncFunction
-                            | Native::GeneratorFunction
-                            | Native::AsyncGeneratorFunction
-                    ) {
-                        vm.set_dynamic_function_prototype(p, result, new_target, native)?;
-                    } else if !matches!(
+                    let result = if !matches!(
                         native,
                         Native::Proxy
                             | Native::Array
@@ -557,8 +549,10 @@ impl<H: Host> Vm<H> {
                             .first()
                             .is_some_and(|value| !value.is_null() && !value.is_undefined()))
                     {
-                        vm.set_constructed_prototype(p, result, new_target, native)?;
-                    }
+                        vm.set_constructed_prototype(p, result, new_target, native)?
+                    } else {
+                        result
+                    };
                     return Ok(result);
                 }
                 let object = if derived_constructor {
@@ -673,13 +667,19 @@ impl<H: Host> Vm<H> {
         result: Value,
         new_target: Value,
         native: Native,
-    ) -> Result<(), JsError> {
+    ) -> Result<Value, JsError> {
         if self.object_data(result).is_none() {
-            return Ok(());
+            return Ok(result);
         }
         let result_root = self.heap.root(result);
         let target_root = self.heap.root(new_target);
-        let outcome = self.set_constructed_prototype_rooted(p, result_root, target_root, native);
+        let outcome = self
+            .set_constructed_prototype_rooted(p, result_root, target_root, native)
+            .map(|()| {
+                self.heap
+                    .root_value(result_root)
+                    .expect("constructed object root remains live")
+            });
         self.heap.release_root(target_root);
         self.heap.release_root(result_root);
         outcome
@@ -698,6 +698,10 @@ impl<H: Host> Vm<H> {
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
                 Native::Object => Some("Object"),
+                Native::Function => Some("Function"),
+                Native::AsyncFunction => Some("AsyncFunction"),
+                Native::GeneratorFunction => Some("GeneratorFunction"),
+                Native::AsyncGeneratorFunction => Some("AsyncGeneratorFunction"),
                 Native::RegExp => Some("RegExp"),
                 Native::Number => Some("Number"),
                 Native::String => Some("String"),
@@ -774,52 +778,6 @@ impl<H: Host> Vm<H> {
             if self.array_buffer_out_of_bounds(buffer, offset, length) {
                 return Err(self.range_error(p, "Invalid DataView byte length".into()));
             }
-        }
-        Ok(())
-    }
-
-    fn set_dynamic_function_prototype(
-        &mut self,
-        p: &ResidualProgram,
-        result: Value,
-        new_target: Value,
-        native: Native,
-    ) -> Result<(), JsError> {
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            let (name, fallback) = match native {
-                Native::AsyncFunction => ("AsyncFunction", Native::AsyncFunction),
-                Native::GeneratorFunction => ("GeneratorFunction", Native::GeneratorFunction),
-                Native::AsyncGeneratorFunction => {
-                    ("AsyncGeneratorFunction", Native::AsyncGeneratorFunction)
-                }
-                _ => ("Function", Native::Function),
-            };
-            if let Some(prototype) = self
-                .realm
-                .intrinsics
-                .builtin_prototypes
-                .get(&(realm, fallback))
-                .copied()
-            {
-                prototype
-            } else {
-                let constructor_atom = self.intern_atom(name);
-                let selected = self
-                    .own_property(realm, constructor_atom)
-                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
-                    .filter(|prototype| self.object_data(*prototype).is_some())
-                    .or_else(|| self.own_property(self.native_value(fallback), prototype_atom))
-                    .unwrap_or(self.function_proto);
-                selected
-            }
-        };
-        if self.object_data(result).is_some() && self.object_data(prototype).is_some() {
-            self.object_set_prototype_of(p, result, prototype)?;
         }
         Ok(())
     }

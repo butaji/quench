@@ -251,6 +251,10 @@ impl<H: Host> Vm<H> {
                 "AsyncGeneratorFunction",
             ),
         ] {
+            self.realm
+                .intrinsics
+                .builtin_prototypes
+                .insert((self.realm.globals, native), prototype);
             let constructor = self.native_value(native);
             self.set_builtin_function_name(constructor, name)?;
             self.object_data_mut(constructor)

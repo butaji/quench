@@ -670,6 +670,62 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn dynamic_constructor_roots_release_after_prototype_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [
+            Native::Function,
+            Native::AsyncFunction,
+            Native::GeneratorFunction,
+            Native::AsyncGeneratorFunction,
+        ] {
+            for (action, fails, intrinsic) in [
+                ("return prototype", false, false),
+                ("return null", false, true),
+                ("throw new Error('prototype')", true, false),
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let program = compile(&format!("var prototype = {{rank:42}}; var target = new Proxy(function Target() {{}}, {{get(object, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(object, key, receiver);}}}});"), "dynamic-constructor-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let target_atom = vm.intern_atom("target");
+                let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
+                let prototype_atom = vm.intern_atom("prototype");
+                let prototype = if intrinsic {
+                    vm.realm.intrinsics.builtin_prototypes[&(vm.realm.globals, native)]
+                } else {
+                    vm.own_property(vm.realm.globals, prototype_atom).unwrap()
+                };
+                let argument = vm.heap.alloc(super::Cell::String("return 42".into()));
+                let weak_argument = vm.heap.weak_handle(argument).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.construct_value_with_new_target(
+                    &program,
+                    vm.native_value(native),
+                    target,
+                    &[argument],
+                );
+                assert_eq!(result.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let weak_result = result.ok().map(|result| {
+                    assert!(vm.is_function(result));
+                    assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+                    vm.heap.weak_handle(result).unwrap()
+                });
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(weak_argument).is_none());
+                if let Some(result) = weak_result {
+                    assert!(vm.heap.weak_value(result).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn error_constructor_and_call_scopes_release_after_coercion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
