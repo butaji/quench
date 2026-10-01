@@ -425,6 +425,56 @@ mod tests {
     }
 
     #[test]
+    fn regression_intrinsic_prototype_fallback_ignores_replaced_globals() {
+        assert_output_in_execution_modes(
+            r#"
+            var OriginalObject = Object, OriginalArray = Array, OriginalRegExp = RegExp;
+            var objectPrototype = Object.prototype, arrayPrototype = Array.prototype, regexpPrototype = RegExp.prototype;
+            var reads = 0;
+            for (var name of ['Object', 'Array', 'RegExp']) {
+                OriginalObject.defineProperty(globalThis, name, {configurable: true, get() {reads++; $262.gc(); return {prototype: {}};}});
+            }
+            function Target() {}
+            Target.prototype = null;
+            print(OriginalObject.getPrototypeOf(new Target()) === objectPrototype);
+            print(OriginalObject.getPrototypeOf(Reflect.construct(OriginalArray, [], Target)) === arrayPrototype);
+            print(OriginalObject.getPrototypeOf(Reflect.construct(OriginalRegExp, [], Target)) === regexpPrototype);
+            print(OriginalObject.getPrototypeOf(new AggregateError([]).errors) === arrayPrototype);
+            print(reads);
+            "#,
+            &["true", "true", "true", "true", "0"],
+        );
+    }
+
+    #[test]
+    fn regression_foreign_intrinsic_prototypes_survive_global_replacement() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm();
+            var objectPrototype = foreign.global.Object.prototype;
+            var arrayPrototype = foreign.global.Array.prototype;
+            var regexpPrototype = foreign.global.RegExp.prototype;
+            var functionPrototype = foreign.global.Function.prototype;
+            foreign.evalScript('globalThis.Target = function Target() {}; Target.prototype = null;');
+            var Target = foreign.global.Target;
+            var reads = 0;
+            for (var name of ['Object', 'Array', 'RegExp', 'Function']) {
+                Object.defineProperty(foreign.global, name, {configurable: true, get() {reads++; $262.gc(); return {prototype: {}};}});
+            }
+            $262.gc();
+            print(Object.getPrototypeOf(new Target()) === objectPrototype);
+            print(Object.getPrototypeOf(Reflect.construct(Array, [], Target)) === arrayPrototype);
+            print(Object.getPrototypeOf(Reflect.construct(RegExp, [], Target)) === regexpPrototype);
+            foreign.evalScript('globalThis.fresh = function fresh() {};');
+            print(Object.getPrototypeOf(foreign.global.fresh) === functionPrototype);
+            print(Object.getPrototypeOf(foreign.global.fresh.prototype) === objectPrototype);
+            print(reads);
+            "#,
+            &["true", "true", "true", "true", "true", "0"],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"
