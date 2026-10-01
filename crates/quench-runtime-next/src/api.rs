@@ -339,6 +339,20 @@ mod tests {
     }
 
     #[test]
+    fn regression_derived_constructors_preserve_the_actual_superclass() {
+        assert_output_in_execution_modes(
+            r#"
+            class Base { get answer() { return 42; } }
+            class Derived extends Base {}
+            print(Object.getPrototypeOf(Derived) === Base);
+            print(Object.getPrototypeOf(Derived.prototype) === Base.prototype);
+            print(new Derived().answer);
+            "#,
+            &["true", "true", "42"],
+        );
+    }
+
+    #[test]
     fn regression_direct_eval_private_expressions_use_the_class_environment() {
         assert_output_in_execution_modes(
             r#"

@@ -253,6 +253,7 @@ fn rewrite_once(
     field_sites: &mut Vec<FieldSite>,
     superinstructions: &[Superinstruction],
 ) -> bool {
+    let live = liveness::analyze(function, methods, field_sites, superinstructions);
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
     let mut code = Vec::with_capacity(old.len());
@@ -269,34 +270,23 @@ fn rewrite_once(
         let rewritten = old
             .get(index + 1)
             .filter(|_| !protected[index + 1])
-            .filter(|second| {
-                second.op() != Op::Move
-                    || !matches!(
-                        old[index].op(),
-                        Op::LoadConst
-                            | Op::LoadLocal
-                            | Op::LoadEnvLocal
-                            | Op::LoadCapture
-                            | Op::LoadName
-                            | Op::LoadNameTypeof
-                            | Op::Binary
-                            | Op::Unary
-                            | Op::GetField
-                    )
-                    || register_dead_in_suffix(
-                        old[index].result_register(),
-                        &old[index + 2..],
-                        methods,
-                        field_sites,
-                        superinstructions,
-                    )
-            })
             .and_then(|second| {
+                // The same control-flow facts justify frame roots and every
+                // removed register write. An unavailable map keeps the pair.
+                let live = live.as_ref()?;
                 let first = old[index];
+                let original_definitions = liveness::definitions(first, superinstructions)
+                    | liveness::definitions(*second, superinstructions);
+                let live_out = liveness::live_out(function, live, index + 1, *second);
                 RULES
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
-                    .find_map(|rule| apply_rule(*rule, first, *second, field_sites))
+                    .find_map(|rule| {
+                        let replacement = apply_rule(*rule, first, *second, field_sites)?;
+                        let removed_definitions = original_definitions
+                            & !liveness::definitions(replacement, superinstructions);
+                        (live_out & removed_definitions == 0).then_some(replacement)
+                    })
             });
         if let Some(instruction) = rewritten {
             map[index + 1] = code.len();
@@ -317,22 +307,6 @@ fn rewrite_once(
     );
     function.code = code;
     changed
-}
-
-fn register_dead_in_suffix(
-    register: Register,
-    suffix: &[Instr],
-    methods: &[MethodSiteSpec],
-    fields: &[FieldSite],
-    superinstructions: &[Superinstruction],
-) -> bool {
-    if u32::from(register) >= u64::BITS {
-        return false;
-    }
-    suffix.iter().all(|instruction| {
-        let uses = liveness::uses(*instruction, methods, fields, superinstructions);
-        uses & (1 << register) == 0
-    })
 }
 
 fn apply_rule(
@@ -409,11 +383,85 @@ mod tests {
         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
     }
 
+    fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
+        let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
+        let function = &mut program.functions[0];
+        function.code = code;
+        function.registers = registers;
+        rewrite_once(function, &[], &mut vec![], &[]);
+        std::mem::take(&mut function.code)
+    }
+
+    fn assert_rewrite_preserves_code(code: Vec<Instr>, registers: u16) {
+        let actual = rewrite_fixture(code.clone(), registers);
+        assert_eq!(actual.len(), code.len());
+        for (actual, expected) in actual.into_iter().zip(code) {
+            assert_eq!(
+                (
+                    actual.op(),
+                    actual.a(),
+                    actual.b(),
+                    actual.c(),
+                    actual.imm()
+                ),
+                (
+                    expected.op(),
+                    expected.a(),
+                    expected.b(),
+                    expected.c(),
+                    expected.imm()
+                ),
+            );
+        }
+    }
+
     #[test]
-    fn producer_move_requires_the_original_register_to_be_dead() {
-        let live = [Instr::new(Op::Return, 3, 0, 0, 0)];
-        assert!(!register_dead_in_suffix(3, &live, &[], &[], &[]));
-        assert!(register_dead_in_suffix(2, &live, &[], &[], &[]));
+    fn producer_move_preserves_a_result_read_on_a_backward_edge() {
+        let code = vec![
+            Instr::new(Op::Jump, 0, 0, 0, 2),
+            Instr::new(Op::Return, 3, 0, 0, 0),
+            Instr::new(Op::LoadLocal, 3, 0, 0, 0),
+            Instr::new(Op::Move, 4, 3, 0, 0),
+            Instr::new(Op::Jump, 0, 0, 0, 1),
+        ];
+        assert_rewrite_preserves_code(code, 5);
+    }
+
+    #[test]
+    fn binary_branch_discards_a_result_only_when_dead_on_every_successor() {
+        let binary = Instr::new(
+            Op::Binary,
+            3,
+            Operand::register(0).0,
+            Operand::register(1).0,
+            BinaryOperator::StrictEquality as u32,
+        );
+        let branch = Instr::new(Op::JumpFalse, 3, 0, 0, 3);
+        let returned = Instr::new(Op::Return, 2, 0, 0, 0);
+        let live_branch = vec![binary, branch, returned, Instr::new(Op::Return, 3, 0, 0, 0)];
+        assert_rewrite_preserves_code(live_branch, 4);
+        let dead_branch = vec![binary, branch, returned, returned];
+        let fused = rewrite_fixture(dead_branch.clone(), 4);
+        assert_eq!(fused[0].op(), Op::JumpBinaryFalse);
+        assert_eq!(fused[0].jump_target(), 2);
+        assert_eq!(fused.len(), dead_branch.len() - 1);
+        assert_rewrite_preserves_code(dead_branch, u64::BITS as u16 + 1);
+    }
+
+    #[test]
+    fn constant_fusion_keeps_a_register_read_after_the_binary() {
+        let code = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(
+                Op::Binary,
+                4,
+                Operand::register(3).0,
+                Operand::register(1).0,
+                BinaryOperator::StrictEquality as u32,
+            ),
+            Instr::new(Op::Return, 3, 0, 0, 0),
+        ];
+        assert_rewrite_preserves_code(code, 5);
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub(super) fn analyze(
         let mut changed = false;
         for pc in (0..function.code.len()).rev() {
             let instruction = function.code[pc];
-            let output = successors(function, &live, pc, instruction);
+            let output = live_out(function, &live, pc, instruction);
             let next = uses(instruction, methods, fields, superinstructions)
                 | (output & !definitions(instruction, superinstructions));
             if live[pc] != next {
@@ -55,7 +55,7 @@ pub(super) fn analyze(
     Some(live)
 }
 
-fn successors(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
+pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
     let fallthrough = live.get(pc + 1).copied().unwrap_or(0);
     let normal = match instruction.op().control_flow_layout() {
         ControlFlowLayout::Jump => live[instruction.jump_target() as usize],
@@ -164,7 +164,7 @@ fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite])
     }
 }
 
-fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
+pub(super) fn definitions(instruction: Instr, superinstructions: &[Superinstruction]) -> u64 {
     let result = if instruction.op().has_result_register()
         && !instruction.returns_from_frame()
         && !instruction.writes_numeric_local()
