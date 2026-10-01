@@ -479,6 +479,7 @@ impl<H: Host> Vm<H> {
         let finalization_jobs = self.heap.collect_with_shape_roots(roots, |shape, roots| {
             append_shape_roots(shapes, shape, roots)
         });
+        self.prune_function_values();
         self.compact_live_shapes();
         self.realm.jobs.extend(
             finalization_jobs

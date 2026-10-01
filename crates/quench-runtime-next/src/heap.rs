@@ -12,7 +12,7 @@ mod slots;
 mod weak;
 pub(crate) use cell::*;
 pub use root::RootId;
-pub(crate) use root::RootTable;
+pub(crate) use root::{RootTable, WeakHandle};
 use slots::SlotArena;
 pub(super) struct Slot {
     cell: Option<Cell>,

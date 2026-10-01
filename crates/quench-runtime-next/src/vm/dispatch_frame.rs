@@ -117,10 +117,8 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
         {
-            frame.locals[slot] = self.function_values[&(self.active_program, id)]
-                .iter()
-                .rev()
-                .find_map(|(closure_env, value)| (*closure_env == parent).then_some(*value))
+            frame.locals[slot] = self.cached_functions_in_environment(self.active_program, id, parent)
+                .next_back()
                 .unwrap_or(Value::UNDEFINED);
         }
         if let Some(encoded_slot) = function.arguments_slot {
@@ -319,10 +317,8 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
         {
-            frame.locals[slot] = self.function_values[&(self.active_program, id)]
-                .iter()
-                .rev()
-                .find_map(|(closure_env, value)| (*closure_env == parent).then_some(*value))
+            frame.locals[slot] = self.cached_functions_in_environment(self.active_program, id, parent)
+                .next_back()
                 .unwrap_or(Value::UNDEFINED);
         }
         if let Some(encoded_slot) = function.arguments_slot {
@@ -416,14 +412,8 @@ impl<H: Host> Vm<H> {
         let callee = self.intern_atom("callee");
         let value = if mapped {
             if let Some(function) = self
-                .function_values
-                .get(&(self.active_program, id))
-                .and_then(|entries| {
-                    entries
-                        .iter()
-                        .find(|(environment, _)| *environment == parent)
-                        .map(|(_, function)| *function)
-                })
+                .cached_functions_in_environment(self.active_program, id, parent)
+                .next()
             {
                 function
             } else {

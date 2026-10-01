@@ -656,6 +656,66 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn closure_identity_cache_prunes_collected_cells_and_keeps_rooted_cells() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("function kept() {}", "closure-cache-gc.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let dead = vm.closure(&program, 0, Value::NULL).unwrap();
+    let kept = vm.closure(&program, 1, Value::NULL).unwrap();
+    let root = vm.root(kept);
+    vm.collect_now(&program);
+    assert!(vm.heap.get(dead).is_none());
+    assert!(vm.heap.get(kept).is_some());
+    assert!(
+        !vm.function_values
+            .contains_key(&(super::program_store::ProgramId::MAIN, 0))
+    );
+    assert!(
+        vm.function_values
+            .contains_key(&(super::program_store::ProgramId::MAIN, 1))
+    );
+    assert!(vm.release_root(root));
+    vm.collect_now(&program);
+    assert!(
+        !vm.function_values
+            .contains_key(&(super::program_store::ProgramId::MAIN, 1))
+    );
+}
+
+#[test]
+fn closure_identity_cache_rejects_reused_function_slots() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("function kept() {}", "closure-cache-reuse.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let old = vm.closure(&program, 1, Value::NULL).unwrap();
+    let key = (super::program_store::ProgramId::MAIN, 1);
+    let allocation_bound = vm.heap.stats().2 + 1;
+    // Bypass cache pruning to prove lookup itself checks the heap generation.
+    vm.heap.collect([]);
+    let mut reused = false;
+    for _ in 0..allocation_bound {
+        let replacement = vm.heap.alloc(crate::heap::Cell::Function {
+            object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+            kind: crate::heap::FunctionKind::User(key.0, key.1),
+            env: Value::NULL,
+            realm: Value::NULL,
+        });
+        if replacement == old {
+            reused = true;
+            break;
+        }
+    }
+    assert!(reused, "the collected function slot must be reused");
+    assert!(
+        vm.cached_functions_in_environment(key.0, key.1, Value::NULL)
+            .next()
+            .is_none()
+    );
+    vm.prune_function_values();
+    assert!(!vm.function_values.contains_key(&key));
+}
+
+#[test]
 fn pending_jobs_use_the_shared_interpreter_after_root_release() {
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));

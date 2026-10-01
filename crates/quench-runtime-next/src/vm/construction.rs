@@ -315,7 +315,7 @@ impl<H: Host> Vm<H> {
         self.function_values
             .entry((program, id))
             .or_default()
-            .push((env, function));
+            .push(self.heap.weak_handle(function).expect("new closure is live"));
         let length = self.intern_atom("length");
         self.set_property(
             function,
@@ -807,13 +807,8 @@ impl<H: Host> Vm<H> {
             self.frames
                 .last()
                 .and_then(|frame| {
-                    self.function_values
-                        .get(&(frame.program, frame.function))
-                        .and_then(|entries| {
-                            entries.iter().rev().find_map(|(environment, function)| {
-                                (*environment == frame.env).then_some(*function)
-                            })
-                        })
+                    self.cached_functions_in_environment(frame.program, frame.function, frame.env)
+                        .next_back()
                 })
                 .unwrap_or(active_constructor)
         } else {
