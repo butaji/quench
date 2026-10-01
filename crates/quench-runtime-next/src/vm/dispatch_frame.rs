@@ -569,7 +569,13 @@ impl<H: Host> Vm<H> {
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        let _stack = self.enter_stack()?;
+        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            crate::stack::StackGuard::enter().map_err(|()| {
+                JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
+            })?
+        } else {
+            self.enter_stack()?
+        };
         let initial_function = self.frames[frame].function as usize;
         let mut pc = self.frames[frame].pc;
         if let Some(error) = initial_error {

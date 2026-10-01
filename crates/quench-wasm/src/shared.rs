@@ -5,8 +5,8 @@ use rqj::{Engine, WasmI32Function};
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, ValType};
 
 impl Module {
-    /// Lower one exported standalone i32 function into the JavaScript VM's
-    /// residual bytecode. Stateful sections and unsupported operators fail
+    /// Lower i32 module functions with one selected exported entry into the
+    /// JavaScript VM's residual bytecode. Stateful sections and unsupported operators fail
     /// explicitly until their shared lowering is implemented.
     pub fn lower_shared_i32(&self, export: &str) -> Result<WasmI32Function, Error> {
         let mut types = Vec::new();
@@ -50,42 +50,44 @@ impl Module {
         }
         let selected = selected
             .ok_or_else(|| Error::Unsupported(format!("unknown function export: {export}")))?;
-        let signature = &types[functions[selected] as usize];
-        if signature
-            .params()
-            .iter()
-            .chain(signature.results())
-            .any(|ty| *ty != ValType::I32)
-            || signature.results().len() > 1
-        {
-            return Err(Error::Unsupported(
-                "function requires non-i32 or multiple results".into(),
-            ));
-        }
-        let params = u16::try_from(signature.params().len())
-            .map_err(|_| Error::Unsupported("too many parameters".into()))?;
-        let body = &bodies[selected];
-        let mut locals = 0u16;
-        for local in body.get_locals_reader().map_err(parse_error)? {
-            let (count, ty) = local.map_err(parse_error)?;
-            if ty != ValType::I32 {
+        let mut inputs = Vec::with_capacity(bodies.len());
+        for (type_index, body) in functions.into_iter().zip(bodies) {
+            let signature = &types[type_index as usize];
+            if signature
+                .params()
+                .iter()
+                .chain(signature.results())
+                .any(|ty| *ty != ValType::I32)
+                || signature.results().len() > 1
+            {
                 return Err(Error::Unsupported(
-                    "function requires non-i32 locals".into(),
+                    "function requires non-i32 or multiple results".into(),
                 ));
             }
-            locals = u16::try_from(count)
-                .ok()
-                .and_then(|count| locals.checked_add(count))
-                .ok_or_else(|| Error::Unsupported("too many locals".into()))?;
+            let params = u16::try_from(signature.params().len())
+                .map_err(|_| Error::Unsupported("too many parameters".into()))?;
+            let mut locals = 0u16;
+            for local in body.get_locals_reader().map_err(parse_error)? {
+                let (count, ty) = local.map_err(parse_error)?;
+                if ty != ValType::I32 {
+                    return Err(Error::Unsupported(
+                        "function requires non-i32 locals".into(),
+                    ));
+                }
+                locals = u16::try_from(count)
+                    .ok()
+                    .and_then(|count| locals.checked_add(count))
+                    .ok_or_else(|| Error::Unsupported("too many locals".into()))?;
+            }
+            inputs.push((
+                params,
+                locals,
+                !signature.results().is_empty(),
+                body.get_operators_reader().map_err(parse_error)?,
+            ));
         }
-        Engine::lower_wasm_i32_function(
-            export,
-            params,
-            locals,
-            !signature.results().is_empty(),
-            body.get_operators_reader().map_err(parse_error)?,
-        )
-        .map_err(|error| Error::Unsupported(error.to_string()))
+        Engine::lower_wasm_i32_module(export, selected as u32, inputs)
+            .map_err(|error| Error::Unsupported(error.to_string()))
     }
 }
 
@@ -191,7 +193,7 @@ mod tests {
             "(module (memory 1) (func (export \"f\") (result i32) i32.const 1))",
             "(module (func (export \"f\") (result i32) block (result i32 i32) i32.const 1 i32.const 2 end drop))",
             "(module (func (export \"f\") (result i64) i64.const 1))",
-            "(module (func $g (result i32) i32.const 1) (func (export \"f\") (result i32) call $g))",
+            "(module (type $t (func (result i32))) (table 1 funcref) (func (export \"f\") (result i32) i32.const 0 call_indirect (type $t)))",
             "(module (import \"m\" \"f\" (func)) (func (export \"f\")))",
             "(module (func $s) (start $s) (func (export \"f\")))",
         ] {
@@ -266,3 +268,6 @@ mod spec;
 
 #[cfg(test)]
 mod control_tests;
+
+#[cfg(test)]
+mod call_tests;

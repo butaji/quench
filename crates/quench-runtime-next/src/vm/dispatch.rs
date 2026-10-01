@@ -995,6 +995,7 @@ impl<H: Host> Vm<H> {
                             }
                         });
                 if terminal
+                    && p.kind != crate::bytecode::ProgramKind::Wasm
                     && !p.functions[function_index as usize].is_async
                     && !p.functions[function_index as usize].is_generator
                 {
