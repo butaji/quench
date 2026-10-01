@@ -572,7 +572,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn array_buffer_zeroed_bytes(
+    pub(super) fn array_buffer_zeroed_bytes(
         &mut self,
         p: &ResidualProgram,
         length: usize,
