@@ -60,8 +60,31 @@ impl<H: Host> Vm<H> {
         });
         self.set_property(env, args_atom, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
+        let function_root = self.heap.root(function);
+        let target_root = self.heap.root(target);
+        let outcome = self.initialize_bound_function_metadata(
+            p,
+            function_root,
+            target_root,
+            args.len().saturating_sub(1) as f64,
+        );
+        self.heap.release_root(target_root);
+        self.heap.release_root(function_root);
+        outcome
+    }
+
+    fn initialize_bound_function_metadata(
+        &mut self,
+        p: &ResidualProgram,
+        function_root: RootId,
+        target_root: RootId,
+        bound_count: f64,
+    ) -> Result<Value, JsError> {
+        let target = self
+            .heap
+            .root_value(target_root)
+            .expect("bound target root remains live");
         let length_atom = self.intern_atom("length");
-        let bound_count = args.len().saturating_sub(1) as f64;
         let bound_length = if self
             .property_attributes(target, PropertyKey::string(length_atom))
             .is_some()
@@ -75,7 +98,15 @@ impl<H: Host> Vm<H> {
         } else {
             0.0
         };
+        let function = self
+            .heap
+            .root_value(function_root)
+            .expect("bound function root remains live");
         self.set_builtin_value_named(function, "length", Value::number(bound_length))?;
+        let function = self
+            .heap
+            .root_value(function_root)
+            .expect("bound function root remains live");
         self.set_property_attributes(
             function,
             PropertyKey::string(length_atom),
@@ -89,13 +120,24 @@ impl<H: Host> Vm<H> {
             },
         );
         let name_atom = self.intern_atom("name");
+        let target = self
+            .heap
+            .root_value(target_root)
+            .expect("bound target root remains live");
         let target_name = self.get_property(p, target, name_atom)?;
         let target_name = match self.heap.get(target_name) {
             Some(Cell::String(name)) => name.to_string(),
             _ => String::new(),
         };
+        let function = self
+            .heap
+            .root_value(function_root)
+            .expect("bound function root remains live");
         self.set_builtin_function_name(function, &format!("bound {target_name}"))?;
-        Ok(function)
+        Ok(self
+            .heap
+            .root_value(function_root)
+            .expect("bound function root remains live"))
     }
 
     pub(super) fn call_bound_function(
