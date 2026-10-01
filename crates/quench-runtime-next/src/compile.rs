@@ -19,7 +19,7 @@ mod binding_time;
 mod capture_profile;
 mod class;
 mod early;
-mod liveness;
+pub(crate) mod liveness;
 mod locals;
 mod numeric;
 pub(crate) mod regexp;
@@ -2329,7 +2329,7 @@ impl<'a> Compiler<'a> {
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             handlers: function.handlers,
-            register_root_offset: u32::MAX,
+            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
         };
         self.functions[id as usize] = Some(result);
         id
