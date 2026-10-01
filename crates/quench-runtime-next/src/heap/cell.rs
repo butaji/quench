@@ -1171,6 +1171,8 @@ pub(crate) enum Cell {
         dynamic_bindings: Vec<(Atom, Value)>,
         with_objects: Vec<Value>,
     },
+    // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
+    WasmBits64(u64),
     String(JsString), BigInt(String),
     Symbol(Option<String>),
     Date { milliseconds: f64, object: Box<Object> },

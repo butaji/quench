@@ -16,7 +16,9 @@ mod value;
 mod value_vec;
 mod vm;
 mod wasm;
-pub use wasm::{WasmI32Function, WasmTrap};
+pub use wasm::{
+    WasmFunction, WasmFunctionBody, WasmI32Function, WasmSignature, WasmTrap, WasmType, WasmValue,
+};
 
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};

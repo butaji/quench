@@ -9,6 +9,9 @@ use crate::{Diagnostic, Engine};
 use wasmparser::{BinaryReaderError, Operator};
 
 mod control;
+mod scalar;
+pub(crate) use scalar::ScalarBits;
+pub use scalar::{WasmFunctionBody, WasmSignature, WasmType, WasmValue};
 pub(crate) mod i32;
 use control::{Control, Reachability};
 use i32::{I32BinaryOperator, I32UnaryOperator};
@@ -36,18 +39,22 @@ impl std::fmt::Display for WasmTrap {
 const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
 
-/// A lowered i32 module with a selected function entry. This shared execution slice
-/// supports locals, i32 numeric operators, structured control flow and direct
-/// calls between i32 functions. Stateful modules require subsequent lowering.
-pub struct WasmI32Function {
+/// A shared residual program with one typed module function entry.
+pub struct WasmFunction {
     pub(crate) program: ResidualProgram,
-    pub(crate) has_result: bool,
+    pub(crate) signature: WasmSignature,
     pub(crate) entry: u32,
 }
 
-impl WasmI32Function {
+/// Compatibility name for the i32-only lowering and execution boundaries.
+pub type WasmI32Function = WasmFunction;
+
+impl WasmFunction {
     pub fn residual(&self) -> &ResidualProgram {
         &self.program
+    }
+    pub fn signature(&self) -> &WasmSignature {
+        &self.signature
     }
 }
 
@@ -75,22 +82,51 @@ impl Engine {
     where
         I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
     {
-        let bodies: Vec<_> = bodies.into_iter().collect();
-        let signatures: Vec<_> = bodies
-            .iter()
-            .map(|(params, _, result, _)| (*params, *result))
-            .collect();
-        let has_result = signatures
-            .get(entry as usize)
-            .ok_or_else(|| Diagnostic::unsupported(name, "Wasm entry function out of bounds"))?
-            .1;
+        Self::lower_wasm_module(
+            name,
+            entry,
+            bodies
+                .into_iter()
+                .map(|(params, locals, has_result, operators)| WasmFunctionBody {
+                    signature: WasmSignature {
+                        params: vec![WasmType::I32; usize::from(params)],
+                        result: has_result.then_some(WasmType::I32),
+                    },
+                    locals: vec![WasmType::I32; usize::from(locals)],
+                    operators,
+                }),
+        )
+    }
+
+    /// Lower the frontend's validated scalar signatures and operator streams.
+    pub fn lower_wasm_module<'a, I>(
+        name: &str,
+        entry: u32,
+        bodies: impl IntoIterator<Item = WasmFunctionBody<I>>,
+    ) -> Result<WasmFunction, Diagnostic>
+    where
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+    {
+        let (signatures, bodies): (Vec<_>, Vec<_>) = bodies
+            .into_iter()
+            .map(|body| (body.signature, (body.locals, body.operators)))
+            .unzip();
+        if entry as usize >= signatures.len() {
+            return Err(Diagnostic::unsupported(
+                name,
+                "Wasm entry function out of bounds",
+            ));
+        }
         let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
         let mut functions = Vec::with_capacity(bodies.len());
-        for (params, locals, has_result, operators) in bodies {
+        for (signature, (locals, operators)) in signatures.iter().zip(bodies) {
+            let params = u16::try_from(signature.params.len())
+                .map_err(|_| Diagnostic::unsupported(name, "too many Wasm parameters"))?;
+            let has_result = signature.result.is_some();
+            let local_types: Vec<_> = signature.params.iter().copied().chain(locals).collect();
             let error = |message: &str| Diagnostic::unsupported(name, message);
-            let local_count = params
-                .checked_add(locals)
-                .ok_or_else(|| error("too many Wasm locals"))?;
+            let local_count =
+                u16::try_from(local_types.len()).map_err(|_| error("too many Wasm locals"))?;
             let mut lowering = Lowering {
                 name,
                 locals: local_count,
@@ -105,9 +141,9 @@ impl Engine {
             };
             // Shared JS frames initialize non-parameter locals to undefined. Wasm
             // initialization is therefore explicit residual code, not another frame.
-            lowering.emit(Op::LoadConst, 0, 0, 0, ZERO_LOCAL_CONSTANT)?;
-            for slot in params..local_count {
-                lowering.emit(Op::StoreLocal, 0, 0, 0, u32::from(slot))?;
+            for (slot, ty) in local_types.iter().enumerate().skip(usize::from(params)) {
+                lowering.load_zero(0, *ty)?;
+                lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
             }
             for operator in operators {
                 let operator =
@@ -181,9 +217,9 @@ impl Engine {
         program
             .validate()
             .map_err(|e| Diagnostic::unsupported(name, e))?;
-        Ok(WasmI32Function {
+        Ok(WasmFunction {
             program,
-            has_result,
+            signature: signatures.into_iter().nth(entry as usize).unwrap(),
             entry,
         })
     }
@@ -321,6 +357,38 @@ mod tests {
     }
 
     #[test]
+    fn serialized_wasm_bits64_preserve_tag_collision_payloads() {
+        let bits = 0x7ffc_1234_5678_9abc_u64;
+        let mut function = Engine::lower_wasm_module(
+            "scalar round trip",
+            0,
+            [WasmFunctionBody {
+                signature: WasmSignature {
+                    params: vec![],
+                    result: Some(WasmType::I64),
+                },
+                locals: vec![],
+                operators: [Operator::I64Const { value: bits as i64 }, Operator::End]
+                    .into_iter()
+                    .map(Ok),
+            }],
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("quench-shared-scalars-{}.qbc", std::process::id()));
+        function.program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path);
+        std::fs::remove_file(path).unwrap();
+        function.program = decoded.unwrap();
+        assert_eq!(
+            crate::Runtime::new(crate::SystemHost)
+                .execute_wasm(&function, &[])
+                .unwrap(),
+            Some(WasmValue::I64(bits as i64))
+        );
+    }
+
+    #[test]
     fn serialized_wasm_numeric_rows_execute_after_decoding() {
         let operators = [
             Operator::LocalGet { local_index: 0 },
@@ -359,7 +427,7 @@ mod tests {
 }
 
 struct Lowering<'a> {
-    signatures: &'a [(u16, bool)],
+    signatures: &'a [WasmSignature],
     name: &'a str,
     locals: u16,
     code: Vec<Instr>,
@@ -424,9 +492,27 @@ impl Lowering<'_> {
     }
 
     fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
+        self.load_scalar(result, WasmValue::I32(value))
+    }
+
+    fn load_zero(&mut self, result: Register, ty: WasmType) -> Result<(), Diagnostic> {
+        if matches!(ty, WasmType::I32 | WasmType::F32) {
+            return self.emit(Op::LoadConst, result, 0, 0, ZERO_LOCAL_CONSTANT);
+        }
+        if let Some(index) = self
+            .constants
+            .iter()
+            .position(|constant| matches!(constant, Constant::WasmBits64(0)))
+        {
+            return self.emit(Op::LoadConst, result, 0, 0, index as u32);
+        }
+        self.load_scalar(result, ty.zero())
+    }
+
+    fn load_scalar(&mut self, result: Register, value: WasmValue) -> Result<(), Diagnostic> {
         let constant = u32::try_from(self.constants.len())
             .map_err(|_| Diagnostic::unsupported(self.name, "too many Wasm constants"))?;
-        self.constants.push(Constant::Number(f64::from(value)));
+        self.constants.push(value.constant());
         self.emit(Op::LoadConst, result, 0, 0, constant)
     }
 
@@ -452,12 +538,22 @@ impl Lowering<'_> {
             return self.emit(Op::WasmI32Unary, result, value, 0, operator as u32);
         }
         match operator {
-            Operator::I32Const { value } => {
+            Operator::I32Const { .. }
+            | Operator::I64Const { .. }
+            | Operator::F32Const { .. }
+            | Operator::F64Const { .. } => {
                 if self.path == Reachability::Dead {
                     return Ok(());
                 }
                 let result = self.push()?;
-                self.load_i32(result, value)
+                let value = match operator {
+                    Operator::I32Const { value } => WasmValue::I32(value),
+                    Operator::I64Const { value } => WasmValue::I64(value),
+                    Operator::F32Const { value } => WasmValue::F32(value.bits()),
+                    Operator::F64Const { value } => WasmValue::F64(value.bits()),
+                    _ => unreachable!(),
+                };
+                self.load_scalar(result, value)
             }
             Operator::LocalGet { local_index }
             | Operator::LocalSet { local_index }
@@ -484,12 +580,16 @@ impl Lowering<'_> {
                 self.emit(op, register, 0, 0, local_index)
             }
             Operator::Call { function_index } => {
-                let (params, has_result) = *self
+                let signature = self
                     .signatures
                     .get(function_index as usize)
                     .ok_or_else(|| {
                         Diagnostic::unsupported(self.name, "Wasm call target out of bounds")
                     })?;
+                let params = u16::try_from(signature.params.len()).map_err(|_| {
+                    Diagnostic::unsupported(self.name, "too many Wasm call parameters")
+                })?;
+                let has_result = signature.result.is_some();
                 if self.path == Reachability::Dead {
                     return Ok(());
                 }

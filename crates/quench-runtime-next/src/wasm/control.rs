@@ -2,7 +2,7 @@
 //! lowering state, not an executable Wasm IR or a second interpreter stack.
 
 use super::*;
-use wasmparser::{BlockType, ValType};
+use wasmparser::BlockType;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Reachability {
@@ -144,7 +144,7 @@ impl Lowering<'_> {
     fn begin(&mut self, kind: Kind, block_type: BlockType) -> Result<(), Diagnostic> {
         let has_result = match block_type {
             BlockType::Empty => false,
-            BlockType::Type(ValType::I32) => true,
+            BlockType::Type(ty) if WasmType::from_wasm(ty).is_some() => true,
             _ => return Err(self.control_error("unsupported Wasm block signature")),
         };
         self.controls.push(Control {
