@@ -1,7 +1,7 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub fn new(host: H) -> Self {
+    pub(crate) fn new(host: H) -> Self {
         Self {
             host,
             specialized: true,

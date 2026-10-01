@@ -1,4 +1,5 @@
-use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value, Vm};
+use crate::vm::Vm;
+use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value};
 
 /// The syntax context used when compiling source.  The v2 compiler currently
 /// accepts the Script subset; the other contexts are explicit so callers do
@@ -61,9 +62,20 @@ impl<H: Host> Runtime<H> {
         self.vm.host
     }
 
-    pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    fn execute_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute(program)
+    }
+
+    /// Execute without exposing a guest handle to the host.
+    pub fn execute(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.execute_value(program).map(drop)
+    }
+
+    /// Execute and retain the result under a generation-checked host root.
+    pub fn execute_rooted(&mut self, program: &ResidualProgram) -> Result<RootId, JsError> {
+        let value = self.execute_value(program)?;
+        Ok(self.root(value))
     }
 
     pub fn root(&mut self, value: Value) -> RootId {
@@ -78,8 +90,9 @@ impl<H: Host> Runtime<H> {
         self.vm.release_root(root)
     }
 
-    pub fn root_value(&self, root: RootId) -> Option<Value> {
-        self.vm.root_value(root)
+    /// Check whether a persistent handle still belongs to this runtime.
+    pub fn root_is_live(&self, root: RootId) -> bool {
+        self.vm.root_value(root).is_some()
     }
 
     /// Queue a callback using only generation-checked persistent roots. The
@@ -100,9 +113,20 @@ impl<H: Host> Runtime<H> {
         true
     }
 
-    pub fn run_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    fn run_jobs_value(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.drain_jobs(program)
+    }
+
+    /// Drain queued jobs without exposing a guest handle to the host.
+    pub fn run_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.run_jobs_value(program).map(drop)
+    }
+
+    /// Drain queued jobs and retain the completion under a host root.
+    pub fn run_jobs_rooted(&mut self, program: &ResidualProgram) -> Result<RootId, JsError> {
+        let value = self.run_jobs_value(program)?;
+        Ok(self.root(value))
     }
 
     pub fn format_error(&mut self, program: &ResidualProgram, error: &JsError) -> String {
@@ -120,9 +144,19 @@ impl<H: Host> Runtime<H> {
     pub fn compile_and_execute(
         &mut self,
         request: ExecutionRequest<'_>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let program = Engine::compile(request).map_err(RuntimeError::Diagnostics)?;
         self.execute(&program).map_err(RuntimeError::Execution)
+    }
+
+    /// Compile, execute, and retain the result under a host-owned root.
+    pub fn compile_and_execute_rooted(
+        &mut self,
+        request: ExecutionRequest<'_>,
+    ) -> Result<RootId, RuntimeError> {
+        let program = Engine::compile(request).map_err(RuntimeError::Diagnostics)?;
+        self.execute_rooted(&program)
+            .map_err(RuntimeError::Execution)
     }
 }
 
@@ -484,11 +518,13 @@ mod tests {
     }
 
     #[test]
-    fn non_script_requests_are_rejected_before_execution() {
-        let mut runtime = Runtime::new(Capture::default());
-        let error = runtime
+    fn module_requests_use_module_compilation() {
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime
             .compile_and_execute(ExecutionRequest {
-                source: "export default 1;",
+                source: "print('module'); export default 1;",
                 name: "module.mjs",
                 kind: SourceKind::Module,
             })
@@ -677,11 +713,11 @@ mod tests {
         let owned_root = owner.root(Value::number(1.0));
         let other_root = other.root(Value::number(2.0));
 
-        assert_eq!(other.root_value(owned_root), None);
+        assert!(!other.root_is_live(owned_root));
         assert!(!other.update_root(owned_root, Value::number(3.0)));
         assert!(!other.release_root(owned_root));
         assert!(!other.enqueue_rooted_job(owned_root, &[]));
-        assert_eq!(other.root_value(other_root), Some(Value::number(2.0)));
+        assert!(other.root_is_live(other_root));
     }
 
     #[test]
@@ -719,7 +755,7 @@ mod tests {
         runtime.execute(&program).unwrap();
         let root = runtime.root(Value::number(42.0));
         runtime.collect(&program).unwrap();
-        assert_eq!(runtime.root_value(root), Some(Value::number(42.0)));
+        assert!(runtime.root_is_live(root));
         assert!(runtime.release_root(root));
     }
 
@@ -752,6 +788,19 @@ mod tests {
             view.0.borrow().as_slice(),
             ["0,1", "0,1,length", "0,1,length"]
         );
+    }
+
+    #[test]
+    fn rooted_execution_completion_survives_collection() {
+        let mut runtime = Runtime::new(Capture::default());
+        let program = Engine::specialize("print('ran');", "rooted-result.js").unwrap();
+        let completion = runtime.execute_rooted(&program).unwrap();
+
+        assert!(runtime.root_is_live(completion));
+        runtime.collect(&program).unwrap();
+        assert!(runtime.root_is_live(completion));
+        assert!(runtime.release_root(completion));
+        assert!(!runtime.root_is_live(completion));
     }
 
     #[test]
