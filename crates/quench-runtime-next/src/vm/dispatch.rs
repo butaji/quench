@@ -366,16 +366,17 @@ impl<H: Host> Vm<H> {
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
                 let v = if module_root {
-                    self.function_values
-                        .get(&(self.frames[f].program, i.closure_function_index()))
-                        .and_then(|closures| {
-                            closures
-                                .iter()
-                                .find(|(closure_env, _)| *closure_env == env)
-                                .map(|(_, closure)| *closure)
-                        })
-                        .map(Ok)
-                        .unwrap_or_else(|| self.closure(p, i.closure_function_index(), env))?
+                    let cached = self
+                        .cached_functions_in_environment(
+                            self.frames[f].program,
+                            i.closure_function_index(),
+                            env,
+                        )
+                        .next();
+                    match cached {
+                        Some(function) => function,
+                        None => self.closure(p, i.closure_function_index(), env)?,
+                    }
                 } else {
                     self.closure(p, i.closure_function_index(), env)?
                 };

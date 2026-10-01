@@ -6,7 +6,7 @@ use crate::bytecode::{
 };
 use crate::heap::{
     Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object,
-    RootId, TypedArrayKind,
+    RootId, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -54,6 +54,7 @@ mod eval;
 mod field_cache;
 mod finalization;
 mod function;
+mod function_cache;
 mod gc;
 mod generator;
 mod index;
@@ -504,9 +505,8 @@ pub(crate) struct Vm<H> {
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
     descriptors: FxHashMap<(Value, property_key::PropertyKey), PropertyAttributes>,
-    // Closure identity cache is indexed by function id; each function keeps
-    // the small set of captured environments it has materialized.
-    function_values: FxHashMap<(ProgramId, u32), Vec<(Value, Value)>>,
+    // Weak identities; captured environments remain authoritative in function cells.
+    function_values: FxHashMap<(ProgramId, u32), Vec<WeakHandle>>,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
     parameter_eval: bool,

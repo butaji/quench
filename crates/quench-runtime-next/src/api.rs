@@ -353,6 +353,29 @@ mod tests {
     }
 
     #[test]
+    fn regression_closure_identity_survives_collection() {
+        assert_output_in_execution_modes(
+            r#"
+            function factory(value) {
+                return function self() {
+                    print(self === arguments.callee);
+                    $262.gc();
+                    return value;
+                };
+            }
+            var first = factory(42);
+            var second = factory(43);
+            $262.gc();
+            print(first());
+            print(second());
+            $262.gc();
+            print(first());
+            "#,
+            &["true", "42", "true", "43", "true", "42"],
+        );
+    }
+
+    #[test]
     fn regression_direct_eval_private_expressions_use_the_class_environment() {
         assert_output_in_execution_modes(
             r#"
