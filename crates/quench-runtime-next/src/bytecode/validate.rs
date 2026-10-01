@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
-    Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, Register,
+    ResidualProgram, REGISTER_MASK,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -167,8 +167,8 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmI64BinaryOperator => {
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm()).is_some()
         }
-        super::ImmediateRole::WasmIntegerConversionOperator => {
-            crate::wasm::integer::IntegerConversionOperator::from_tag(instruction.imm()).is_some()
+        super::ImmediateRole::WasmScalarConversionOperator => {
+            crate::wasm::conversion::ScalarConversionOperator::from_tag(instruction.imm()).is_some()
         }
         super::ImmediateRole::WasmF32BinaryOperator => {
             crate::wasm::float::F32BinaryOperator::from_tag(instruction.imm()).is_some()
