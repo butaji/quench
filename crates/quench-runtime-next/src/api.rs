@@ -931,6 +931,61 @@ mod tests {
     }
 
     #[test]
+    fn regression_define_properties_collects_before_applying() {
+        assert_output_in_execution_modes(
+            r#"
+            var target = {}, calls = 0;
+            var proxy = new Proxy(target, {defineProperty() {calls++; return true;}});
+            try {Object.defineProperties(proxy, {first:{value:1}, second:{get:1}});}
+            catch (error) {print(error instanceof TypeError);}
+            print(calls); print(Object.keys(target).length);
+            var events = [];
+            var input = {
+                get first() {events.push('get-first'); return {get value() {events.push('value-first'); $262.gc(); return {rank:42};}, configurable:true};},
+                get second() {events.push('get-second'); $262.gc(); return {get value() {events.push('value-second'); return 43;}, configurable:true};}
+            };
+            target = {};
+            proxy = new Proxy(target, {defineProperty(object,key,descriptor) {
+                events.push('define-' + key); $262.gc(); return Reflect.defineProperty(object,key,descriptor);
+            }});
+            print(Object.defineProperties(proxy,input) === proxy);
+            print(events.join(',')); print(target.first.rank); print(target.second);
+            "#,
+            &[
+                "true",
+                "0",
+                "0",
+                "true",
+                "get-first,value-first,get-second,value-second,define-first,define-second",
+                "42",
+                "43",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_object_create_preserves_collected_descriptor_records() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads = 0;
+            var result = Object.create(null, {
+                first: {get value() {reads++; return {rank:42};}},
+                second: {get get() {reads++; $262.gc(); return function() {return 43;};}},
+                third: {get value() {$262.gc(); return 44;}}
+            });
+            print(Object.getPrototypeOf(result) === null); print(result.first.rank);
+            print(result.second); print(result.third); print(reads);
+            var target = {};
+            var marker = {rank:45};
+            try {Object.defineProperties(target, {first:{value:42}, get second() {$262.gc(); throw marker;}});}
+            catch (error) {print(error === marker);}
+            print(Object.hasOwn(target,'first'));
+            "#,
+            &["true", "42", "43", "44", "2", "true", "false"],
+        );
+    }
+
+    #[test]
     fn regression_property_definition_parses_once_before_proxy_effects() {
         assert_output_in_execution_modes(
             r#"

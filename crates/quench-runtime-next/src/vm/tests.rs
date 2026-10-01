@@ -670,6 +670,88 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn definition_batch_roots_release_after_each_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "own-keys-throw",
+            "own-descriptor-throw",
+            "get-descriptor-throw",
+            "parse-throw",
+            "invalid-late",
+            "define-reject",
+            "define-throw",
+            "success",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var weak, marker = {{kind:'{phase}'}};
+                var backing = {{}};
+                var target = new Proxy(backing, {{defineProperty(object,key,descriptor) {{
+                    $262.gc();
+                    if (key === 'second' && '{phase}' === 'define-reject') return false;
+                    if (key === 'second' && '{phase}' === 'define-throw') throw marker;
+                    return Reflect.defineProperty(object,key,descriptor);
+                }}}});
+                var descriptors = new Proxy({{
+                    first: {{get value() {{var value = {{rank:42}}; weak = new WeakRef(value); $262.gc(); return value;}}}},
+                    second: {{get value() {{$262.gc(); if ('{phase}' === 'parse-throw') throw marker; return 43;}}}}
+                }}, {{
+                    ownKeys() {{$262.gc(); if ('{phase}' === 'own-keys-throw') throw marker; return ['first','second'];}},
+                    getOwnPropertyDescriptor(object,key) {{$262.gc();
+                        if (key === 'second' && '{phase}' === 'own-descriptor-throw') throw marker;
+                        return {{enumerable:true, configurable:true}};
+                    }},
+                    get(object,key) {{$262.gc();
+                        if (key === 'second' && '{phase}' === 'get-descriptor-throw') throw marker;
+                        if (key === 'second' && '{phase}' === 'invalid-late') return {{get:1}};
+                        return Reflect.get(object,key);
+                    }}
+                }});
+            "#
+            );
+            let program = compile(&source, "definition-batch-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let values = ["target", "descriptors", "marker"].map(|name| {
+                let atom = vm.intern_atom(name);
+                vm.own_property(vm.realm.globals, atom).unwrap()
+            });
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.object_define_properties(&program, &values[..2]);
+            match phase {
+                "success" => assert_eq!(result.unwrap(), values[0]),
+                "invalid-late" | "define-reject" => {
+                    let error = result.unwrap_err();
+                    assert!(vm.format_error(&program, &error).contains("TypeError"));
+                }
+                _ => assert_eq!(result.unwrap_err().thrown_value(), Some(values[2])),
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+            let weak = vm.intern_atom("weak");
+            let weak = vm.own_property(vm.realm.globals, weak).unwrap();
+            let weak = match vm.heap.get(weak) {
+                Some(super::Cell::WeakRef { target, .. }) => *target,
+                _ => None,
+            };
+            vm.collect_now(&program);
+            if phase != "own-keys-throw" {
+                let weak = weak.expect("first descriptor created a weak value tracker");
+                assert_eq!(
+                    vm.heap.weak_value(weak).is_some(),
+                    matches!(phase, "success" | "define-reject" | "define-throw"),
+                    "{phase}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn definition_record_stack_exhaustion_preserves_root_scopes() {
     let mut vm = Vm::new(Test262Host);
     let program = Engine::specialize("var target = {};", "definition-stack-budget.js").unwrap();
