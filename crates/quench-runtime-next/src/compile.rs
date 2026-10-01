@@ -286,12 +286,25 @@ impl Engine {
     }
 
     pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
+        use oxc_ast_visit::Visit;
+
+        struct RegExpSyntax(bool);
+        impl<'a> Visit<'a> for RegExpSyntax {
+            fn visit_reg_exp_literal(&mut self, _: &RegExpLiteral<'a>) {
+                self.0 = true;
+            }
+        }
+
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if stack::validate_parsed(&parsed).is_err() {
             return true;
         }
+        // RegExp token contents belong to OXC, not the text expression splitter.
+        let mut regexp = RegExpSyntax(false);
+        regexp.visit_program(&parsed.program);
         !parsed.diagnostics.is_empty()
+            || regexp.0
             || parsed.program.body.iter().any(|statement| {
                 matches!(
                     statement,
@@ -961,14 +974,9 @@ impl Engine {
         early::parameter_early_error(&parsed.program, strict)
     }
 
-    pub(crate) fn eval_strict_binding_early_error(source: &str, strict: bool) -> Option<String> {
-        let strict_source;
-        let source = if strict {
-            strict_source = format!("'use strict';\n{source}");
-            strict_source.as_str()
-        } else {
-            source
-        };
+    pub(crate) fn strict_eval_syntax_error(source: &str) -> Option<String> {
+        let strict_source = format!("'use strict';\n{source}");
+        let source = strict_source.as_str();
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if stack::validate_parsed(&parsed).is_err() {
@@ -984,11 +992,12 @@ impl Engine {
             }
             return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
         }
-        early::strict_binding_early_error(&parsed.program, strict)
-    }
-
-    pub(crate) fn eval_strict_eval_early_error(source: &str) -> bool {
-        early::strict_eval_early_error(source)
+        oxc_semantic::SemanticBuilder::new()
+            .with_check_syntax_error(true)
+            .build(&parsed.program)
+            .diagnostics
+            .first()
+            .map(|diagnostic| format!("SyntaxError: {diagnostic}"))
     }
 }
 
@@ -1548,16 +1557,12 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         let async_module = module_goal && has_top_level_await(&program.body);
-        if early::strict_arguments_early_error(program, self.root_strict) {
+        if let Some(name) =
+            early::strict_restricted_assignment_early_error(program, self.root_strict)
+        {
             self.reject(
                 Span::default(),
-                "SyntaxError: assignment to arguments is not allowed in strict mode",
-            );
-        }
-        if self.root_strict && early::strict_eval_early_error(self.text) {
-            self.reject(
-                Span::default(),
-                "SyntaxError: assignment to eval is not allowed in strict mode",
+                format!("SyntaxError: assignment to {name} is not allowed in strict mode"),
             );
         }
         if self.root_strict
