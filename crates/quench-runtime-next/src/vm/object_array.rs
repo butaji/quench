@@ -1,4 +1,4 @@
-use super::object_descriptors::DescriptorConflict;
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -24,71 +24,77 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         target: Value,
-        descriptor: Value,
+        descriptor: PropertyDescriptorRecord,
     ) -> Result<bool, JsError> {
-        if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
-            return Err(self.type_error(p, "array receiver is not array".into()));
-        }
-        let descriptor = self.to_property_descriptor(p, descriptor)?;
-        let descriptor_value = descriptor.value;
-        let requested_len = if let Some(value) = descriptor_value {
-            let uint32 = array_length_uint32(self.to_number(p, value)?);
-            let number_len = self.to_number(p, value)?;
-            if number_len != f64::from(uint32) {
-                return Err(self.range_error(p, "invalid array length".into()));
+        let target_root = self.heap.root(target);
+        let descriptor =
+            super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, descriptor);
+        let outcome = (|| {
+            if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+                return Err(self.type_error(p, "array receiver is not array".into()));
             }
-            Some(uint32 as usize)
-        } else {
-            None
-        };
-        if descriptor.has_accessor_fields()
-            || descriptor.configurable.is_some_and(|value| value)
-            || descriptor.enumerable.is_some_and(|value| value)
-        {
-            return Ok(false);
-        }
-        let (current_len, current_writable) = match self.heap.get(target) {
-            Some(Cell::Array { elements, .. }) => (
-                self.heap
-                    .sparse_length(target)
-                    .unwrap_or(0)
-                    .max(elements.len()),
-                self.descriptors
-                    .get(&(target, PropertyKey::string(self.length_atom)))
-                    .is_none_or(|attributes| attributes.writable),
-            ),
-            _ => return Err(self.type_error(p, "array receiver is not array".into())),
-        };
-        let next_len = requested_len.unwrap_or(current_len);
-        let writable = descriptor.writable.unwrap_or(current_writable);
-        if !current_writable && (next_len != current_len || writable) {
-            return Ok(false);
-        }
-        if next_len < current_len {
-            let blocked_index = self
-                .descriptors
-                .iter()
-                .filter_map(|((object, key), attributes)| {
-                    (*object == target
-                        && matches!(key, PropertyKey::String(atom)
-                        if *atom != self.length_atom
-                            && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| {
-                                index >= next_len && !attributes.configurable
-                            })))
-                    .then(|| match key {
-                        PropertyKey::String(atom) => self.atom_name(*atom).parse::<usize>().ok(),
-                        PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
-                    })
-                    .flatten()
-                })
-                .max();
-            if let Some(blocked_index) = blocked_index {
-                let partial_len = blocked_index + 1;
-                if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
-                    Rc::make_mut(elements).truncate(partial_len);
+            let descriptor_value = descriptor.resolve(&self.heap).value;
+            let requested_len = if let Some(value) = descriptor_value {
+                let uint32 = array_length_uint32(self.to_number(p, value)?);
+                let value = descriptor.resolve(&self.heap).value.unwrap();
+                let number_len = self.to_number(p, value)?;
+                if number_len != f64::from(uint32) {
+                    return Err(self.range_error(p, "invalid array length".into()));
                 }
-                self.heap.sparse_set_length(target, partial_len);
-                let removed = self
+                Some(uint32 as usize)
+            } else {
+                None
+            };
+            let descriptor = descriptor.resolve(&self.heap);
+            let target = self.heap.root_value(target_root).unwrap();
+            if descriptor.has_accessor_fields()
+                || descriptor.configurable.is_some_and(|value| value)
+                || descriptor.enumerable.is_some_and(|value| value)
+            {
+                return Ok(false);
+            }
+            let (current_len, current_writable) = match self.heap.get(target) {
+                Some(Cell::Array { elements, .. }) => (
+                    self.heap
+                        .sparse_length(target)
+                        .unwrap_or(0)
+                        .max(elements.len()),
+                    self.descriptors
+                        .get(&(target, PropertyKey::string(self.length_atom)))
+                        .is_none_or(|attributes| attributes.writable),
+                ),
+                _ => return Err(self.type_error(p, "array receiver is not array".into())),
+            };
+            let next_len = requested_len.unwrap_or(current_len);
+            let writable = descriptor.writable.unwrap_or(current_writable);
+            if !current_writable && (next_len != current_len || writable) {
+                return Ok(false);
+            }
+            if next_len < current_len {
+                let blocked_index = self
+                    .descriptors
+                    .iter()
+                    .filter_map(|((object, key), attributes)| {
+                        (*object == target
+                            && matches!(key, PropertyKey::String(atom)
+                            if *atom != self.length_atom
+                                && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| {
+                                    index >= next_len && !attributes.configurable
+                                })))
+                        .then(|| match key {
+                            PropertyKey::String(atom) => self.atom_name(*atom).parse::<usize>().ok(),
+                            PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
+                        })
+                        .flatten()
+                    })
+                    .max();
+                if let Some(blocked_index) = blocked_index {
+                    let partial_len = blocked_index + 1;
+                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+                        Rc::make_mut(elements).truncate(partial_len);
+                    }
+                    self.heap.sparse_set_length(target, partial_len);
+                    let removed = self
                     .descriptors
                     .keys()
                     .filter_map(|(object, key)| {
@@ -99,28 +105,28 @@ impl<H: Host> Vm<H> {
                         .then_some((*object, *key))
                     })
                     .collect::<Vec<_>>();
-                for key in removed {
-                    self.descriptors.remove(&key);
+                    for key in removed {
+                        self.descriptors.remove(&key);
+                    }
+                    if !writable {
+                        self.descriptors.insert(
+                            (target, PropertyKey::string(self.length_atom)),
+                            PropertyAttributes {
+                                writable: false,
+                                enumerable: false,
+                                configurable: false,
+                                accessor: false,
+                                getter: None,
+                                setter: None,
+                            },
+                        );
+                    }
+                    return Ok(false);
                 }
-                if !writable {
-                    self.descriptors.insert(
-                        (target, PropertyKey::string(self.length_atom)),
-                        PropertyAttributes {
-                            writable: false,
-                            enumerable: false,
-                            configurable: false,
-                            accessor: false,
-                            getter: None,
-                            setter: None,
-                        },
-                    );
+                if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+                    Rc::make_mut(elements).truncate(next_len);
                 }
-                return Ok(false);
-            }
-            if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
-                Rc::make_mut(elements).truncate(next_len);
-            }
-            let removed = self
+                let removed = self
                 .descriptors
                 .keys()
                 .filter_map(|(object, key)| {
@@ -131,23 +137,27 @@ impl<H: Host> Vm<H> {
                     .then_some((*object, *key))
                 })
                 .collect::<Vec<_>>();
-            for key in removed {
-                self.descriptors.remove(&key);
+                for key in removed {
+                    self.descriptors.remove(&key);
+                }
             }
-        }
-        self.heap.sparse_set_length(target, next_len);
-        self.descriptors.insert(
-            (target, PropertyKey::string(self.length_atom)),
-            PropertyAttributes {
-                writable,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        Ok(true)
+            self.heap.sparse_set_length(target, next_len);
+            self.descriptors.insert(
+                (target, PropertyKey::string(self.length_atom)),
+                PropertyAttributes {
+                    writable,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            Ok(true)
+        })();
+        descriptor.release(&mut self.heap);
+        self.heap.release_root(target_root);
+        outcome
     }
 
     pub(super) fn set_array_length(
@@ -156,12 +166,7 @@ impl<H: Host> Vm<H> {
         target: Value,
         value: Value,
     ) -> Result<bool, JsError> {
-        let descriptor = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        let value_atom = self.intern_atom("value");
-        self.set_property(descriptor, value_atom, value)?;
-        self.define_array_length(p, target, descriptor)
+        self.define_array_length(p, target, PropertyDescriptorRecord::value(value))
     }
 
     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
@@ -262,12 +267,10 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn define_array_property(
         &mut self,
-        p: &ResidualProgram,
         target: Value,
         index: usize,
-        descriptor: Value,
-    ) -> Result<Value, JsError> {
-        let descriptor = self.to_property_descriptor(p, descriptor)?;
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<bool, JsError> {
         let atom = self.intern_atom(&index.to_string());
         let existing = match self.heap.get(target) {
             Some(Cell::Array { elements, .. }) => elements
@@ -300,16 +303,7 @@ impl<H: Host> Vm<H> {
                 .get(&(target, PropertyKey::string(self.length_atom)))
                 .is_some_and(|attributes| !attributes.writable)
         {
-            return Err(self.type_error(p, "cannot extend non-writable array".into()));
-        }
-        if is_new
-            && self
-                .object_data(target)
-                .is_some_and(|object| !object.is_extensible())
-        {
-            return Err(JsError(
-                "cannot add property to non-extensible array".into(),
-            ));
+            return Ok(false);
         }
         let current = self
             .descriptors
@@ -317,57 +311,34 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         let attributes = descriptor.fold_attributes(current, is_new);
-        if !is_new {
-            if let Some(conflict) = descriptor.non_configurable_conflict(current, attributes) {
-                let message = match conflict {
-                    DescriptorConflict::Attributes => {
-                        "cannot redefine non-configurable array index"
-                    }
-                    DescriptorConflict::Kind if current.accessor => {
-                        "cannot change array accessor to data property"
-                    }
-                    DescriptorConflict::Kind => "cannot change non-configurable array index kind",
-                };
-                return Err(JsError(message.into()));
-            }
+        let current_record = (!is_new).then(|| {
+            PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
+        });
+        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
+            return Ok(false);
         }
         let descriptor_value = descriptor.value;
         let descriptor_accessor = descriptor.has_accessor_fields();
         if descriptor_accessor {
-            if descriptor.changes_non_configurable_accessor(current, |left, right| {
-                self.same_value(left, right)
-            }) {
-                return Err(
-                    self.type_error(p, "cannot change non-configurable array accessor".into())
-                );
-            }
             self.unmap_argument_index(target, index);
             if !self.set_array_element(target, index, Value::DELETED) {
-                return Err(JsError("cannot define array accessor".into()));
+                return Ok(false);
             }
             self.descriptors
                 .insert((target, PropertyKey::string(atom)), attributes);
-            return Ok(target);
+            return Ok(true);
         }
         let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
-        if !is_new
-            && !current.configurable
-            && !current.writable
-            && descriptor_value.is_some_and(|value| {
-                existing.is_some_and(|current| !self.same_value(current, value))
-            })
-        {
-            return Err(JsError("cannot write non-writable array index".into()));
-        }
         if !self.set_array_element(target, index, next) {
-            return Err(JsError("cannot define array index".into()));
+            return Ok(false);
         }
         self.descriptors
             .insert((target, PropertyKey::string(atom)), attributes);
         if !attributes.writable {
             self.unmap_argument_index(target, index);
         }
-        Ok(target)
+        Ok(true)
     }
 
     pub(super) fn delete_array_index(&mut self, target: Value, index: usize) -> Value {

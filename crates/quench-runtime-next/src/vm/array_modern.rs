@@ -721,20 +721,13 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: Value,
     ) -> Result<(), JsError> {
-        let descriptor = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        for (name, field) in [
-            ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, field)?;
+        let key = self.to_property_key(p, Value::number(index as f64))?;
+        let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
+        if self.define_own_property_record(p, target, key, record)? {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot create data property".into()))
         }
-        self.object_define_property(p, &[target, Value::number(index as f64), descriptor])?;
-        Ok(())
     }
 
     pub(super) fn iterator_abrupt(

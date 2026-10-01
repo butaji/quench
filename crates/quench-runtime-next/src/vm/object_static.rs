@@ -1,4 +1,4 @@
-use super::object_descriptors::DescriptorConflict;
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -691,133 +691,15 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
-        {
-            if handler.is_null() {
-                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
-            }
-            let trap_atom = self.intern_atom("defineProperty");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let key = self.to_property_key(p, key_value)?;
-                let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-                if self.object_data(descriptor).is_none() {
-                    return Err(self.type_error(p, "property descriptor is not an object".into()));
-                }
-                let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
-                if !self.truthy(result) {
-                    return Err(
-                        self.type_error(p, "proxy defineProperty trap returned false".into())
-                    );
-                }
-                self.validate_proxy_define_property(p, target, key, descriptor)?;
-                return Ok(source);
-            } else if !trap.is_null() && !trap.is_undefined() {
-                return Err(self.type_error(p, "proxy defineProperty trap is not callable".into()));
-            } else {
-                let mut forwarded = args.to_vec();
-                if let Some(receiver) = forwarded.first_mut() {
-                    *receiver = target;
-                }
-                return self.object_define_property(p, &forwarded);
-            }
-        }
-        let target = self.proxy_target(source);
-        let target = self
-            .object_data(target)
-            .map(|_| target)
-            .ok_or_else(|| self.type_error(p, "defineProperty target is not an object".into()))?;
-        let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let descriptor = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        if self.object_data(descriptor).is_none() {
-            return Err(self.type_error(p, "property descriptor is not an object".into()));
-        }
-        let key = self.to_property_key(p, key_value)?;
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            return self.define_ordinary_property_key(p, target, PropertyKey::symbol(key), descriptor);
-        }
-        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
-            unreachable!("ToPropertyKey returns a string or symbol")
-        };
-        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
-            match Self::typed_array_index_key(key.host_string()) {
-                super::object_descriptors::TypedArrayIndexKey::Index(index) => {
-                    return self.define_typed_array_property(p, target, index, descriptor);
-                }
-                super::object_descriptors::TypedArrayIndexKey::Invalid => {
-                    return Err(self.type_error(
-                        p,
-                        "cannot define a non-integer typed array index".into(),
-                    ));
-                }
-                super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
-            }
-        }
-        if key.host_string() == "length"
-            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-            && !self
-                .object_data(target)
-                .is_some_and(Object::is_arguments_object)
-        {
-            return if self.define_array_length(p, target, descriptor)? {
-                Ok(target)
-            } else {
-                Err(self.type_error(p, "cannot redefine array length".into()))
-            };
-        }
-        if let Some(index) = array_index(key.host_string()).map(|index| index as usize)
-            && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-        {
-            return self.define_array_property(p, target, index, descriptor);
-        }
-        let atom = self.intern_js_atom(&key);
-        self.evaluate_deferred_namespace_for_key(
-            p,
-            target,
-            Some(crate::vm::property_key::PropertyKey::string(atom)),
-        )?;
-        if self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
-        {
-            let Some(current) = self.own_property(target, atom) else {
-                return Err(
-                    self.type_error(p, "cannot define a non-export on a module namespace".into())
-                );
-            };
-            let configurable = self.descriptor_field(p, descriptor, "configurable")?;
-            let enumerable = self.descriptor_field(p, descriptor, "enumerable")?;
-            let writable = self.descriptor_field(p, descriptor, "writable")?;
-            let value = self.descriptor_field(p, descriptor, "value")?;
-            let getter = self.descriptor_field(p, descriptor, "get")?;
-            let setter = self.descriptor_field(p, descriptor, "set")?;
-            let compatible = !configurable.is_some_and(|value| self.truthy(value))
-                && !enumerable.is_some_and(|value| !self.truthy(value))
-                && !writable.is_some_and(|value| !self.truthy(value))
-                && getter.is_none()
-                && setter.is_none()
-                && value.is_none_or(|value| self.same_value(current, value));
-            return if compatible {
-                Ok(target)
-            } else {
-                Err(self.type_error(p, "cannot redefine module namespace export".into()))
-            };
-        }
-        self.define_ordinary_property_key(p, target, PropertyKey::string(atom), descriptor)
+        self.define_property_from_descriptor(p, args, PropertyDefinitionKind::Object)
     }
 
-    fn define_ordinary_property_key(
+    pub(super) fn define_ordinary_property_key(
         &mut self,
-        p: &ResidualProgram,
         target: Value,
         key: PropertyKey,
-        descriptor: Value,
-    ) -> Result<Value, JsError> {
-        let descriptor = self.to_property_descriptor(p, descriptor)?;
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<bool, JsError> {
         let existing = match key {
             PropertyKey::String(atom) => self.own_property(target, atom),
             PropertyKey::Symbol(symbol) => self.symbol_property(target, symbol),
@@ -831,50 +713,19 @@ impl<H: Host> Vm<H> {
         let descriptor_value = descriptor.value;
         let descriptor_accessor = descriptor.has_accessor_fields();
         let descriptor_data = descriptor.has_data_fields();
-        if !is_new {
-            if let Some(conflict) = descriptor.non_configurable_conflict(current, attributes) {
-                let message = match conflict {
-                    DescriptorConflict::Attributes => "cannot redefine non-configurable property",
-                    DescriptorConflict::Kind => "cannot change non-configurable property kind",
-                };
-                return Err(self.type_error(p, message.into()));
-            }
+        let current_record = (!is_new).then(|| {
+            PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
+        });
+        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
+            return Ok(false);
         }
-        let accessor = descriptor_accessor;
-        if accessor {
-            let getter = attributes.getter;
-            let setter = attributes.setter;
-            if descriptor.changes_non_configurable_accessor(current, |left, right| {
-                self.same_value(left, right)
-            }) {
-                return Err(self.type_error(p, "cannot change non-configurable accessor".into()));
-            }
-            if !is_new && !current.configurable && !current.accessor {
-                return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
-            }
+        if descriptor_accessor {
             if is_new {
                 self.set_shape_property(target, key, Value::UNDEFINED)?;
             }
-            self.set_property_attributes(
-                target,
-                key,
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: attributes.enumerable,
-                    configurable: attributes.configurable,
-                    accessor: true,
-                    getter,
-                    setter,
-                },
-            );
-            return Ok(target);
-        }
-        if !is_new
-            && !current.configurable
-            && !current.writable
-            && descriptor_value.is_some_and(|next| !self.same_value(existing.unwrap(), next))
-        {
-            return Err(self.type_error(p, "cannot write non-writable property".into()));
+            self.set_property_attributes(target, key, attributes);
+            return Ok(true);
         }
         let value = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if is_new || descriptor_value.is_some() && (current.writable || current.configurable) {
@@ -884,8 +735,9 @@ impl<H: Host> Vm<H> {
             self.set_shape_property(target, key, value)?;
         }
         self.set_property_attributes(target, key, attributes);
-        Ok(target)
+        Ok(true)
     }
+
 }
 
 pub(super) fn array_index(name: &str) -> Option<u32> {

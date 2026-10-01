@@ -825,36 +825,12 @@ impl<H: Host> Vm<H> {
         value: Value,
         new_property: bool,
     ) -> Result<bool, JsError> {
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(receiver).cloned()
-        else {
-            return Ok(false);
-        };
-        if handler.is_null() {
-            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
-        }
-        let trap_atom = self.intern_atom("defineProperty");
-        let trap = self.get_property(p, handler, trap_atom)?;
-        if !self.is_function(trap) {
-            return self.define_receiver_data_property(p, target, atom, value, new_property);
-        }
-        let descriptor = self.object();
-        let value_atom = self.intern_atom("value");
-        self.set_property(descriptor, value_atom, value)?;
-        if new_property {
-            for name in ["writable", "enumerable", "configurable"] {
-                let field = self.intern_atom(name);
-                self.set_property(descriptor, field, Value::TRUE)?;
-            }
-        }
         let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-        let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
-        if !self.truthy(result) {
-            return Ok(false);
+        let mut descriptor = super::object_descriptors::PropertyDescriptorRecord::value(value);
+        if new_property {
+            descriptor = super::object_descriptors::PropertyDescriptorRecord::data(value);
         }
-        self.validate_proxy_define_property(p, target, key, descriptor)?;
-        Ok(true)
+        self.define_own_property_record(p, receiver, key, descriptor)
     }
 
     pub(super) fn set_shape_property(
