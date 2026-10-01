@@ -170,6 +170,9 @@ pub(crate) enum ImmediateRole {
     UnaryOperator,
     WasmI32BinaryOperator,
     WasmI32UnaryOperator,
+    WasmI64BinaryOperator,
+    WasmI64UnaryOperator,
+    WasmIntegerConversionOperator,
     TemplateSiteIndex,
     JumpTarget,
     MethodSiteIndex,
@@ -517,6 +520,9 @@ opcodes!(
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
     WasmI32Binary => Effect::THROWS; layout Scalar; meaning WasmI32BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmIntegerConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmIntegerConversionOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
 );
 
@@ -1016,7 +1022,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 34;
+    pub const FORMAT_VERSION: u8 = 35;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

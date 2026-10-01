@@ -68,6 +68,14 @@ impl<H: Host> Vm<H> {
             .transpose()
     }
 
+    pub(super) fn wasm_i64_operand(&self, value: Value) -> Result<i64, JsError> {
+        let crate::WasmValue::I64(value) = self.decode_wasm_scalar(value, crate::WasmType::I64)?
+        else {
+            unreachable!("decoded i64 operand")
+        };
+        Ok(value)
+    }
+
     pub(super) fn encode_wasm_scalar(&mut self, value: crate::WasmValue) -> Value {
         match value.bits() {
             crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),

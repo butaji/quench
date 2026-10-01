@@ -23,7 +23,8 @@ using `quench_wasm::Module::lower_shared(export)`, then executes through
 and result types. `WasmValue` carries i32/i64 values and exact f32/f64 IEEE bits,
 preserving signed zero and NaN payloads. Constants, locals (with typed zero
 initialization), calls, branches and select preserve all four scalar forms.
-Arithmetic currently supports the full i32 operator family; remaining numeric
+Arithmetic supports the full i32 and i64 operator families, plus wrapping and
+signed/unsigned extension between those widths. Remaining floating-point numeric
 operators, references, multiple results and stateful module sections fail
 explicitly. Blocks support zero or one scalar result without block parameters.
 

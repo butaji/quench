@@ -1,8 +1,8 @@
-//! Exercise every directive in the pinned i32 file through shared execution.
+//! Exercise every directive in the pinned integer files through shared execution.
 //! No legacy executor or unsupported-directive skip is permitted here.
 
 use crate::{Engine, Error, Module};
-use rqj::{Host, Runtime, WasmI32Function, WasmTrap};
+use rqj::{Host, Runtime, WasmFunction, WasmTrap, WasmValue};
 use std::collections::HashMap;
 use wast::core::{WastArgCore, WastRetCore};
 use wast::{Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet};
@@ -17,8 +17,17 @@ impl Host for TestHost {
 
 #[test]
 fn pinned_i32_directives_use_shared_execution() {
+    run_integer_spec("i32");
+}
+
+#[test]
+fn pinned_i64_directives_use_shared_execution() {
+    run_integer_spec("i64");
+}
+
+fn run_integer_spec(file: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../quench-wasm-test/testsuite/i32.wast");
+        .join(format!("../quench-wasm-test/testsuite/{file}.wast"));
     let source = std::fs::read_to_string(path).unwrap();
     let buffer = wast::parser::ParseBuffer::new(&source).unwrap();
     let mut script: Wast<'_> = wast::parser::parse(&buffer).unwrap();
@@ -46,13 +55,14 @@ fn pinned_i32_directives_use_shared_execution() {
                     &mut functions,
                     &mut runtime,
                 )
-                .unwrap_or_else(|error| panic!("i32.wast:{line}: {error}"));
+                .unwrap_or_else(|error| panic!("{file}.wast:{line}: {error}"));
                 let expected = match results.as_slice() {
                     [] => None,
-                    [WastRet::Core(WastRetCore::I32(value))] => Some(*value),
-                    _ => panic!("i32.wast:{line}: unexpected result type"),
+                    [WastRet::Core(WastRetCore::I32(value))] => Some(WasmValue::I32(*value)),
+                    [WastRet::Core(WastRetCore::I64(value))] => Some(WasmValue::I64(*value)),
+                    _ => panic!("{file}.wast:{line}: unexpected result type"),
                 };
-                assert_eq!(got, expected, "i32.wast:{line}");
+                assert_eq!(got, expected, "{file}.wast:{line}");
                 returns += 1;
             }
             WastDirective::AssertTrap { exec, message, .. } => {
@@ -66,10 +76,10 @@ fn pinned_i32_directives_use_shared_execution() {
                 let expected = match *message {
                     "integer divide by zero" => WasmTrap::IntegerDivideByZero,
                     "integer overflow" => WasmTrap::IntegerOverflow,
-                    _ => panic!("i32.wast:{line}: unexpected trap class"),
+                    _ => panic!("{file}.wast:{line}: unexpected trap class"),
                 };
-                assert_eq!(error.wasm_trap(), Some(expected), "i32.wast:{line}");
-                assert_eq!(error.to_string(), *message, "i32.wast:{line}");
+                assert_eq!(error.wasm_trap(), Some(expected), "{file}.wast:{line}");
+                assert_eq!(error.to_string(), *message, "{file}.wast:{line}");
                 traps += 1;
             }
             WastDirective::AssertInvalid {
@@ -78,11 +88,11 @@ fn pinned_i32_directives_use_shared_execution() {
                 let error = engine.compile(&module.encode().unwrap()).unwrap_err();
                 assert!(
                     matches!(error, Error::Validate(_)),
-                    "i32.wast:{line}: {error}"
+                    "{file}.wast:{line}: {error}"
                 );
                 assert!(
                     error.to_string().contains(*message),
-                    "i32.wast:{line}: {error}"
+                    "{file}.wast:{line}: {error}"
                 );
                 invalid += 1;
             }
@@ -93,15 +103,15 @@ fn pinned_i32_directives_use_shared_execution() {
                     Err(error) => error.to_string(),
                     Ok(bytes) => match engine.compile(&bytes).unwrap_err() {
                         Error::Parse(error) => error,
-                        error => panic!("i32.wast:{line}: expected parse error, got {error}"),
+                        error => panic!("{file}.wast:{line}: expected parse error, got {error}"),
                     },
                 };
                 // The spec labels grammar failures; decoder diagnostic wording
                 // is implementation-specific. The parse-error class is required.
-                assert!(!error.is_empty(), "i32.wast:{line}: expected {message}");
+                assert!(!error.is_empty(), "{file}.wast:{line}: expected {message}");
                 malformed += 1;
             }
-            _ => panic!("i32.wast:{line}: unsupported directive"),
+            _ => panic!("{file}.wast:{line}: unsupported directive"),
         }
     }
     assert_eq!(
@@ -109,7 +119,7 @@ fn pinned_i32_directives_use_shared_execution() {
         script.directives.len()
     );
     eprintln!(
-        "shared i32: {} directives, {returns} returns, {traps} traps, {invalid} invalid, {malformed} malformed",
+        "shared {file}: {} directives, {returns} returns, {traps} traps, {invalid} invalid, {malformed} malformed",
         script.directives.len()
     );
 }
@@ -117,9 +127,9 @@ fn pinned_i32_directives_use_shared_execution() {
 fn invoke(
     execute: &WastExecute<'_>,
     module: &Module,
-    functions: &mut HashMap<String, WasmI32Function>,
+    functions: &mut HashMap<String, WasmFunction>,
     runtime: &mut Runtime<TestHost>,
-) -> Result<Option<i32>, rqj::JsError> {
+) -> Result<Option<WasmValue>, rqj::JsError> {
     let WastExecute::Invoke(WastInvoke {
         module: None,
         name,
@@ -131,13 +141,14 @@ fn invoke(
     };
     let function = functions
         .entry((*name).to_owned())
-        .or_insert_with(|| module.lower_shared_i32(name).unwrap());
+        .or_insert_with(|| module.lower_shared(name).unwrap());
     let args = args
         .iter()
         .map(|arg| match arg {
-            WastArg::Core(WastArgCore::I32(value)) => *value,
+            WastArg::Core(WastArgCore::I32(value)) => WasmValue::I32(*value),
+            WastArg::Core(WastArgCore::I64(value)) => WasmValue::I64(*value),
             _ => panic!("unexpected argument type"),
         })
         .collect::<Vec<_>>();
-    runtime.execute_wasm_i32(function, &args)
+    runtime.execute_wasm(function, &args)
 }

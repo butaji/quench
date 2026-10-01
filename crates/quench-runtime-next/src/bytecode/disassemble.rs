@@ -234,6 +234,9 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::UnaryOperator
         | ImmediateRole::WasmI32BinaryOperator
         | ImmediateRole::WasmI32UnaryOperator
+        | ImmediateRole::WasmI64BinaryOperator
+        | ImmediateRole::WasmI64UnaryOperator
+        | ImmediateRole::WasmIntegerConversionOperator
         | ImmediateRole::JumpTarget => write_scalar_value(output, instruction),
     }
 }
@@ -292,12 +295,24 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
         ImmediateRole::WasmI32BinaryOperator => write!(
             output,
             " operator={:?}",
-            crate::wasm::i32::I32BinaryOperator::from_tag(instruction.imm())
+            crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmI64BinaryOperator => write!(
+            output, " operator={:?}",
+            crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmIntegerConversionOperator => write!(
+            output, " operator={:?}",
+            crate::wasm::integer::IntegerConversionOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmI64UnaryOperator => write!(
+            output, " operator={:?}",
+            crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI32UnaryOperator => write!(
             output,
             " operator={:?}",
-            crate::wasm::i32::I32UnaryOperator::from_tag(instruction.imm())
+            crate::wasm::integer::I32UnaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::UnaryOperator => {
             write!(output, " operator={}", instruction.unary_operator())

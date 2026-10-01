@@ -812,17 +812,50 @@ impl<H: Host> Vm<H> {
                     self.read(f, i.register_c()),
                 )
                 .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
-                let operator = crate::wasm::i32::I32BinaryOperator::from_tag(i.imm())
+                let operator = crate::wasm::integer::I32BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm binary operator");
                 let value = operator.apply(left, right).map_err(JsError::wasm_trap_error)?;
+                let crate::WasmValue::I32(value) = value else {
+                    unreachable!("i32 operator result")
+                };
                 self.write(f, i.result_register(), Value::integer(value));
             }
             Op::WasmI32Unary => {
                 let value = self.read(f, i.register_b()).as_int()
                     .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))?;
-                let operator = crate::wasm::i32::I32UnaryOperator::from_tag(i.imm())
+                let operator = crate::wasm::integer::I32UnaryOperator::from_tag(i.imm())
                     .expect("validated Wasm unary operator");
-                self.write(f, i.result_register(), Value::integer(operator.apply(value)));
+                let crate::WasmValue::I32(value) = operator.apply(value) else {
+                    unreachable!("i32 operator result")
+                };
+                self.write(f, i.result_register(), Value::integer(value));
+            }
+            Op::WasmI64Binary => {
+                let left = self.wasm_i64_operand(self.read(f, i.register_b()))?;
+                let right = self.wasm_i64_operand(self.read(f, i.register_c()))?;
+                let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm binary operator");
+                let value = operator.apply(left, right).map_err(JsError::wasm_trap_error)?;
+                let value = self.encode_wasm_scalar(value);
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmI64Unary => {
+                let value = self.wasm_i64_operand(self.read(f, i.register_b()))?;
+                let operator = crate::wasm::integer::I64UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm unary operator");
+                let value = self.encode_wasm_scalar(operator.apply(value));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmIntegerConvert => {
+                let operator = crate::wasm::integer::IntegerConversionOperator::from_tag(i.imm())
+                    .expect("validated Wasm integer conversion");
+                let value = self.decode_wasm_scalar(
+                    self.read(f, i.register_b()),
+                    operator.source_type(),
+                )?;
+                let value = operator.apply(value).expect("typed Wasm conversion operand");
+                let value = self.encode_wasm_scalar(value);
+                self.write(f, i.result_register(), value);
             }
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
