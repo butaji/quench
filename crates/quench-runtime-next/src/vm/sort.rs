@@ -1,3 +1,4 @@
+use super::{Host, JsError, ResidualProgram, RootId, Value, Vm};
 use std::cmp::Ordering;
 
 const INITIAL_RUN_WIDTH: usize = 1;
@@ -62,4 +63,31 @@ where
         };
     }
     Ok(())
+}
+
+impl<H: Host> Vm<H> {
+    pub(super) fn compare_sort_callback(
+        &mut self,
+        p: &ResidualProgram,
+        comparator: RootId,
+        left: RootId,
+        right: RootId,
+    ) -> Result<Ordering, JsError> {
+        let comparator = self.heap.root_value(comparator).unwrap();
+        let left = self.heap.root_value(left).unwrap();
+        let right = self.heap.root_value(right).unwrap();
+        let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
+        let result = self.heap.root(result);
+        let value = self.heap.root_value(result).unwrap();
+        let number = self.to_number(p, value);
+        self.heap.release_root(result);
+        let number = number?;
+        Ok(if number < 0.0 {
+            Ordering::Less
+        } else if number > 0.0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        })
+    }
 }
