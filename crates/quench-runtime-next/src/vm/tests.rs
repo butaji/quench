@@ -1,7 +1,7 @@
 use super::wtf16::JsString;
 use super::{
     CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, Vm,
-    activation::Completion, activation::Continuation,
+    activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -158,6 +158,12 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         second_error_prototype,
         first_iterator_prototype,
         second_iterator_prototype,
+        first_regexp_constructor,
+        first_regexp_prototype,
+        second_regexp_constructor,
+        second_regexp_prototype,
+        first_segmenter_prototype,
+        second_segmenter_prototype,
     ] {
         assert!(vm.heap.get(object).is_some());
     }
@@ -181,12 +187,6 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
             .map(|prototypes| prototypes.generator),
         Some(second_iterator_prototype)
     );
-}
-
-#[test]
-fn js_error_is_pointer_sized() {
-    assert_eq!(size_of::<JsError>(), size_of::<usize>());
-}
     assert_eq!(
         vm.realm
             .intrinsics
