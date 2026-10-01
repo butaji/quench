@@ -185,7 +185,7 @@ impl<H: Host> Vm<H> {
         )
         .is_err();
         let prior_global = self.switch_realm_global(realm_global);
-        let result = self.eval_global_script(p, &source);
+        let result = self.eval_global_script(p, &source, false);
         self.switch_realm_global(prior_global);
         match result {
             Ok(value) if self.is_function(value) => {

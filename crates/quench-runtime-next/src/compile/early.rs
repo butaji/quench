@@ -1130,21 +1130,24 @@ pub(super) fn collect_pattern_names(pattern: &BindingPattern<'_>, names: &mut im
     }
 }
 
-pub(super) fn strict_arguments_early_error(program: &Program<'_>, strict: bool) -> bool {
-    let mut validator = StrictArgumentsEarlyError {
+pub(super) fn strict_restricted_assignment_early_error(
+    program: &Program<'_>,
+    strict: bool,
+) -> Option<&'static str> {
+    let mut validator = StrictRestrictedAssignmentEarlyError {
         strict,
-        found: false,
+        found: None,
     };
     validator.visit_program(program);
     validator.found
 }
 
-struct StrictArgumentsEarlyError {
+struct StrictRestrictedAssignmentEarlyError {
     strict: bool,
-    found: bool,
+    found: Option<&'static str>,
 }
 
-impl<'a> Visit<'a> for StrictArgumentsEarlyError {
+impl<'a> Visit<'a> for StrictRestrictedAssignmentEarlyError {
     fn visit_function(&mut self, function: &Function<'a>, flags: ScopeFlags) {
         let own_strict = function.body.as_ref().is_some_and(|body| {
             body.directives
@@ -1173,19 +1176,19 @@ impl<'a> Visit<'a> for StrictArgumentsEarlyError {
 
     fn visit_assignment_expression(&mut self, expression: &AssignmentExpression<'a>) {
         if self.strict
-            && expression
+            && let Some(name) = expression
                 .left
                 .as_simple_assignment_target()
-                .is_some_and(Self::is_arguments_target)
+                .and_then(Self::restricted_target)
         {
-            self.found = true;
+            self.found.get_or_insert(name);
         }
         walk::walk_assignment_expression(self, expression);
     }
 
     fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
-        if self.strict && Self::is_arguments_target(&expression.argument) {
-            self.found = true;
+        if self.strict && let Some(name) = Self::restricted_target(&expression.argument) {
+            self.found.get_or_insert(name);
         }
         walk::walk_update_expression(self, expression);
     }
@@ -1193,102 +1196,28 @@ impl<'a> Visit<'a> for StrictArgumentsEarlyError {
     fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
         if self.strict
             && expression.operator == oxc_syntax::operator::UnaryOperator::Delete
-            && matches!(&expression.argument, oxc_ast::ast::Expression::Identifier(id) if id.name == "arguments")
+            && let Expression::Identifier(identifier) = &expression.argument
+            && let Some(name) = Self::restricted_name(identifier.name.as_str())
         {
-            self.found = true;
+            self.found.get_or_insert(name);
         }
         walk::walk_unary_expression(self, expression);
     }
 }
 
-impl StrictArgumentsEarlyError {
-    fn is_arguments_target(target: &SimpleAssignmentTarget<'_>) -> bool {
-        matches!(target, SimpleAssignmentTarget::AssignmentTargetIdentifier(id) if id.name == "arguments")
+impl StrictRestrictedAssignmentEarlyError {
+    fn restricted_target(target: &SimpleAssignmentTarget<'_>) -> Option<&'static str> {
+        let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target else {
+            return None;
+        };
+        Self::restricted_name(identifier.name.as_str())
     }
-}
 
-pub(super) fn strict_eval_early_error(source: &str) -> bool {
-    let masked = mask_literals_and_comments(source);
-    let bytes = masked.as_bytes();
-    let mut index = 0;
-    while index + 4 <= bytes.len() {
-        if bytes[index..].starts_with(b"eval")
-            && (index == 0 || !is_identifier_byte(bytes[index - 1]))
-            && (index + 4 == bytes.len() || !is_identifier_byte(bytes[index + 4]))
-        {
-            let mut cursor = index + 4;
-            while matches!(bytes.get(cursor), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-                cursor += 1;
-            }
-            if matches!(bytes.get(cursor), Some(b'=' | b'+' | b'-' | b'*' | b'/')) {
-                return true;
-            }
+    fn restricted_name(name: &str) -> Option<&'static str> {
+        match name {
+            "eval" => Some("eval"),
+            "arguments" => Some("arguments"),
+            _ => None,
         }
-        index += 1;
     }
-    false
-}
-
-fn is_identifier_byte(byte: u8) -> bool {
-    !byte.is_ascii() || byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
-}
-
-fn mask_literals_and_comments(source: &str) -> String {
-    let bytes = source.as_bytes();
-    let mut masked = bytes.to_vec();
-    let mut quote = None;
-    let mut index = 0;
-    while index < bytes.len() {
-        if let Some(delimiter) = quote {
-            if bytes[index] == b'\\' && index + 1 < bytes.len() {
-                masked[index] = b' ';
-                masked[index + 1] = b' ';
-                index += 2;
-                continue;
-            }
-            if bytes[index] == delimiter {
-                quote = None;
-            } else if !matches!(bytes[index], b'\n' | b'\r') {
-                masked[index] = b' ';
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(bytes[index], b'\'' | b'"' | b'`') {
-            quote = Some(bytes[index]);
-            masked[index] = b' ';
-            index += 1;
-            continue;
-        }
-        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'/') {
-            masked[index] = b' ';
-            masked[index + 1] = b' ';
-            index += 2;
-            while index < bytes.len() && bytes[index] != b'\n' {
-                masked[index] = b' ';
-                index += 1;
-            }
-            continue;
-        }
-        if bytes[index] == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            masked[index] = b' ';
-            masked[index + 1] = b' ';
-            index += 2;
-            while index + 1 < bytes.len() {
-                if bytes[index] == b'*' && bytes[index + 1] == b'/' {
-                    masked[index] = b' ';
-                    masked[index + 1] = b' ';
-                    index += 2;
-                    break;
-                }
-                if !matches!(bytes[index], b'\n' | b'\r') {
-                    masked[index] = b' ';
-                }
-                index += 1;
-            }
-            continue;
-        }
-        index += 1;
-    }
-    String::from_utf8(masked).unwrap_or_default()
 }

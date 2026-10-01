@@ -148,9 +148,6 @@ impl<H: Host> Vm<H> {
             return self
                 .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error));
         }
-        if inherited_strict && (trimmed.contains("arguments =") || trimmed.contains("arguments=")) {
-            return self.syntax_error_result(p, "'arguments' is not allowed in strict mode");
-        }
         if self.direct_eval && text.contains('#') {
             let private_names = self
                 .direct_eval_private_names(p)
@@ -170,7 +167,9 @@ impl<H: Host> Vm<H> {
         }
         let result = self.eval_source_simple(p, trimmed, inherited_strict);
         match result {
-            Err(error) if error.is_eval_parser_diagnostic() => self.eval_global_script(p, &text),
+            Err(error) if error.is_eval_parser_diagnostic() => {
+                self.eval_global_script(p, &text, inherited_strict)
+            }
             result => result,
         }
     }
@@ -179,14 +178,12 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         source: &str,
+        strict: bool,
     ) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
-        let strict = self.direct_eval
-            && self
-                .frames
-                .last()
-                .and_then(|frame| p.functions.get(frame.function as usize))
-                .is_some_and(|function| function.strict);
+        if strict {
+            self.validate_strict_eval(p, source)?;
+        }
         if !self.direct_eval
             && let Some(expression) = crate::Engine::eval_single_expression(source)
         {
@@ -496,7 +493,7 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, "invalid statement in eval code");
         }
         if crate::Engine::eval_requires_compiled_program(source) {
-            return self.eval_global_script(p, source);
+            return self.eval_global_script(p, source, inherited_strict);
         }
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
@@ -508,14 +505,8 @@ impl<H: Host> Vm<H> {
         };
         let source_strict =
             inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
-        if source_strict && crate::Engine::eval_strict_eval_early_error(source) {
-            return self.syntax_error_result(p, "assignment to eval is not allowed in strict mode");
-        }
-        if source_strict
-            && let Some(error) = crate::Engine::eval_strict_binding_early_error(source, true)
-        {
-            let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
-            return self.syntax_error_result(p, message);
+        if source_strict {
+            self.validate_strict_eval(p, source)?;
         }
         if source.contains("function")
             && !source.contains("super")
@@ -860,7 +851,7 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom(expression);
         match self.load_eval_name(p, atom) {
             Ok(value) => Ok(value),
-            Err(_) if self.direct_eval => self.eval_global_script(p, expression),
+            Err(_) if self.direct_eval => self.eval_global_script(p, expression, strict),
             Err(_) => self.eval_compiled_expression(p, expression, strict),
         }
     }
@@ -1028,6 +1019,29 @@ impl<H: Host> Vm<H> {
         self.syntax_error_result(p, message)
             .expect_err("dynamic eval syntax errors must throw")
             .mark_eval_parser_diagnostic()
+    }
+
+    fn validate_strict_eval(&mut self, p: &ResidualProgram, source: &str) -> Result<(), JsError> {
+        let private_names = if self.direct_eval {
+            self.direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        let super_property = self.direct_eval && self.eval_super_context(p).is_some();
+        let context_source = if super_property || !private_names.is_empty() {
+            Some(eval_method_context_source(source, &private_names))
+        } else {
+            None
+        };
+        if let Some(error) = crate::Engine::strict_eval_syntax_error(
+            context_source.as_deref().unwrap_or(source),
+        ) {
+            return self
+                .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error))
+                .map(drop);
+        }
+        Ok(())
     }
 
     fn direct_eval_private_names(
@@ -1680,19 +1694,24 @@ fn private_eval_method_body(
     private_names: &[(String, String)],
     expression: bool,
 ) -> String {
-    let declarations = private_names
-        .iter()
-        .map(|(label, _)| format!("#{label};"))
-        .collect::<Vec<_>>()
-        .join("\n");
     let statements = if expression {
         format!("return ({source});")
     } else {
         source.to_owned()
     };
     format!(
-        "return (class {{\n{declarations}\n__eval() {{ {statements}\n}} }}).prototype.__eval.call(this);"
+        "return {}.prototype.__eval.call(this);",
+        eval_method_context_source(&statements, private_names),
     )
+}
+
+fn eval_method_context_source(source: &str, private_names: &[(String, String)]) -> String {
+    let declarations = private_names
+        .iter()
+        .map(|(label, _)| format!("#{label};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("(class {{\n{declarations}\n__eval() {{\n{source}\n}}\n}})")
 }
 
 fn eval_regexp_literal_units(source: &[u16]) -> Option<(&[u16], &[u16])> {
