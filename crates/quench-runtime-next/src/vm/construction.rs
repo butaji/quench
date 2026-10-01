@@ -542,6 +542,7 @@ impl<H: Host> Vm<H> {
                     | Native::ArrayBuffer
                     | Native::SharedArrayBuffer
                     | Native::RegExp
+                    | Native::AggregateError
             ) && !(native == Native::Object
                 && new_target == self.native_value(Native::Object)
                 && args
@@ -671,7 +672,7 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn set_constructed_prototype(
+    pub(super) fn set_constructed_prototype(
         &mut self,
         p: &ResidualProgram,
         result: Value,
@@ -682,7 +683,9 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let result_root = self.heap.root(result);
-        let outcome = self.set_constructed_prototype_rooted(p, result_root, new_target, native);
+        let target_root = self.heap.root(new_target);
+        let outcome = self.set_constructed_prototype_rooted(p, result_root, target_root, native);
+        self.heap.release_root(target_root);
         self.heap.release_root(result_root);
         outcome
     }
@@ -691,14 +694,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         result_root: crate::heap::RootId,
-        new_target: Value,
+        target_root: crate::heap::RootId,
         native: Native,
     ) -> Result<(), JsError> {
-        let result = self
-            .heap
-            .root_value(result_root)
-            .expect("constructed object root remains live");
         let prototype_atom = self.intern_atom("prototype");
+        let new_target = self.heap.root_value(target_root).unwrap();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = (match native {
@@ -736,10 +736,21 @@ impl<H: Host> Vm<H> {
             }) else {
                 return Ok(());
             };
+            let new_target = self.heap.root_value(target_root).unwrap();
             let realm = self.function_realm(p, new_target)?;
-            let constructor_atom = self.intern_atom(intrinsic);
-            let constructor = self.get_property(p, realm, constructor_atom)?;
-            let prototype = self.get_property(p, constructor, prototype_atom)?;
+            let prototype = if let Some(prototype) = self
+                .realm
+                .intrinsics
+                .error_prototypes
+                .get(&(realm, native))
+                .copied()
+            {
+                prototype
+            } else {
+                let constructor_atom = self.intern_atom(intrinsic);
+                let constructor = self.get_property(p, realm, constructor_atom)?;
+                self.get_property(p, constructor, prototype_atom)?
+            };
             if self.object_data(prototype).is_none() {
                 return Ok(());
             }
@@ -747,6 +758,10 @@ impl<H: Host> Vm<H> {
         } else {
             prototype
         };
+        let result = self
+            .heap
+            .root_value(result_root)
+            .expect("constructed object root remains live");
         self.object_set_prototype_of(p, result, prototype)?;
         if native == Native::DataView
             && let Some((buffer, offset, length)) = self.data_view_view(result)

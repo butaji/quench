@@ -353,6 +353,136 @@ mod tests {
     }
 
     #[test]
+    fn regression_collecting_getters_keep_current_instruction_registers() {
+        assert_output_in_execution_modes(
+            r#"
+            var source = {get first() {return {answer: 42};}, get second() {$262.gc(); return 7;}};
+            print([source.first, source.second][0].answer);
+            print(({first: source.first, second: source.second}).first.answer);
+            function first(left, right) {return left.answer;}
+            print(first(source.first, source.second));
+            "#,
+            &["42", "42", "42"],
+        );
+    }
+
+    #[test]
+    fn regression_spread_and_aggregate_lists_survive_collection() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var mode of ['spread', 'aggregate']) {
+                var nextReads = 0;
+                var source = {[Symbol.iterator]() {
+                    var index = 0;
+                    return {get next() {
+                        nextReads++;
+                        $262.gc();
+                        return function() {
+                            $262.gc();
+                            if (index === 3) return {done: true};
+                            return {get done() {$262.gc(); return false;}, value: {rank: ++index}};
+                        };
+                    }};
+                }};
+                var result = mode === 'spread' ? [...source] : new AggregateError(source).errors;
+                print(result.length);
+                print(result.map(value => value.rank).join(','));
+                print(nextReads);
+            }
+            var cause = {marker: 7};
+            var error = new AggregateError([{rank: 1}], {toString() {$262.gc(); return 'message';}}, {
+                get cause() {$262.gc(); return cause;}
+            });
+            print(error.message);
+            print(error.cause === cause);
+            print(error.errors[0].rank);
+            print(Object.getOwnPropertyDescriptor(error, 'errors').enumerable);
+            "#,
+            &[
+                "3", "1,2,3", "1", "3", "1,2,3", "1", "message", "true", "1", "false",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_aggregate_error_preserves_effect_order() {
+        assert_output_in_execution_modes(
+            r#"
+            var log = [];
+            var prototype = {};
+            var target = new Proxy(function Other() {}, {get(object, key, receiver) {
+                if (key === 'prototype') {log.push('prototype'); $262.gc(); return prototype;}
+                return Reflect.get(object, key, receiver);
+            }});
+            var cause = {marker: 7};
+            var options = new Proxy({}, {
+                has(object, key) {log.push('has'); $262.gc(); return true;},
+                get(object, key) {log.push('cause'); $262.gc(); return cause;}
+            });
+            var source = {get [Symbol.iterator]() {log.push('iterator'); $262.gc(); return function() {
+                var index = 0;
+                return {next() {log.push('next'); $262.gc(); return index++ ? {done: true} : {value: {rank: 1}, done: false};}};
+            };}};
+            var message = {toString() {log.push('message'); $262.gc(); return 'message';}};
+            var error = Reflect.construct(AggregateError, [source, message, options], target);
+            print(log.join(','));
+            print(Object.getPrototypeOf(error) === prototype);
+            print(error.cause === cause);
+            print(error.errors[0].rank);
+            for (var key of ['message', 'cause', 'errors']) {
+                var descriptor = Object.getOwnPropertyDescriptor(error, key);
+                print(descriptor.writable && descriptor.configurable && !descriptor.enumerable);
+            }
+            var SavedAggregateError = AggregateError;
+            AggregateError = function Poison() {};
+            function InvalidPrototypeTarget() {}
+            InvalidPrototypeTarget.prototype = null;
+            var fallback = Reflect.construct(SavedAggregateError, [[]], InvalidPrototypeTarget);
+            print(Object.getPrototypeOf(fallback) === SavedAggregateError.prototype);
+            AggregateError = SavedAggregateError;
+            for (var mode of ['spread', 'aggregate']) {
+                for (var phase of ['next', 'done', 'value']) {
+                    var marker = {};
+                    var closed = 0;
+                    var source = {[Symbol.iterator]() {return {
+                        next() {
+                            if (phase === 'next') throw marker;
+                            return {get done() {if (phase === 'done') throw marker; return false;}, get value() {throw marker;}};
+                        },
+                        return() {closed++; return {};}
+                    };}};
+                    try {if (mode === 'spread') [...source]; else new AggregateError(source);}
+                    catch (error) {print(error === marker);}
+                    print(closed);
+                }
+            }
+            "#,
+            &[
+                "prototype,message,has,cause,iterator,next,next",
+                "true",
+                "true",
+                "1",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_typed_iterable_roots_survive_collection() {
         assert_output_in_execution_modes(
             r#"
