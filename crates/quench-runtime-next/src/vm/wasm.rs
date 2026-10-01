@@ -31,6 +31,25 @@ mod tests {
     use wasmparser::Operator;
 
     #[test]
+    fn unreachable_trap_unwinds_the_shared_activation() {
+        let function = crate::Engine::lower_wasm_i32_function(
+            "unreachable-unwind",
+            0,
+            0,
+            true,
+            [Operator::Unreachable, Operator::End].into_iter().map(Ok),
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert!(vm.frames.is_empty());
+        vm.collect_now(function.residual());
+    }
+
+    #[test]
     fn integer_traps_unwind_the_shared_activation() {
         let operators = [
             Operator::LocalGet { local_index: 0 },

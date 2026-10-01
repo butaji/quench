@@ -189,9 +189,9 @@ mod tests {
     fn shared_lowering_rejects_unsupported_semantics() {
         for wat in [
             "(module (memory 1) (func (export \"f\") (result i32) i32.const 1))",
-            "(module (func (export \"f\") (result i32) block (result i32) i32.const 1 end))",
+            "(module (func (export \"f\") (result i32) block (result i32 i32) i32.const 1 i32.const 2 end drop))",
             "(module (func (export \"f\") (result i64) i64.const 1))",
-            "(module (func (export \"f\") (result i32) i32.const 1 return))",
+            "(module (func $g (result i32) i32.const 1) (func (export \"f\") (result i32) call $g))",
             "(module (import \"m\" \"f\" (func)) (func (export \"f\")))",
             "(module (func $s) (start $s) (func (export \"f\")))",
         ] {
@@ -263,3 +263,6 @@ mod tests {
 
 #[cfg(test)]
 mod spec;
+
+#[cfg(test)]
+mod control_tests;
