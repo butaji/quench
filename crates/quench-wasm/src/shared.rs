@@ -309,3 +309,6 @@ mod scalar_tests;
 
 #[cfg(test)]
 mod integer_tests;
+
+#[cfg(test)]
+mod float_tests;

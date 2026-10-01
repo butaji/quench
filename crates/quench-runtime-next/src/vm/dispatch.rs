@@ -857,6 +857,36 @@ impl<H: Host> Vm<H> {
                 let value = self.encode_wasm_scalar(value);
                 self.write(f, i.result_register(), value);
             }
+            Op::WasmF32Binary => {
+                let left = self.wasm_f32_operand(self.read(f, i.register_b()))?;
+                let right = self.wasm_f32_operand(self.read(f, i.register_c()))?;
+                let operator = crate::wasm::float::F32BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_wasm_scalar(operator.apply(left, right));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmF32Unary => {
+                let left = self.wasm_f32_operand(self.read(f, i.register_b()))?;
+                let operator = crate::wasm::float::F32UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_wasm_scalar(operator.apply(left));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmF64Binary => {
+                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
+                let right = self.wasm_f64_operand(self.read(f, i.register_c()))?;
+                let operator = crate::wasm::float::F64BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_wasm_scalar(operator.apply(left, right));
+                self.write(f, i.result_register(), value);
+            }
+            Op::WasmF64Unary => {
+                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
+                let operator = crate::wasm::float::F64UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm float operator");
+                let value = self.encode_wasm_scalar(operator.apply(left));
+                self.write(f, i.result_register(), value);
+            }
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");

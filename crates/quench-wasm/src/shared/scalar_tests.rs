@@ -131,9 +131,9 @@ fn host_boundary_rejects_type_mismatches_and_i32_convenience_misuse() {
 }
 
 #[test]
-fn unsupported_scalar_arithmetic_and_reference_types_fail_explicitly() {
+fn unsupported_numeric_conversions_and_reference_types_fail_explicitly() {
     for wat in [
-        r#"(module (func (export "f") (result f64) f64.const 1 f64.const 2 f64.add))"#,
+        r#"(module (func (export "f") (result i64) f64.const 1 i64.trunc_f64_s))"#,
         r#"(module (func (export "f") (result externref) ref.null extern))"#,
     ] {
         assert!(matches!(
