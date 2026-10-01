@@ -656,6 +656,50 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn reduction_roots_release_on_success_and_abrupt_completion() {
+    let cases = [
+        ("var source = [1, 2]; var callback = (accumulator, value) => ({sum: 42});", false, false),
+        ("var source = [1, 2]; var callback = () => {throw new Error('callback')};", true, true),
+        ("var source = [1, 2]; var callback = () => ({sum: 42}); \
+          for (var index of [0, 1]) Object.defineProperty(source, index, \
+          {get() {throw new Error('getter')}});", true, true),
+        ("var source = new Proxy([1, 2], {has() {throw new Error('has')}}); \
+          var callback = () => ({sum: 42});", true, true),
+        ("var source = []; var callback = () => ({sum: 42});", true, false),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [Native::ArrayReduce, Native::ArrayReduceRight] {
+            for (source, fails_without_initial, fails_with_initial) in cases {
+                for (initial, fails) in [(false, fails_without_initial), (true, fails_with_initial)] {
+                    let mut vm = Vm::new(SilentHost);
+                    let program = compile(source, "reduce-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let source_atom = vm.intern_atom("source");
+                    let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                    let callback_atom = vm.intern_atom("callback");
+                    let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
+                    let mut args = vec![callback];
+                    if initial { args.push(Value::UNDEFINED); }
+                    let roots_before = vm.heap.root_count_for_test();
+                    let outcome = vm.array_reduce_native(&program, native, source, &args);
+                    assert_eq!(outcome.is_err(), fails);
+                    assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                    if let Ok(result) = outcome {
+                        if let Some(handle) = vm.heap.weak_handle(result) {
+                            vm.collect_now(&program);
+                            assert!(vm.heap.weak_value(handle).is_none());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn flattening_roots_release_after_success_and_abrupt_completion() {
     let cases = [
         ("var source = [1]; var mapper = value => [value];", false, false),
