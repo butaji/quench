@@ -979,78 +979,84 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         target: Option<CallTarget>,
     ) -> Result<Value, JsError> {
-        // Operands have already been popped from the VM frame when this
-        // boundary is entered. Keep every incoming guest value live while a
-        // call can allocate, collect, or re-enter the interpreter.
-        let roots_start = self.active_call_roots.len();
-        self.active_call_roots.extend(
+        self.with_call_roots(
             std::iter::once(callee)
                 .chain(std::iter::once(this))
                 .chain(args.iter().copied()),
-        );
-        let result = (|| {
-            if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
-                return self.proxy_call(p, callee, this, args);
-            }
-            let target = match target {
-                Some(target) => target,
-                None => self
-                    .call_target(callee)
-                    .map_err(|error| self.type_error(p, error.to_string()))?,
-            };
-            match target {
-                CallTarget::Native(native) => {
-                    self.profile.call_target(0, args.len());
-                    if native == Native::ProxyRevoke {
-                        return self.proxy_revoke(callee);
+            |vm| {
+                if matches!(vm.heap.get(callee), Some(Cell::Proxy { .. })) {
+                    return vm.proxy_call(p, callee, this, args);
+                }
+                let target = match target {
+                    Some(target) => target,
+                    None => vm
+                        .call_target(callee)
+                        .map_err(|error| vm.type_error(p, error.to_string()))?,
+                };
+                match target {
+                    CallTarget::Native(native) => {
+                        vm.profile.call_target(0, args.len());
+                        if native == Native::ProxyRevoke {
+                            return vm.proxy_revoke(callee);
+                        }
+                        vm.call_native_guarded(p, native, this, args, callee)
                     }
-                    self.call_native_guarded(p, native, this, args, callee)
+                    CallTarget::User(program_id, id, env) => {
+                        vm.profile.call_target(1, args.len());
+                        let program = vm.programs.get(program_id).ok_or_else(|| {
+                            vm.type_error(p, "function belongs to an unavailable program".into())
+                        })?;
+                        let active_program = std::mem::replace(&mut vm.active_program, program_id);
+                        let realm = match vm.heap.get(callee) {
+                            Some(Cell::Function { realm, .. }) => *realm,
+                            _ => vm.realm.globals,
+                        };
+                        let current_global = std::mem::replace(&mut vm.realm.globals, realm);
+                        let result = if program
+                            .functions
+                            .get(id as usize)
+                            .is_some_and(|function| function.is_class_constructor)
+                            && vm.construct_target.is_none()
+                        {
+                            Err(vm
+                                .type_error(p, "class constructor cannot be called without new".into()))
+                        } else {
+                            vm.call_user_maybe_async(&program, id, env, this, args)
+                        };
+                        vm.active_program = active_program;
+                        vm.realm.globals = current_global;
+                        result
+                    }
+                    CallTarget::NumericUser(program_id, id, env) => {
+                        vm.profile.call_target(2, args.len());
+                        let program = vm.programs.get(program_id).ok_or_else(|| {
+                            vm.type_error(p, "function belongs to an unavailable program".into())
+                        })?;
+                        let active_program = std::mem::replace(&mut vm.active_program, program_id);
+                        let realm = match vm.heap.get(callee) {
+                            Some(Cell::Function { realm, .. }) => *realm,
+                            _ => vm.realm.globals,
+                        };
+                        let current_global = std::mem::replace(&mut vm.realm.globals, realm);
+                        let result = vm.call_user_numeric(&program, id, env, this, args);
+                        vm.active_program = active_program;
+                        vm.realm.globals = current_global;
+                        result
+                    }
                 }
-                CallTarget::User(program_id, id, env) => {
-                    self.profile.call_target(1, args.len());
-                    let program = self.programs.get(program_id).ok_or_else(|| {
-                        self.type_error(p, "function belongs to an unavailable program".into())
-                    })?;
-                    let active_program = std::mem::replace(&mut self.active_program, program_id);
-                    let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { realm, .. }) => *realm,
-                        _ => self.realm.globals,
-                    };
-                    let current_global = std::mem::replace(&mut self.realm.globals, realm);
-                    let result = if program
-                        .functions
-                        .get(id as usize)
-                        .is_some_and(|function| function.is_class_constructor)
-                        && self.construct_target.is_none()
-                    {
-                        Err(self
-                            .type_error(p, "class constructor cannot be called without new".into()))
-                    } else {
-                        self.call_user_maybe_async(&program, id, env, this, args)
-                    };
-                    self.active_program = active_program;
-                    self.realm.globals = current_global;
-                    result
-                }
-                CallTarget::NumericUser(program_id, id, env) => {
-                    self.profile.call_target(2, args.len());
-                    let program = self.programs.get(program_id).ok_or_else(|| {
-                        self.type_error(p, "function belongs to an unavailable program".into())
-                    })?;
-                    let active_program = std::mem::replace(&mut self.active_program, program_id);
-                    let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { realm, .. }) => *realm,
-                        _ => self.realm.globals,
-                    };
-                    let current_global = std::mem::replace(&mut self.realm.globals, realm);
-                    let result = self.call_user_numeric(&program, id, env, this, args);
-                    self.active_program = active_program;
-                    self.realm.globals = current_global;
-                    result
-                }
-            }
-        })();
-        self.active_call_roots.truncate(roots_start);
+            },
+        )
+    }
+
+    fn with_call_roots<R>(
+        &mut self,
+        values: impl IntoIterator<Item = Value>,
+        call: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let start = self.active_call_roots.len();
+        self.active_call_roots.extend(values);
+        let result = call(self);
+        self.active_call_roots.truncate(start);
         result
     }
 

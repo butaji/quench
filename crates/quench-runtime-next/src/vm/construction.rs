@@ -436,162 +436,172 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let _stack = self.enter_stack()?;
-        if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
-            return self.proxy_construct(p, callee, new_target, args);
-        }
-        if !self.is_constructable(p, callee) {
-            return Err(self.type_error(p, "value is not a constructor".into()));
-        }
-        if !self.is_constructable(p, new_target) {
-            return Err(self.type_error(p, "newTarget is not a constructor".into()));
-        }
-        let (kind, derived_constructor) = match self.heap.get(callee) {
-            Some(Cell::Function { kind, .. }) => {
-                let derived = match kind {
-                    FunctionKind::User(program_id, id)
-                    | FunctionKind::NumericUser(program_id, id) => {
-                        self.programs.get(*program_id).is_some_and(|program| {
-                            program
-                                .functions
-                                .get(*id as usize)
-                                .is_some_and(|function| function.derived_constructor)
-                        })
+        self.with_call_roots(
+            std::iter::once(callee)
+                .chain(std::iter::once(new_target))
+                .chain(args.iter().copied()),
+            |vm| {
+                let _stack = vm.enter_stack()?;
+                if matches!(vm.heap.get(callee), Some(Cell::Proxy { .. })) {
+                    return vm.proxy_construct(p, callee, new_target, args);
+                }
+                if !vm.is_constructable(p, callee) {
+                    return Err(vm.type_error(p, "value is not a constructor".into()));
+                }
+                if !vm.is_constructable(p, new_target) {
+                    return Err(vm.type_error(p, "newTarget is not a constructor".into()));
+                }
+                let (kind, derived_constructor) = match vm.heap.get(callee) {
+                    Some(Cell::Function { kind, .. }) => {
+                        let derived = match kind {
+                            FunctionKind::User(program_id, id)
+                            | FunctionKind::NumericUser(program_id, id) => {
+                                vm.programs.get(*program_id).is_some_and(|program| {
+                                    program
+                                        .functions
+                                        .get(*id as usize)
+                                        .is_some_and(|function| function.derived_constructor)
+                                })
+                            }
+                            _ => false,
+                        };
+                        (*kind, derived)
                     }
-                    _ => false,
+                    _ => unreachable!("IsConstructor accepted a non-function target"),
                 };
-                (*kind, derived)
-            }
-            _ => unreachable!("IsConstructor accepted a non-function target"),
-        };
-        if let FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) = kind
-        {
-            let Some(program) = self.programs.get(program_id) else {
-                return Err(self.type_error(p, "function belongs to an unavailable program".into()));
-            };
-            let Some(function) = program.functions.get(id as usize) else {
-                return Err(self.type_error(p, "function index is outside its program".into()));
-            };
-            if !function.constructible {
-                return Err(self.type_error(p, "value is not a constructor".into()));
-            }
-            if function.is_async {
-                return Err(JsError("async function is not a constructor".into()));
-            }
-            if function.is_generator {
-                return Err(JsError("generator function is not a constructor".into()));
-            }
-            if self
-                .lookup_atom("prototype")
-                .is_some_and(|atom| self.own_property(callee, atom).is_none())
-            {
-                return Err(JsError("arrow function is not a constructor".into()));
-            }
-        }
-        if let FunctionKind::Native(Native::DynamicDerivedClass) = kind {
-            let base = match self.heap.get(callee) {
-                Some(Cell::Function { env, .. }) => *env,
-                _ => return Err(JsError("not a constructor".into())),
-            };
-            return self.construct_value_with_new_target(p, base, new_target, args);
-        }
-        if let FunctionKind::Native(Native::FunctionBoundCall) = kind {
-            let env = match self.heap.get(callee) {
-                Some(Cell::Function { env, .. }) => *env,
-                _ => return Err(self.type_error(p, "invalid bound function".into())),
-            };
-            let target_atom = self.intern_atom("\0rqj:bound-target");
-            let args_atom = self.intern_atom("\0rqj:bound-args");
-            let target = self
-                .own_property(env, target_atom)
-                .ok_or_else(|| self.type_error(p, "invalid bound function".into()))?;
-            let bound_args = self
-                .own_property(env, args_atom)
-                .and_then(|value| match self.heap.get(value) {
-                    Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            let mut arguments = bound_args;
-            arguments.extend_from_slice(args);
-            let new_target = if new_target == callee {
-                target
-            } else {
-                new_target
-            };
-            return self.construct_value_with_new_target(p, target, new_target, &arguments);
-        }
-        if let FunctionKind::Native(native) = kind {
-            let realm = self.function_realm(p, callee)?;
-            let previous_global = self.switch_realm_global(realm);
-            let result = self.construct_native_with_new_target(p, native, args, new_target);
-            self.switch_realm_global(previous_global);
-            let result = result?;
-            if matches!(
-                native,
-                Native::Function
-                    | Native::AsyncFunction
-                    | Native::GeneratorFunction
-                    | Native::AsyncGeneratorFunction
-            ) {
-                self.set_dynamic_function_prototype(p, result, new_target, native)?;
-            } else if !matches!(
-                native,
-                Native::Proxy
-                    | Native::Array
-                    | Native::ArrayBuffer
-                    | Native::SharedArrayBuffer
-                    | Native::RegExp
-                    | Native::AggregateError
-            ) && !(native == Native::Object
-                && new_target == self.native_value(Native::Object)
-                && args
-                    .first()
-                    .is_some_and(|value| !value.is_null() && !value.is_undefined()))
-            {
-                self.set_constructed_prototype(p, result, new_target, native)?;
-            }
-            return Ok(result);
-        }
-        let object = if derived_constructor {
-            Value::UNDEFINED
-        } else {
-            let proto = self.prototype_from_constructor(p, new_target)?;
-            self.heap.alloc(Cell::Object(Self::empty_object(proto)))
-        };
-        let previous_target = self.construct_target;
-        self.construct_target = Some(new_target);
-        let result = if derived_constructor {
-            self.call_user_for_construct(p, callee, args)
-                .map(|(value, this)| (value, Some(this)))
-        } else {
-            self.call_value(p, callee, object, args)
-                .map(|value| (value, None))
-        };
-        self.construct_target = previous_target;
-        let (result, this) = result?;
-        if self.is_object_like(result) {
-            return Ok(result);
-        }
-        if derived_constructor {
-            if result.is_undefined() {
-                let this = this.unwrap_or(Value::DELETED);
-                return if this.is_deleted() {
-                    Err(self.reference_error(
-                        p,
-                        "Must call super constructor before returning from derived constructor"
-                            .into(),
-                    ))
+                if let FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) =
+                    kind
+                {
+                    let Some(program) = vm.programs.get(program_id) else {
+                        return Err(
+                            vm.type_error(p, "function belongs to an unavailable program".into())
+                        );
+                    };
+                    let Some(function) = program.functions.get(id as usize) else {
+                        return Err(vm.type_error(p, "function index is outside its program".into()));
+                    };
+                    if !function.constructible {
+                        return Err(vm.type_error(p, "value is not a constructor".into()));
+                    }
+                    if function.is_async {
+                        return Err(JsError("async function is not a constructor".into()));
+                    }
+                    if function.is_generator {
+                        return Err(JsError("generator function is not a constructor".into()));
+                    }
+                    if vm
+                        .lookup_atom("prototype")
+                        .is_some_and(|atom| vm.own_property(callee, atom).is_none())
+                    {
+                        return Err(JsError("arrow function is not a constructor".into()));
+                    }
+                }
+                if let FunctionKind::Native(Native::DynamicDerivedClass) = kind {
+                    let base = match vm.heap.get(callee) {
+                        Some(Cell::Function { env, .. }) => *env,
+                        _ => return Err(JsError("not a constructor".into())),
+                    };
+                    return vm.construct_value_with_new_target(p, base, new_target, args);
+                }
+                if let FunctionKind::Native(Native::FunctionBoundCall) = kind {
+                    let env = match vm.heap.get(callee) {
+                        Some(Cell::Function { env, .. }) => *env,
+                        _ => return Err(vm.type_error(p, "invalid bound function".into())),
+                    };
+                    let target_atom = vm.intern_atom("\0rqj:bound-target");
+                    let args_atom = vm.intern_atom("\0rqj:bound-args");
+                    let target = vm
+                        .own_property(env, target_atom)
+                        .ok_or_else(|| vm.type_error(p, "invalid bound function".into()))?;
+                    let bound_args = vm
+                        .own_property(env, args_atom)
+                        .and_then(|value| match vm.heap.get(value) {
+                            Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let mut arguments = bound_args;
+                    arguments.extend_from_slice(args);
+                    let new_target = if new_target == callee {
+                        target
+                    } else {
+                        new_target
+                    };
+                    return vm.construct_value_with_new_target(p, target, new_target, &arguments);
+                }
+                if let FunctionKind::Native(native) = kind {
+                    let realm = vm.function_realm(p, callee)?;
+                    let previous_global = vm.switch_realm_global(realm);
+                    let result = vm.construct_native_with_new_target(p, native, args, new_target);
+                    vm.switch_realm_global(previous_global);
+                    let result = result?;
+                    if matches!(
+                        native,
+                        Native::Function
+                            | Native::AsyncFunction
+                            | Native::GeneratorFunction
+                            | Native::AsyncGeneratorFunction
+                    ) {
+                        vm.set_dynamic_function_prototype(p, result, new_target, native)?;
+                    } else if !matches!(
+                        native,
+                        Native::Proxy
+                            | Native::Array
+                            | Native::ArrayBuffer
+                            | Native::SharedArrayBuffer
+                            | Native::RegExp
+                            | Native::AggregateError
+                    ) && !(native == Native::Object
+                        && new_target == vm.native_value(Native::Object)
+                        && args
+                            .first()
+                            .is_some_and(|value| !value.is_null() && !value.is_undefined()))
+                    {
+                        vm.set_constructed_prototype(p, result, new_target, native)?;
+                    }
+                    return Ok(result);
+                }
+                let object = if derived_constructor {
+                    Value::UNDEFINED
                 } else {
-                    Ok(this)
+                    let proto = vm.prototype_from_constructor(p, new_target)?;
+                    vm.heap.alloc(Cell::Object(Self::empty_object(proto)))
                 };
-            }
-            return Err(self.type_error(
-                p,
-                "derived constructor may only return an object or undefined".into(),
-            ));
-        }
-        Ok(object)
+                let previous_target = vm.construct_target;
+                vm.construct_target = Some(new_target);
+                let result = if derived_constructor {
+                    vm.call_user_for_construct(p, callee, args)
+                        .map(|(value, this)| (value, Some(this)))
+                } else {
+                    vm.call_value(p, callee, object, args)
+                        .map(|value| (value, None))
+                };
+                vm.construct_target = previous_target;
+                let (result, this) = result?;
+                if vm.is_object_like(result) {
+                    return Ok(result);
+                }
+                if derived_constructor {
+                    if result.is_undefined() {
+                        let this = this.unwrap_or(Value::DELETED);
+                        return if this.is_deleted() {
+                            Err(vm.reference_error(
+                                p,
+                                "Must call super constructor before returning from derived constructor"
+                                    .into(),
+                            ))
+                        } else {
+                            Ok(this)
+                        };
+                    }
+                    return Err(vm.type_error(
+                        p,
+                        "derived constructor may only return an object or undefined".into(),
+                    ));
+                }
+                Ok(object)
+            },
+        )
     }
 
     fn prototype_from_constructor(
