@@ -789,91 +789,108 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(p, "sort comparator is not callable".into()));
         }
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        if !mutate && length > u32::MAX as usize {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
-
+        let comparator = comparator.map(|value| self.heap.root(value));
+        let mut object_root = None;
         let mut values = Vec::new();
-        let mut undefined_count = 0;
-        for index in 0..length {
-            let key = Value::number(index as f64);
-            if !mutate || self.has_property(p, object, key)? {
-                let value = self.get_index(p, object, key)?;
-                if value.is_undefined() {
-                    undefined_count += 1;
-                } else {
-                    values.push(value);
+        let outcome = (|| {
+            let object = self.box_object_or_type_error(p, this)?;
+            let root = self.heap.root(object);
+            object_root = Some(root);
+            let length = self.array_like_length(p, object)?;
+            if !mutate && length > MAX_ARRAY_LENGTH {
+                return Err(self.range_error(p, "invalid array length".into()));
+            }
+            let mut undefined_count = 0;
+            for index in 0..length {
+                let key = Value::number(index as f64);
+                let object = self.heap.root_value(root).unwrap();
+                if !mutate || self.has_property(p, object, key)? {
+                    let object = self.heap.root_value(root).unwrap();
+                    let value = self.get_index(p, object, key)?;
+                    if value.is_undefined() {
+                        undefined_count += 1;
+                    } else {
+                        values.push(self.heap.root(value));
+                    }
                 }
             }
-        }
-
-        self.sort_values(p, &mut values, comparator)?;
-        if mutate {
-            let sorted_count = values.len();
-            for (index, value) in values.into_iter().enumerate() {
-                self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
-            }
-            for index in sorted_count..sorted_count + undefined_count {
-                self.set_index_mode(
-                    p,
-                    object,
-                    Value::number(index as f64),
-                    Value::UNDEFINED,
-                    true,
-                )?;
-            }
-            for index in sorted_count + undefined_count..length {
-                let deleted =
-                    self.object_delete_property(p, &[object, Value::number(index as f64)])?;
-                if !self.truthy(deleted) {
-                    return Err(self.type_error(p, "cannot delete array-like element".into()));
+            super::sort::try_stable_sort_by(&mut values, |left, right| {
+                Ok(match self.sort_compare(p, comparator, *left, *right)? {
+                    value if value < 0.0 => std::cmp::Ordering::Less,
+                    value if value > 0.0 => std::cmp::Ordering::Greater,
+                    _ => std::cmp::Ordering::Equal,
+                })
+            })?;
+            if mutate {
+                let sorted_count = values.len();
+                for (index, value) in values.iter().enumerate() {
+                    let object = self.heap.root_value(root).unwrap();
+                    let value = self.heap.root_value(*value).unwrap();
+                    self.set_index_mode(p, object, Value::number(index as f64), value, true)?;
                 }
+                for index in sorted_count..sorted_count + undefined_count {
+                    let object = self.heap.root_value(root).unwrap();
+                    self.set_index_mode(
+                        p,
+                        object,
+                        Value::number(index as f64),
+                        Value::UNDEFINED,
+                        true,
+                    )?;
+                }
+                for index in sorted_count + undefined_count..length {
+                    let object = self.heap.root_value(root).unwrap();
+                    let deleted =
+                        self.object_delete_property(p, &[object, Value::number(index as f64)])?;
+                    if !self.truthy(deleted) {
+                        return Err(self.type_error(p, "cannot delete array-like element".into()));
+                    }
+                }
+                Ok(self.heap.root_value(root).unwrap())
+            } else {
+                let mut result: Vec<_> = values
+                    .iter()
+                    .map(|root| self.heap.root_value(*root).unwrap())
+                    .collect();
+                result.resize(length, Value::UNDEFINED);
+                Ok(self.new_array(result))
             }
-            Ok(object)
-        } else {
-            values.resize(length, Value::UNDEFINED);
-            Ok(self.new_array(values))
+        })();
+        for value in values {
+            self.heap.release_root(value);
         }
+        if let Some(root) = object_root {
+            self.heap.release_root(root);
+        }
+        if let Some(root) = comparator {
+            self.heap.release_root(root);
+        }
+        outcome
     }
 
-    fn sort_values(
-        &mut self,
-        p: &ResidualProgram,
-        values: &mut [Value],
-        comparator: Option<Value>,
-    ) -> Result<(), JsError> {
-        super::sort::try_stable_sort_by(values, |left, right| {
-            Ok(match self.sort_compare(p, comparator, *left, *right)? {
-                value if value < 0.0 => std::cmp::Ordering::Less,
-                value if value > 0.0 => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            })
-        })
-    }
-
+    // Undefined values are counted outside the sortable snapshot.
     fn sort_compare(
         &mut self,
         p: &ResidualProgram,
-        comparator: Option<Value>,
-        left: Value,
-        right: Value,
+        comparator: Option<RootId>,
+        left: RootId,
+        right: RootId,
     ) -> Result<f64, JsError> {
-        if left.is_undefined() || right.is_undefined() {
-            return Ok(match (left.is_undefined(), right.is_undefined()) {
-                (true, true) => 0.0,
-                (true, false) => 1.0,
-                (false, true) => -1.0,
-                _ => unreachable!(),
-            });
-        }
         if let Some(comparator) = comparator {
+            let comparator = self.heap.root_value(comparator).unwrap();
+            let left = self.heap.root_value(left).unwrap();
+            let right = self.heap.root_value(right).unwrap();
             let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
-            let number = self.to_number(p, result)?;
+            let result = self.heap.root(result);
+            let value = self.heap.root_value(result).unwrap();
+            let number = self.to_number(p, value);
+            self.heap.release_root(result);
+            let number = number?;
             return Ok(if number.is_nan() { 0.0 } else { number });
         }
+        let left = self.heap.root_value(left).unwrap();
         let left = self.to_string(p, left)?;
+        let right = self.heap.root_value(right).unwrap();
         let right = self.to_string(p, right)?;
         Ok(match left.cmp(&right) {
             std::cmp::Ordering::Less => -1.0,

@@ -656,6 +656,49 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
+    let cases = [
+        ("var source = [3, 1, 2]; var comparator = (left, right) => left - right;", false, false),
+        ("var source = null; var comparator = (left, right) => left - right;", true, true),
+        ("var source = [3, 1, 2]; var comparator = undefined; \
+          Object.defineProperty(source, '1', {get() {throw new Error('getter')}});", true, true),
+        ("var source = [3, 1, 2]; var comparator = () => {throw new Error('compare')};", true, true),
+        ("var source = [3, 1, 2]; var comparator = () => \
+          ({valueOf() {throw new Error('coercion')}});", true, true),
+        ("var source = [{toString() {throw new Error('string')}}, {}]; var comparator = undefined;", true, true),
+        ("var source = [3, 1, 2]; var comparator = undefined; \
+          Object.defineProperty(source, '0', {get() {return 3}, set() {throw new Error('setter')}});", true, false),
+        ("var source = [3, , 1]; var comparator = undefined; \
+          Object.defineProperty(source, '2', {configurable: false});", true, false),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (source, sort_fails, copy_fails) in cases {
+            for (native, fails) in [(Native::ArraySort, sort_fails), (Native::ArrayToSorted, copy_fails)] {
+                let mut vm = Vm::new(SilentHost);
+                let program = compile(source, "sort-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let comparator_atom = vm.intern_atom("comparator");
+                let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
+                let roots_before = vm.heap.root_count_for_test();
+                let outcome = vm.array_modern_native(&program, native, source, &[comparator]);
+                assert_eq!(outcome.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                if native == Native::ArrayToSorted && let Ok(result) = outcome {
+                    let handle = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
