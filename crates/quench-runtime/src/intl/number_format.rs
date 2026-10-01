@@ -1,6 +1,7 @@
 #[path = "number_format_currency.rs"]
 mod number_format_currency;
 pub(crate) use number_format_currency::format_currency;
+#[path = "number_format_parts.rs"]
 mod number_format_parts;
 
 pub(crate) use number_format_parts::{

@@ -4,7 +4,9 @@ use crate::{execute::VmError, value::Value};
 
 use super::number_format::*;
 
+#[path = "number_methods.rs"]
 mod number_methods;
+#[path = "number_render.rs"]
 mod number_render;
 
 pub(crate) use number_methods::{localize_digits, prototype_method, supports_digit_system};
