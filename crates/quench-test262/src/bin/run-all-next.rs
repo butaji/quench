@@ -3,7 +3,7 @@ use std::{
     env, fs,
     io::Read,
     path::{Path, PathBuf},
-    process::{ChildStderr, Command, ExitCode, Stdio},
+    process::{Child, ChildStderr, Command, ExitCode, Stdio},
     sync::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -231,14 +231,16 @@ fn run_case_process(
         .map_err(|error| format!("Test262 case process spawn failed: {error}"))?;
     let stderr = child.stderr.take().expect("piped Test262 case stderr");
     let stderr_reader = drain_stderr(stderr);
-    let status = child
-        .wait_timeout(timeout)
-        .map_err(|error| format!("Test262 case process wait failed: {error}"))?;
-    let Some(status) = status else {
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = stderr_reader.join();
-        return Err(format!("timed_out after {}ms", timeout.as_millis()));
+    let status = match child.wait_timeout(timeout) {
+        Ok(Some(status)) => status,
+        Ok(None) => {
+            terminate_case_process(&mut child, stderr_reader);
+            return Err(format!("timed_out after {}ms", timeout.as_millis()));
+        }
+        Err(error) => {
+            terminate_case_process(&mut child, stderr_reader);
+            return Err(format!("Test262 case process wait failed: {error}"));
+        }
     };
     let stderr = stderr_reader
         .join()
@@ -256,6 +258,15 @@ fn run_case_process(
             reason
         })
     }
+}
+
+fn terminate_case_process(
+    child: &mut Child,
+    stderr_reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = stderr_reader.join();
 }
 
 fn drain_stderr(stderr: ChildStderr) -> thread::JoinHandle<std::io::Result<Vec<u8>>> {
@@ -675,23 +686,30 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn stderr_is_drained_while_a_case_process_is_running() {
-        use std::process::Command;
+    fn case_process_drains_large_stderr_before_deadline() {
+        use std::os::unix::fs::PermissionsExt;
 
-        let mut child = Command::new("sh")
-            .args(["-c", "head -c 131072 /dev/zero >&2"])
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let stderr_reader = drain_stderr(child.stderr.take().unwrap());
-        assert!(
-            child
-                .wait_timeout(Duration::from_secs(5))
-                .unwrap()
-                .is_some()
-        );
-        let stderr = stderr_reader.join().unwrap().unwrap();
-        assert_eq!(stderr.len(), 131072);
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("quench-test262-stderr-{unique}"));
+        fs::create_dir_all(&directory).unwrap();
+        let executable = directory.join("case-worker");
+        fs::write(
+            &executable,
+            "#!/bin/sh\nhead -c 131072 /dev/zero >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let fixture = directory.join("fixture.js");
+
+        let failure = run_case_process(&executable, &directory, &fixture, Duration::from_secs(5))
+            .unwrap_err();
+
+        assert_eq!(failure.len(), 131072);
+        assert!(!failure.starts_with("timed_out"));
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
