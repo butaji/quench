@@ -226,6 +226,47 @@ mod tests {
     }
 
     #[test]
+    fn regression_dynamic_eval_bindings_survive_yield_and_await() {
+        assert_output_in_execution_modes(
+            r#"
+            function* syncGenerator() {
+                eval('var retained = { value: 42 }');
+                yield 0;
+                eval('var afterResume = 1');
+                $262.gc();
+                print(retained.value);
+            }
+            var iterator = syncGenerator();
+            iterator.next();
+            $262.gc();
+            iterator.next();
+            async function asyncFunction() {
+                eval('var retained = { value: 43 }');
+                await 0;
+                eval('var afterResume = 1');
+                $262.gc();
+                print(retained.value);
+            }
+            asyncFunction();
+            async function* asyncGenerator() {
+                eval('var retained = { value: 44 }');
+                yield 0;
+                await 0;
+                eval('var afterResume = 1');
+                $262.gc();
+                print(retained.value);
+            }
+            var asyncIterator = asyncGenerator();
+            asyncIterator.next().then(function () {
+                $262.gc();
+                return asyncIterator.next();
+            });
+            "#,
+            &["42", "43", "44"],
+        );
+    }
+
+    #[test]
     fn regression_parser_exhaustion_is_catchable_across_dynamic_entry_points() {
         std::thread::Builder::new()
             .stack_size(crate::WORKER_STACK_SIZE)

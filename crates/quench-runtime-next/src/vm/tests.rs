@@ -664,6 +664,8 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         dynamic_bindings: vec![],
         with_objects: vec![],
     });
+    let held = vm.heap.alloc(crate::heap::Cell::Error("suspended binding".into()));
+    let held_atom = vm.intern_atom("held");
     let id = vm.suspend_continuation(Continuation {
         program: super::program_store::ProgramId::MAIN,
         active_iterators: vec![],
@@ -672,6 +674,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         env: live,
         this: Value::UNDEFINED,
         locals: vec![],
+        dynamic_bindings: vec![(held_atom, held)],
         registers: vec![],
         completion: Completion::Yield(Value::UNDEFINED),
         captured: false,
@@ -680,10 +683,12 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     });
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_some());
+    assert!(vm.heap.get(held).is_some());
     assert!(vm.resume_continuation(id).is_some());
     assert!(vm.resume_continuation(id).is_none());
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_none());
+    assert!(vm.heap.get(held).is_none());
 }
 
 #[test]
@@ -698,6 +703,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
         env: Value::NULL,
         this: Value::UNDEFINED,
         locals: vec![],
+        dynamic_bindings: vec![],
         registers: vec![],
         active_iterators: vec![],
         completion: Completion::Yield(Value::UNDEFINED),

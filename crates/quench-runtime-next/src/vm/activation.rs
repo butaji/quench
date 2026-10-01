@@ -1,13 +1,11 @@
-use super::ActiveIterator;
 use super::program_store::ProgramId;
+use super::{ActiveIterator, Atom};
 use crate::Value;
 use std::collections::VecDeque;
 
 /// The only state that crosses an activation boundary. The value is kept as a
 /// heap root while the continuation is suspended and is consumed by the
 /// resumer according to its completion kind.
-// The compiler does not emit suspension points yet; keep all four completion
-// states explicit so future producers share this representation.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Completion {
@@ -25,6 +23,7 @@ pub(crate) struct Continuation {
     pub env: Value,
     pub this: Value,
     pub locals: Vec<Value>,
+    pub dynamic_bindings: Vec<(Atom, Value)>,
     pub registers: Vec<Value>,
     pub active_iterators: Vec<ActiveIterator>,
     pub completion: Completion,
@@ -70,10 +69,50 @@ pub(crate) struct SuspendedEntry {
 }
 
 impl Continuation {
+    pub(super) fn from_frame(
+        frame: &mut super::Frame,
+        completion: Completion,
+        resume_register: Option<u16>,
+        promise: Value,
+    ) -> Self {
+        Self {
+            program: frame.program,
+            function: frame.function,
+            pc: frame.pc,
+            env: frame.env,
+            this: frame.this,
+            locals: std::mem::take(&mut frame.locals),
+            dynamic_bindings: std::mem::take(&mut frame.dynamic_bindings),
+            registers: std::mem::take(&mut frame.registers),
+            active_iterators: std::mem::take(&mut frame.active_iterators),
+            completion,
+            captured: frame.captured,
+            resume_register,
+            promise,
+        }
+    }
+
+    pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
+        super::Frame {
+            program: self.program,
+            function: self.function,
+            pc: self.pc,
+            env: self.env,
+            this: self.this,
+            locals: self.locals,
+            dynamic_bindings: self.dynamic_bindings,
+            captured: self.captured,
+            registers: self.registers,
+            active_iterators: self.active_iterators,
+            with_base,
+        }
+    }
+
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         std::iter::once(self.env)
             .chain(std::iter::once(self.this))
             .chain(self.locals.iter().copied())
+            .chain(self.dynamic_bindings.iter().map(|(_, value)| *value))
             .chain(self.registers.iter().copied())
             .chain(match self.completion {
                 Completion::Return(value)
@@ -98,6 +137,7 @@ mod tests {
             env: Value::heap(1),
             this: Value::heap(2),
             locals: vec![Value::heap(4)],
+            dynamic_bindings: vec![(0, Value::heap(8))],
             registers: vec![Value::heap(5)],
             active_iterators: vec![],
             completion: Completion::Await(Value::heap(6)),
@@ -111,6 +151,7 @@ mod tests {
                 Value::heap(1),
                 Value::heap(2),
                 Value::heap(4),
+                Value::heap(8),
                 Value::heap(5),
                 Value::heap(6),
                 Value::heap(7)
