@@ -16,8 +16,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::ArrayToReversed => self.array_to_reversed_native(p, this),
-            Native::ArrayToSpliced => self.array_to_spliced_native(p, this, args),
+            Native::ArrayToReversed | Native::ArrayToSpliced => {
+                self.array_copy_native(p, native, this, args)
+            }
             Native::ArraySort => self.array_sort_native(p, this, args, true),
             Native::ArrayToSorted => self.array_sort_native(p, this, args, false),
             Native::ArraySpecies => Ok(this),
@@ -57,23 +58,6 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(prototype),
             elements: Rc::new(values),
         })
-    }
-
-    fn array_to_reversed_native(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-    ) -> Result<Value, JsError> {
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        if length > u32::MAX as usize {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
-        let mut values = Vec::with_capacity(length);
-        for index in (0..length).rev() {
-            values.push(self.get_index(p, object, Value::number(index as f64))?);
-        }
-        Ok(self.new_array(values))
     }
 
     fn array_to_string_native(
@@ -790,54 +774,6 @@ impl<H: Host> Vm<H> {
     ) -> JsError {
         let _ = self.iterator_close(p, iterator);
         error
-    }
-
-    fn array_to_spliced_native(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        let start = args
-            .first()
-            .copied()
-            .map(|value| self.array_relative_index(p, value, length))
-            .transpose()?
-            .unwrap_or(0);
-        let remaining = length - start;
-        let delete_count = match args.get(1).copied() {
-            None if args.is_empty() => 0,
-            None => length - start,
-            Some(value) => {
-                let number = self.to_number(p, value)?;
-                if number.is_nan() || number <= 0.0 {
-                    0
-                } else if number.is_infinite() {
-                    remaining
-                } else {
-                    (number.trunc() as usize).min(remaining)
-                }
-            }
-        };
-        let insert_count = args.len().saturating_sub(2);
-        let result_length = length - delete_count + insert_count;
-        if result_length as f64 > MAX_SAFE_INTEGER {
-            return Err(self.type_error(p, "array-like length exceeds safe integer".into()));
-        }
-        if result_length > u32::MAX as usize {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
-        let mut updated = Vec::with_capacity(result_length);
-        for index in 0..start {
-            updated.push(self.get_index(p, object, Value::number(index as f64))?);
-        }
-        updated.extend(args.iter().copied().skip(2));
-        for index in start + delete_count..length {
-            updated.push(self.get_index(p, object, Value::number(index as f64))?);
-        }
-        Ok(self.new_array(updated))
     }
 
     fn array_sort_native(

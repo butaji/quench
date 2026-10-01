@@ -13,7 +13,7 @@ impl<H: Host> Vm<H> {
             Native::ArrayLastIndexOf => self.array_last_index_of_native(p, this, args),
             Native::ArrayIndexOf => self.array_index_of_native(p, this, args),
             Native::ArrayCopyWithin => self.array_copy_within_native(p, this, args),
-            Native::ArrayWith => self.array_with_native(p, this, args),
+            Native::ArrayWith => self.array_copy_native(p, native, this, args),
             Native::ArrayForEach
             | Native::ArrayMap
             | Native::ArrayFilter
@@ -210,45 +210,6 @@ impl<H: Host> Vm<H> {
             }
         }
         Ok(object)
-    }
-
-    pub(super) fn array_with_native(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        if length > u32::MAX as usize {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
-        let number = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let index = if number.is_nan() || number == 0.0 {
-            0.0
-        } else if number.is_infinite() {
-            number
-        } else {
-            number.trunc()
-        };
-        let actual_index = if index < 0.0 {
-            length as f64 + index
-        } else {
-            index
-        };
-        if actual_index < 0.0 || actual_index >= length as f64 {
-            return Err(self.range_error(p, "array index out of range".into()));
-        }
-        let index = actual_index as usize;
-        let mut values = Vec::with_capacity(length);
-        for offset in 0..length {
-            values.push(if offset == index {
-                args.get(1).copied().unwrap_or(Value::UNDEFINED)
-            } else {
-                self.get_index(p, object, Value::number(offset as f64))?
-            });
-        }
-        Ok(self.new_array(values))
     }
 
     pub(super) fn array_callback_native(

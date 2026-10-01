@@ -656,6 +656,41 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (source, getters_fail, coercion_fails) in [
+            ("var source = [1, 2, 3]; var index = 1;", false, false),
+            ("var source = [1, 2, 3]; var index = 1; \
+              for (var key of [0, 1, 2]) Object.defineProperty(source, key, \
+              {get() {throw new Error('getter')}});", true, false),
+            ("var source = [1, 2, 3]; var index = {valueOf() {throw new Error('coercion')}};", false, true),
+        ] {
+            for native in [Native::ArrayWith, Native::ArrayToReversed, Native::ArrayToSpliced] {
+                let mut vm = Vm::new(SilentHost);
+                let program = compile(source, "copy-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let index_atom = vm.intern_atom("index");
+                let index = vm.own_property(vm.realm.globals, index_atom).unwrap();
+                let roots_before = vm.heap.root_count_for_test();
+                let outcome = vm.array_copy_native(&program, native, source, &[index, Value::number(1.0)]);
+                assert_eq!(outcome.is_err(), getters_fail || (coercion_fails && native != Native::ArrayToReversed));
+                assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                if let Ok(result) = outcome {
+                    let handle = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn reduction_roots_release_on_success_and_abrupt_completion() {
     let cases = [
         ("var source = [1, 2]; var callback = (accumulator, value) => ({sum: 42});", false, false),

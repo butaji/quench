@@ -353,6 +353,38 @@ mod tests {
     }
 
     #[test]
+    fn regression_array_copies_root_values_across_collecting_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var method of ['with', 'toReversed', 'toSpliced']) {
+                var trace = [];
+                var source = [0, 1, 2];
+                for (let index of [0, 1, 2]) {
+                    Object.defineProperty(source, index, {get() {
+                        trace.push(index);
+                        $262.gc();
+                        return {answer: 40 + index};
+                    }});
+                }
+                var replacement = {answer: 99};
+                var result = method === 'with' ? source.with(1, replacement)
+                    : method === 'toSpliced' ? source.toSpliced(1, 1, replacement) : source.toReversed();
+                print(result.map(value => value.answer).join(','));
+                print(trace.join(','));
+                print(Object.getPrototypeOf(result) === Array.prototype);
+            }
+            print(Array.prototype.with.call('abc', {valueOf() {$262.gc(); return 1;}}, 'z').join(','));
+            print(Array.prototype.toSpliced.call('abc', {valueOf() {$262.gc(); return 1;}}, 1, 'z').join(','));
+            "#,
+            &[
+                "40,99,42", "0,2", "true",
+                "42,41,40", "2,1,0", "true",
+                "40,99,42", "0,2", "true", "a,z,c", "a,z,c",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_reduction_accumulators_survive_guest_collection() {
         assert_output_in_execution_modes(
             r#"
