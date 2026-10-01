@@ -6,29 +6,72 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if self.object_data(target).is_none() {
-            return Err(self.type_error(p, "defineProperties target is not an object".into()));
-        }
-        let descriptors =
-            self.box_object_or_type_error(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let keys = self.object_own_key_values(p, descriptors)?;
-        for key in keys {
-            let property = self.object_get_own_property_descriptor(p, &[descriptors, key])?;
-            if property.is_undefined() || !self.descriptor_flag(property, "enumerable") {
-                continue;
+        let target = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let input = self
+            .heap
+            .root(args.get(1).copied().unwrap_or(Value::UNDEFINED));
+        let mut descriptors_root = None;
+        let mut keys = Vec::new();
+        let mut definitions = Vec::new();
+        let outcome = (|| {
+            if !self.is_object_like(self.heap.root_value(target).unwrap()) {
+                return Err(self.type_error(p, "defineProperties target is not an object".into()));
             }
-            let descriptor = match self.heap.get(key).cloned() {
-                Some(Cell::Symbol(_)) => self.get_index(p, descriptors, key)?,
-                Some(Cell::String(name)) => {
-                    let atom = self.intern_js_atom(&name);
-                    self.get_property(p, descriptors, atom)?
+            let descriptors = self.heap.root_value(input).unwrap();
+            let descriptors = self.box_object_or_type_error(p, descriptors)?;
+            let descriptors = self.heap.root(descriptors);
+            descriptors_root = Some(descriptors);
+            let object = self.heap.root_value(descriptors).unwrap();
+            keys = self
+                .object_own_key_values(p, object)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for &key in &keys {
+                let object = self.heap.root_value(descriptors).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                let current = self.object_get_own_property_descriptor(p, &[object, property])?;
+                if current.is_undefined() || !self.descriptor_flag(current, "enumerable") {
+                    continue;
                 }
-                _ => continue,
-            };
-            self.object_define_property(p, &[target, key, descriptor])?;
+                let object = self.heap.root_value(descriptors).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                let view = self.get_index(p, object, property)?;
+                let record = self.to_property_descriptor(p, view)?;
+                definitions.push((
+                    key,
+                    super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record),
+                ));
+            }
+            for (key, descriptor) in &definitions {
+                let object = self.heap.root_value(target).unwrap();
+                let property = self.heap.root_value(*key).unwrap();
+                if !self.define_own_property_record(
+                    p,
+                    object,
+                    property,
+                    descriptor.resolve(&self.heap),
+                )? {
+                    return Err(self.type_error(p, "cannot define property".into()));
+                }
+            }
+            Ok(self.heap.root_value(target).unwrap())
+        })();
+        for (_, descriptor) in definitions {
+            descriptor.release(&mut self.heap);
         }
-        Ok(target)
+        for key in keys {
+            self.heap.release_root(key);
+        }
+        for root in [Some(target), Some(input), descriptors_root]
+            .into_iter()
+            .flatten()
+        {
+            self.heap.release_root(root);
+        }
+        outcome
     }
 
     pub(super) fn install_object(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
