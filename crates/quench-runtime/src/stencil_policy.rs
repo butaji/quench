@@ -1,11 +1,6 @@
-//! Host capabilities for the physical stencil views.
-//!
-//! Semantic instructions remain architecture-independent.  This module is the
-//! single edge where compile-time ISA facts and the explicit ARM development
-//! opt-in become an immutable execution policy.  Plan construction derives all
-//! physical views from that policy instead of repeating target branches.
-
-use std::sync::OnceLock;
+//! The legacy interpreter never admits physical stencil execution.
+//! Migration tests may temporarily select capabilities on their own thread;
+//! every ordinary plan derives its rejection policy from `DISABLED`.
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -181,14 +176,6 @@ impl ExecutionPolicy {
             RegionAbi::ArrayCopyLoop => false,
             RegionAbi::ArrayReductionLoop => false,
             RegionAbi::AffineI32Loop => self.affine_i32_loops,
-            RegionAbi::I32CounterLoop => false,
-            RegionAbi::BooleanReductionLoop => false,
-            RegionAbi::BranchRecurrenceLoop => false,
-            RegionAbi::NestedXorLoop => false,
-            RegionAbi::SwitchReductionLoop => false,
-            RegionAbi::MatrixReductionLoop => false,
-            RegionAbi::TypedLaneLoop => false,
-            RegionAbi::TwoStateI32Loop => false,
             RegionAbi::NumericI32BitwiseLoop => self.numeric_i32_bitwise_loops,
             RegionAbi::NumericI32PairLoop => self.numeric_i32_pair_loops,
             RegionAbi::NumericF64Loop => self.numeric_f64_loops,
@@ -232,20 +219,7 @@ impl ExecutionPolicy {
     /// Keep dispatch-path timing controls independent of architecture opt-ins.
     #[cfg(test)]
     pub(crate) const fn disabled_for_test() -> Self {
-        Self {
-            native_leaves: false,
-            local_fusions: LocalFusionPolicy::NONE,
-            native_dispatch: false,
-            fused_regions: false,
-            array_kernels: false,
-            array_numeric_loops: false,
-            affine_i32_loops: false,
-            numeric_i32_bitwise_loops: false,
-            numeric_i32_pair_loops: false,
-            numeric_f64_loops: false,
-            numeric_f64_mixed_loops: false,
-            optimizing_view: false,
-        }
+        Self::DISABLED
     }
 
     #[cfg(test)]
@@ -322,50 +296,26 @@ impl ExecutionPolicy {
                 optimizing_view: false,
             },
             #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-            Architecture::Other => Self {
-                native_leaves: false,
-                local_fusions: LocalFusionPolicy::NONE,
-                native_dispatch: false,
-                fused_regions: false,
-                array_kernels: false,
-                array_numeric_loops: false,
-                affine_i32_loops: false,
-                numeric_i32_bitwise_loops: false,
-                numeric_i32_pair_loops: false,
-                numeric_f64_loops: false,
-                numeric_f64_mixed_loops: false,
-                optimizing_view: false,
-            },
+            Architecture::Other => Self::DISABLED,
         }
     }
 
-    fn current_uncached() -> Self {
-        // The legacy runtime is now an interpreter oracle.  Physical stencil
-        // code remains available only to focused migration tests that opt into
-        // an explicit policy; production construction must never map or
-        // execute guest-generated machine code.
-        Self::disabled_for_runtime()
-    }
-
-    const fn disabled_for_runtime() -> Self {
-        Self {
-            native_leaves: false,
-            local_fusions: LocalFusionPolicy::NONE,
-            native_dispatch: false,
-            fused_regions: false,
-            array_kernels: false,
-            array_numeric_loops: false,
-            affine_i32_loops: false,
-            numeric_i32_bitwise_loops: false,
-            numeric_i32_pair_loops: false,
-            numeric_f64_loops: false,
-            numeric_f64_mixed_loops: false,
-            optimizing_view: false,
-        }
-    }
+    /// Production has no physical execution capabilities on any target.
+    const DISABLED: Self = Self {
+        native_leaves: false,
+        local_fusions: LocalFusionPolicy::NONE,
+        native_dispatch: false,
+        fused_regions: false,
+        array_kernels: false,
+        array_numeric_loops: false,
+        affine_i32_loops: false,
+        numeric_i32_bitwise_loops: false,
+        numeric_i32_pair_loops: false,
+        numeric_f64_loops: false,
+        numeric_f64_mixed_loops: false,
+        optimizing_view: false,
+    };
 }
-
-static CURRENT: OnceLock<ExecutionPolicy> = OnceLock::new();
 
 #[cfg(test)]
 thread_local! {
@@ -387,7 +337,7 @@ pub(crate) fn current() -> ExecutionPolicy {
     if let Some(policy) = TEST_OVERRIDE.with(Cell::get) {
         return policy;
     }
-    *CURRENT.get_or_init(ExecutionPolicy::current_uncached)
+    ExecutionPolicy::DISABLED
 }
 
 #[cfg(test)]
@@ -404,6 +354,32 @@ pub(crate) fn with_policy_for_test<R>(policy: ExecutionPolicy, execute: impl FnO
 #[cfg(test)]
 mod tests {
     use super::{Architecture, ArmMode, ExecutionPolicy};
+
+    #[test]
+    fn production_policy_rejects_physical_execution() {
+        let policy = super::current();
+        assert_eq!(policy, ExecutionPolicy::DISABLED);
+        assert!(!policy.allows_admission());
+        assert!(!policy.optimizing_view);
+    }
+
+    #[test]
+    fn nested_test_policy_restores_after_unwind() {
+        let baseline = super::current();
+        let outer = ExecutionPolicy::arm_opt_in_for_test();
+        super::with_policy_for_test(outer, || {
+            assert_eq!(super::current(), outer);
+            let result = std::panic::catch_unwind(|| {
+                super::with_policy_for_test(ExecutionPolicy::DISABLED, || {
+                    assert_eq!(super::current(), ExecutionPolicy::DISABLED);
+                    panic!("exercise policy guard unwind");
+                });
+            });
+            assert!(result.is_err());
+            assert_eq!(super::current(), outer);
+        });
+        assert_eq!(super::current(), baseline);
+    }
 
     #[test]
     fn policy_is_a_derived_capability_set() {

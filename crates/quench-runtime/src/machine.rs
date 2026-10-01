@@ -5522,46 +5522,6 @@ impl NativeRegionPlan {
                     }
                     return crate::vm::execute_region_fallback(&mut region);
                 }
-                crate::stencil_select::RegionAbi::I32CounterLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "i32-counter loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::BooleanReductionLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "boolean-reduction loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::BranchRecurrenceLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "branch-recurrence loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::NestedXorLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "nested-xor loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::SwitchReductionLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "switch-reduction loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::MatrixReductionLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "matrix-reduction loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::TypedLaneLoop => {
-                    return Err(NativeDispatchError::Physical(
-                        "typed-lane loop ABI requires its typed entry".into(),
-                    ));
-                }
-                crate::stencil_select::RegionAbi::TwoStateI32Loop => {
-                    return Err(NativeDispatchError::Physical(
-                        "two-state i32 loop ABI requires its typed entry".into(),
-                    ));
-                }
                 crate::stencil_select::RegionAbi::ArrayCopyLoop => {
                     return Err(NativeDispatchError::Physical(
                         "array-copy ABI requires its typed entry".into(),
