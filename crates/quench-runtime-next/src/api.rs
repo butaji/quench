@@ -353,6 +353,94 @@ mod tests {
     }
 
     #[test]
+    fn regression_error_results_survive_collecting_message_and_cause() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var Constructor of [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError]) {
+                for (var mode of ['call', 'construct']) {
+                    var marker = {rank: 7};
+                    var message = {toString() {$262.gc(); return 'message';}};
+                    var options = {get cause() {$262.gc(); return marker;}};
+                    var error = mode === 'call' ? Constructor(message, options) : new Constructor(message, options);
+                    print(error.message);
+                    print(error.cause === marker);
+                    print(Object.getOwnPropertyDescriptor(error, 'message').enumerable);
+                }
+            }
+            var marker = {rank: 8};
+            var suppressed = {rank: 9};
+            var error = new SuppressedError(marker, suppressed, {toString() {$262.gc(); return 'suppressed';}});
+            print(error.message);
+            print(error.error === marker);
+            print(error.suppressed === suppressed);
+            "#,
+            &[
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "message",
+                "true",
+                "false",
+                "suppressed",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_constructor_operands_survive_collecting_prototype_lookup() {
+        assert_output_in_execution_modes(
+            r#"
+            var result = new (new Proxy(function C(value) {
+                $262.gc(); this.answer = value.answer;
+            }, {get(target, key, receiver) {
+                if (key === 'prototype') {$262.gc(); return {};}
+                return Reflect.get(target, key, receiver);
+            }}))({answer: 42});
+            print(result.answer);
+            "#,
+            &["42"],
+        );
+    }
+
+    #[test]
     fn regression_collecting_getters_keep_current_instruction_registers() {
         assert_output_in_execution_modes(
             r#"
