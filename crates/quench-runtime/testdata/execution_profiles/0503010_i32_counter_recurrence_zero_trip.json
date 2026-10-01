@@ -3,10 +3,10 @@
   "ir": [
     "LoadConst",
     "LoadLocal",
+    "Unary",
     "LoadConst",
     "NumericSubtract",
     "StoreLocal",
-    "Unary",
     "LoadConst",
     "GreaterThan",
     "JumpIfFalse",

@@ -31,13 +31,17 @@ pub(crate) fn reduce_update(
     crate::reduce::reduce_assignments::capture_name_target(&mut place, ops, next_register);
     crate::reduce::reduce_assignments::prepare_get(&mut place, ops, next_register);
     let old = crate::reduce::reduce_assignments::get(&place, ops, next_register)?;
+    let numeric_old = if update.prefix {
+        old
+    } else {
+        emit_numeric(ops, next_register, old)
+    };
     let one = emit_one(ops, next_register);
-    let updated = emit_member_update_value(ops, next_register, update, old, one);
+    let updated = emit_member_update_value(ops, next_register, update, numeric_old, one);
     crate::reduce::reduce_assignments::put(place, updated, ops)?;
     if update.prefix {
         Some(updated)
     } else {
-        let numeric_old = emit_numeric(ops, next_register, old);
         Some(numeric_old)
     }
 }
@@ -841,6 +845,39 @@ include!("loops_while.rs");
 mod tests {
     use super::{live_for_of, take_live_for_of, LIVE_FOR_OF};
     use crate::value::Value;
+
+    #[test]
+    fn regression_postfix_update_converts_once_before_the_property_setter() {
+        let _scope = crate::with_scope::FunctionGuard::isolate();
+        let source = r#"
+            for (var increment of [true, false]) {
+                var order = [], stored, thrown = {};
+                var operand = {};
+                operand[Symbol.toPrimitive] = function(hint) {
+                    order.push(hint);
+                    return 41;
+                };
+                var target = {};
+                Object.defineProperty(target, 'value', {
+                    get: function() { order.push('get'); return operand; },
+                    set: function(value) {
+                        order.push('set');
+                        stored = value;
+                        operand[Symbol.toPrimitive] = function() { throw thrown; };
+                    }
+                });
+                var old = increment ? target.value++ : target.value--;
+                if (old !== 41 || stored !== (increment ? 42 : 40) ||
+                    order.join('/') !== 'get/number/set') throw order.join('/');
+            }
+        "#;
+        let program = crate::reduce::reduce_source(source).expect("postfix source lowers");
+        assert_eq!(
+            crate::vm::execute_code_with_context(program.code(), &crate::vm::VmContext::default())
+                .expect("postfix source matches Node without coercing after the setter"),
+            Value::Undefined,
+        );
+    }
 
     #[test]
     fn live_for_of_stack_is_lifo_and_empty_after_pop() {

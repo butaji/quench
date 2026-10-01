@@ -87,11 +87,6 @@ fn run_loop_inner(
         registers,
     } = request;
     if label.is_none() && !post_test {
-        if let Some(result) = crate::stencil_boolean_reduction::execute_structured(
-            init, test, body, update, dst, per_iteration, registers,
-        ) {
-            return result;
-        }
         if let Some(result) = crate::stencil_ordered_neighbor::execute_structured(
             init, test, body, update, dst, per_iteration, registers,
         ) {
