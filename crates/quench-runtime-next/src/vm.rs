@@ -178,6 +178,7 @@ struct Realm {
     intrinsics: RealmIntrinsics,
     jobs: Vec<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
+    promise: PromiseRuntime,
 }
 #[derive(Default)]
 struct RealmIntrinsics {
@@ -471,7 +472,6 @@ pub(crate) struct Vm<H> {
     with_stack: Vec<Value>,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
-    promise: PromiseRuntime,
     test262_agent: Test262AgentState,
     programs: ProgramStore,
     active_program: ProgramId,
@@ -872,7 +872,7 @@ impl<H: Host> Vm<H> {
         self.parameter_eval = false;
         self.eval_script_context = false;
         self.construct_target = None;
-        self.promise = Default::default();
+        self.realm.promise = Default::default();
         self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.transitions.clear();

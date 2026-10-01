@@ -10,7 +10,7 @@ impl<H: Host> Vm<H> {
         result: Value,
     ) -> Result<(), JsError> {
         let (reactions, finally_reactions) = {
-            let Some(record) = self.promise.records.get_mut(&promise) else {
+            let Some(record) = self.realm.promise.records.get_mut(&promise) else {
                 return Err(JsError("invalid Promise state".into()));
             };
             if record.state != PromiseState::Pending {
