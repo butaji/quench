@@ -301,6 +301,8 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
       var lockedReceiver = Object.create(lockedPrototype);
       try { lockedReceiver.locked = 2; print("not-blocked"); }
       catch (error) { print("blocked"); }
+      print(lockedReceiver.locked);
+      print(Object.hasOwn(lockedReceiver, "locked"));
       class Accessor {
         constructor(value) { this._value = value; }
         get value() { return this._value; }
@@ -313,16 +315,28 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
       print(instance.value);
       print(Accessor.kind);
     "#;
-    let program = Engine::specialize(source, "accessor.js").unwrap();
-    let output = Rc::new(RefCell::new(Vec::new()));
-    let mut vm = Vm::new(RecordingHost(output.clone()));
-    vm.execute(&program).unwrap();
-    assert_eq!(
-        output.borrow().as_slice(),
-        [
-            "3", "9", "function", "function", "7", "true", "blocked", "4", "6", "class"
-        ]
-    );
+    for strict in [false, true] {
+        let source = if strict {
+            format!("'use strict';\n{source}")
+        } else {
+            source.to_owned()
+        };
+        for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+            let program = compile(&source, "accessor.js").unwrap();
+            let output = Rc::new(RefCell::new(Vec::new()));
+            let mut vm = Vm::new(RecordingHost(output.clone()));
+            vm.execute(&program).unwrap();
+            assert_eq!(
+                output.borrow().as_slice(),
+                [
+                    "3", "9", "function", "function", "7", "true",
+                    if strict { "blocked" } else { "not-blocked" },
+                    "1", "false", "4", "6", "class"
+                ],
+                "strict={strict}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -520,28 +534,36 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
 
 #[test]
 fn untaken_closure_branch_does_not_allocate_environments() {
-    let source = r#"
-      function maybe(make) {
-        var value = 1;
-        if (make) return function() { return value; };
-        return value;
-      }
-      var i = 0;
-      while (i < 1000) { maybe(false); i = i + 1; }
-    "#;
-    let program = Engine::specialize(source, "lazy-env.js").unwrap();
-    let mut vm = Vm::new(SilentHost);
-    vm.initialize(&program).unwrap();
-    let baseline = vm.heap.stats().0;
-    let root = vm.closure(&program, 0, Value::NULL).unwrap();
-    let globals = vm.realm.globals;
-    vm.call_value(&program, root, globals, &[]).unwrap();
-    let execution_allocations = vm.heap.stats().0 - baseline;
-    assert!(
-        execution_allocations < 128,
-        "unexpected per-call allocation: {}",
-        execution_allocations
-    );
+    const CALLS: usize = 1_000;
+    fn environments(
+        body: &str,
+        make: bool,
+        compile: fn(&str, &str) -> Result<crate::ResidualProgram, Vec<crate::Diagnostic>>,
+    ) -> usize {
+        let source = format!(
+            "function maybe(make) {{ var value = 1; {body} return value; }} \
+             var i = 0; while (i < {CALLS}) {{ maybe({make}); i = i + 1; }}"
+        );
+        let program = compile(&source, "lazy-env.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.initialize(&program).unwrap();
+        vm.heap.retain_allocations_for_test();
+        let baseline = vm.heap.environment_count_for_test();
+        let root = vm.closure(&program, 0, Value::NULL).unwrap();
+        let globals = vm.realm.globals;
+        vm.call_value(&program, root, globals, &[]).unwrap();
+        assert_eq!(vm.heap.stats().1, 0, "census must retain every allocation");
+        vm.heap.environment_count_for_test() - baseline
+    }
+
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let no_closure = environments("", false, compile);
+        let closure_branch = "if (make) return function() { return value; };";
+        let untaken = environments(closure_branch, false, compile);
+        let taken = environments(closure_branch, true, compile);
+        assert_eq!(untaken, no_closure, "untaken closure adds environments");
+        assert_eq!(taken - untaken, CALLS, "one environment per taken closure");
+    }
 }
 
 #[test]

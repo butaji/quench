@@ -1131,7 +1131,11 @@ mod tests {
     fn json_parser_keeps_escaped_surrogate_units() {
         let source = r#""\ud800a\udc00""#;
         let units = source.encode_utf16().collect::<Vec<_>>();
-        let JsonValue::String(value) = JsonParser::new(&units).parse().unwrap() else {
+        let JsonValue::Source(value, text) = JsonParser::new(&units).parse().unwrap() else {
+            panic!("expected source-bearing primitive");
+        };
+        assert_eq!(text.units(), units);
+        let JsonValue::String(value) = *value else {
             panic!("expected string");
         };
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
