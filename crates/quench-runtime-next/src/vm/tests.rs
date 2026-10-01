@@ -99,11 +99,11 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
     let second_regexp_prototype = vm.object();
     let first_segmenter_prototype = vm.object();
     let second_segmenter_prototype = vm.object();
-    vm.realm.intrinsics.error_prototypes.insert(
+    vm.realm.intrinsics.builtin_prototypes.insert(
         (first_global, Native::TypeError),
         first_error_prototype,
     );
-    vm.realm.intrinsics.error_prototypes.insert(
+    vm.realm.intrinsics.builtin_prototypes.insert(
         (second_global, Native::TypeError),
         second_error_prototype,
     );
@@ -168,11 +168,11 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         assert!(vm.heap.get(object).is_some());
     }
     assert_eq!(
-        vm.realm.intrinsics.error_prototypes.get(&(first_global, Native::TypeError)),
+        vm.realm.intrinsics.builtin_prototypes.get(&(first_global, Native::TypeError)),
         Some(&first_error_prototype)
     );
     assert_eq!(
-        vm.realm.intrinsics.error_prototypes.get(&(second_global, Native::TypeError)),
+        vm.realm.intrinsics.builtin_prototypes.get(&(second_global, Native::TypeError)),
         Some(&second_error_prototype)
     );
     assert_eq!(

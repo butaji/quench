@@ -402,21 +402,21 @@ impl<H: Host> Vm<H> {
         self.own_property(realm, atom)
     }
 
-    fn realm_object_prototype(&mut self, realm: Value) -> Value {
-        let object = self.intern_atom("Object");
-        let prototype = self.intern_atom("prototype");
-        self.own_property(realm, object)
-            .and_then(|constructor| self.own_property(constructor, prototype))
-            .filter(|value| self.object_data(*value).is_some())
+    fn realm_object_prototype(&self, realm: Value) -> Value {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(realm, Native::Object))
+            .copied()
             .unwrap_or(self.object_proto)
     }
 
-    fn realm_function_prototype(&mut self, realm: Value) -> Value {
-        let function = self.intern_atom("Function");
-        let prototype = self.intern_atom("prototype");
-        self.own_property(realm, function)
-            .and_then(|constructor| self.own_property(constructor, prototype))
-            .filter(|value| self.object_data(*value).is_some())
+    fn realm_function_prototype(&self, realm: Value) -> Value {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(realm, Native::Function))
+            .copied()
             .unwrap_or(self.function_proto)
     }
 
@@ -621,14 +621,7 @@ impl<H: Host> Vm<H> {
         } else {
             return Ok(self.object_proto);
         };
-        let object_atom = self.intern_atom("Object");
-        let object_constructor = self.get_property(p, realm, object_atom)?;
-        let object_prototype = self.get_property(p, object_constructor, prototype_atom)?;
-        Ok(if self.object_data(object_prototype).is_some() {
-            object_prototype
-        } else {
-            self.object_proto
-        })
+        Ok(self.realm_object_prototype(realm))
     }
 
     fn array_prototype_from_new_target(
@@ -642,23 +635,16 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        self.array_prototype_for_realm(p, realm)
+        Ok(self.array_prototype_for_realm(realm))
     }
 
-    pub(super) fn array_prototype_for_realm(
-        &mut self,
-        p: &ResidualProgram,
-        realm: Value,
-    ) -> Result<Value, JsError> {
-        let array_atom = self.intern_atom("Array");
-        let array = self.get_property(p, realm, array_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, array, prototype_atom)?;
-        Ok(if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            self.array_proto
-        })
+    pub(super) fn array_prototype_for_realm(&self, realm: Value) -> Value {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(realm, Native::Array))
+            .copied()
+            .unwrap_or(self.array_proto)
     }
 
     pub(super) fn regexp_prototype_from_new_target(
@@ -672,14 +658,13 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        let regexp_atom = self.intern_atom("RegExp");
-        let regexp = self.get_property(p, realm, regexp_atom)?;
-        let prototype = self.get_property(p, regexp, prototype_atom)?;
-        Ok(if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            self.regexp_proto
-        })
+        Ok(self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&realm)
+            .map(|intrinsics| intrinsics.prototype)
+            .unwrap_or(self.regexp_proto))
     }
 
     pub(super) fn set_constructed_prototype(
@@ -748,10 +733,17 @@ impl<H: Host> Vm<H> {
             };
             let new_target = self.heap.root_value(target_root).unwrap();
             let realm = self.function_realm(p, new_target)?;
-            let prototype = if let Some(prototype) = self
+            let prototype = if native == Native::RegExp {
+                self.realm
+                    .intrinsics
+                    .regexp_intrinsics
+                    .get(&realm)
+                    .map(|intrinsics| intrinsics.prototype)
+                    .unwrap_or(self.regexp_proto)
+            } else if let Some(prototype) = self
                 .realm
                 .intrinsics
-                .error_prototypes
+                .builtin_prototypes
                 .get(&(realm, native))
                 .copied()
             {
@@ -807,14 +799,24 @@ impl<H: Host> Vm<H> {
                 }
                 _ => ("Function", Native::Function),
             };
-            let constructor_atom = self.intern_atom(name);
-            let selected = self
-                .own_property(realm, constructor_atom)
-                .and_then(|constructor| self.own_property(constructor, prototype_atom))
-                .filter(|prototype| self.object_data(*prototype).is_some())
-                .or_else(|| self.own_property(self.native_value(fallback), prototype_atom))
-                .unwrap_or(self.function_proto);
-            selected
+            if let Some(prototype) = self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(realm, fallback))
+                .copied()
+            {
+                prototype
+            } else {
+                let constructor_atom = self.intern_atom(name);
+                let selected = self
+                    .own_property(realm, constructor_atom)
+                    .and_then(|constructor| self.own_property(constructor, prototype_atom))
+                    .filter(|prototype| self.object_data(*prototype).is_some())
+                    .or_else(|| self.own_property(self.native_value(fallback), prototype_atom))
+                    .unwrap_or(self.function_proto);
+                selected
+            }
         };
         if self.object_data(result).is_some() && self.object_data(prototype).is_some() {
             self.object_set_prototype_of(p, result, prototype)?;
