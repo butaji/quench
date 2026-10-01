@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) enum TypedArrayElement {
+    BigInt(num_bigint::BigInt),
+    Number(f64),
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn typed_array_values(&mut self, source: Value) -> Option<Vec<Value>> {
         if let Some(length) = self.typed_array_length(source) {
@@ -269,6 +274,25 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: Value,
     ) -> Result<bool, JsError> {
+        let Some(kind) = self.typed_array_kind(object) else {
+            return Ok(false);
+        };
+        let object = self.heap.root(object);
+        let outcome = (|| {
+            let value = self.typed_array_convert_value(p, kind, value)?;
+            let object = self.heap.root_value(object).unwrap();
+            Ok(self.typed_array_write_element(object, index, &value))
+        })();
+        self.heap.release_root(object);
+        outcome
+    }
+
+    pub(super) fn typed_array_write_element(
+        &mut self,
+        object: Value,
+        index: usize,
+        value: &TypedArrayElement,
+    ) -> bool {
         let (buffer, offset, kind) = match self.heap.get(object) {
             Some(Cell::TypedArray {
                 buffer,
@@ -276,16 +300,12 @@ impl<H: Host> Vm<H> {
                 kind,
                 ..
             }) => (*buffer, *offset, *kind),
-            _ => return Ok(false),
+            _ => return false,
         };
-        let (bigint, number) = self.typed_array_convert_value(p, kind, value)?;
-        if self.array_buffer_detached(buffer) {
-            return Ok(true);
-        }
-        let length = self.typed_array_length(object).unwrap_or(0);
-        if index >= length {
-            return Ok(true);
-        }
+        let (bigint, number) = match value {
+            TypedArrayElement::BigInt(value) => (Some(value), None),
+            TypedArrayElement::Number(value) => (None, Some(*value)),
+        };
         let bigint_bytes = bigint.map(|value| {
             let fill = if value.sign() == num_bigint::Sign::Minus {
                 u8::MAX
@@ -299,12 +319,14 @@ impl<H: Host> Vm<H> {
             bytes
         });
         if self.array_buffer_detached(buffer)
-            || self.typed_array_length(object).is_none_or(|length| index >= length)
+            || self
+                .typed_array_length(object)
+                .is_none_or(|length| index >= length)
         {
-            return Ok(true);
+            return true;
         }
         if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
-            return Ok(true);
+            return true;
         }
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
             let bytes = Rc::make_mut(bytes);
@@ -337,7 +359,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        Ok(true)
+        true
     }
 
     pub(super) fn typed_array_convert_value(
@@ -345,15 +367,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         kind: TypedArrayKind,
         value: Value,
-    ) -> Result<(Option<num_bigint::BigInt>, Option<f64>), JsError> {
-        let bigint = match kind {
-            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => Some(self.to_bigint(p, value)?),
-            _ => None,
-        };
-        let number = bigint
-            .is_none()
-            .then(|| self.to_number(p, value))
-            .transpose()?;
-        Ok((bigint, number))
+    ) -> Result<TypedArrayElement, JsError> {
+        match kind {
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+                self.to_bigint(p, value).map(TypedArrayElement::BigInt)
+            }
+            _ => self.to_number(p, value).map(TypedArrayElement::Number),
+        }
     }
 }

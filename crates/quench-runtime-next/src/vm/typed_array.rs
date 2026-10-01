@@ -288,31 +288,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(this)
             }
-            Native::Uint8ArrayFill => {
-                let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = if matches!(
-                    self.typed_array_kind(this),
-                    Some(TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
-                ) {
-                    let value = self.to_bigint(p, value)?;
-                    self.heap.alloc(Cell::BigInt(value.to_string()))
-                } else {
-                    Value::number(self.to_number(p, value)?)
-                };
-                self.typed_array_validate_current_write(p, this)?;
-                let start = self.typed_array_relative_index(p, args.get(1), length)?;
-                self.typed_array_validate_current_write(p, this)?;
-                let end_arg = args.get(2).filter(|value| !value.is_undefined());
-                let end = match end_arg {
-                    Some(value) => self.typed_array_relative_index(p, Some(value), length)?,
-                    None => length,
-                };
-                self.typed_array_validate_current_write(p, this)?;
-                for index in start..end {
-                    self.typed_array_set(p, this, index, value)?;
-                }
-                Ok(this)
-            }
+            Native::Uint8ArrayFill => self.typed_array_fill_native(p, this, args, length),
             Native::Uint8ArrayCopyWithin => {
                 let target = self.typed_array_relative_index(p, args.first(), length)?;
                 self.typed_array_validate_current_write(p, this)?;
@@ -497,6 +473,53 @@ impl<H: Host> Vm<H> {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn typed_array_fill_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+        length: usize,
+    ) -> Result<Value, JsError> {
+        let source = self.heap.root(this);
+        let value = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let start = args.get(1).map(|value| self.heap.root(*value));
+        let end = args
+            .get(2)
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.heap.root(*value));
+        let outcome = (|| {
+            let this = self.heap.root_value(source).unwrap();
+            let kind = self.typed_array_kind(this).unwrap();
+            let value = self.heap.root_value(value).unwrap();
+            let value = self.typed_array_convert_value(p, kind, value)?;
+            let start = start.and_then(|root| self.heap.root_value(root));
+            let start = self.typed_array_relative_index(p, start.as_ref(), length)?;
+            let end = match end {
+                Some(root) => {
+                    let end = self.heap.root_value(root).unwrap();
+                    self.typed_array_relative_index(p, Some(&end), length)?
+                }
+                None => length,
+            };
+            let this = self.heap.root_value(source).unwrap();
+            self.typed_array_validate_current_write(p, this)?;
+            let end = end.min(self.typed_array_length(this).unwrap_or_default());
+            for index in start..end {
+                self.typed_array_write_element(this, index, &value);
+            }
+            Ok(this)
+        })();
+        for root in [Some(source), Some(value), start, end]
+            .into_iter()
+            .flatten()
+        {
+            self.heap.release_root(root);
+        }
+        outcome
     }
 
     fn typed_array_validate_current_write(
