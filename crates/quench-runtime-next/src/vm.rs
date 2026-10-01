@@ -73,6 +73,8 @@ mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
 mod group_by;
+mod property_definition;
+use property_definition::PropertyDefinitionKind;
 use group_by::GroupByKind;
 mod iterators;
 mod json;

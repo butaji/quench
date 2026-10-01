@@ -931,6 +931,94 @@ mod tests {
     }
 
     #[test]
+    fn regression_property_definition_parses_once_before_proxy_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var define of [Object.defineProperty, Reflect.defineProperty]) {
+                var events = [];
+                var input = {enumerable:true, configurable:true,
+                    get value() {events.push('value'); $262.gc(); return {rank:42};},
+                    get writable() {events.push('writable'); $262.gc(); return true;}};
+                var target = {};
+                var proxy = new Proxy(target, {get defineProperty() {events.push('trap-getter'); $262.gc();
+                    return function(target, key, descriptor) {
+                        events.push('trap'); $262.gc(); print(descriptor === input);
+                        print(Reflect.ownKeys(descriptor).join(','));
+                        Object.defineProperty(target, key, descriptor); return true;
+                    };
+                }});
+                define(proxy, {[Symbol.toPrimitive]() {events.push('key'); $262.gc(); return 'answer';}}, input);
+                print(events.join(','));
+                print(target.answer.rank);
+            }
+            "#,
+            &[
+                "false",
+                "value,writable,enumerable,configurable",
+                "key,value,writable,trap-getter,trap",
+                "42",
+                "false",
+                "value,writable,enumerable,configurable",
+                "key,value,writable,trap-getter,trap",
+                "42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_reflect_definition_preserves_thrown_completion() {
+        assert_output_in_execution_modes(
+            r#"
+            var marker = {rank:42};
+            try {Reflect.defineProperty([], 'length', {value:{valueOf() {$262.gc(); throw marker;}}}); print(false);}
+            catch (error) {print(error === marker);}
+            try {Reflect.defineProperty([], 'length', {value:-1}); print(false);}
+            catch (error) {print(error instanceof RangeError);}
+            var frozen = Object.freeze({answer:1});
+            print(Reflect.defineProperty(frozen, 'answer', {value:2}));
+            print(Reflect.defineProperty(frozen, 'other', {value:2}));
+            print(Reflect.defineProperty(new Uint8Array(0), '0', {value:2}));
+            "#,
+            &["true", "true", "false", "false", "false"],
+        );
+    }
+
+    #[test]
+    fn regression_internal_definitions_ignore_descriptor_prototype_fields() {
+        assert_output_in_execution_modes(
+            r#"
+            Object.defineProperty(Object.prototype, 'get', {configurable:true, get() {$262.gc(); throw 'inherited-get';}});
+            var reflected, mapped, flattened, from;
+            try {
+                var descriptor = Object.create(null); descriptor.value = {rank:42}; descriptor.configurable = true;
+                reflected = {}; print(Reflect.defineProperty(reflected, 'answer', descriptor));
+                mapped = [1,2].map(value => value + 1);
+                flattened = [[1],[2]].flat();
+                from = Array.from([1,2], value => value + 2);
+            } finally {delete Object.prototype.get;}
+            print(reflected.answer.rank); print(mapped.join(',')); print(flattened.join(',')); print(from.join(','));
+            "#,
+            &["true", "42", "2,3", "1,2", "3,4"],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_definition_invariants_use_original_record() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var define of [Object.defineProperty, Reflect.defineProperty]) {
+                var proxy = new Proxy({}, {defineProperty(target,key,descriptor) {
+                    descriptor.configurable = true; $262.gc(); return true;
+                }});
+                try {define(proxy, 'answer', {value:42, configurable:false}); print(false);}
+                catch (error) {print(error instanceof TypeError);}
+            }
+            "#,
+            &["true", "true"],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"

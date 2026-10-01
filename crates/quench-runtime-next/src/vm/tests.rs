@@ -670,6 +670,112 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn definition_record_stack_exhaustion_preserves_root_scopes() {
+    let mut vm = Vm::new(Test262Host);
+    let program = Engine::specialize("var target = {};", "definition-stack-budget.js").unwrap();
+    vm.execute(&program).unwrap();
+    let atom = vm.intern_atom("target");
+    let target = vm.own_property(vm.realm.globals, atom).unwrap();
+    let key = vm.heap.alloc(super::Cell::String("entry".into()));
+    let record = super::object_descriptors::PropertyDescriptorRecord::data(Value::number(42.0));
+    let roots = vm.heap.root_count_for_test();
+    let calls = vm.active_call_roots.len();
+    let mut guards = Vec::new();
+    while let Ok(guard) = quench_stack::StackGuard::enter() {
+        guards.push(guard);
+    }
+    let error = vm
+        .define_own_property_record(&program, target, key, record)
+        .unwrap_err();
+    drop(guards);
+    assert!(
+        vm.format_error(&program, &error)
+            .contains(quench_stack::STACK_EXHAUSTED_MESSAGE)
+    );
+    assert_eq!(vm.heap.root_count_for_test(), roots);
+    assert_eq!(vm.active_call_roots.len(), calls);
+    assert!(
+        vm.define_own_property_record(&program, target, key, record)
+            .unwrap()
+    );
+}
+
+#[test]
+fn definition_record_roots_release_across_target_kinds() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "ordinary-ok",
+            "ordinary-reject",
+            "array-ok",
+            "array-reject",
+            "length-ok",
+            "length-reject",
+            "length-throw",
+            "typed-ok",
+            "typed-reject",
+            "typed-throw",
+            "proxy-ok",
+            "proxy-reject",
+            "proxy-throw",
+            "proxy-invariant",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var target={{}};
+                if ('{phase}'.startsWith('array-') || '{phase}'.startsWith('length-')) target=[];
+                if ('{phase}'.startsWith('typed-')) target=new Uint8Array('{phase}' === 'typed-reject' ? 0 : 1);
+                if ('{phase}' === 'ordinary-reject' || '{phase}' === 'array-reject' || '{phase}' === 'length-reject') Object.freeze(target);
+                if ('{phase}'.startsWith('proxy-')) target=new Proxy(target, {{get defineProperty() {{$262.gc();
+                    return function(target,key,descriptor) {{$262.gc(); if ('{phase}' === 'proxy-throw') throw {{kind:'{phase}'}}; return '{phase}' !== 'proxy-reject';}};
+                }}}});
+                var key='{phase}'.startsWith('length-') ? 'length' : '{phase}'.startsWith('array-') || '{phase}'.startsWith('typed-') ? '0' : 'entry';
+                var descriptor={{get value() {{$262.gc(); return {{rank:42, valueOf() {{$262.gc();
+                    if ('{phase}' === 'length-throw' || '{phase}' === 'typed-throw') throw {{kind:'{phase}'}}; return 2;
+                }}}};}}, writable:true, enumerable:!'{phase}'.startsWith('length-'), configurable:!'{phase}'.startsWith('length-') && '{phase}' !== 'proxy-invariant'}};
+            "#
+            );
+            let program = compile(&source, "definition-record-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let values = ["target", "key", "descriptor"].map(|name| {
+                let atom = vm.intern_atom(name);
+                vm.own_property(vm.realm.globals, atom).unwrap()
+            });
+            let record = vm.to_property_descriptor(&program, values[2]).unwrap();
+            let weak = vm.heap.weak_handle(record.value.unwrap()).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.define_own_property_record(&program, values[0], values[1], record);
+            if phase.ends_with("-throw") || phase == "proxy-invariant" {
+                let error = result.unwrap_err();
+                if phase == "proxy-invariant" {
+                    assert!(vm.format_error(&program, &error).contains("TypeError"));
+                } else {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                }
+            } else {
+                assert_eq!(result.unwrap(), phase.ends_with("-ok"), "{phase}");
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            vm.collect_now(&program);
+            assert_eq!(
+                vm.heap.weak_value(weak).is_some(),
+                matches!(phase, "ordinary-ok" | "array-ok"),
+                "{phase}"
+            );
+        }
+    }
+}
+
+#[test]
 fn descriptor_record_roots_release_after_field_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

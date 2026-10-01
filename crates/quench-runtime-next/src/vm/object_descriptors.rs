@@ -18,6 +18,69 @@ pub(super) struct PropertyDescriptorRecord {
 }
 
 impl PropertyDescriptorRecord {
+    pub(super) fn data(value: Value) -> Self {
+        Self {
+            value: Some(value),
+            writable: Some(true),
+            enumerable: Some(true),
+            configurable: Some(true),
+            getter: None,
+            setter: None,
+        }
+    }
+
+    pub(super) fn value(value: Value) -> Self {
+        Self {
+            value: Some(value),
+            writable: None,
+            enumerable: None,
+            configurable: None,
+            getter: None,
+            setter: None,
+        }
+    }
+
+    pub(super) fn compatible_with(
+        self,
+        current: Option<Self>,
+        extensible: bool,
+        same_value: impl Fn(Value, Value) -> bool,
+    ) -> bool {
+        let Some(current) = current else {
+            return extensible;
+        };
+        let attributes = current.fold_attributes(DEFAULT_PROPERTY_ATTRIBUTES, true);
+        if attributes.configurable {
+            return true;
+        }
+        let next = self.fold_attributes(attributes, false);
+        if self.non_configurable_conflict(attributes, next).is_some()
+            || self.changes_non_configurable_accessor(attributes, &same_value)
+        {
+            return false;
+        }
+        attributes.accessor
+            || attributes.writable
+            || self
+                .value
+                .is_none_or(|value| same_value(value, current.value.unwrap_or(Value::UNDEFINED)))
+    }
+
+    pub(super) fn from_attributes(value: Value, attributes: PropertyAttributes) -> Self {
+        Self {
+            value: (!attributes.accessor).then_some(value),
+            writable: (!attributes.accessor).then_some(attributes.writable),
+            enumerable: Some(attributes.enumerable),
+            configurable: Some(attributes.configurable),
+            getter: attributes
+                .accessor
+                .then_some(attributes.getter.unwrap_or(Value::UNDEFINED)),
+            setter: attributes
+                .accessor
+                .then_some(attributes.setter.unwrap_or(Value::UNDEFINED)),
+        }
+    }
+
     pub(super) fn has_accessor_fields(self) -> bool {
         self.getter.is_some() || self.setter.is_some()
     }
@@ -188,6 +251,30 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    pub(super) fn own_descriptor_record(&mut self, descriptor: Value) -> PropertyDescriptorRecord {
+        let fields = [
+            "value",
+            "writable",
+            "enumerable",
+            "configurable",
+            "get",
+            "set",
+        ]
+        .map(|name| {
+            let atom = self.intern_atom(name);
+            self.own_property(descriptor, atom)
+        });
+        let [value, writable, enumerable, configurable, getter, setter] = fields;
+        PropertyDescriptorRecord {
+            value,
+            writable: writable.map(|v| self.truthy(v)),
+            enumerable: enumerable.map(|v| self.truthy(v)),
+            configurable: configurable.map(|v| self.truthy(v)),
+            getter,
+            setter,
+        }
+    }
+
     pub(super) fn complete_property_descriptor(
         &mut self,
         descriptor: PropertyDescriptorRecord,
@@ -207,9 +294,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         record: PropertyDescriptorRecord,
     ) -> Result<Value, JsError> {
-        let value_root = record.value.map(|value| self.heap.root(value));
-        let getter_root = record.getter.map(|value| self.heap.root(value));
-        let setter_root = record.setter.map(|value| self.heap.root(value));
+        let record = super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record);
         let prototype = self
             .realm
             .intrinsics
@@ -219,25 +304,17 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto);
         let descriptor = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let descriptor = self.heap.root(descriptor);
-        let result = (|| {
+        let outcome = (|| {
+            let fields = record.resolve(&self.heap);
             for (name, field) in [
-                (
-                    "value",
-                    value_root.map(|root| self.heap.root_value(root).unwrap()),
-                ),
-                ("writable", record.writable.map(Self::integrity_bool)),
-                (
-                    "get",
-                    getter_root.map(|root| self.heap.root_value(root).unwrap()),
-                ),
-                (
-                    "set",
-                    setter_root.map(|root| self.heap.root_value(root).unwrap()),
-                ),
-                ("enumerable", record.enumerable.map(Self::integrity_bool)),
+                ("value", fields.value),
+                ("writable", fields.writable.map(Self::integrity_bool)),
+                ("get", fields.getter),
+                ("set", fields.setter),
+                ("enumerable", fields.enumerable.map(Self::integrity_bool)),
                 (
                     "configurable",
-                    record.configurable.map(Self::integrity_bool),
+                    fields.configurable.map(Self::integrity_bool),
                 ),
             ] {
                 if let Some(field) = field {
@@ -248,13 +325,9 @@ impl<H: Host> Vm<H> {
             }
             Ok(self.heap.root_value(descriptor).unwrap())
         })();
-        for root in [Some(descriptor), value_root, getter_root, setter_root]
-            .into_iter()
-            .flatten()
-        {
-            self.heap.release_root(root);
-        }
-        result
+        self.heap.release_root(descriptor);
+        record.release(&mut self.heap);
+        outcome
     }
 
     fn own_data_descriptor(
@@ -282,18 +355,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         attributes: PropertyAttributes,
     ) -> Result<Value, JsError> {
-        self.from_property_descriptor(PropertyDescriptorRecord {
-            value: (!attributes.accessor).then_some(value),
-            writable: (!attributes.accessor).then_some(attributes.writable),
-            enumerable: Some(attributes.enumerable),
-            configurable: Some(attributes.configurable),
-            getter: attributes
-                .accessor
-                .then_some(attributes.getter.unwrap_or(Value::UNDEFINED)),
-            setter: attributes
-                .accessor
-                .then_some(attributes.setter.unwrap_or(Value::UNDEFINED)),
-        })
+        self.from_property_descriptor(PropertyDescriptorRecord::from_attributes(value, attributes))
     }
 
     pub(super) fn typed_array_index_key(key: &str) -> TypedArrayIndexKey {
@@ -324,37 +386,27 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         target: Value,
         index: usize,
-        descriptor: Value,
-    ) -> Result<Value, JsError> {
-        let descriptor = self.to_property_descriptor(p, descriptor)?;
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<bool, JsError> {
         let invalid_kind = descriptor.has_accessor_fields();
         let invalid_attributes = descriptor.writable == Some(false)
             || descriptor.enumerable == Some(false)
             || descriptor.configurable == Some(false);
         if invalid_kind || invalid_attributes {
-            return Err(self.type_error(
-                p,
-                "cannot define incompatible typed array index descriptor".into(),
-            ));
+            return Ok(false);
         }
         if self
             .typed_array_length(target)
             .is_none_or(|length| index >= length)
         {
-            return Err(self.type_error(
-                p,
-                "cannot define a property on an out-of-bounds typed array".into(),
-            ));
+            return Ok(false);
         }
         if let Some(value) = descriptor.value
             && !self.typed_array_set(p, target, index, value)?
         {
-            return Err(self.type_error(
-                p,
-                "cannot define a property on an out-of-bounds typed array".into(),
-            ));
+            return Ok(false);
         }
-        Ok(target)
+        Ok(true)
     }
 
     pub(super) fn object_get_own_property_descriptor(
