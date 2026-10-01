@@ -670,6 +670,95 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn error_constructor_and_call_scopes_release_after_coercion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [
+            Native::Error,
+            Native::EvalError,
+            Native::RangeError,
+            Native::ReferenceError,
+            Native::SyntaxError,
+            Native::TypeError,
+            Native::URIError,
+            Native::SuppressedError,
+        ] {
+            for (setup, fails) in [
+                (
+                    "var message = {toString() {$262.gc(); return 'message'}}; var options = {get cause() {$262.gc(); return {rank: 7}}};",
+                    false,
+                ),
+                (
+                    "var message = {toString() {$262.gc(); throw new Error('message')}}; var options;",
+                    true,
+                ),
+                (
+                    "var message; var options = {get cause() {$262.gc(); throw new Error('cause')}};",
+                    true,
+                ),
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let program = compile(setup, "error-root-scope.js").unwrap();
+                vm.execute(&program).unwrap();
+                let message_atom = vm.intern_atom("message");
+                let message = vm.own_property(vm.realm.globals, message_atom).unwrap();
+                let options_atom = vm.intern_atom("options");
+                let options = vm.own_property(vm.realm.globals, options_atom).unwrap();
+                let args = if native == Native::SuppressedError {
+                    vec![Value::UNDEFINED, Value::UNDEFINED, message]
+                } else {
+                    vec![message, options]
+                };
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.construct_error_native(&program, native, &args);
+                assert_eq!(
+                    result.is_err(),
+                    fails && (native != Native::SuppressedError || !message.is_undefined())
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                if let Ok(value) = result {
+                    let handle = vm.heap.weak_handle(value).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+        for fails in [false, true] {
+            let mut vm = Vm::new(Test262Host);
+            let action = if fails {
+                "throw new Error('prototype')"
+            } else {
+                "return {}"
+            };
+            let program = compile(&format!("var constructor = new Proxy(function C(value) {{$262.gc(); this.answer = value.answer;}}, {{get(target, key, receiver) {{if (key === 'prototype') {{$262.gc(); {action}}} return Reflect.get(target, key, receiver);}}}});"), "construct-scope.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("constructor");
+            let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+            let argument = vm.object();
+            vm.set_named(&program, argument, "answer", Value::number(42.0))
+                .unwrap();
+            let weak = vm.heap.weak_handle(argument).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.construct_value(&program, constructor, &[argument]);
+            assert_eq!(result.is_err(), fails);
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            if let Ok(result) = result {
+                let atom = vm.intern_atom("answer");
+                assert_eq!(vm.own_property(result, atom), Some(Value::number(42.0)));
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak).is_none());
+        }
+    }
+}
+
+#[test]
 fn spread_and_aggregate_roots_release_after_guest_failures() {
     let cases = [
         (

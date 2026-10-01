@@ -2,6 +2,8 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
+const ERROR_OPTIONS_ARGUMENT: usize = 1;
+const SUPPRESSED_MESSAGE_ARGUMENT: usize = 2;
 
 const ERROR_CONSTRUCTORS: &[(&str, Native)] = &[
     ("Error", Native::Error),
@@ -1717,81 +1719,93 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
-        let name = match native {
-            Native::Error => Some("Error"),
-            Native::AggregateError => Some("AggregateError"),
-            Native::SuppressedError => Some("SuppressedError"),
-            Native::EvalError => Some("EvalError"),
-            Native::RangeError => Some("RangeError"),
-            Native::ReferenceError => Some("ReferenceError"),
-            Native::SyntaxError => Some("SyntaxError"),
-            Native::TypeError | Native::RealmTypeError => Some("TypeError"),
-            Native::URIError => Some("URIError"),
-            _ => None,
+        let (message, options, suppressed) = match native {
+            Native::SuppressedError => (
+                args.get(SUPPRESSED_MESSAGE_ARGUMENT)
+                    .copied()
+                    .filter(|value| !value.is_undefined())
+                    .map(|value| self.heap.root(value)),
+                None,
+                Some([
+                    self.heap
+                        .root(args.first().copied().unwrap_or(Value::UNDEFINED)),
+                    self.heap
+                        .root(args.get(1).copied().unwrap_or(Value::UNDEFINED)),
+                ]),
+            ),
+            _ => (
+                args.first()
+                    .copied()
+                    .filter(|value| !value.is_undefined())
+                    .map(|value| self.heap.root(value)),
+                args.get(ERROR_OPTIONS_ARGUMENT)
+                    .copied()
+                    .filter(|value| self.is_object_like(*value))
+                    .map(|value| self.heap.root(value)),
+                None,
+            ),
         };
-        let constructor = if let Some(name) = name {
-            let atom = self.intern_atom(name);
-            self.get_property(program, self.realm.globals, atom)
-                .unwrap_or_else(|_| self.native_value(native))
-        } else {
-            self.native_value(native)
-        };
-        let prototype = self.realm.intrinsics.error_prototypes
+        let prototype = self
+            .realm
+            .intrinsics
+            .error_prototypes
             .get(&(self.realm.globals, native))
             .copied()
-            .or_else(|| self.own_property(constructor, prototype_atom))
-            .unwrap_or(self.object_proto);
+            .unwrap_or_else(|| {
+                let constructor = self.native_value(native);
+                let atom = self.intern_atom("prototype");
+                self.own_property(constructor, atom)
+                    .unwrap_or(self.object_proto)
+            });
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
-        if native == Native::SuppressedError {
-            if let Some(message) = args.get(2).copied().filter(|value| !value.is_undefined()) {
-                let message = self.to_string(program, message)?;
+        let root = self.heap.root(object);
+        let outcome = (|| {
+            self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
+            if let Some(message) = message {
+                let value = self.heap.root_value(message).unwrap();
+                let message = self.to_string(program, value)?;
                 let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                let object = self.heap.root_value(root).unwrap();
                 self.set_builtin_value_named(object, "message", message)?;
             }
-            for (name, value) in [
-                ("error", args.first().copied().unwrap_or(Value::UNDEFINED)),
-                (
-                    "suppressed",
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                ),
-            ] {
-                self.set_builtin_value_named(object, name, value)?;
+            if let Some([error, suppressed]) = suppressed {
+                for (name, value) in [("error", error), ("suppressed", suppressed)] {
+                    let value = self.heap.root_value(value).unwrap();
+                    let object = self.heap.root_value(root).unwrap();
+                    self.set_builtin_value_named(object, name, value)?;
+                }
             }
-            return Ok(object);
-        }
-        if let Some(value) = args.first().copied().filter(|value| !value.is_undefined()) {
-            let message = self.to_string(program, value)?;
-            let message_value = self.heap.alloc(Cell::String(JsString::from_str(&message)));
-            self.set_named(program, object, "message", message_value)?;
-            let message_atom = self.intern_atom("message");
-            self.set_property_attributes(
-                object,
-                PropertyKey::string(message_atom),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        if let Some(options) = args
-            .get(1)
-            .copied()
-            .filter(|value| self.is_object_like(*value))
+            if let Some(options) = options {
+                self.install_error_cause(program, root, options)?;
+            }
+            Ok(self.heap.root_value(root).unwrap())
+        })();
+        for root in [Some(root), message, options]
+            .into_iter()
+            .flatten()
+            .chain(suppressed.into_iter().flatten())
         {
-            let cause_atom = self.intern_atom("cause");
-            let cause_key = self.heap.alloc(Cell::String("cause".into()));
-            if self.has_property(program, options, cause_key)? {
-                let cause = self.get_property(program, options, cause_atom)?;
-                self.set_builtin_value_named(object, "cause", cause)?;
-            }
+            self.heap.release_root(root);
         }
-        Ok(object)
+        outcome
+    }
+
+    fn install_error_cause(
+        &mut self,
+        program: &ResidualProgram,
+        object: RootId,
+        options: RootId,
+    ) -> Result<(), JsError> {
+        let cause_atom = self.intern_atom("cause");
+        let cause_key = self.heap.alloc(Cell::String("cause".into()));
+        let value = self.heap.root_value(options).unwrap();
+        if self.has_property(program, value, cause_key)? {
+            let options = self.heap.root_value(options).unwrap();
+            let cause = self.get_property(program, options, cause_atom)?;
+            let object = self.heap.root_value(object).unwrap();
+            self.set_builtin_value_named(object, "cause", cause)?;
+        }
+        Ok(())
     }
 
     pub(super) fn construct_aggregate_error(
@@ -1839,15 +1853,7 @@ impl<H: Host> Vm<H> {
                 self.set_builtin_value_named(value, "message", message)?;
             }
             if let Some(options) = options {
-                let cause_atom = self.intern_atom("cause");
-                let cause_key = self.heap.alloc(Cell::String("cause".into()));
-                let value = self.heap.root_value(options).unwrap();
-                if self.has_property(program, value, cause_key)? {
-                    let options = self.heap.root_value(options).unwrap();
-                    let cause = self.get_property(program, options, cause_atom)?;
-                    let value = self.heap.root_value(root).unwrap();
-                    self.set_builtin_value_named(value, "cause", cause)?;
-                }
+                self.install_error_cause(program, root, options)?;
             }
             let input = self.heap.root_value(input).unwrap();
             errors_list = self.iterable_to_rooted_list(program, input)?;
