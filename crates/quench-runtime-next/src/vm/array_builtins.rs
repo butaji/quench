@@ -57,6 +57,10 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.object_proto),
             elements: Rc::new(Vec::new()),
         });
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::Array), self.array_proto);
         self.set_builtin_function_name(array, "Array")?;
         for &(name, native) in ARRAY_PROTOTYPE_METHODS {
             self.set_builtin_named(program, self.array_proto, name, native)?;
@@ -103,6 +107,10 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Result<(), JsError> {
         let array = self.native_with_realm(Native::Array, global, global);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Array), prototype);
         self.set_builtin_function_name(array, "Array")?;
         self.set_builtin_value_named(array, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", array)?;

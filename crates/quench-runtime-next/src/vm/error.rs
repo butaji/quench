@@ -339,7 +339,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
-        let prototype = self.realm.intrinsics.error_prototypes[&(self.realm.globals, Native::RangeError)];
+        let prototype = self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
         self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)
@@ -1002,9 +1002,9 @@ impl<H: Host> Vm<H> {
         let type_error_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(error_prototype)));
-        self.realm.intrinsics.error_prototypes
+        self.realm.intrinsics.builtin_prototypes
             .insert((global, Native::TypeError), type_error_prototype);
-        self.realm.intrinsics.error_prototypes
+        self.realm.intrinsics.builtin_prototypes
             .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named(program, type_error, "prototype", type_error_prototype)?;
         self.set_named(program, type_error_prototype, "constructor", type_error)?;
@@ -1018,6 +1018,10 @@ impl<H: Host> Vm<H> {
         let object_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Object), object_prototype);
         self.install_object_prototype_methods(program, object_prototype, Some(global))?;
         let (shared_array_buffer, _) =
             self.install_shared_array_buffer_for_realm(program, global, object_prototype)?;
@@ -1399,7 +1403,10 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
-            self.realm.intrinsics.error_prototypes.insert((global, native), prototype);
+            self.realm
+                .intrinsics
+                .builtin_prototypes
+                .insert((global, native), prototype);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let name_value = self.heap.alloc(Cell::String(name.into()));
@@ -1524,6 +1531,10 @@ impl<H: Host> Vm<H> {
             env: Value::NULL,
             realm: global,
         });
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Function), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -1628,7 +1639,7 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
-            self.realm.intrinsics.error_prototypes
+            self.realm.intrinsics.builtin_prototypes
                 .insert((self.realm.globals, *native), prototype);
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -1748,7 +1759,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .realm
             .intrinsics
-            .error_prototypes
+            .builtin_prototypes
             .get(&(self.realm.globals, native))
             .copied()
             .unwrap_or_else(|| {
@@ -1834,7 +1845,7 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .realm
                 .intrinsics
-                .error_prototypes
+                .builtin_prototypes
                 .get(&(self.realm.globals, Native::AggregateError))
                 .copied()
                 .unwrap_or(self.object_proto);
@@ -1857,7 +1868,7 @@ impl<H: Host> Vm<H> {
             }
             let input = self.heap.root_value(input).unwrap();
             errors_list = self.iterable_to_rooted_list(program, input)?;
-            let prototype = self.array_prototype_for_realm(program, self.realm.globals)?;
+            let prototype = self.array_prototype_for_realm(self.realm.globals);
             let errors = errors_list
                 .iter()
                 .map(|value| self.heap.root_value(*value).unwrap())

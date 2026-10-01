@@ -188,7 +188,7 @@ struct Realm {
 #[derive(Default)]
 struct RealmIntrinsics {
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
-    error_prototypes: FxHashMap<(Value, Native), Value>,
+    builtin_prototypes: FxHashMap<(Value, Native), Value>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,

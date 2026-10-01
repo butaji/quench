@@ -843,6 +843,15 @@ impl<H: Host> Vm<H> {
             env: Value::NULL,
             realm: self.realm.globals,
         });
+        for (native, prototype) in [
+            (Native::Object, self.object_proto),
+            (Native::Function, self.function_proto),
+        ] {
+            self.realm
+                .intrinsics
+                .builtin_prototypes
+                .insert((self.realm.globals, native), prototype);
+        }
         self.object_data_mut(self.realm.globals).unwrap().proto = self.object_proto;
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

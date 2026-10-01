@@ -214,7 +214,7 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.realm.intrinsics.error_prototypes
+                    self.realm.intrinsics.builtin_prototypes
                         .iter()
                         .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
                 )
