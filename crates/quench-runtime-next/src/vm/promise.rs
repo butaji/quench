@@ -3399,12 +3399,7 @@ impl<H: Host> Vm<H> {
                                 .name
                                 .is_some_and(|name| residual.atoms[name as usize] == local)
                     })
-                    .and_then(|(id, _)| {
-                        self.function_values
-                            .get(&(program_id, id as u32))
-                            .and_then(|values| values.last())
-                            .map(|(_, value)| *value)
-                    });
+                    .and_then(|(id, _)| self.cached_functions(program_id, id as u32).next_back());
                 let slot = residual.functions[0]
                     .local_atoms
                     .iter()
