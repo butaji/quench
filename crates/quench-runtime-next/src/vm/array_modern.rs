@@ -344,71 +344,42 @@ impl<H: Host> Vm<H> {
         mapfn: Option<Value>,
         map_this: Value,
     ) -> Result<Value, JsError> {
-        let done_atom = self.intern_atom("done");
-        let value_atom = self.intern_atom("value");
-        let iterator = self.call_value(p, iterator_method, source, &[])?;
-        if !self.is_object_like(iterator) {
-            return Err(self.type_error(p, "iterator method did not return an object".into()));
-        }
-        let iterator_root = self.heap.root(iterator);
+        let constructor = self.heap.root(constructor);
+        let mapfn = mapfn.map(|value| self.heap.root(value));
+        let map_this = mapfn.map(|_| self.heap.root(map_this));
         let mut values = Vec::new();
+        let mut target = None;
         let outcome = (|| {
-            let next_atom = self.intern_atom("next");
-            let next_method = self.get_property(p, iterator, next_atom)?;
-            if !self.is_function(next_method) {
-                return Err(self.type_error(p, "iterator next is not callable".into()));
-            }
-            loop {
-                let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-                let step = match self.call_value(p, next_method, iterator, &[]) {
-                    Ok(step) if self.is_object_like(step) => step,
-                    Ok(_) => {
-                        let error = self.type_error(p, "iterator next result is not an object".into());
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                let done = match self.get_property(p, step, done_atom) {
-                    Ok(done) => done,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if self.truthy(done) {
-                    break;
-                }
-                let value = match self.get_property(p, step, value_atom) {
-                    Ok(value) => value,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                values.push(self.heap.root(value));
-            }
-            let target = self.array_from_target(
+            values = self.rooted_iterator_list(p, source, iterator_method)?;
+            let constructor = self.heap.root_value(constructor).unwrap();
+            let result = self.array_from_target(
                 p,
                 constructor,
                 Some(values.len()),
                 ArrayFromTarget::TypedArray,
             )?;
-            let target_root = self.heap.root(target);
-            let result = (|| {
-                for (index, value) in values.iter().enumerate() {
-                    let value = self.heap.root_value(*value).unwrap();
-                    let value = if let Some(mapfn) = mapfn {
-                        self.call_value(
-                            p,
-                            mapfn,
-                            map_this,
-                            &[value, Value::number(index as f64)],
-                        )?
-                    } else {
-                        value
-                    };
-                    self.typed_array_set(p, target, index, value)?;
-                }
-                Ok(self.heap.root_value(target_root).unwrap())
-            })();
-            self.heap.release_root(target_root);
-            result
+            let target_root = self.heap.root(result);
+            target = Some(target_root);
+            for (index, value) in values.iter().enumerate() {
+                let value = self.heap.root_value(*value).unwrap();
+                let value = if let Some(mapfn) = mapfn {
+                    let mapfn = self.heap.root_value(mapfn).unwrap();
+                    let map_this = self.heap.root_value(map_this.unwrap()).unwrap();
+                    self.call_value(p, mapfn, map_this, &[value, Value::number(index as f64)])?
+                } else {
+                    value
+                };
+                let target = self.heap.root_value(target_root).unwrap();
+                self.typed_array_set(p, target, index, value)?;
+            }
+            Ok(self.heap.root_value(target_root).unwrap())
         })();
-        self.heap.release_root(iterator_root);
+        for root in [Some(constructor), mapfn, map_this, target]
+            .into_iter()
+            .flatten()
+        {
+            self.heap.release_root(root);
+        }
         for value in values {
             self.heap.release_root(value);
         }
