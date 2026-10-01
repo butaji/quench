@@ -656,6 +656,62 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn typed_sort_snapshot_roots_release_after_comparator_errors() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
+            for (comparator, fails) in [
+                ("undefined", false),
+                (
+                    "(left, right) => left < right ? -1 : left > right ? 1 : 0",
+                    false,
+                ),
+                ("() => {throw new Error('compare')}", true),
+                ("() => ({valueOf() {throw new Error('coercion')}})", true),
+            ] {
+                for native in [
+                    Native::TypedArraySort,
+                    Native::TypedArrayToSorted,
+                    Native::TypedArrayToReversed,
+                ] {
+                    let mut vm = Vm::new(SilentHost);
+                    let values = if constructor == "Uint8Array" {
+                        "[3, 1, 2]"
+                    } else {
+                        "[3n, 1n, 2n]"
+                    };
+                    let source = format!(
+                        "var source = new {constructor}({values}); var comparator = {comparator};"
+                    );
+                    let program = compile(&source, "typed-sort-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let source_atom = vm.intern_atom("source");
+                    let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                    let comparator_atom = vm.intern_atom("comparator");
+                    let comparator = vm.own_property(vm.realm.globals, comparator_atom).unwrap();
+                    let roots_before = vm.heap.root_count_for_test();
+                    let outcome = vm.typed_array_native(&program, native, source, &[comparator]);
+                    assert_eq!(
+                        outcome.is_err(),
+                        fails && native != Native::TypedArrayToReversed
+                    );
+                    assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                    if native != Native::TypedArraySort
+                        && let Ok(result) = outcome
+                    {
+                        let handle = vm.heap.weak_handle(result).unwrap();
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
     let cases = [
         ("var source = [3, 1, 2]; var comparator = (left, right) => left - right;", false, false),

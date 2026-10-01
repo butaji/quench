@@ -815,11 +815,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             super::sort::try_stable_sort_by(&mut values, |left, right| {
-                Ok(match self.sort_compare(p, comparator, *left, *right)? {
-                    value if value < 0.0 => std::cmp::Ordering::Less,
-                    value if value > 0.0 => std::cmp::Ordering::Greater,
-                    _ => std::cmp::Ordering::Equal,
-                })
+                self.sort_compare(p, comparator, *left, *right)
             })?;
             if mutate {
                 let sorted_count = values.len();
@@ -875,27 +871,14 @@ impl<H: Host> Vm<H> {
         comparator: Option<RootId>,
         left: RootId,
         right: RootId,
-    ) -> Result<f64, JsError> {
+    ) -> Result<std::cmp::Ordering, JsError> {
         if let Some(comparator) = comparator {
-            let comparator = self.heap.root_value(comparator).unwrap();
-            let left = self.heap.root_value(left).unwrap();
-            let right = self.heap.root_value(right).unwrap();
-            let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
-            let result = self.heap.root(result);
-            let value = self.heap.root_value(result).unwrap();
-            let number = self.to_number(p, value);
-            self.heap.release_root(result);
-            let number = number?;
-            return Ok(if number.is_nan() { 0.0 } else { number });
+            return self.compare_sort_callback(p, comparator, left, right);
         }
         let left = self.heap.root_value(left).unwrap();
         let left = self.to_string(p, left)?;
         let right = self.heap.root_value(right).unwrap();
         let right = self.to_string(p, right)?;
-        Ok(match left.cmp(&right) {
-            std::cmp::Ordering::Less => -1.0,
-            std::cmp::Ordering::Equal => 0.0,
-            std::cmp::Ordering::Greater => 1.0,
-        })
+        Ok(left.cmp(&right))
     }
 }
