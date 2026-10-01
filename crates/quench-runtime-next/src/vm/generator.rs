@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
             .map(|function| self.function_realm(p, function))
             .transpose()?
             .unwrap_or(self.realm.globals);
-        let realm_prototypes = self.iterator_realm_prototypes.get(&realm).copied();
+        let realm_prototypes = self.realm.iterator_prototypes.get(&realm).copied();
         let default_prototype = realm_prototypes
             .map(|prototypes| {
                 if function.is_async {
