@@ -134,103 +134,104 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn reflect_define_property(
+    pub(super) fn reflect_define_property(
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let key = self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let descriptor_source = args.get(2).copied().unwrap_or(Value::UNDEFINED);
-        let descriptor = self.reflect_to_property_descriptor(p, descriptor_source)?;
-        let normalized_args = [source, key, descriptor];
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
-        {
-            if handler.is_null() {
-                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+        let source = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let key_input = self
+            .heap
+            .root(args.get(1).copied().unwrap_or(Value::UNDEFINED));
+        let descriptor_input = self
+            .heap
+            .root(args.get(2).copied().unwrap_or(Value::UNDEFINED));
+        let mut key_root = None;
+        let mut descriptor_root = None;
+        let mut target_root = None;
+        let mut handler_root = None;
+        let outcome = (|| {
+            let receiver = self.heap.root_value(source).unwrap();
+            if !self.is_object_like(receiver) {
+                return Err(self.type_error(p, "Reflect.defineProperty target is not an object".into()));
             }
-            let trap_atom = self.intern_atom("defineProperty");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if trap.is_null() || trap.is_undefined() {
-                let forwarded = [target, key, descriptor];
-                return self.reflect_define_property(p, &forwarded);
-            }
-            if !self.is_function(trap) {
-                return Err(self.type_error(p, "proxy defineProperty trap is not callable".into()));
-            }
-            let result = self.call_value(p, trap, handler, &[target, key, descriptor])?;
-            if !self.truthy(result) {
-                return Ok(Value::FALSE);
-            }
-            self.validate_proxy_define_property(p, target, key, descriptor)?;
-            return Ok(Value::TRUE);
-        }
-        Ok(
-            if self.object_define_property(p, &normalized_args).is_ok() {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            },
-        )
-    }
-
-    fn reflect_to_property_descriptor(
-        &mut self,
-        p: &ResidualProgram,
-        source: Value,
-    ) -> Result<Value, JsError> {
-        if !self.is_object_like(source) {
-            return Err(self.type_error(p, "property descriptor is not an object".into()));
-        }
-        let descriptor = self.object();
-        for name in [
-            "enumerable",
-            "configurable",
-            "value",
-            "writable",
-            "get",
-            "set",
-        ] {
-            let atom = self.intern_atom(name);
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-            if !self.has_property(p, source, key)? {
-                continue;
-            }
-            let value = self.get_property(p, source, atom)?;
-            let value = if matches!(name, "enumerable" | "configurable" | "writable") {
-                if self.truthy(value) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
+            let key = self.heap.root_value(key_input).unwrap();
+            let key = self.to_property_key(p, key)?;
+            let key = self.heap.root(key);
+            key_root = Some(key);
+            let input = self.heap.root_value(descriptor_input).unwrap();
+            let record = self.to_property_descriptor(p, input)?;
+            let descriptor = self.from_property_descriptor(record)?;
+            let descriptor = self.heap.root(descriptor);
+            descriptor_root = Some(descriptor);
+            let receiver = self.heap.root_value(source).unwrap();
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = self.heap.get(receiver).cloned()
+            {
+                if handler.is_null() {
+                    return Err(self.type_error(p, "cannot access a revoked proxy".into()));
                 }
-            } else {
-                value
-            };
-            if matches!(name, "get" | "set") && !value.is_undefined() && !self.is_function(value) {
-                return Err(self.type_error(
+                let target = self.heap.root(target);
+                target_root = Some(target);
+                let handler = self.heap.root(handler);
+                handler_root = Some(handler);
+                let trap_atom = self.intern_atom("defineProperty");
+                let object = self.heap.root_value(handler).unwrap();
+                let trap = self.get_property(p, object, trap_atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    let target = self.heap.root_value(target).unwrap();
+                    let key = self.heap.root_value(key).unwrap();
+                    let descriptor = self.heap.root_value(descriptor).unwrap();
+                    return self.reflect_define_property(p, &[target, key, descriptor]);
+                }
+                if !self.is_function(trap) {
+                    return Err(self.type_error(p, "proxy defineProperty trap is not callable".into()));
+                }
+                let object = self.heap.root_value(handler).unwrap();
+                let target_value = self.heap.root_value(target).unwrap();
+                let key_value = self.heap.root_value(key).unwrap();
+                let descriptor_value = self.heap.root_value(descriptor).unwrap();
+                let result = self.call_value(
                     p,
-                    format!("property descriptor {name} field is not callable"),
-                ));
+                    trap,
+                    object,
+                    &[target_value, key_value, descriptor_value],
+                )?;
+                if !self.truthy(result) {
+                    return Ok(Value::FALSE);
+                }
+                let target = self.heap.root_value(target).unwrap();
+                let key = self.heap.root_value(key).unwrap();
+                let descriptor = self.heap.root_value(descriptor).unwrap();
+                self.validate_proxy_define_property(p, target, key, descriptor)?;
+                return Ok(Value::TRUE);
             }
-            self.set_property(descriptor, atom, value)?;
+            let source = self.heap.root_value(source).unwrap();
+            let key = self.heap.root_value(key).unwrap();
+            let descriptor = self.heap.root_value(descriptor).unwrap();
+            Ok(Self::integrity_bool(
+                self.object_define_property(p, &[source, key, descriptor])
+                    .is_ok(),
+            ))
+        })();
+        for root in [
+            Some(source),
+            Some(key_input),
+            Some(descriptor_input),
+            key_root,
+            descriptor_root,
+            target_root,
+            handler_root,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.heap.release_root(root);
         }
-        let data = ["value", "writable"].iter().any(|name| {
-            let atom = self.intern_atom(name);
-            self.own_property(descriptor, atom).is_some()
-        });
-        let accessor = ["get", "set"].iter().any(|name| {
-            let atom = self.intern_atom(name);
-            self.own_property(descriptor, atom).is_some()
-        });
-        if data && accessor {
-            return Err(self.type_error(
-                p,
-                "property descriptor mixes data and accessor fields".into(),
-            ));
-        }
-        Ok(descriptor)
+        outcome
     }
 
     fn reflect_set_prototype_of(

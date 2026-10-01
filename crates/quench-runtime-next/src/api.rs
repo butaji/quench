@@ -828,6 +828,109 @@ mod tests {
     }
 
     #[test]
+    fn regression_descriptor_fields_survive_later_collecting_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var define of [Object.defineProperty, Reflect.defineProperty]) {
+                var target = {};
+                var events = [];
+                var descriptor = {enumerable:true, configurable:true,
+                    get value() {events.push('value'); $262.gc(); return {rank:42};},
+                    get writable() {events.push('writable'); $262.gc(); return true;}};
+                define(target, 'answer', descriptor);
+                print(target.answer.rank);
+                print(events.join(','));
+                var descriptor = {enumerable:true, configurable:true,
+                    get get() {events.push('get'); $262.gc(); return function() {return 43;};},
+                    get set() {events.push('set'); $262.gc(); return function(value) {this.saved = value;};}};
+                define(target, 'accessor', descriptor);
+                print(target.accessor);
+                target.accessor = 44;
+                print(target.saved);
+                print(events.join(','));
+            }
+            "#,
+            &[
+                "42",
+                "value,writable",
+                "43",
+                "44",
+                "value,writable,get,set",
+                "42",
+                "value,writable",
+                "43",
+                "44",
+                "value,writable,get,set",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_descriptor_validation_stops_before_setter_lookup() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var define of [Object.defineProperty, Reflect.defineProperty]) {
+                var reads = 0;
+                try {define({}, 'answer', {get get() {$262.gc(); return 1;},
+                    get set() {reads++; $262.gc(); throw {kind:'setter'};}});}
+                catch (error) {print(error instanceof TypeError);}
+                print(reads);
+            }
+            var reads = 0;
+            try {Reflect.defineProperty(1, {[Symbol.toPrimitive]() {reads++; throw 'key';}}, {});}
+            catch (error) {print(error instanceof TypeError);}
+            print(reads);
+            "#,
+            &["true", "0", "true", "0", "true", "0"],
+        );
+    }
+
+    #[test]
+    fn regression_descriptor_projection_survives_collecting_proxy_lookup() {
+        assert_output_in_execution_modes(
+            r#"
+            var target = {};
+            var proxy = new Proxy(target, {get defineProperty() {
+                $262.gc(); return function(target, key, descriptor) {
+                    $262.gc(); print(Reflect.ownKeys(descriptor).join(','));
+                    print(descriptor.value.rank);
+                    print(typeof key === 'symbol');
+                    Object.defineProperty(target, key, descriptor);
+                    return true;
+                };
+            }});
+            print(Reflect.defineProperty(proxy, {[Symbol.toPrimitive]() {$262.gc(); return Symbol('entry');}},
+                {enumerable:true, configurable:true, get value() {$262.gc(); return {rank:45};},
+                    get writable() {$262.gc(); return true;}}));
+            print(target[Object.getOwnPropertySymbols(target)[0]].rank);
+            var realm = $262.createRealm();
+            var descriptor = realm.global.Object.getOwnPropertyDescriptor({answer:46}, 'answer');
+            print(Object.getPrototypeOf(descriptor) === realm.global.Object.prototype);
+            print(descriptor.value);
+            var revocable = Proxy.revocable({rank:47}, {get defineProperty() {
+                revocable.revoke(); $262.gc(); return function(target, key, descriptor) {
+                    $262.gc(); print(target.rank); print(descriptor.value.rank); return true;
+                };
+            }});
+            print(Reflect.defineProperty(revocable.proxy, 'entry', {configurable:true,
+                get value() {$262.gc(); return {rank:48};}, get writable() {$262.gc(); return true;}}));
+            "#,
+            &[
+                "value,writable,enumerable,configurable",
+                "45",
+                "true",
+                "true",
+                "45",
+                "true",
+                "46",
+                "47",
+                "48",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"
