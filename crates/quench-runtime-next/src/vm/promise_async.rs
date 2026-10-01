@@ -36,22 +36,14 @@ impl<H: Host> Vm<H> {
             super::FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(frame),
+                frame: Some(mut frame),
             } => {
-                let continuation = Continuation {
-                    program: frame.program,
-                    function: frame.function,
-                    pc: frame.pc,
-                    env: frame.env,
-                    this: frame.this,
-                    locals: frame.locals,
-                    registers: frame.registers,
-                    active_iterators: frame.active_iterators,
-                    completion: Completion::Await(value),
-                    captured: frame.captured,
-                    resume_register: Some(destination),
+                let continuation = Continuation::from_frame(
+                    &mut frame,
+                    Completion::Await(value),
+                    Some(destination),
                     promise,
-                };
+                );
                 let id = self.suspend_continuation(continuation);
                 self.enqueue_async_resume(p, id, promise, None, value, false)?;
             }
@@ -200,21 +192,10 @@ impl<H: Host> Vm<H> {
             record.continuation = None;
             record.running = true;
         }
-        let mut frame = super::Frame {
-            program: continuation.program,
-            function: continuation.function,
-            pc: continuation.pc,
-            env: continuation.env,
-            this: continuation.this,
-            locals: continuation.locals,
-            dynamic_bindings: vec![],
-            captured: continuation.captured,
-            registers: continuation.registers,
-            active_iterators: continuation.active_iterators,
-            with_base: self.with_stack.len(),
-        };
+        let resume_register = continuation.resume_register;
+        let mut frame = continuation.into_frame(self.with_stack.len());
         if !resume.rejected
-            && let Some(register) = continuation.resume_register
+            && let Some(register) = resume_register
         {
             if register as usize >= frame.registers.len() {
                 return Err(JsError("invalid async resume register".into()));
@@ -226,7 +207,7 @@ impl<H: Host> Vm<H> {
             .rejected
             .then(|| JsError::thrown(value, "await rejected".into()));
         let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
-        let frame = self.frames.pop().expect("resumed frame exists");
+        let mut frame = self.frames.pop().expect("resumed frame exists");
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -257,20 +238,12 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             } => {
-                let continuation = Continuation {
-                    program: frame.program,
-                    function: frame.function,
-                    pc: frame.pc,
-                    env: frame.env,
-                    this: frame.this,
-                    locals: frame.locals,
-                    registers: frame.registers,
-                    active_iterators: frame.active_iterators,
-                    completion: Completion::Await(value),
-                    captured: frame.captured,
-                    resume_register: Some(destination),
-                    promise: resume.promise,
-                };
+                let continuation = Continuation::from_frame(
+                    &mut frame,
+                    Completion::Await(value),
+                    Some(destination),
+                    resume.promise,
+                );
                 let id = self.suspend_continuation(continuation);
                 self.enqueue_async_resume(p, id, resume.promise, resume.generator, value, false)?;
             }
