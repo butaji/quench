@@ -372,8 +372,7 @@ impl<H: Host> Vm<H> {
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
                 ];
-                let constructor = self
-                    .intl_collator_constructors
+                let constructor = self.realm.intrinsics.intl_collator_constructors
                     .get(&self.realm.globals)
                     .copied()
                     .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;

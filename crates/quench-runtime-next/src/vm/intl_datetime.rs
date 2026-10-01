@@ -123,17 +123,18 @@ impl<H: Host> Vm<H> {
         object_prototype: Value,
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlDateTimeFormat, global, global);
-        self.intl_datetime_format_constructors
+        self.realm.intrinsics.intl_datetime_format_constructors
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "DateTimeFormat")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_datetime_format_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_datetime_format_prototypes
+            .insert(global, prototype);
         let fallback_symbol = self
             .heap
             .alloc(Cell::Symbol(Some(INTL_LEGACY_CONSTRUCTED_SYMBOL.into())));
-        self.intl_datetime_format_fallback_symbols
+        self.realm.intrinsics.intl_datetime_format_fallback_symbols
             .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         set_non_writable_property(self, constructor, "prototype");
@@ -184,8 +185,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self
-            .intl_datetime_format_constructors
+        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
-            self.intl_datetime_format_prototypes
+            self.realm.intrinsics.intl_datetime_format_prototypes
                 .get(&realm)
                 .copied()
                 .unwrap_or(self.object_proto)
@@ -593,8 +593,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
         }
-        let constructor = self
-            .intl_datetime_format_constructors
+        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
@@ -647,8 +646,7 @@ impl<H: Host> Vm<H> {
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
         };
-        let constructor = self
-            .intl_datetime_format_constructors
+        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
@@ -777,7 +775,7 @@ impl<H: Host> Vm<H> {
             }
             formatter
         };
-        let symbol = self.intl_datetime_format_fallback_symbols[&realm];
+        let symbol = self.realm.intrinsics.intl_datetime_format_fallback_symbols[&realm];
         self.set_symbol_property(receiver, symbol, fallback)?;
         self.set_property_attributes(
             receiver,
@@ -805,7 +803,7 @@ impl<H: Host> Vm<H> {
         let Some(realm) = self.intl_datetime_format_receiver_realm(p, receiver)? else {
             return Err(self.type_error(p, "incompatible DateTimeFormat receiver".into()));
         };
-        let symbol = self.intl_datetime_format_fallback_symbols[&realm];
+        let symbol = self.realm.intrinsics.intl_datetime_format_fallback_symbols[&realm];
         let fallback = self.get_index(p, receiver, symbol)?;
         if self.date_time_locale(fallback).is_some() {
             Ok(fallback)
@@ -821,8 +819,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let mut prototype = self.object_get_prototype_of(p, receiver)?;
         while !prototype.is_null() {
-            if let Some(realm) = self
-                .intl_datetime_format_prototypes
+            if let Some(realm) = self.realm.intrinsics.intl_datetime_format_prototypes
                 .iter()
                 .find_map(|(realm, candidate)| (*candidate == prototype).then_some(*realm))
             {

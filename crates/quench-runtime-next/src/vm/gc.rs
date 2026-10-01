@@ -214,117 +214,115 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.realm
-                        .error_prototypes
+                    self.realm.intrinsics.error_prototypes
                         .iter()
                         .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.regexp_intrinsics
+                    self.realm.intrinsics.regexp_intrinsics
                         .iter()
                         .flat_map(|(realm, intrinsics)| {
                             [*realm, intrinsics.constructor, intrinsics.prototype]
                         }),
                 )
                 .chain(
-                    self.intl_number_format_constructors
+                    self.realm.intrinsics.intl_number_format_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_number_format_prototypes
+                    self.realm.intrinsics.intl_number_format_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_number_format_fallback_symbols
+                    self.realm.intrinsics.intl_number_format_fallback_symbols
                         .iter()
                         .flat_map(|(realm, symbol)| [*realm, *symbol]),
                 )
                 .chain(
-                    self.intl_collator_constructors
+                    self.realm.intrinsics.intl_collator_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_collator_prototypes
+                    self.realm.intrinsics.intl_collator_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_plural_rules_prototypes
+                    self.realm.intrinsics.intl_plural_rules_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_datetime_format_constructors
+                    self.realm.intrinsics.intl_datetime_format_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_datetime_format_prototypes
+                    self.realm.intrinsics.intl_datetime_format_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_datetime_format_fallback_symbols
+                    self.realm.intrinsics.intl_datetime_format_fallback_symbols
                         .iter()
                         .flat_map(|(realm, symbol)| [*realm, *symbol]),
                 )
                 .chain(
-                    self.intl_display_names_constructors
+                    self.realm.intrinsics.intl_display_names_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_display_names_prototypes
+                    self.realm.intrinsics.intl_display_names_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_duration_format_constructors
+                    self.realm.intrinsics.intl_duration_format_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_duration_format_prototypes
+                    self.realm.intrinsics.intl_duration_format_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_list_format_constructors
+                    self.realm.intrinsics.intl_list_format_constructors
                         .iter()
                         .flat_map(|(realm, constructor)| [*realm, *constructor]),
                 )
                 .chain(
-                    self.intl_list_format_prototypes
+                    self.realm.intrinsics.intl_list_format_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_relative_time_format_prototypes
+                    self.realm.intrinsics.intl_relative_time_format_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_segmenter_prototypes
+                    self.realm.intrinsics.intl_segmenter_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_segments_prototypes
+                    self.realm.intrinsics.intl_segments_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
-                    self.intl_locale_prototypes
+                    self.realm.intrinsics.intl_locale_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(
-                    self.realm
-                        .iterator_prototypes
+                    self.realm.intrinsics.iterator_prototypes
                         .iter()
                         .flat_map(|(realm, prototypes)| {
                             [

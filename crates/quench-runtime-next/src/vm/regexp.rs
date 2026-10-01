@@ -59,7 +59,7 @@ impl CompiledRegexp {
 
 impl<H: Host> Vm<H> {
     pub(super) fn regexp_intrinsic_constructor(&self) -> Value {
-        self.regexp_intrinsics
+        self.realm.intrinsics.regexp_intrinsics
             .get(&self.realm.globals)
             .expect("RegExp intrinsics are installed for the active realm")
             .constructor
@@ -71,7 +71,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         prototype: Value,
     ) -> Result<(), JsError> {
-        self.regexp_intrinsics.insert(
+        self.realm.intrinsics.regexp_intrinsics.insert(
             realm,
             RegExpIntrinsics {
                 constructor,
@@ -1070,8 +1070,7 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
             }
             (Native::RegExpSource, _)
-                if self
-                    .regexp_intrinsics
+                if self.realm.intrinsics.regexp_intrinsics
                     .get(&self.realm.globals)
                     .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
@@ -1089,8 +1088,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
             Some(Cell::RegExp { flags, .. }) => flags.clone(),
-            _ if self
-                .regexp_intrinsics
+            _ if self.realm.intrinsics.regexp_intrinsics
                 .get(&self.realm.globals)
                 .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
@@ -1223,7 +1221,7 @@ impl<H: Host> Vm<H> {
             let prototype = if let Some(new_target) = new_target {
                 self.regexp_prototype_from_new_target(p, new_target)?
             } else {
-                self.regexp_intrinsics
+                self.realm.intrinsics.regexp_intrinsics
                     .get(&self.realm.globals)
                     .expect("RegExp intrinsics are installed for the active realm")
                     .prototype
@@ -1291,8 +1289,7 @@ impl<H: Host> Vm<H> {
         let Some(Cell::RegExp { .. }) = self.heap.get(receiver) else {
             return Err(self.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
         };
-        let is_intrinsic_instance = self
-            .regexp_intrinsics
+        let is_intrinsic_instance = self.realm.intrinsics.regexp_intrinsics
             .get(&self.realm.globals)
             .is_some_and(|intrinsics| {
                 matches!(self.heap.get(receiver), Some(Cell::RegExp { object, .. }) if object.proto == intrinsics.prototype)
