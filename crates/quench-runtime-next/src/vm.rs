@@ -29,6 +29,7 @@ mod arguments;
 mod array;
 mod array_buffer;
 mod array_builtins;
+mod array_flatten;
 mod array_group;
 mod array_indexed;
 mod array_modern;

@@ -353,6 +353,69 @@ mod tests {
     }
 
     #[test]
+    fn regression_flattened_values_survive_collection() {
+        assert_output_in_execution_modes(
+            r#"
+            var source = [0, 1];
+            Object.defineProperty(source, '0', {get() { return [{answer: 42}]; }});
+            Object.defineProperty(source, '1', {get() { $262.gc(); return [{answer: 43}]; }});
+            print(source.flat().map(value => value.answer).join(','));
+            print([0, 1].flatMap(value => {
+                $262.gc();
+                return [{answer: 44 + value}];
+            }).map(value => value.answer).join(','));
+            "#,
+            &["42,43", "44,45"],
+        );
+    }
+
+    #[test]
+    fn regression_flattening_species_writes_follow_each_element() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var method of ['flat', 'flatMap']) {
+                var trace = [];
+                var source = [1, 2];
+                source.constructor = {[Symbol.species]: function() {
+                    return new Proxy({}, {defineProperty(target, key, descriptor) {
+                        trace.push('write' + key);
+                        Object.defineProperty(target, key, descriptor);
+                        return true;
+                    }});
+                }};
+                Object.defineProperty(source, '0', {get() { trace.push('get0'); return 1; }});
+                Object.defineProperty(source, '1', {get() { trace.push('get1'); return 2; }});
+                var result = method === 'flat' ? source.flat() : source.flatMap(value => {
+                    trace.push('map' + value);
+                    return [value];
+                });
+                print(trace.join(','));
+                print(result[0] + ',' + result[1]);
+            }
+            "#,
+            &["get0,write0,get1,write1", "1,2", "get0,map1,write0,get1,map2,write1", "1,2"],
+        );
+    }
+
+    #[test]
+    fn regression_flattening_stops_when_species_write_fails() {
+        assert_output_in_execution_modes(
+            r#"
+            var trace = [];
+            var source = [1, 2];
+            source.constructor = {[Symbol.species]: function() {
+                return new Proxy({}, {defineProperty() {trace.push('write'); return false;}});
+            }};
+            try {
+                source.flatMap(value => {trace.push('map' + value); return [value];});
+            } catch (error) { print(error instanceof TypeError); }
+            print(trace.join(','));
+            "#,
+            &["true", "map1,write"],
+        );
+    }
+
+    #[test]
     fn regression_bound_function_survives_collecting_metadata_getters() {
         assert_output_in_execution_modes(
             r#"
