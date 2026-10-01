@@ -98,6 +98,11 @@ impl JsError {
         self.0.payload.thrown
     }
 
+    pub(super) fn replace_thrown_value(&mut self, value: Value) {
+        self.0.payload.thrown = Some(value);
+    }
+
+
     pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
         matches!(
             self.0.payload.description,
@@ -1254,6 +1259,10 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.set_builtin_function_name(map, "Map")?;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Map), map_prototype);
         self.set_builtin_value_named(map, "prototype", map_prototype)?;
         self.set_builtin_value_named(map_prototype, "constructor", map)?;
         let prototype_atom = self.intern_atom("prototype");

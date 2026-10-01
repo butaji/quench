@@ -29,26 +29,8 @@ impl<H: Host> Vm<H> {
             let value = self.get_property(p, value, next_atom)?;
             let next_root = self.heap.root(value);
             next = Some(next_root);
-            let done_atom = self.intern_atom("done");
-            let value_atom = self.intern_atom("value");
             loop {
-                let iterator = self.heap.root_value(iterator_root).unwrap();
-                let next = self.heap.root_value(next_root).unwrap();
-                let step = self.call_value(p, next, iterator, &[])?;
-                if !self.is_object_like(step) {
-                    return Err(self.type_error(p, "iterator next result is not an object".into()));
-                }
-                let step = self.heap.root(step);
-                let outcome = (|| {
-                    let object = self.heap.root_value(step).unwrap();
-                    let done = self.get_property(p, object, done_atom)?;
-                    if self.truthy(done) {
-                        return Ok(None);
-                    }
-                    let object = self.heap.root_value(step).unwrap();
-                    self.get_property(p, object, value_atom).map(Some)
-                })();
-                self.heap.release_root(step);
+                let outcome = self.rooted_iterator_step_value(p, iterator_root, next_root);
                 match outcome? {
                     Some(value) => values.push(self.heap.root(value)),
                     None => return Ok(()),
@@ -67,5 +49,33 @@ impl<H: Host> Vm<H> {
                 Err(error)
             }
         }
+    }
+
+    pub(super) fn rooted_iterator_step_value(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: RootId,
+        next: RootId,
+    ) -> Result<Option<Value>, JsError> {
+        let receiver = self.heap.root_value(iterator).unwrap();
+        let method = self.heap.root_value(next).unwrap();
+        let step = self.call_value(p, method, receiver, &[])?;
+        if !self.is_object_like(step) {
+            return Err(self.type_error(p, "iterator next result is not an object".into()));
+        }
+        let step = self.heap.root(step);
+        let outcome = (|| {
+            let done_atom = self.intern_atom("done");
+            let object = self.heap.root_value(step).unwrap();
+            let done = self.get_property(p, object, done_atom)?;
+            if self.truthy(done) {
+                return Ok(None);
+            }
+            let value_atom = self.intern_atom("value");
+            let object = self.heap.root_value(step).unwrap();
+            self.get_property(p, object, value_atom).map(Some)
+        })();
+        self.heap.release_root(step);
+        outcome
     }
 }

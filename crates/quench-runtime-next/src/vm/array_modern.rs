@@ -741,9 +741,14 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         iterator: Value,
-        error: JsError,
+        mut error: JsError,
     ) -> JsError {
+        let thrown = error.thrown_value().map(|value| self.heap.root(value));
         let _ = self.iterator_close(p, iterator);
+        if let Some(root) = thrown {
+            error.replace_thrown_value(self.heap.root_value(root).unwrap());
+            self.heap.release_root(root);
+        }
         error
     }
 
