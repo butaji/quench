@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
-        let prototype = self.error_prototypes[&(self.realm.globals, Native::RangeError)];
+        let prototype = self.realm.error_prototypes[&(self.realm.globals, Native::RangeError)];
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
         self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)
@@ -959,9 +959,11 @@ impl<H: Host> Vm<H> {
         let type_error_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(error_prototype)));
-        self.error_prototypes
+        self.realm
+            .error_prototypes
             .insert((global, Native::TypeError), type_error_prototype);
-        self.error_prototypes
+        self.realm
+            .error_prototypes
             .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named(program, type_error, "prototype", type_error_prototype)?;
         self.set_named(program, type_error_prototype, "constructor", type_error)?;
@@ -1058,7 +1060,7 @@ impl<H: Host> Vm<H> {
             "next",
             self.native_value(Native::IteratorNext),
         )?;
-        self.iterator_realm_prototypes.insert(
+        self.realm.iterator_prototypes.insert(
             global,
             IteratorRealmPrototypes {
                 helper: realm_iterator_helper_proto,
@@ -1356,7 +1358,7 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
-            self.error_prototypes.insert((global, native), prototype);
+            self.realm.error_prototypes.insert((global, native), prototype);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let name_value = self.heap.alloc(Cell::String(name.into()));
@@ -1585,7 +1587,8 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
-            self.error_prototypes
+            self.realm
+                .error_prototypes
                 .insert((self.realm.globals, *native), prototype);
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -1697,6 +1700,7 @@ impl<H: Host> Vm<H> {
             self.native_value(native)
         };
         let prototype = self
+            .realm
             .error_prototypes
             .get(&(self.realm.globals, native))
             .copied()
