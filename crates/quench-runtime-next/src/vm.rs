@@ -388,7 +388,7 @@ const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     getter: None,
     setter: None,
 };
-pub struct Vm<H> {
+pub(crate) struct Vm<H> {
     pub(crate) host: H,
     specialized: bool,
     heap: Heap,
@@ -545,13 +545,13 @@ impl<H: Host> Vm<H> {
         previous
     }
 
-    pub fn root(&mut self, value: Value) -> RootId {
+    pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.heap.root(value)
     }
-    pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
+    pub(crate) fn update_root(&mut self, root: RootId, value: Value) -> bool {
         self.heap.update_root(root, value)
     }
-    pub fn root_value(&self, root: RootId) -> Option<Value> {
+    pub(crate) fn root_value(&self, root: RootId) -> Option<Value> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
@@ -561,7 +561,7 @@ impl<H: Host> Vm<H> {
             args,
         });
     }
-    pub fn release_root(&mut self, root: RootId) -> bool {
+    pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.heap.release_root(root)
     }
     pub(super) fn instantiate_global_declarations(
@@ -759,7 +759,7 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         self.realm.global_lexical_bindings.extend(bindings);
     }
-    pub fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+    pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.initialize(program)?;
         if program.is_module() {
             self.instantiate_main_module(program)?;

@@ -24,7 +24,7 @@ pub use host::{CapabilityId, Host, HostContext, HostGlobal, ModuleSource, System
 pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
 pub use value::Value;
-pub use vm::{JsError, Vm};
+pub use vm::JsError;
 
 mod api;
 pub use api::{ExecutionRequest, Runtime, RuntimeError, SourceKind};
