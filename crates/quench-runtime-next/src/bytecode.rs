@@ -173,6 +173,10 @@ pub(crate) enum ImmediateRole {
     WasmI64BinaryOperator,
     WasmI64UnaryOperator,
     WasmIntegerConversionOperator,
+    WasmF32BinaryOperator,
+    WasmF32UnaryOperator,
+    WasmF64BinaryOperator,
+    WasmF64UnaryOperator,
     TemplateSiteIndex,
     JumpTarget,
     MethodSiteIndex,
@@ -523,6 +527,10 @@ opcodes!(
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmIntegerConvert => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmIntegerConversionOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF32Binary => Effect::PURE; layout Scalar; meaning WasmF32BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF32Unary => Effect::PURE; layout Scalar; meaning WasmF32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmF64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
 );
 
@@ -1022,7 +1030,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 35;
+    pub const FORMAT_VERSION: u8 = 36;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

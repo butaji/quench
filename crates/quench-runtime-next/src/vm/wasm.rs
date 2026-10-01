@@ -76,6 +76,22 @@ impl<H: Host> Vm<H> {
         Ok(value)
     }
 
+    pub(super) fn wasm_f32_operand(&self, value: Value) -> Result<f32, JsError> {
+        let crate::WasmValue::F32(bits) = self.decode_wasm_scalar(value, crate::WasmType::F32)?
+        else {
+            unreachable!("decoded f32 operand")
+        };
+        Ok(f32::from_bits(bits))
+    }
+
+    pub(super) fn wasm_f64_operand(&self, value: Value) -> Result<f64, JsError> {
+        let crate::WasmValue::F64(bits) = self.decode_wasm_scalar(value, crate::WasmType::F64)?
+        else {
+            unreachable!("decoded f64 operand")
+        };
+        Ok(f64::from_bits(bits))
+    }
+
     pub(super) fn encode_wasm_scalar(&mut self, value: crate::WasmValue) -> Value {
         match value.bits() {
             crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),

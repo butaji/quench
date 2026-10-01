@@ -50,6 +50,33 @@ impl WasmValue {
         }
     }
 
+    pub fn is_canonical_nan(self) -> bool {
+        self.nan_bits()
+            .is_some_and(|(bits, canonical, sign)| bits & !sign == canonical)
+    }
+
+    pub fn is_arithmetic_nan(self) -> bool {
+        self.nan_bits()
+            .is_some_and(|(bits, canonical, _)| bits & canonical == canonical)
+    }
+
+    fn nan_bits(self) -> Option<(u64, u64, u64)> {
+        use super::numeric::{canonical_nan_bits, sign_mask};
+        match self {
+            Self::F32(bits) => Some((
+                u64::from(bits),
+                canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits())),
+                sign_mask(u32::BITS),
+            )),
+            Self::F64(bits) => Some((
+                bits,
+                canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits()),
+                sign_mask(u64::BITS),
+            )),
+            _ => None,
+        }
+    }
+
     pub(crate) fn bits(self) -> ScalarBits {
         match self {
             Self::I32(value) => ScalarBits::Bits32(value as u32),
