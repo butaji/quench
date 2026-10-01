@@ -150,8 +150,9 @@ impl<H: Host> Vm<H> {
         let mut pc = self.frames[frame].pc;
         loop {
             // SAFETY: decoded branch targets are in range and every function
-            // terminates; `pc` is synchronized at every external semantic edge.
+            // terminates; the frame publishes the active instruction for GC.
             let _instruction_pc = pc;
+            self.frames[frame].pc = _instruction_pc;
             let ins = unsafe { *code.get_unchecked(pc) };
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
@@ -364,6 +365,7 @@ impl<H: Host> Vm<H> {
         instruction: Instr,
     ) -> Result<StepResult, JsError> {
         let mut pc = self.frames[frame].pc;
+        self.frames[frame].pc = pc - 1;
         let result = self.step(p, frame, instruction.as_wide(), &mut pc);
         self.frames[frame].pc = pc;
         result

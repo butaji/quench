@@ -602,8 +602,10 @@ impl<H: Host> Vm<H> {
             let function = self.frames[frame].function as usize;
             let code = &p.functions[function].code;
             let instruction_pc = pc;
+            // GC inside a getter or native operation needs this instruction's root map.
+            self.frames[frame].pc = instruction_pc;
             // SAFETY: the validated residual program has in-range branch targets
-            // and a terminal Return. Effect edges publish `pc` to the frame.
+            // and a terminal Return. The frame publishes the active instruction.
             let packed = unsafe { *code.get_unchecked(pc) };
             let ins = if packed.is_wide() {
                 p.functions[function].wide[packed.wide_index()]

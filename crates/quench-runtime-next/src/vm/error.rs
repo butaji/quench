@@ -1800,46 +1800,77 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let message = args.get(1).copied().filter(|value| !value.is_undefined());
-        let message = message
-            .map(|message| self.to_string(program, message))
-            .transpose()?;
-        let realm = match self.heap.get(new_target) {
-            Some(Cell::Function { realm, .. }) => *realm,
-            _ => self.realm.globals,
-        };
-        let errors_list = self
-            .iterable_to_list(program, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let errors_prototype = self.array_prototype_for_realm(program, realm)?;
-        let errors = self.new_array_with_prototype(errors_list, errors_prototype);
-        let prototype_atom = self.intern_atom("prototype");
-        let constructor_atom = self.intern_atom("AggregateError");
-        let constructor = self
-            .own_property(realm, constructor_atom)
-            .unwrap_or_else(|| self.native_value(Native::AggregateError));
-        let prototype = self
-            .own_property(constructor, prototype_atom)
-            .unwrap_or(self.object_proto);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
-        self.set_builtin_value_named(object, "errors", errors)?;
-        if let Some(message) = message {
-            let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
-            self.set_builtin_value_named(object, "message", message)?;
-        }
-        if let Some(options) = args
+        let input = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let message = args
+            .get(1)
+            .copied()
+            .filter(|value| !value.is_undefined())
+            .map(|value| self.heap.root(value));
+        let options = args
             .get(2)
             .copied()
             .filter(|value| self.is_object_like(*value))
-        {
-            let cause_atom = self.intern_atom("cause");
-            let cause_key = self.heap.alloc(Cell::String("cause".into()));
-            if self.has_property(program, options, cause_key)? {
-                let cause = self.get_property(program, options, cause_atom)?;
-                self.set_builtin_value_named(object, "cause", cause)?;
+            .map(|value| self.heap.root(value));
+        let new_target = self.heap.root(new_target);
+        let mut object = None;
+        let mut errors_list = Vec::new();
+        let outcome = (|| {
+            let prototype = self
+                .realm
+                .intrinsics
+                .error_prototypes
+                .get(&(self.realm.globals, Native::AggregateError))
+                .copied()
+                .unwrap_or(self.object_proto);
+            let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let root = self.heap.root(value);
+            object = Some(root);
+            let new_target = self.heap.root_value(new_target).unwrap();
+            self.set_constructed_prototype(program, value, new_target, Native::AggregateError)?;
+            let value = self.heap.root_value(root).unwrap();
+            self.set_builtin_value_named(value, "\0rqj:error-brand", Value::TRUE)?;
+            if let Some(message) = message {
+                let message = self.heap.root_value(message).unwrap();
+                let message = self.to_string(program, message)?;
+                let message = self.heap.alloc(Cell::String(JsString::from_str(&message)));
+                let value = self.heap.root_value(root).unwrap();
+                self.set_builtin_value_named(value, "message", message)?;
             }
+            if let Some(options) = options {
+                let cause_atom = self.intern_atom("cause");
+                let cause_key = self.heap.alloc(Cell::String("cause".into()));
+                let value = self.heap.root_value(options).unwrap();
+                if self.has_property(program, value, cause_key)? {
+                    let options = self.heap.root_value(options).unwrap();
+                    let cause = self.get_property(program, options, cause_atom)?;
+                    let value = self.heap.root_value(root).unwrap();
+                    self.set_builtin_value_named(value, "cause", cause)?;
+                }
+            }
+            let input = self.heap.root_value(input).unwrap();
+            errors_list = self.iterable_to_rooted_list(program, input)?;
+            let prototype = self.array_prototype_for_realm(program, self.realm.globals)?;
+            let errors = errors_list
+                .iter()
+                .map(|value| self.heap.root_value(*value).unwrap())
+                .collect();
+            let errors = self.new_array_with_prototype(errors, prototype);
+            let value = self.heap.root_value(root).unwrap();
+            self.set_builtin_value_named(value, "errors", errors)?;
+            Ok(value)
+        })();
+        for root in [Some(input), message, options, Some(new_target), object]
+            .into_iter()
+            .flatten()
+        {
+            self.heap.release_root(root);
         }
-        Ok(object)
+        for value in errors_list {
+            self.heap.release_root(value);
+        }
+        outcome
     }
 }
 

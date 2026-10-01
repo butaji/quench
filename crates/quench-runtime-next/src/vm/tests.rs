@@ -670,6 +670,89 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn spread_and_aggregate_roots_release_after_guest_failures() {
+    let cases = [
+        (
+            "var source = [{rank: 1}]; var message; var options;",
+            false,
+            false,
+        ),
+        (
+            "var source = {[Symbol.iterator]() {return {get next() {$262.gc(); throw new Error('next')}}}}; var message; var options;",
+            true,
+            true,
+        ),
+        (
+            "var source = {[Symbol.iterator]() {return {next() {$262.gc(); throw new Error('next')}}}}; var message; var options;",
+            true,
+            true,
+        ),
+        (
+            "var source = {[Symbol.iterator]() {return {next() {return {get done() {$262.gc(); throw new Error('done')}}}}}}; var message; var options;",
+            true,
+            true,
+        ),
+        (
+            "var source = {[Symbol.iterator]() {return {next() {return {done: false, get value() {$262.gc(); throw new Error('value')}}}}}}; var message; var options;",
+            true,
+            true,
+        ),
+        (
+            "var source = [{rank: 1}]; var message = {toString() {$262.gc(); throw new Error('message')}}; var options;",
+            false,
+            true,
+        ),
+        (
+            "var source = [{rank: 1}]; var message; var options = new Proxy({}, {has() {$262.gc(); throw new Error('has')}});",
+            false,
+            true,
+        ),
+        (
+            "var source = [{rank: 1}]; var message; var options = {get cause() {$262.gc(); throw new Error('cause')}};",
+            false,
+            true,
+        ),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (setup, spread_fails, aggregate_fails) in cases {
+            for aggregate in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let program = compile(setup, "spread-aggregate-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut args = Vec::new();
+                for name in ["source", "message", "options", "AggregateError"] {
+                    let atom = vm.intern_atom(name);
+                    args.push(vm.own_property(vm.realm.globals, atom).unwrap());
+                }
+                let roots = vm.heap.root_count_for_test();
+                let result = if aggregate {
+                    vm.construct_aggregate_error(&program, &args[..3], args[3])
+                } else {
+                    vm.spread_to_array(&program, args[0])
+                };
+                assert_eq!(
+                    result.is_err(),
+                    if aggregate {
+                        aggregate_fails
+                    } else {
+                        spread_fails
+                    }
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                if let Ok(value) = result {
+                    let handle = vm.heap.weak_handle(value).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
     let sources = [
         ("({length: Number.MAX_SAFE_INTEGER + 1})", true),

@@ -8,16 +8,23 @@ impl<H: Host> Vm<H> {
         source: Value,
         method: Value,
     ) -> Result<Vec<RootId>, JsError> {
-        let mut iterator = None;
+        let iterator = self.call_value(p, method, source, &[])?;
+        if !self.is_object_like(iterator) {
+            return Err(self.type_error(p, "iterator method did not return an object".into()));
+        }
+        self.rooted_iterator_values(p, iterator)
+    }
+
+    pub(super) fn rooted_iterator_values(
+        &mut self,
+        p: &ResidualProgram,
+        iterator: Value,
+    ) -> Result<Vec<RootId>, JsError> {
+        let iterator_root = self.heap.root(iterator);
         let mut next = None;
         let mut values = Vec::new();
         let outcome = (|| {
-            let value = self.call_value(p, method, source, &[])?;
-            if !self.is_object_like(value) {
-                return Err(self.type_error(p, "iterator method did not return an object".into()));
-            }
-            let iterator_root = self.heap.root(value);
-            iterator = Some(iterator_root);
+            let value = self.heap.root_value(iterator_root).unwrap();
             let next_atom = self.intern_atom("next");
             let value = self.get_property(p, value, next_atom)?;
             let next_root = self.heap.root(value);
@@ -48,7 +55,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         })();
-        for root in [iterator, next].into_iter().flatten() {
+        for root in [Some(iterator_root), next].into_iter().flatten() {
             self.heap.release_root(root);
         }
         match outcome {
