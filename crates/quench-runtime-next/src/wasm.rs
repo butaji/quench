@@ -8,6 +8,25 @@ use crate::bytecode::{
 use crate::{Diagnostic, Engine};
 use wasmparser::{BinaryReaderError, Operator};
 
+pub(crate) mod i32;
+use i32::{I32BinaryOperator, I32UnaryOperator};
+
+/// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmTrap {
+    IntegerDivideByZero,
+    IntegerOverflow,
+}
+
+impl std::fmt::Display for WasmTrap {
+    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        output.write_str(match self {
+            Self::IntegerDivideByZero => "integer divide by zero",
+            Self::IntegerOverflow => "integer overflow",
+        })
+    }
+}
+
 const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
 
@@ -185,6 +204,82 @@ mod tests {
             .take(usize::from(crate::bytecode::REGISTER_MASK) + 2);
         assert!(Engine::lower_wasm_i32_function("stack", 0, 0, true, operators).is_err());
     }
+
+    #[test]
+    fn residual_validation_rejects_unknown_wasm_numeric_selectors() {
+        for (operator, opcode) in [
+            (Operator::I32Add, Op::WasmI32Binary),
+            (Operator::I32Eqz, Op::WasmI32Unary),
+        ] {
+            let mut operators = vec![Operator::LocalGet { local_index: 0 }];
+            if opcode == Op::WasmI32Binary {
+                operators.push(Operator::LocalGet { local_index: 0 });
+            }
+            operators.extend([operator, Operator::End]);
+            let mut function = Engine::lower_wasm_i32_function(
+                "selector",
+                1,
+                0,
+                true,
+                operators.into_iter().map(Ok),
+            )
+            .unwrap();
+            let residual = &mut function.program.functions[0];
+            let pc = residual.code.iter().position(|i| i.op() == opcode).unwrap();
+            let index = residual.wide.len();
+            let instruction = residual.code[pc];
+            residual.wide.push(WideInstruction::new(
+                opcode,
+                instruction.a(),
+                instruction.b(),
+                instruction.c(),
+                u32::MAX,
+            ));
+            residual.code[pc] = Instr::wide(index).unwrap();
+            assert!(function.program.validate().is_err());
+            let error = crate::Runtime::new(crate::SystemHost)
+                .execute_wasm_i32(&function, &[1])
+                .unwrap_err();
+            assert_eq!(error.wasm_trap(), None);
+        }
+    }
+
+    #[test]
+    fn serialized_wasm_numeric_rows_execute_after_decoding() {
+        let operators = [
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32DivU,
+            Operator::I32Clz,
+            Operator::End,
+        ];
+        let mut function = Engine::lower_wasm_i32_function(
+            "round-trip",
+            2,
+            0,
+            true,
+            operators.into_iter().map(Ok),
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("quench-shared-i32-{}.qbc", std::process::id()));
+        function.program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path);
+        std::fs::remove_file(path).unwrap();
+        function.program = decoded.unwrap();
+        let mut runtime = crate::Runtime::new(crate::SystemHost);
+        assert_eq!(
+            runtime.execute_wasm_i32(&function, &[-1, 2]).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            runtime
+                .execute_wasm_i32(&function, &[1, 0])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(WasmTrap::IntegerDivideByZero)
+        );
+    }
 }
 
 struct Lowering<'a> {
@@ -244,6 +339,17 @@ impl Lowering<'_> {
     }
 
     fn operator(&mut self, operator: Operator<'_>) -> Result<(), Diagnostic> {
+        if let Some(operator) = I32BinaryOperator::from_wasm(&operator) {
+            let right = self.pop()?;
+            let left = self.pop()?;
+            let result = self.push()?;
+            return self.emit(Op::WasmI32Binary, result, left, right, operator as u32);
+        }
+        if let Some(operator) = I32UnaryOperator::from_wasm(&operator) {
+            let value = self.pop()?;
+            let result = self.push()?;
+            return self.emit(Op::WasmI32Unary, result, value, 0, operator as u32);
+        }
         match operator {
             Operator::I32Const { value } => {
                 let constant = u32::try_from(self.constants.len())
@@ -272,18 +378,6 @@ impl Lowering<'_> {
                     _ => unreachable!(),
                 };
                 self.emit(op, register, 0, 0, local_index)
-            }
-            Operator::I32Add | Operator::I32Sub | Operator::I32Mul => {
-                let op = match operator {
-                    Operator::I32Add => Op::WasmI32Add,
-                    Operator::I32Sub => Op::WasmI32Subtract,
-                    Operator::I32Mul => Op::WasmI32Multiply,
-                    _ => unreachable!(),
-                };
-                let right = self.pop()?;
-                let left = self.pop()?;
-                let result = self.push()?;
-                self.emit(op, result, left, right, 0)
             }
             Operator::Drop => self.pop().map(drop),
             Operator::Nop => Ok(()),

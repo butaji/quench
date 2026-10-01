@@ -191,7 +191,7 @@ mod tests {
             "(module (memory 1) (func (export \"f\") (result i32) i32.const 1))",
             "(module (func (export \"f\") (result i32) block (result i32) i32.const 1 end))",
             "(module (func (export \"f\") (result i64) i64.const 1))",
-            "(module (func (export \"f\") (result i32) i32.const 1 i32.const 0 i32.div_s))",
+            "(module (func (export \"f\") (result i32) i32.const 1 return))",
             "(module (import \"m\" \"f\" (func)) (func (export \"f\")))",
             "(module (func $s) (start $s) (func (export \"f\")))",
         ] {
@@ -225,4 +225,41 @@ mod tests {
         let mut runtime = Runtime::new(TestHost);
         assert_eq!(runtime.execute_wasm_i32(&function, &[7]).unwrap(), Some(21));
     }
+
+    #[test]
+    fn shared_integer_traps_are_typed_and_runtime_recovers() {
+        use rqj::WasmTrap;
+
+        let divide = lower(
+            "(module (func (export \"f\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s))",
+        );
+        let remainder = lower(
+            "(module (func (export \"f\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.rem_s))",
+        );
+        let mut runtime = Runtime::new(TestHost);
+        for (args, trap) in [
+            ([i32::MIN, 0], WasmTrap::IntegerDivideByZero),
+            ([i32::MIN, -1], WasmTrap::IntegerOverflow),
+        ] {
+            let error = runtime.execute_wasm_i32(&divide, &args).unwrap_err();
+            assert_eq!(error.wasm_trap(), Some(trap));
+            assert_eq!(error.to_string(), trap.to_string());
+            runtime.collect(divide.residual()).unwrap();
+            assert_eq!(runtime.execute_wasm_i32(&divide, &[7, 2]).unwrap(), Some(3));
+        }
+        assert_eq!(
+            runtime
+                .execute_wasm_i32(&remainder, &[i32::MIN, -1])
+                .unwrap(),
+            Some(0)
+        );
+        let error = runtime.execute_wasm_i32(&divide, &[]).unwrap_err();
+        assert_eq!(error.wasm_trap(), None);
+
+        let program = rqj::Engine::specialize("throw new Error('guest');", "throw.js").unwrap();
+        assert_eq!(runtime.execute(&program).unwrap_err().wasm_trap(), None);
+    }
 }
+
+#[cfg(test)]
+mod spec;

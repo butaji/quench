@@ -161,6 +161,12 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::MultiplicationOperator => {
             instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
         }
+        super::ImmediateRole::WasmI32BinaryOperator => {
+            crate::wasm::i32::I32BinaryOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmI32UnaryOperator => {
+            crate::wasm::i32::I32UnaryOperator::from_tag(instruction.imm()).is_some()
+        }
         super::ImmediateRole::UnaryOperator => {
             instruction.unary_operator() <= oxc_ast::ast::UnaryOperator::Void as u32
         }

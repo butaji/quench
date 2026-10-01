@@ -24,3 +24,40 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasmparser::Operator;
+
+    #[test]
+    fn integer_traps_unwind_the_shared_activation() {
+        let operators = [
+            Operator::LocalGet { local_index: 0 },
+            Operator::LocalGet { local_index: 1 },
+            Operator::I32DivS,
+            Operator::End,
+        ];
+        let function = crate::Engine::lower_wasm_i32_function(
+            "trap-unwind",
+            2,
+            0,
+            true,
+            operators.into_iter().map(Ok),
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        for args in [[1, 0], [i32::MIN, -1]] {
+            assert!(
+                vm.execute_wasm_i32(&function, &args)
+                    .unwrap_err()
+                    .wasm_trap()
+                    .is_some()
+            );
+            assert!(vm.frames.is_empty());
+            vm.collect_now(function.residual());
+        }
+        assert_eq!(vm.execute_wasm_i32(&function, &[7, 2]).unwrap(), Some(3));
+        assert!(vm.frames.is_empty());
+    }
+}

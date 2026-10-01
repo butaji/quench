@@ -19,8 +19,9 @@ These are requirements, not an assertion of complete conformance.
 The initial shared execution API lowers standalone i32 function exports from a
 validated `quench_wasm::Module` with `lower_shared_i32(export)`, then executes
 with `rqj::Runtime::execute_wasm_i32(&function, args)`. It supports constants,
-locals (including zero initialization), drop/nop, and wrapping add/subtract/
-multiply. Unsupported operators and stateful module sections are rejected.
+locals (including zero initialization), drop/nop, and all i32 numeric operators.
+Integer division and remainder preserve signed/unsigned rules and report typed
+`WasmTrap` values for division by zero and signed division overflow. Unsupported operators and stateful module sections are rejected.
 Decoding and validation stay in `quench-wasm`; lowering uses the next runtime's
 `Engine`, residual instructions, root maps, activation frames and dispatch loop.
 Like JavaScript `Runtime::execute`, execution starts fresh and invalidates
@@ -30,5 +31,5 @@ harness still owns the remaining Wasm coverage.
 Run the focused shared execution regressions with:
 
 ```sh
-cargo test -p quench-wasm --lib shared::tests::
+cargo test -p quench-wasm --lib shared:: -- --nocapture
 ```
