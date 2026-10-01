@@ -805,6 +805,7 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
+            Op::WasmUnreachable => return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable)),
             Op::WasmI32Binary => {
                 let (left, right) = Value::int_pair(
                     self.read(f, i.register_b()),
