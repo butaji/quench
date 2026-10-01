@@ -26,10 +26,10 @@
     "StoreLocal",
     "Move",
     "LoadLocal",
+    "Unary",
     "LoadConst",
     "NumericAdd",
     "StoreLocal",
-    "Unary",
     "Jump",
     "LoadLocal",
     "Return"

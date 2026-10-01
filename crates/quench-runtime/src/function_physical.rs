@@ -156,16 +156,16 @@ fn validate_named_loop_update(
     use crate::ir::Opcode;
     (ops[18].opcode == Opcode::LoadLocal
         && ops[18].b == ops[5].a
-        && number_constant(code, ops[19], 1.0)
-        && ops[20].opcode.binary_operator(ops[20].flags) == Some(crate::ops::BinaryOp::NumericAdd)
-        && ops[20].b == ops[18].a
-        && ops[20].c == ops[19].a
-        && ops[21].opcode == Opcode::StoreLocal
-        && ops[21].a == ops[5].a
-        && ops[21].b == ops[20].a
-        && ops[22].opcode == Opcode::Unary
-        && crate::ir::compact_unary_operator(ops[22].flags) == Some(crate::ops::UnaryOp::ToNumeric)
-        && ops[22].b == ops[18].a
+        && ops[19].opcode == Opcode::Unary
+        && crate::ir::compact_unary_operator(ops[19].flags) == Some(crate::ops::UnaryOp::ToNumeric)
+        && ops[19].b == ops[18].a
+        && number_constant(code, ops[20], 1.0)
+        && ops[21].opcode.binary_operator(ops[21].flags) == Some(crate::ops::BinaryOp::NumericAdd)
+        && ops[21].b == ops[19].a
+        && ops[21].c == ops[20].a
+        && ops[22].opcode == Opcode::StoreLocal
+        && ops[22].a == ops[5].a
+        && ops[22].b == ops[21].a
         && ops[23].opcode == Opcode::Jump
         && ops[23].a == 7)
         .then_some(())
