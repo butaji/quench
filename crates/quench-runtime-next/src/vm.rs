@@ -1,3 +1,4 @@
+mod wasm;
 use crate::Value;
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, Register,

@@ -5,7 +5,7 @@ use crate::bytecode::{
 
 pub(super) type MethodSite = (u32, u16, Vec<Register>, Option<(u32, u16)>);
 
-pub(super) fn derive(
+pub(crate) fn derive(
     functions: &mut [Function],
     methods: &[MethodSite],
     fields: &[FieldSite],
