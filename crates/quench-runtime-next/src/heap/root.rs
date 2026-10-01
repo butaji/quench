@@ -1,9 +1,26 @@
 use super::Heap;
 use crate::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const FIRST_ROOT_TABLE_ID: u64 = 1;
+static NEXT_ROOT_TABLE_ID: AtomicU64 = AtomicU64::new(FIRST_ROOT_TABLE_ID);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RootTableId(u64);
+
+impl RootTableId {
+    fn fresh() -> Self {
+        let id = NEXT_ROOT_TABLE_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("root table identity space exhausted");
+        Self(id)
+    }
+}
 
 /// A generation-checked strong handle owned by a host/runtime scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RootId {
+    table: RootTableId,
     slot: u32,
     generation: u32,
 }
@@ -15,10 +32,20 @@ pub(crate) struct WeakHandle {
     pub(crate) generation: u32,
 }
 
-#[derive(Default)]
 pub(crate) struct RootTable {
+    id: RootTableId,
     entries: Vec<Entry>,
     free: Vec<u32>,
+}
+
+impl Default for RootTable {
+    fn default() -> Self {
+        Self {
+            id: RootTableId::fresh(),
+            entries: Vec::new(),
+            free: Vec::new(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -37,6 +64,7 @@ impl RootTable {
             entry.generation = generation;
             entry.value = Some(value);
             return RootId {
+                table: self.id,
                 slot,
                 generation: entry.generation,
             };
@@ -47,12 +75,16 @@ impl RootTable {
             value: Some(value),
         });
         RootId {
+            table: self.id,
             slot,
             generation: 1,
         }
     }
 
     pub(crate) fn update(&mut self, root: RootId, value: Value) -> bool {
+        if root.table != self.id {
+            return false;
+        }
         let Some(entry) = self.entries.get_mut(root.slot as usize) else {
             return false;
         };
@@ -64,6 +96,9 @@ impl RootTable {
     }
 
     pub(crate) fn get(&self, root: RootId) -> Option<Value> {
+        if root.table != self.id {
+            return None;
+        }
         let entry = self.entries.get(root.slot as usize)?;
         (entry.generation == root.generation)
             .then_some(entry.value)
@@ -71,6 +106,9 @@ impl RootTable {
     }
 
     pub(crate) fn remove(&mut self, root: RootId) -> bool {
+        if root.table != self.id {
+            return false;
+        }
         let Some(entry) = self.entries.get_mut(root.slot as usize) else {
             return false;
         };
@@ -137,6 +175,7 @@ mod tests {
         let first = roots.insert(Value::number(1.0));
         roots.entries[first.slot as usize].generation = u32::MAX;
         let last_generation = RootId {
+            table: roots.id,
             slot: first.slot,
             generation: u32::MAX,
         };
@@ -148,5 +187,21 @@ mod tests {
         assert_eq!(roots.get(replacement), Some(Value::number(2.0)));
         assert!(!roots.free.contains(&last_generation.slot));
         assert!(roots.entries[last_generation.slot as usize].value.is_none());
+    }
+
+    #[test]
+    fn handles_are_owned_by_their_root_table() {
+        let mut first = RootTable::default();
+        let mut second = RootTable::default();
+        let first_root = first.insert(Value::number(1.0));
+        let second_root = second.insert(Value::number(2.0));
+
+        assert_eq!(first_root.slot, second_root.slot);
+        assert_eq!(first_root.generation, second_root.generation);
+        assert_ne!(first_root, second_root);
+        assert_eq!(second.get(first_root), None);
+        assert!(!second.update(first_root, Value::number(3.0)));
+        assert!(!second.remove(first_root));
+        assert_eq!(second.get(second_root), Some(Value::number(2.0)));
     }
 }
