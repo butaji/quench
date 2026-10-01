@@ -475,6 +475,71 @@ mod tests {
     }
 
     #[test]
+    fn regression_dynamic_functions_survive_collecting_prototype_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            var constructors = [Function, (async function() {}).constructor, (function*() {}).constructor, (async function*() {}).constructor];
+            for (var Constructor of constructors) {
+                var prototype = {rank: 42};
+                var reads = 0;
+                var target = new Proxy(function Target() {}, {get(object, key, receiver) {
+                    if (key === 'prototype') {reads++; $262.gc(); return prototype;}
+                    return Reflect.get(object, key, receiver);
+                }});
+                var result = Reflect.construct(Constructor, ['return 42'], target);
+                print(typeof result);
+                print(Object.getPrototypeOf(result) === prototype);
+                print(Function.prototype.toString.call(result).includes('return 42'));
+                print(reads);
+            }
+            "#,
+            &[
+                "function", "true", "true", "1", "function", "true", "true", "1", "function", "true",
+                "true", "1", "function", "true", "true", "1",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_dynamic_function_fallback_uses_foreign_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm();
+            foreign.evalScript('globalThis.kinds = [Function, (async function() {}).constructor, (function*() {}).constructor, (async function*() {}).constructor]; globalThis.Target = function Target() {};');
+            var constructors = [Function, (async function() {}).constructor, (function*() {}).constructor, (async function*() {}).constructor];
+            var prototypes = foreign.global.kinds.map(function(Constructor) {return Constructor.prototype;});
+            var reads = 0;
+            for (var name of ['Function', 'AsyncFunction', 'GeneratorFunction', 'AsyncGeneratorFunction']) {
+                Object.defineProperty(foreign.global, name, {configurable: true, get() {reads++; $262.gc(); return {prototype: {}};}});
+            }
+            for (var index = 0; index < constructors.length; index++) {
+                var targetReads = 0;
+                var target = new Proxy(foreign.global.Target, {get(object, key, receiver) {
+                    if (key === 'prototype') {targetReads++; $262.gc(); return null;}
+                    return Reflect.get(object, key, receiver);
+                }});
+                var result = Reflect.construct(constructors[index], ['return 42'], target);
+                print(Object.getPrototypeOf(result) === prototypes[index]);
+                print(targetReads);
+            }
+            print(reads);
+            for (var Constructor of constructors) {
+                var marker = {};
+                var target = new Proxy(function Target() {}, {get(object, key, receiver) {
+                    if (key === 'prototype') {$262.gc(); throw marker;}
+                    return Reflect.get(object, key, receiver);
+                }});
+                try {Reflect.construct(Constructor, ['return 42'], target); print(false);}
+                catch (error) {print(error === marker);}
+            }
+            "#,
+            &[
+                "true", "1", "true", "1", "true", "1", "true", "1", "0", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"

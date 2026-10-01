@@ -1134,6 +1134,10 @@ impl<H: Host> Vm<H> {
                     .alloc(Cell::Object(Self::empty_object(self.function_proto))),
             ),
         ] {
+            self.realm
+                .intrinsics
+                .builtin_prototypes
+                .insert((global, native), prototype);
             let constructor = self.native_with_realm(native, global, global);
             self.object_data_mut(constructor)
                 .expect("realm dynamic function")
