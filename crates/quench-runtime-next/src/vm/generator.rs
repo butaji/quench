@@ -337,7 +337,7 @@ impl<H: Host> Vm<H> {
             self.forward_promise(p, completion, promise)?;
             return Ok(());
         }
-        if self.promise.records.contains_key(&value)
+        if self.realm.promise.records.contains_key(&value)
             && let Err(error) = self.promise_for_value(p, value)
         {
             let reason = error
@@ -505,8 +505,7 @@ impl<H: Host> Vm<H> {
         source: Value,
         target: Value,
     ) -> Result<(), JsError> {
-        let record = self
-            .promise
+        let record = self.realm.promise
             .records
             .get(&source)
             .cloned()
@@ -517,7 +516,7 @@ impl<H: Host> Vm<H> {
             next: target,
         };
         if record.state == PromiseState::Pending {
-            self.promise
+            self.realm.promise
                 .records
                 .get_mut(&source)
                 .expect("source Promise record exists")
@@ -1011,8 +1010,7 @@ impl<H: Host> Vm<H> {
         };
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
-            let state = self
-                .promise
+            let state = self.realm.promise
                 .records
                 .get(&resolved)
                 .cloned()

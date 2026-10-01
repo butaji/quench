@@ -69,8 +69,7 @@ impl<H: Host> Vm<H> {
         if !self.is_function(then) {
             return Err(self.type_error(p, "Promise resolve result has no callable then".into()));
         }
-        let record = self
-            .promise
+        let record = self.realm.promise
             .aggregates
             .get(&aggregate)
             .cloned()
@@ -101,7 +100,7 @@ impl<H: Host> Vm<H> {
         rejected: bool,
     ) -> Value {
         let function = self.native_with_env(Native::PromiseAggregateJob, Value::UNDEFINED);
-        self.promise.aggregate_jobs.insert(
+        self.realm.promise.aggregate_jobs.insert(
             function,
             AggregateJob {
                 aggregate,

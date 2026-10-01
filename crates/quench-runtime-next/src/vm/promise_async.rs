@@ -82,7 +82,7 @@ impl<H: Host> Vm<H> {
         let source = self.promise_for_value(p, awaited)?;
         let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
         let rejected = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
-        self.promise.async_resume_jobs.insert(
+        self.realm.promise.async_resume_jobs.insert(
             fulfilled,
             AsyncResumeJob {
                 continuation,
@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
                 yielded,
             },
         );
-        self.promise.async_resume_jobs.insert(
+        self.realm.promise.async_resume_jobs.insert(
             rejected,
             AsyncResumeJob {
                 continuation,
@@ -102,8 +102,7 @@ impl<H: Host> Vm<H> {
                 yielded,
             },
         );
-        let record = self
-            .promise
+        let record = self.realm.promise
             .records
             .get(&source)
             .cloned()
@@ -114,7 +113,7 @@ impl<H: Host> Vm<H> {
             next: self.promise_object(),
         };
         if record.state == PromiseState::Pending {
-            self.promise
+            self.realm.promise
                 .records
                 .get_mut(&source)
                 .expect("await source Promise record exists")
@@ -131,17 +130,15 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise async resume without callback".into()))?;
-        let resume = self
-            .promise
+        let resume = self.realm.promise
             .async_resume_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise async resume job".into()))?;
-        self.promise
+        self.realm.promise
             .async_resume_jobs
             .retain(|_, candidate| candidate.continuation != resume.continuation);
         self.resume_async_continuation(p, resume, value)?;

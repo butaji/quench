@@ -217,6 +217,30 @@ fn js_error_is_pointer_sized() {
             .get(&second_global),
         Some(&second_segmenter_prototype)
     );
+}
+
+#[test]
+fn realm_promise_records_keep_values_rooted() {
+    let mut vm = Vm::new(SilentHost);
+    let promise = vm.promise_object();
+    let result = vm.object();
+    vm.realm.promise.records.get_mut(&promise).unwrap().result = result;
+
+    let program = Engine::specialize("print(0);", "realm-promises.js").unwrap();
+    vm.collect_now(&program);
+
+    assert!(vm.heap.get(promise).is_some());
+    assert!(vm.heap.get(result).is_some());
+    assert_eq!(
+        vm.realm.promise.records.get(&promise).map(|record| record.result),
+        Some(result)
+    );
+}
+
+#[test]
+fn js_error_is_pointer_sized() {
+    assert_eq!(size_of::<JsError>(), size_of::<usize>());
+}
 
 #[test]
 fn dynamic_primitive_strings_are_canonicalized() {
