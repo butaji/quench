@@ -174,6 +174,27 @@ fn object_integrity_metadata_survives_collection() {
 }
 
 #[test]
+fn out_of_line_private_brand_keeps_its_home_alive() {
+    let mut heap = Heap::new();
+    let home = heap.alloc(Cell::Object(plain_object()));
+    let instance = heap.alloc(Cell::Object(plain_object()));
+    heap.get_mut(instance)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .add_private_name(PrivateBrand { home, name: 0 });
+
+    heap.collect([instance]);
+
+    assert!(heap.get(instance).is_some());
+    assert!(heap.get(home).is_some());
+
+    heap.collect([]);
+
+    assert!(heap.get(instance).is_none());
+    assert!(heap.get(home).is_none());
+}
+
+#[test]
 fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let mut heap = Heap::new();
     heap.register_property_shape(1, 2);
