@@ -30,11 +30,6 @@ pub(crate) enum ValueDefinition {
         lhs: ValueId,
         rhs: ValueId,
     },
-    IntrinsicBinary {
-        builtin: crate::ops::Builtin,
-        lhs: ValueId,
-        rhs: ValueId,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -83,44 +78,6 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
         self.insert_node(&mut node)
     }
 
-    pub(crate) fn push_intrinsic_binary(
-        &mut self,
-        output: Register,
-        builtin: crate::ops::Builtin,
-        inputs: [Register; 2],
-    ) -> bool {
-        let Some(mut node) = self.intrinsic_binary_node(output, builtin, inputs) else {
-            return false;
-        };
-        self.insert_node(&mut node)
-    }
-
-    /// Records a local after the enclosing admission proved its checked-load
-    /// initialization guard. The ordinary instruction path remains effectful.
-    pub(crate) fn push_guarded_local(&mut self, output: Register, slot: Register) -> bool {
-        let Some(id) = self.next_id(output) else {
-            return false;
-        };
-        let mut node = ValueNode {
-            id,
-            definition: ValueDefinition::Source(NumericSource::Local(slot)),
-        };
-        self.insert_node(&mut node)
-    }
-
-    pub(crate) fn push_i32_binary(&mut self, instruction: Instruction) -> bool {
-        let Some(operator) = instruction.opcode.binary_operator(instruction.flags) else {
-            return false;
-        };
-        if !is_i32_operator(operator) {
-            return false;
-        }
-        let Some(mut node) = self.binary_node(instruction, operator) else {
-            return false;
-        };
-        self.insert_node(&mut node)
-    }
-
     fn insert_node(&mut self, node: &mut ValueNode) -> bool {
         if usize::from(self.len) == CAPACITY || CAPACITY > MAX_VALUE_GRAPH_CAPACITY {
             return false;
@@ -135,37 +92,6 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
         self.nodes[usize::from(self.len)] = *node;
         self.len += 1;
         true
-    }
-
-    fn intrinsic_binary_node(
-        &self,
-        output: Register,
-        builtin: crate::ops::Builtin,
-        inputs: [Register; 2],
-    ) -> Option<ValueNode> {
-        Some(ValueNode {
-            id: self.next_id(output)?,
-            definition: ValueDefinition::IntrinsicBinary {
-                builtin,
-                lhs: self.canonical(self.current(inputs[0])?)?,
-                rhs: self.canonical(self.current(inputs[1])?)?,
-            },
-        })
-    }
-
-    fn binary_node(
-        &self,
-        instruction: Instruction,
-        operator: crate::ops::BinaryOp,
-    ) -> Option<ValueNode> {
-        Some(ValueNode {
-            id: self.next_id(instruction.a)?,
-            definition: ValueDefinition::Binary {
-                operator,
-                lhs: self.canonical(self.current(instruction.b)?)?,
-                rhs: self.canonical(self.current(instruction.c)?)?,
-            },
-        })
     }
 
     pub(crate) const fn len(self) -> usize {
@@ -292,7 +218,6 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
                 let inputs = [self.resolve(lhs)?, self.resolve(rhs)?];
                 fold_numeric_sources(inputs, operator).map(NumericSource::Constant)
             }
-            ValueDefinition::IntrinsicBinary { .. } => None,
         }
     }
 
@@ -322,16 +247,4 @@ impl<const CAPACITY: usize> ValueGraph<CAPACITY> {
 
 fn pure(opcode: Opcode) -> bool {
     opcode.effects() == [crate::facts::OperationEffect::Pure]
-}
-
-fn is_i32_operator(operator: crate::ops::BinaryOp) -> bool {
-    matches!(
-        operator,
-        crate::ops::BinaryOp::BitwiseAnd
-            | crate::ops::BinaryOp::BitwiseOr
-            | crate::ops::BinaryOp::BitwiseXor
-            | crate::ops::BinaryOp::ShiftLeft
-            | crate::ops::BinaryOp::ShiftRight
-            | crate::ops::BinaryOp::ShiftRightZeroFill
-    )
 }

@@ -1262,7 +1262,11 @@ fn lower_local_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
 }
 
 fn lower_proven_local_postfix_update(ops: &[Op]) -> Option<crate::ir::Instruction> {
-    let [Op::LoadLocal { dst: old, slot }, Op::Const {
+    let [Op::LoadLocal { dst: old, slot }, Op::Unary {
+        dst: numeric_old,
+        operator: crate::ops::UnaryOp::ToNumeric,
+        src: unary_src,
+    }, Op::Const {
         dst: one,
         value: Constant::Number(value),
     }, Op::Binary {
@@ -1270,11 +1274,7 @@ fn lower_proven_local_postfix_update(ops: &[Op]) -> Option<crate::ir::Instructio
         operator,
         lhs,
         rhs,
-    }, Op::StoreLocal { slot: stored, src }, Op::Unary {
-        dst: numeric_old,
-        operator: crate::ops::UnaryOp::ToNumeric,
-        src: unary_src,
-    }, ..] = ops
+    }, Op::StoreLocal { slot: stored, src }, ..] = ops
     else {
         return None;
     };
@@ -1285,7 +1285,8 @@ fn lower_proven_local_postfix_update(ops: &[Op]) -> Option<crate::ir::Instructio
     };
     (*value == 1.0
         && old != updated
-        && lhs == old
+        && numeric_old != updated
+        && lhs == numeric_old
         && rhs == one
         && slot == stored
         && updated == src
@@ -11519,6 +11520,11 @@ mod tests {
         let mut arena = super::CodeArena::new();
         let range = arena.append_slice(&[
             super::Op::LoadLocal { dst: 2, slot: 7 },
+            super::Op::Unary {
+                dst: 5,
+                operator: crate::ops::UnaryOp::ToNumeric,
+                src: 2,
+            },
             super::Op::Const {
                 dst: 3,
                 value: super::Constant::Number(1.0),
@@ -11526,15 +11532,10 @@ mod tests {
             super::Op::Binary {
                 dst: 4,
                 operator: crate::ops::BinaryOp::NumericAdd,
-                lhs: 2,
+                lhs: 5,
                 rhs: 3,
             },
             super::Op::StoreLocal { slot: 7, src: 4 },
-            super::Op::Unary {
-                dst: 5,
-                operator: crate::ops::UnaryOp::ToNumeric,
-                src: 2,
-            },
         ]);
         let store = arena.freeze();
         let code = store.code(range).expect("compact code range");

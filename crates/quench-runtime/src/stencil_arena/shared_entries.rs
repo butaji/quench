@@ -205,38 +205,6 @@ impl SharedStencilSlab {
         crate::stencil_select::RegionAbi::AffineI32Loop
     );
     typed_dispatch_entry!(
-        owned_i32_counter_loop_entry,
-        crate::stencil_select::RegionAbi::I32CounterLoop
-    );
-    typed_dispatch_entry!(
-        owned_boolean_reduction_loop_entry,
-        crate::stencil_select::RegionAbi::BooleanReductionLoop
-    );
-    typed_dispatch_entry!(
-        owned_branch_recurrence_loop_entry,
-        crate::stencil_select::RegionAbi::BranchRecurrenceLoop
-    );
-    typed_dispatch_entry!(
-        owned_nested_xor_loop_entry,
-        crate::stencil_select::RegionAbi::NestedXorLoop
-    );
-    typed_dispatch_entry!(
-        owned_switch_reduction_loop_entry,
-        crate::stencil_select::RegionAbi::SwitchReductionLoop
-    );
-    typed_dispatch_entry!(
-        owned_matrix_reduction_loop_entry,
-        crate::stencil_select::RegionAbi::MatrixReductionLoop
-    );
-    typed_dispatch_entry!(
-        owned_typed_lane_loop_entry,
-        crate::stencil_select::RegionAbi::TypedLaneLoop
-    );
-    typed_dispatch_entry!(
-        owned_two_state_i32_loop_entry,
-        crate::stencil_select::RegionAbi::TwoStateI32Loop
-    );
-    typed_dispatch_entry!(
         owned_numeric_f64_loop_entry,
         crate::stencil_select::RegionAbi::NumericF64Loop
     );

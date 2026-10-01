@@ -115,51 +115,15 @@ pub(crate) fn try_execute_specialized(
             completion, generator,
         )));
     }
-    try_execute_physical(function, arguments)
+    try_execute_numeric(function, arguments)
 }
 
-fn try_execute_physical(
+fn try_execute_numeric(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     arguments: &[crate::value::Value],
 ) -> Result<Option<crate::value::Value>, crate::execute::VmError> {
-    if let Some(value) = try_execute_increasing_i32(function) {
-        record_increasing_i32(function);
-        return Ok(Some(crate::value::Value::Number(value)));
-    }
-    if let Some(value) = try_execute_typed_lane(function, arguments)? {
-        record_typed_lane(function);
-        return Ok(Some(crate::value::Value::Number(value)));
-    }
-    if let Some(value) = try_execute_counted_i32(function)? {
-        record_counted_i32(function);
-        return Ok(Some(crate::value::Value::Number(value)));
-    }
-    if let Some(value) = try_execute_two_state_i32(function)? {
-        record_two_state_i32(function);
-        return Ok(Some(crate::value::Value::Number(f64::from(value))));
-    }
-    if let Some(value) = try_execute_matrix_reduction(function, arguments)? {
-        record_matrix_reduction(function);
-        return Ok(Some(crate::value::Value::Number(value)));
-    }
-    if let Some(value) = try_execute_switch_reduction(function, arguments) {
-        record_switch_reduction(function);
-        return Ok(Some(crate::value::Value::Number(value as f64)));
-    }
-    if let Some(value) = try_execute_nested_xor(function, arguments) {
-        record_nested_xor(function);
-        return Ok(Some(crate::value::Value::Number(value as f64)));
-    }
-    if let Some(value) = try_execute_branch_recurrence(function, arguments) {
-        record_branch_recurrence(function);
-        return Ok(Some(crate::value::Value::Number(value as f64)));
-    }
-    if let Some(value) = try_execute_boolean_reduction(function, arguments) {
-        record_boolean_reduction(function);
-        return Ok(Some(crate::value::Value::Number(f64::from(value))));
-    }
-    if let Some((value, native)) = try_execute_counter_recurrence(function, arguments) {
-        record_counter_recurrence(function, native);
+    if let Some(value) = try_execute_counter_recurrence(function, arguments) {
+        record_counter_recurrence(function);
         return Ok(Some(crate::value::Value::Number(f64::from(value))));
     }
     if let Some(fact) = function.code.numeric_affine_named_loop() {
@@ -180,229 +144,23 @@ fn try_execute_physical(
     Ok(None)
 }
 
-fn try_execute_increasing_i32(function: &crate::value::FunctionValue) -> Option<f64> {
-    (function.params == 0 && crate::functions::direct_call_eligible(function)).then_some(())?;
-    let selected =
-        crate::stencil_increasing_i32_recurrence::select_function(function.code.code()?)?;
-    selected.execute_native()
-}
-
-fn record_increasing_i32(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "integer_recurrence_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["integer_recurrence"]);
-}
-
-fn try_execute_typed_lane(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Result<Option<f64>, crate::execute::VmError> {
-    if function.params < 1 || !crate::functions::direct_call_eligible(function) {
-        return Ok(None);
-    }
-    let Some(code) = function.code.code() else {
-        return Ok(None);
-    };
-    let Some(fact) = crate::stencil_typed_lane::select_function(code) else {
-        return Ok(None);
-    };
-    fact.execute_native(function, arguments)
-}
-
-fn record_typed_lane(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "typed_lane_arithmetic_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["typed_lane_arithmetic"]);
-}
-
-fn try_execute_counted_i32(
-    function: &crate::value::FunctionValue,
-) -> Result<Option<f64>, crate::execute::VmError> {
-    if function.params != 0 || !crate::functions::direct_call_eligible(function) {
-        return Ok(None);
-    }
-    let Some(code) = function.code.code() else {
-        return Ok(None);
-    };
-    let Some(selected) = crate::stencil_counted_i32_recurrence::select_function(code) else {
-        return Ok(None);
-    };
-    selected.execute_native(function)
-}
-
-fn record_counted_i32(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "counted_i32_recurrence", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["counted_region", "i32_ushr_xor_imul"]);
-}
-
-fn try_execute_two_state_i32(
-    function: &crate::value::FunctionValue,
-) -> Result<Option<i32>, crate::execute::VmError> {
-    if function.params != 0 || !crate::functions::direct_call_eligible(function) {
-        return Ok(None);
-    }
-    let Some(code) = function.code.code() else {
-        return Ok(None);
-    };
-    let Some(selected) = crate::stencil_two_state_i32::select_function(code) else {
-        return Ok(None);
-    };
-    selected.execute_native()
-}
-
-fn record_two_state_i32(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "recurrence_branch_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["recurrence_branch"]);
-}
-
-fn try_execute_matrix_reduction(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Result<Option<f64>, crate::execute::VmError> {
-    if function.params < 2 || !crate::functions::direct_call_eligible(function) {
-        return Ok(None);
-    }
-    let Some(code) = function.code.code() else {
-        return Ok(None);
-    };
-    let Some(fact) = crate::stencil_matrix_reduction::select_function(code) else {
-        return Ok(None);
-    };
-    fact.execute_native(function, arguments)
-}
-
-fn record_matrix_reduction(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "dense_matrix_reduction_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["dense_matrix_reduction"]);
-}
-
-fn try_execute_switch_reduction(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Option<i64> {
-    let eligible = arguments.is_empty()
-        && function.params == 0
-        && crate::functions::direct_call_eligible(function);
-    eligible.then_some(())?;
-    let fact = crate::stencil_switch_reduction::select_function(function.code.code()?)?;
-    fact.execute_native()
-}
-
-fn record_switch_reduction(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "switch_dispatch_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["switch_dispatch"]);
-}
-
-fn try_execute_nested_xor(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Option<i64> {
-    let eligible = arguments.is_empty()
-        && function.params == 0
-        && crate::functions::direct_call_eligible(function);
-    eligible.then_some(())?;
-    let fact = crate::stencil_nested_xor::select_function(function.code.code()?)?;
-    fact.execute_native()
-}
-
-fn record_nested_xor(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "nested_count_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["nested_count"]);
-}
-
-fn try_execute_branch_recurrence(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Option<i64> {
-    let eligible = arguments.is_empty()
-        && function.params == 0
-        && crate::functions::direct_call_eligible(function);
-    eligible.then_some(())?;
-    let fact = crate::stencil_branch_recurrence::select_function(function.code.code()?)?;
-    fact.execute_native()
-}
-
-fn record_branch_recurrence(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "branch_predict_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["branch_predict"]);
-}
-
-fn try_execute_boolean_reduction(
-    function: &crate::value::FunctionValue,
-    arguments: &[crate::value::Value],
-) -> Option<i32> {
-    let eligible = arguments.is_empty()
-        && function.params == 0
-        && crate::functions::direct_call_eligible(function);
-    eligible.then_some(())?;
-    let fact = crate::stencil_boolean_reduction::select_function(function.code.code()?)?;
-    fact.execute_native()
-}
-
-fn record_boolean_reduction(function: &crate::value::FunctionValue) {
-    crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
-    if let Some(code) = function.code.code() {
-        crate::execution_trace::stencil_observation(code, 0, "boolean_short_circuit_region", true);
-    }
-    #[cfg(test)]
-    crate::test_execution_profile::dynamic_region_route(["boolean_short_circuit"]);
-}
-
 fn try_execute_counter_recurrence(
     function: &crate::value::FunctionValue,
     arguments: &[crate::value::Value],
-) -> Option<(i32, bool)> {
+) -> Option<i32> {
     (function.params >= 2 && crate::functions::direct_call_eligible(function)).then_some(())?;
     let fact = function.code.numeric_counter_recurrence()?;
     let first = u16::try_from(function.captures.len()).ok()?;
     (fact.value_parameter == first && fact.counter_parameter == first.checked_add(1)?)
         .then_some(())?;
-    fact.execute_native(arguments)
-        .or_else(|| fact.execute(arguments).map(|value| (value, false)))
+    fact.execute(arguments)
 }
 
-fn record_counter_recurrence(function: &crate::value::FunctionValue, _native: bool) {
+fn record_counter_recurrence(function: &crate::value::FunctionValue) {
     crate::execution_trace::kernel("PrecompiledI32CounterRecurrence", false);
     crate::execution_trace::event(crate::execution_trace::Event::LeafHit);
     if let Some(code) = function.code.code() {
         crate::execution_trace::stencil_observation(code, 0, "i32_counter_recurrence", true);
-    }
-    #[cfg(test)]
-    {
-        if !_native {
-            crate::test_execution_profile::portable_recipe();
-        }
-        crate::test_execution_profile::dynamic_region_route(["i32_counter_recurrence"]);
     }
 }
 
@@ -555,7 +313,7 @@ pub(crate) fn execute_direct(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let _stack = enter_function_stack(function)?;
-    if let Some(value) = try_execute_physical(function, arguments)? {
+    if let Some(value) = try_execute_numeric(function, arguments)? {
         return Ok(value);
     }
     execute_interpreter(function, this_value, arguments)
