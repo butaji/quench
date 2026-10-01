@@ -26,38 +26,25 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
-        let values = self.iterable_to_list(p, source)?;
-        Ok(self.new_array(values))
+        let roots = self.iterable_to_rooted_list(p, source)?;
+        let values = roots
+            .iter()
+            .map(|root| self.heap.root_value(*root).unwrap())
+            .collect();
+        let array = self.new_array(values);
+        for root in roots {
+            self.heap.release_root(root);
+        }
+        Ok(array)
     }
 
-    pub(super) fn iterable_to_list(
+    pub(super) fn iterable_to_rooted_list(
         &mut self,
         p: &ResidualProgram,
         source: Value,
-    ) -> Result<Vec<Value>, JsError> {
+    ) -> Result<Vec<RootId>, JsError> {
         let iterator = self.get_iterator(p, source)?;
-        let done_atom = self.intern_atom("done");
-        let value_atom = self.intern_atom("value");
-        let mut values = Vec::new();
-        loop {
-            let step = match self.iterator_next(p, iterator) {
-                Ok(step) => step,
-                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-            };
-            let done = match self.get_property(p, step, done_atom) {
-                Ok(done) => done,
-                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-            };
-            if self.truthy(done) {
-                break;
-            }
-            let value = match self.get_property(p, step, value_atom) {
-                Ok(value) => value,
-                Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-            };
-            values.push(value);
-        }
-        Ok(values)
+        self.rooted_iterator_values(p, iterator)
     }
 
     pub(super) fn iterator_step_value(
@@ -890,39 +877,46 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         source: Value,
     ) -> Result<Value, JsError> {
-        if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
-            let method = self.get_index(p, source, symbol)?;
-            if method.is_undefined() || method.is_null() {
-                return Err(self.type_error(p, "value is not iterable".into()));
+        let root = self.heap.root(source);
+        let outcome = (|| {
+            let source = self.heap.root_value(root).unwrap();
+            if let Some(symbol) = self.well_known_symbols.get("iterator").copied() {
+                let method = self.get_index(p, source, symbol)?;
+                if method.is_undefined() || method.is_null() {
+                    return Err(self.type_error(p, "value is not iterable".into()));
+                }
+                if !self.is_function(method) {
+                    return Err(self.type_error(p, "iterator method is not callable".into()));
+                }
+                let source = self.heap.root_value(root).unwrap();
+                let iterator = self.call_value(p, method, source, &[])?;
+                if !self.is_object_like(iterator) {
+                    return Err(self.type_error(p, "iterator method did not return an object".into()));
+                }
+                return Ok(iterator);
             }
-            if !self.is_function(method) {
-                return Err(self.type_error(p, "iterator method is not callable".into()));
-            }
-            let iterator = self.call_value(p, method, source, &[])?;
-            if !self.is_object_like(iterator) {
-                return Err(self.type_error(p, "iterator method did not return an object".into()));
-            }
-            return Ok(iterator);
-        }
-        let kind = match self.heap.get(source) {
-            Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
-            Some(Cell::String(_)) => IteratorKind::String,
-            Some(Cell::Map { .. }) => IteratorKind::MapEntries,
-            Some(Cell::Set { .. }) => IteratorKind::SetValues,
-            _ => return Err(self.type_error(p, "value is not iterable".into())),
-        };
-        Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.iterator_proto),
-            source,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
-            kind,
-            index: 0,
-            done: false,
-            generator: None,
-        }))
+            let kind = match self.heap.get(source) {
+                Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
+                Some(Cell::String(_)) => IteratorKind::String,
+                Some(Cell::Map { .. }) => IteratorKind::MapEntries,
+                Some(Cell::Set { .. }) => IteratorKind::SetValues,
+                _ => return Err(self.type_error(p, "value is not iterable".into())),
+            };
+            Ok(self.heap.alloc(Cell::Iterator {
+                object: Self::empty_object(self.iterator_proto),
+                source,
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                kind,
+                index: 0,
+                done: false,
+                generator: None,
+            }))
+        })();
+        self.heap.release_root(root);
+        outcome
     }
 
     pub(super) fn iterator_from(
