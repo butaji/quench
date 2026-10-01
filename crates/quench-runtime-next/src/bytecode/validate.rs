@@ -170,6 +170,18 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmIntegerConversionOperator => {
             crate::wasm::integer::IntegerConversionOperator::from_tag(instruction.imm()).is_some()
         }
+        super::ImmediateRole::WasmF32BinaryOperator => {
+            crate::wasm::float::F32BinaryOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmF32UnaryOperator => {
+            crate::wasm::float::F32UnaryOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmF64BinaryOperator => {
+            crate::wasm::float::F64BinaryOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmF64UnaryOperator => {
+            crate::wasm::float::F64UnaryOperator::from_tag(instruction.imm()).is_some()
+        }
         super::ImmediateRole::WasmI64UnaryOperator => {
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm()).is_some()
         }

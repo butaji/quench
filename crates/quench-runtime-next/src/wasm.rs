@@ -12,8 +12,11 @@ mod control;
 mod scalar;
 pub(crate) use scalar::ScalarBits;
 pub use scalar::{WasmFunctionBody, WasmSignature, WasmType, WasmValue};
+pub(crate) mod float;
 pub(crate) mod integer;
+mod numeric;
 use control::{Control, Reachability};
+use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
 use integer::{
     I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
     IntegerConversionOperator,
@@ -353,6 +356,30 @@ mod tests {
                 WasmType::I64,
                 WasmType::I32,
             ),
+            (
+                Operator::F32Add,
+                Op::WasmF32Binary,
+                WasmType::F32,
+                WasmType::F32,
+            ),
+            (
+                Operator::F32Neg,
+                Op::WasmF32Unary,
+                WasmType::F32,
+                WasmType::F32,
+            ),
+            (
+                Operator::F64Add,
+                Op::WasmF64Binary,
+                WasmType::F64,
+                WasmType::F64,
+            ),
+            (
+                Operator::F64Neg,
+                Op::WasmF64Unary,
+                WasmType::F64,
+                WasmType::F64,
+            ),
         ] {
             let mut operators = vec![Operator::LocalGet { local_index: 0 }];
             if opcode
@@ -393,6 +420,63 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error.wasm_trap(), None);
         }
+    }
+
+    #[test]
+    fn serialized_float_rows_preserve_rounding_and_nan_classes() {
+        let mut function = Engine::lower_wasm_module(
+            "float round trip",
+            0,
+            [WasmFunctionBody {
+                signature: WasmSignature {
+                    params: vec![WasmType::F64; 2],
+                    result: Some(WasmType::F64),
+                },
+                locals: vec![],
+                operators: [
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::F64Max,
+                    Operator::F64Nearest,
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("quench-shared-float-{}.qbc", std::process::id()));
+        function.program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path);
+        std::fs::remove_file(path).unwrap();
+        function.program = decoded.unwrap();
+        let mut runtime = crate::Runtime::new(crate::SystemHost);
+        assert_eq!(
+            runtime
+                .execute_wasm(
+                    &function,
+                    &[
+                        WasmValue::F64(1.0f64.to_bits()),
+                        WasmValue::F64(2.5f64.to_bits())
+                    ]
+                )
+                .unwrap(),
+            Some(WasmValue::F64(2.0f64.to_bits()))
+        );
+        assert!(
+            runtime
+                .execute_wasm(
+                    &function,
+                    &[
+                        WasmValue::F64(0x7ff0_0000_0000_0001),
+                        WasmValue::F64(1.0f64.to_bits())
+                    ]
+                )
+                .unwrap()
+                .unwrap()
+                .is_canonical_nan()
+        );
     }
 
     #[test]
@@ -619,6 +703,19 @@ impl Lowering<'_> {
             IntegerConversionOperator::from_wasm(&operator)
                 .map(|op| (Op::WasmIntegerConvert, op as u32))
         });
+        let numeric = numeric
+            .or_else(|| {
+                F32BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmF32Binary, op as u32))
+            })
+            .or_else(|| {
+                F32UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmF32Unary, op as u32))
+            })
+            .or_else(|| {
+                F64BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmF64Binary, op as u32))
+            })
+            .or_else(|| {
+                F64UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmF64Unary, op as u32))
+            });
         if let Some((op, selector)) = numeric {
             if self.path == Reachability::Dead {
                 return Ok(());

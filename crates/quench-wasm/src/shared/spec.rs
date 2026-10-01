@@ -1,10 +1,10 @@
-//! Exercise every directive in the pinned integer files through shared execution.
+//! Exercise every directive in the pinned numeric files through shared execution.
 //! No legacy executor or unsupported-directive skip is permitted here.
 
 use crate::{Engine, Error, Module};
 use rqj::{Host, Runtime, WasmFunction, WasmTrap, WasmValue};
 use std::collections::HashMap;
-use wast::core::{WastArgCore, WastRetCore};
+use wast::core::{NanPattern, WastArgCore, WastRetCore};
 use wast::{Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet};
 
 struct TestHost;
@@ -17,15 +17,40 @@ impl Host for TestHost {
 
 #[test]
 fn pinned_i32_directives_use_shared_execution() {
-    run_integer_spec("i32");
+    run_numeric_spec("i32");
 }
 
 #[test]
 fn pinned_i64_directives_use_shared_execution() {
-    run_integer_spec("i64");
+    run_numeric_spec("i64");
 }
 
-fn run_integer_spec(file: &str) {
+#[test]
+fn pinned_f32_directives_use_shared_execution() {
+    run_numeric_spec("f32");
+}
+#[test]
+fn pinned_f64_directives_use_shared_execution() {
+    run_numeric_spec("f64");
+}
+#[test]
+fn pinned_f32_comparisons_use_shared_execution() {
+    run_numeric_spec("f32_cmp");
+}
+#[test]
+fn pinned_f64_comparisons_use_shared_execution() {
+    run_numeric_spec("f64_cmp");
+}
+#[test]
+fn pinned_f32_bitwise_operators_use_shared_execution() {
+    run_numeric_spec("f32_bitwise");
+}
+#[test]
+fn pinned_f64_bitwise_operators_use_shared_execution() {
+    run_numeric_spec("f64_bitwise");
+}
+
+fn run_numeric_spec(file: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join(format!("../quench-wasm-test/testsuite/{file}.wast"));
     let source = std::fs::read_to_string(path).unwrap();
@@ -56,13 +81,7 @@ fn run_integer_spec(file: &str) {
                     &mut runtime,
                 )
                 .unwrap_or_else(|error| panic!("{file}.wast:{line}: {error}"));
-                let expected = match results.as_slice() {
-                    [] => None,
-                    [WastRet::Core(WastRetCore::I32(value))] => Some(WasmValue::I32(*value)),
-                    [WastRet::Core(WastRetCore::I64(value))] => Some(WasmValue::I64(*value)),
-                    _ => panic!("{file}.wast:{line}: unexpected result type"),
-                };
-                assert_eq!(got, expected, "{file}.wast:{line}");
+                assert_result(got, results, &format!("{file}.wast:{line}"));
                 returns += 1;
             }
             WastDirective::AssertTrap { exec, message, .. } => {
@@ -147,8 +166,54 @@ fn invoke(
         .map(|arg| match arg {
             WastArg::Core(WastArgCore::I32(value)) => WasmValue::I32(*value),
             WastArg::Core(WastArgCore::I64(value)) => WasmValue::I64(*value),
+            WastArg::Core(WastArgCore::F32(value)) => WasmValue::F32(value.bits),
+            WastArg::Core(WastArgCore::F64(value)) => WasmValue::F64(value.bits),
             _ => panic!("unexpected argument type"),
         })
         .collect::<Vec<_>>();
     runtime.execute_wasm(function, &args)
+}
+
+fn assert_result(got: Option<WasmValue>, results: &[WastRet<'_>], context: &str) {
+    match results {
+        [] => assert_eq!(got, None, "{context}"),
+        [WastRet::Core(WastRetCore::I32(value))] => {
+            assert_eq!(got, Some(WasmValue::I32(*value)), "{context}")
+        }
+        [WastRet::Core(WastRetCore::I64(value))] => {
+            assert_eq!(got, Some(WasmValue::I64(*value)), "{context}")
+        }
+        [WastRet::Core(WastRetCore::F32(pattern))] => {
+            assert!(matches!(got, Some(WasmValue::F32(_))), "{context}: {got:?}");
+            assert_float(
+                got.unwrap(),
+                *pattern,
+                |value| WasmValue::F32(value.bits),
+                context,
+            );
+        }
+        [WastRet::Core(WastRetCore::F64(pattern))] => {
+            assert!(matches!(got, Some(WasmValue::F64(_))), "{context}: {got:?}");
+            assert_float(
+                got.unwrap(),
+                *pattern,
+                |value| WasmValue::F64(value.bits),
+                context,
+            );
+        }
+        _ => panic!("{context}: unexpected result type"),
+    }
+}
+
+fn assert_float<T>(
+    got: WasmValue,
+    pattern: NanPattern<T>,
+    value: impl FnOnce(T) -> WasmValue,
+    context: &str,
+) {
+    match pattern {
+        NanPattern::Value(expected) => assert_eq!(got, value(expected), "{context}"),
+        NanPattern::CanonicalNan => assert!(got.is_canonical_nan(), "{context}: {got:?}"),
+        NanPattern::ArithmeticNan => assert!(got.is_arithmetic_nan(), "{context}: {got:?}"),
+    }
 }
