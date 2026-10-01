@@ -206,7 +206,8 @@ impl<H: Host> Vm<H> {
                     self.regexp_proto,
                 ])
                 .chain(
-                    self.global_lexical_states
+                    self.realm
+                        .global_lexical_states
                         .iter()
                         .flat_map(|(global, state)| {
                             std::iter::once(*global).chain(state.bindings.values().copied())

@@ -174,6 +174,7 @@ struct Realm {
     global_lexical_declarations: FxHashSet<Atom>,
     global_lexical_bindings: FxHashMap<Atom, Value>,
     immutable_global_lexical_bindings: FxHashSet<Atom>,
+    global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
     jobs: Vec<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
 }
@@ -393,7 +394,6 @@ pub(crate) struct Vm<H> {
     specialized: bool,
     heap: Heap,
     realm: Realm,
-    global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
@@ -524,7 +524,7 @@ impl<H: Host> Vm<H> {
         if previous == global {
             return previous;
         }
-        self.global_lexical_states.insert(
+        self.realm.global_lexical_states.insert(
             previous,
             GlobalLexicalState {
                 declarations: std::mem::take(&mut self.realm.global_lexical_declarations),
@@ -535,6 +535,7 @@ impl<H: Host> Vm<H> {
             },
         );
         let state = self
+            .realm
             .global_lexical_states
             .remove(&global)
             .unwrap_or_default();

@@ -27,6 +27,63 @@ impl Host for RecordingHost {
 }
 
 #[test]
+fn realm_lexical_state_follows_the_active_global_and_stays_rooted() {
+    let mut vm = Vm::new(SilentHost);
+    let first_global = vm.object();
+    let second_global = vm.object();
+    vm.realm.globals = first_global;
+    let first_binding = vm.intern_atom("firstRealmBinding");
+    vm.realm.global_lexical_declarations.insert(first_binding);
+    vm.realm
+        .global_lexical_bindings
+        .insert(first_binding, Value::number(1.0));
+
+    assert_eq!(vm.switch_realm_global(second_global), first_global);
+    assert!(
+        !vm.realm
+            .global_lexical_declarations
+            .contains(&first_binding)
+    );
+    let second_binding = vm.intern_atom("secondRealmBinding");
+    vm.realm.global_lexical_declarations.insert(second_binding);
+    vm.realm
+        .global_lexical_bindings
+        .insert(second_binding, Value::number(2.0));
+
+    let program = Engine::specialize("print(0);", "realm-switch.js").unwrap();
+    vm.collect_now(&program);
+    assert!(vm.heap.get(first_global).is_some());
+    assert!(vm.heap.get(second_global).is_some());
+
+    assert_eq!(vm.switch_realm_global(first_global), second_global);
+    assert!(
+        vm.realm
+            .global_lexical_declarations
+            .contains(&first_binding)
+    );
+    assert_eq!(
+        vm.realm.global_lexical_bindings.get(&first_binding),
+        Some(&Value::number(1.0))
+    );
+    assert!(
+        !vm.realm
+            .global_lexical_declarations
+            .contains(&second_binding)
+    );
+
+    vm.switch_realm_global(second_global);
+    assert!(
+        vm.realm
+            .global_lexical_declarations
+            .contains(&second_binding)
+    );
+    assert_eq!(
+        vm.realm.global_lexical_bindings.get(&second_binding),
+        Some(&Value::number(2.0))
+    );
+}
+
+#[test]
 fn js_error_is_pointer_sized() {
     assert_eq!(size_of::<JsError>(), size_of::<usize>());
 }
