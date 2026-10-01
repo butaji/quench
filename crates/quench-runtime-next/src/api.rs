@@ -353,6 +353,38 @@ mod tests {
     }
 
     #[test]
+    fn regression_reduction_accumulators_survive_guest_collection() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var method of ['reduce', 'reduceRight']) {
+                var source = [0, 1];
+                Object.defineProperty(source, method === 'reduce' ? '1' : '0', {
+                    get() { $262.gc(); return 1; }
+                });
+                print(source[method]((accumulator, value) => ({sum: accumulator.sum + 1}), {sum: 40}).sum);
+                var seed = [0, 1];
+                Object.defineProperty(seed, method === 'reduce' ? '0' : '1', {
+                    get() { return {sum: 40}; }
+                });
+                Object.defineProperty(seed, method === 'reduce' ? '1' : '0', {
+                    get() { $262.gc(); return {sum: 2}; }
+                });
+                print(seed[method]((accumulator, value) => ({sum: accumulator.sum + value.sum})).sum);
+                var proxy = new Proxy([0, 1], {
+                    has(target, key) { $262.gc(); return Reflect.has(target, key); }
+                });
+                print(proxy[method]((accumulator, value) => ({sum: accumulator.sum + 1}), {sum: 40}).sum);
+                print(new Uint8Array([0, 1])[method]((accumulator, value) => {
+                    $262.gc();
+                    return {sum: accumulator.sum + 1};
+                }, {sum: 40}).sum);
+            }
+            "#,
+            &["42", "42", "42", "42", "42", "42", "42", "42"],
+        );
+    }
+
+    #[test]
     fn regression_flattened_values_survive_collection() {
         assert_output_in_execution_modes(
             r#"

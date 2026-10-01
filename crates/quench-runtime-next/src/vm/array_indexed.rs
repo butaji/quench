@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
             let key = Value::number(index as f64);
             if self.has_property(p, object, key)? {
                 let value = self.get_index(p, object, key)?;
-                if self.array_strict_equal(value, search) {
+                if self.strict_equal(value, search) {
                     return Ok(Value::number(index as f64));
                 }
             }
@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
             let key = Value::number(index as f64);
             if self.has_property(p, object, key)? {
                 let value = self.get_index(p, object, key)?;
-                if self.array_strict_equal(value, search) {
+                if self.strict_equal(value, search) {
                     return Ok(Value::number(index as f64));
                 }
             }
@@ -458,42 +458,53 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
             return Err(self.type_error(p, "reduce callback is not callable".into()));
         }
+        let object_root = self.heap.root(object);
+        let callback_root = self.heap.root(callback);
+        let mut accumulator_root = args.get(1).map(|value| self.heap.root(*value));
         let reverse = matches!(native, Native::ArrayReduceRight);
-        let mut index = if reverse { length } else { 0 };
-        let mut accumulator = args.get(1).copied();
-        while accumulator.is_none() && if reverse { index > 0 } else { index < length } {
-            if reverse {
-                index -= 1;
-            }
-            let key = Value::number(index as f64);
-            if typed_array || self.has_property(p, object, key)? {
-                accumulator = Some(self.get_index(p, object, key)?);
-            }
-            if !reverse {
-                index += 1;
-            }
-        }
-        let Some(mut accumulator) = accumulator else {
-            return Err(self.type_error(p, "reduce of empty array with no initial value".into()));
-        };
-        while if reverse { index > 0 } else { index < length } {
-            if reverse {
-                index -= 1;
-            }
-            let key = Value::number(index as f64);
-            if typed_array || self.has_property(p, object, key)? {
+        let mut indices = 0..length;
+        let outcome = (|| {
+            while let Some(index) = if reverse {
+                indices.next_back()
+            } else {
+                indices.next()
+            } {
+                let key = Value::number(index as f64);
+                let object = self.heap.root_value(object_root).unwrap();
+                if !typed_array && !self.has_property(p, object, key)? {
+                    continue;
+                }
+                let object = self.heap.root_value(object_root).unwrap();
                 let value = self.get_index(p, object, key)?;
-                let callback_args = [accumulator, value, key, object];
-                accumulator = self.call_value(p, callback, Value::UNDEFINED, &callback_args)?;
+                match accumulator_root {
+                    None => accumulator_root = Some(self.heap.root(value)),
+                    Some(root) => {
+                        let accumulator = self.heap.root_value(root).unwrap();
+                        let object = self.heap.root_value(object_root).unwrap();
+                        let callback = self.heap.root_value(callback_root).unwrap();
+                        let result = self.call_value(
+                            p,
+                            callback,
+                            Value::UNDEFINED,
+                            &[accumulator, value, key, object],
+                        )?;
+                        self.heap.update_root(root, result);
+                    }
+                }
             }
-            if !reverse {
-                index += 1;
+            match accumulator_root {
+                Some(root) => Ok(self.heap.root_value(root).unwrap()),
+                None => {
+                    Err(self.type_error(p, "reduce of empty array with no initial value".into()))
+                }
             }
+        })();
+        if let Some(root) = accumulator_root {
+            self.heap.release_root(root);
         }
-        Ok(accumulator)
+        self.heap.release_root(callback_root);
+        self.heap.release_root(object_root);
+        outcome
     }
 
-    fn array_strict_equal(&self, left: Value, right: Value) -> bool {
-        self.strict_equal(left, right)
-    }
 }
