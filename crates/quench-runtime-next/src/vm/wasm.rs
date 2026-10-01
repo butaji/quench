@@ -8,12 +8,18 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<i32>, JsError> {
         let program = &function.program;
         program.validate().map_err(JsError::validation)?;
-        if args.len() != usize::from(program.functions[0].params) {
+        if args.len() != usize::from(program.functions[function.entry as usize].params) {
             return Err(JsError::validation("Wasm argument count mismatch".into()));
         }
         self.initialize(program)?;
         let args = args.iter().copied().map(Value::integer).collect::<Vec<_>>();
-        let result = self.call_user(program, 0, Value::NULL, Value::UNDEFINED, &args)?;
+        let result = self.call_user(
+            program,
+            function.entry,
+            Value::NULL,
+            Value::UNDEFINED,
+            &args,
+        )?;
         if function.has_result {
             result
                 .as_int()
@@ -38,6 +44,33 @@ mod tests {
             0,
             true,
             [Operator::Unreachable, Operator::End].into_iter().map(Ok),
+        )
+        .unwrap();
+        let mut vm = Vm::new(crate::SystemHost);
+        assert_eq!(
+            vm.execute_wasm_i32(&function, &[]).unwrap_err().wasm_trap(),
+            Some(crate::WasmTrap::Unreachable)
+        );
+        assert!(vm.frames.is_empty());
+        vm.collect_now(function.residual());
+    }
+
+    #[test]
+    fn nested_call_trap_unwinds_every_shared_activation() {
+        let function = crate::Engine::lower_wasm_i32_module(
+            "nested-unwind",
+            1,
+            [
+                (0, 0, true, vec![Operator::Unreachable, Operator::End]),
+                (
+                    0,
+                    0,
+                    true,
+                    vec![Operator::Call { function_index: 0 }, Operator::End],
+                ),
+            ]
+            .into_iter()
+            .map(|(params, locals, result, ops)| (params, locals, result, ops.into_iter().map(Ok))),
         )
         .unwrap();
         let mut vm = Vm::new(crate::SystemHost);

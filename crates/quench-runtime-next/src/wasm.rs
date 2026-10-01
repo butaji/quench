@@ -2,8 +2,8 @@
 //! and module validation belong to quench-wasm, not this execution core.
 
 use crate::bytecode::{
-    AtomTable, Constant, DispatchClass, Function, Instr, Op, ProgramKind, Register,
-    ResidualProgram, WideInstruction,
+    AtomTable, Constant, DispatchClass, Function, ImmediateLayout, Instr, Op, ProgramKind,
+    Register, ResidualProgram, WideInstruction,
 };
 use crate::{Diagnostic, Engine};
 use wasmparser::{BinaryReaderError, Operator};
@@ -17,6 +17,7 @@ use i32::{I32BinaryOperator, I32UnaryOperator};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmTrap {
     Unreachable,
+    CallStackExhausted,
     IntegerDivideByZero,
     IntegerOverflow,
 }
@@ -25,6 +26,7 @@ impl std::fmt::Display for WasmTrap {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         output.write_str(match self {
             Self::Unreachable => "unreachable",
+            Self::CallStackExhausted => "call stack exhausted",
             Self::IntegerDivideByZero => "integer divide by zero",
             Self::IntegerOverflow => "integer overflow",
         })
@@ -34,12 +36,13 @@ impl std::fmt::Display for WasmTrap {
 const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
 
-/// A lowered, standalone i32 function. This initial shared execution slice
-/// supports locals, i32 numeric operators and structured control flow; module state and
-/// cross-function calls require the subsequent module lowering work.
+/// A lowered i32 module with a selected function entry. This shared execution slice
+/// supports locals, i32 numeric operators, structured control flow and direct
+/// calls between i32 functions. Stateful modules require subsequent lowering.
 pub struct WasmI32Function {
     pub(crate) program: ResidualProgram,
     pub(crate) has_result: bool,
+    pub(crate) entry: u32,
 }
 
 impl WasmI32Function {
@@ -59,74 +62,103 @@ impl Engine {
         has_result: bool,
         operators: impl IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
     ) -> Result<WasmI32Function, Diagnostic> {
-        let error = |message: &str| Diagnostic::unsupported(name, message);
-        let local_count = params
-            .checked_add(locals)
-            .ok_or_else(|| error("too many Wasm locals"))?;
-        let mut lowering = Lowering {
-            name,
-            locals: local_count,
-            code: Vec::new(),
-            wide: Vec::new(),
-            constants: vec![Constant::Number(0.0), Constant::Undefined],
-            depth: 0,
-            registers: 1,
-            controls: vec![Control::function(has_result)],
-            path: Reachability::Live,
-        };
-        // Shared JS frames initialize non-parameter locals to undefined. Wasm
-        // initialization is therefore explicit residual code, not another frame.
-        lowering.emit(Op::LoadConst, 0, 0, 0, ZERO_LOCAL_CONSTANT)?;
-        for slot in params..local_count {
-            lowering.emit(Op::StoreLocal, 0, 0, 0, u32::from(slot))?;
-        }
-        for operator in operators {
-            let operator = operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
-            if lowering.controls.is_empty() {
-                return Err(error("operators after Wasm function end"));
+        Self::lower_wasm_i32_module(name, 0, [(params, locals, has_result, operators)])
+    }
+
+    /// Lower validated i32 function bodies into one shared residual program.
+    /// Function indices and signatures retain the frontend's module order.
+    pub fn lower_wasm_i32_module<'a, I>(
+        name: &str,
+        entry: u32,
+        bodies: impl IntoIterator<Item = (u16, u16, bool, I)>,
+    ) -> Result<WasmI32Function, Diagnostic>
+    where
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+    {
+        let bodies: Vec<_> = bodies.into_iter().collect();
+        let signatures: Vec<_> = bodies
+            .iter()
+            .map(|(params, _, result, _)| (*params, *result))
+            .collect();
+        let has_result = signatures
+            .get(entry as usize)
+            .ok_or_else(|| Diagnostic::unsupported(name, "Wasm entry function out of bounds"))?
+            .1;
+        let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
+        let mut functions = Vec::with_capacity(bodies.len());
+        for (params, locals, has_result, operators) in bodies {
+            let error = |message: &str| Diagnostic::unsupported(name, message);
+            let local_count = params
+                .checked_add(locals)
+                .ok_or_else(|| error("too many Wasm locals"))?;
+            let mut lowering = Lowering {
+                name,
+                locals: local_count,
+                code: Vec::new(),
+                wide: Vec::new(),
+                constants,
+                signatures: &signatures,
+                depth: 0,
+                registers: 1,
+                controls: vec![Control::function(has_result)],
+                path: Reachability::Live,
+            };
+            // Shared JS frames initialize non-parameter locals to undefined. Wasm
+            // initialization is therefore explicit residual code, not another frame.
+            lowering.emit(Op::LoadConst, 0, 0, 0, ZERO_LOCAL_CONSTANT)?;
+            for slot in params..local_count {
+                lowering.emit(Op::StoreLocal, 0, 0, 0, u32::from(slot))?;
             }
-            lowering.operator(operator)?;
+            for operator in operators {
+                let operator =
+                    operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
+                if lowering.controls.is_empty() {
+                    return Err(error("operators after Wasm function end"));
+                }
+                lowering.operator(operator)?;
+            }
+            if !lowering.controls.is_empty() {
+                return Err(error("missing Wasm function end"));
+            }
+            let function = Function {
+                parent: None,
+                name: None,
+                source_text: None,
+                params,
+                length: params,
+                parameter_end_pc: 0,
+                parameter_atoms: vec![],
+                rest: false,
+                is_async: false,
+                is_generator: false,
+                is_class_constructor: false,
+                derived_constructor: false,
+                super_home_atom: None,
+                constructible: false,
+                class_field_initializer: false,
+                parameter_eval_arguments_error: false,
+                arguments_slot: None,
+                strict: true,
+                locals: local_count,
+                local_atoms: vec![],
+                environment_atoms: vec![],
+                lexical_atoms: vec![],
+                global_lexical_atoms: vec![],
+                global_var_atoms: vec![],
+                global_function_atoms: vec![],
+                global_annex_b_var_atoms: vec![],
+                global_immutable_atoms: vec![],
+                eval_sites: vec![],
+                code: lowering.code,
+                wide: lowering.wide,
+                registers: lowering.registers,
+                dispatch: DispatchClass::General,
+                handlers: vec![],
+                register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            };
+            functions.push(function);
+            constants = lowering.constants;
         }
-        if !lowering.controls.is_empty() {
-            return Err(error("missing Wasm function end"));
-        }
-        let function = Function {
-            parent: None,
-            name: None,
-            source_text: None,
-            params,
-            length: params,
-            parameter_end_pc: 0,
-            parameter_atoms: vec![],
-            rest: false,
-            is_async: false,
-            is_generator: false,
-            is_class_constructor: false,
-            derived_constructor: false,
-            super_home_atom: None,
-            constructible: false,
-            class_field_initializer: false,
-            parameter_eval_arguments_error: false,
-            arguments_slot: None,
-            strict: true,
-            locals: local_count,
-            local_atoms: vec![],
-            environment_atoms: vec![],
-            lexical_atoms: vec![],
-            global_lexical_atoms: vec![],
-            global_var_atoms: vec![],
-            global_function_atoms: vec![],
-            global_annex_b_var_atoms: vec![],
-            global_immutable_atoms: vec![],
-            eval_sites: vec![],
-            code: lowering.code,
-            wide: lowering.wide,
-            registers: lowering.registers,
-            dispatch: DispatchClass::General,
-            handlers: vec![],
-            register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
-        };
-        let mut functions = vec![function];
         let register_roots = crate::compile::liveness::derive(&mut functions, &[], &[], &[]);
         let program = ResidualProgram {
             specialized: false,
@@ -136,7 +168,7 @@ impl Engine {
             module_link_plan: None,
             source_name: name.into(),
             atoms: AtomTable::default(),
-            constants: lowering.constants,
+            constants,
             functions,
             cache_sites: 0,
             method_sites: vec![],
@@ -152,6 +184,7 @@ impl Engine {
         Ok(WasmI32Function {
             program,
             has_result,
+            entry,
         })
     }
 }
@@ -212,6 +245,8 @@ mod tests {
     fn lowering_boundary_rejects_invalid_operand_and_local_domains() {
         for operators in [
             vec![Operator::I32Add, Operator::End],
+            vec![Operator::Call { function_index: 1 }, Operator::End],
+            vec![Operator::Call { function_index: 0 }, Operator::End],
             vec![Operator::LocalGet { local_index: 1 }, Operator::End],
             vec![Operator::LocalSet { local_index: 0 }, Operator::End],
             vec![Operator::I32Const { value: 1 }],
@@ -324,6 +359,7 @@ mod tests {
 }
 
 struct Lowering<'a> {
+    signatures: &'a [(u16, bool)],
     name: &'a str,
     locals: u16,
     code: Vec<Instr>,
@@ -446,6 +482,45 @@ impl Lowering<'_> {
                     _ => unreachable!(),
                 };
                 self.emit(op, register, 0, 0, local_index)
+            }
+            Operator::Call { function_index } => {
+                let (params, has_result) = *self
+                    .signatures
+                    .get(function_index as usize)
+                    .ok_or_else(|| {
+                        Diagnostic::unsupported(self.name, "Wasm call target out of bounds")
+                    })?;
+                if self.path == Reachability::Dead {
+                    return Ok(());
+                }
+                let target = u16::try_from(function_index).map_err(|_| {
+                    Diagnostic::unsupported(
+                        self.name,
+                        "Wasm call target exceeds function index layout",
+                    )
+                })?;
+                let base = self
+                    .depth
+                    .checked_sub(params)
+                    .filter(|base| *base >= self.control_base())
+                    .ok_or_else(|| {
+                        Diagnostic::unsupported(self.name, "Wasm call argument stack underflow")
+                    })?;
+                let immediate = ImmediateLayout::call_immediate(base, params, false, false);
+                if ImmediateLayout::call_window_base(immediate) != base {
+                    return Err(Diagnostic::unsupported(
+                        self.name,
+                        "Wasm call exceeds argument window layout",
+                    ));
+                }
+                self.depth = base;
+                // CallKnown always writes a shared Value. Void calls reserve a
+                // scratch result slot without exposing it as a Wasm operand.
+                let result = self.push()?;
+                if !has_result {
+                    self.depth = base;
+                }
+                self.emit(Op::CallKnown, result, target, 0, immediate)
             }
             Operator::Drop if self.path == Reachability::Live => self.pop().map(drop),
             Operator::Drop => Ok(()),
