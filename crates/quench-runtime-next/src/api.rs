@@ -353,6 +353,36 @@ mod tests {
     }
 
     #[test]
+    fn regression_array_sort_snapshots_survive_collecting_guest_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var method of ['sort', 'toSorted']) {
+                for (var custom of [true, false]) {
+                    var source = [0, 1, 2];
+                    var written = [];
+                    for (let index of [0, 1, 2]) {
+                        Object.defineProperty(source, index, {
+                            get() {
+                                if (written[index]) return written[index];
+                                $262.gc();
+                                return {rank: 3 - index, toString() {$262.gc(); return String(this.rank);}};
+                            },
+                            set(value) {$262.gc(); written[index] = value;}
+                        });
+                    }
+                    var result = custom ? source[method]((left, right) => {
+                        $262.gc(); return {valueOf() {$262.gc(); return left.rank - right.rank;}};
+                    }) : source[method]();
+                    print(result.map(value => value.rank).join(','));
+                    print(result === source);
+                }
+            }
+            "#,
+            &["1,2,3", "true", "1,2,3", "true", "1,2,3", "false", "1,2,3", "false"],
+        );
+    }
+
+    #[test]
     fn regression_array_copies_root_values_across_collecting_getters() {
         assert_output_in_execution_modes(
             r#"
