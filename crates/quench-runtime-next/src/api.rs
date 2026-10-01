@@ -353,6 +353,38 @@ mod tests {
     }
 
     #[test]
+    fn regression_typed_sort_snapshots_survive_collecting_comparators() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var Constructor of [BigInt64Array, BigUint64Array]) {
+                for (var method of ['sort', 'toSorted']) {
+                    var source = new Constructor([3n, 1n, 2n, 4n]);
+                    var result = source[method]((left, right) => {
+                        $262.gc();
+                        return {valueOf() {
+                            $262.gc();
+                            return left < right ? -1 : left > right ? 1 : 0;
+                        }};
+                    });
+                    print(result.join(','));
+                    print(result === source);
+                }
+            }
+            var numeric = new Float64Array([NaN, 0, -0, 2, -1]).toSorted();
+            print(numeric[0]);
+            print(Object.is(numeric[1], -0));
+            print(Object.is(numeric[2], 0));
+            print(numeric[3]);
+            print(Number.isNaN(numeric[4]));
+            "#,
+            &[
+                "1,2,3,4", "true", "1,2,3,4", "false", "1,2,3,4", "true", "1,2,3,4", "false", "-1",
+                "true", "true", "2", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_array_sort_snapshots_survive_collecting_guest_effects() {
         assert_output_in_execution_modes(
             r#"

@@ -572,34 +572,62 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let buffer = *buffer;
-        let immutable = matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }));
+        let immutable = matches!(
+            self.heap.get(buffer),
+            Some(Cell::ArrayBuffer {
+                immutable: true,
+                ..
+            })
+        );
         if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) || immutable {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         }
 
-        let length = self.typed_array_length(this).unwrap_or_default();
-        let mut values = (0..length)
-            .map(|index| self.typed_array_get(this, index).unwrap_or(Value::UNDEFINED))
-            .collect::<Vec<_>>();
-        self.typed_array_sort_values(p, &mut values, comparator)?;
-        for (index, value) in values.into_iter().enumerate() {
-            self.typed_array_set(p, this, index, value)?;
+        let source = self.heap.root(this);
+        let comparator = comparator.map(|value| self.heap.root(value));
+        let mut values = Vec::new();
+        let outcome = (|| {
+            let this = self.heap.root_value(source).unwrap();
+            let length = self.typed_array_length(this).unwrap_or_default();
+            for index in 0..length {
+                let this = self.heap.root_value(source).unwrap();
+                let value = self
+                    .typed_array_get(this, index)
+                    .unwrap_or(Value::UNDEFINED);
+                values.push(self.heap.root(value));
+            }
+            self.typed_array_sort_values(p, &mut values, comparator)?;
+            for (index, value) in values.iter().enumerate() {
+                let this = self.heap.root_value(source).unwrap();
+                let value = self.heap.root_value(*value).unwrap();
+                self.typed_array_set(p, this, index, value)?;
+            }
+            Ok(self.heap.root_value(source).unwrap())
+        })();
+        for value in values {
+            self.heap.release_root(value);
         }
-        Ok(this)
+        if let Some(root) = comparator {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(source);
+        outcome
     }
 
     fn typed_array_sort_values(
         &mut self,
         p: &ResidualProgram,
-        values: &mut [Value],
-        comparator: Option<Value>,
+        values: &mut [RootId],
+        comparator: Option<RootId>,
     ) -> Result<(), JsError> {
         super::sort::try_stable_sort_by(values, |left, right| {
-            Ok(match self.typed_array_sort_compare(p, comparator, *left, *right)? {
-                -1 => std::cmp::Ordering::Less,
-                1 => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            })
+            if let Some(comparator) = comparator {
+                self.compare_sort_callback(p, comparator, *left, *right)
+            } else {
+                let left = self.heap.root_value(*left).unwrap();
+                let right = self.heap.root_value(*right).unwrap();
+                Ok(self.typed_array_sort_compare(left, right))
+            }
         })
     }
 
@@ -671,19 +699,48 @@ impl<H: Host> Vm<H> {
         {
             return Err(self.type_error(p, "sort comparator is not callable".into()));
         }
-        let mut values = (0..length)
-            .map(|index| self.typed_array_get(this, index).unwrap_or(Value::UNDEFINED))
-            .collect::<Vec<_>>();
-        if native == Native::TypedArrayToReversed {
-            values.reverse();
+        let source = self.heap.root(this);
+        let comparator = if native == Native::TypedArrayToSorted {
+            comparator.map(|value| self.heap.root(value))
         } else {
-            self.typed_array_sort_values(p, &mut values, comparator)?;
+            None
+        };
+        let mut values = Vec::new();
+        let mut target = None;
+        let outcome = (|| {
+            for index in 0..length {
+                let this = self.heap.root_value(source).unwrap();
+                let value = self
+                    .typed_array_get(this, index)
+                    .unwrap_or(Value::UNDEFINED);
+                values.push(self.heap.root(value));
+            }
+            if native == Native::TypedArrayToReversed {
+                values.reverse();
+            } else {
+                self.typed_array_sort_values(p, &mut values, comparator)?;
+            }
+            let result = self.new_typed_array_of_kind(p, kind, length)?;
+            let result = self.heap.root(result);
+            target = Some(result);
+            for (index, value) in values.iter().enumerate() {
+                let target = self.heap.root_value(result).unwrap();
+                let value = self.heap.root_value(*value).unwrap();
+                self.typed_array_set(p, target, index, value)?;
+            }
+            Ok(self.heap.root_value(result).unwrap())
+        })();
+        if let Some(target) = target {
+            self.heap.release_root(target);
         }
-        let target = self.new_typed_array_of_kind(p, kind, length)?;
-        for (index, value) in values.into_iter().enumerate() {
-            self.typed_array_set(p, target, index, value)?;
+        for value in values {
+            self.heap.release_root(value);
         }
-        Ok(target)
+        if let Some(root) = comparator {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(source);
+        outcome
     }
 
     fn new_typed_array_of_kind(
@@ -699,54 +756,34 @@ impl<H: Host> Vm<H> {
         self.construct_typed_array_native(p, &[Value::number(length as f64)], kind, name)
     }
 
-    fn typed_array_sort_compare(
-        &mut self,
-        p: &ResidualProgram,
-        comparator: Option<Value>,
-        left: Value,
-        right: Value,
-    ) -> Result<i8, JsError> {
-        if let Some(comparator) = comparator {
-            let result = self.call_value(p, comparator, Value::UNDEFINED, &[left, right])?;
-            let number = self.to_number(p, result)?;
-            return Ok(if number.is_nan() || number == 0.0 {
-                0
-            } else if number < 0.0 {
-                -1
-            } else {
-                1
-            });
-        }
+    fn typed_array_sort_compare(&self, left: Value, right: Value) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
         if let (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) =
             (self.heap.get(left), self.heap.get(right))
         {
             let left = left.parse::<i128>().unwrap_or_default();
             let right = right.parse::<i128>().unwrap_or_default();
-            return Ok(match left.cmp(&right) {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            });
+            return left.cmp(&right);
         }
         let left = left.as_number().unwrap_or(f64::NAN);
         let right = right.as_number().unwrap_or(f64::NAN);
-        Ok(if left.is_nan() {
-            if right.is_nan() { 0 } else { 1 }
+        if left.is_nan() {
+            if right.is_nan() {
+                Ordering::Equal
+            } else {
+                Ordering::Greater
+            }
         } else if right.is_nan() {
-            -1
+            Ordering::Less
         } else if left == 0.0 && right == 0.0 {
             match (left.is_sign_negative(), right.is_sign_negative()) {
-                (true, false) => -1,
-                (false, true) => 1,
-                _ => 0,
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+                _ => Ordering::Equal,
             }
         } else {
-            match left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal) {
-                std::cmp::Ordering::Less => -1,
-                std::cmp::Ordering::Equal => 0,
-                std::cmp::Ordering::Greater => 1,
-            }
-        })
+            left.partial_cmp(&right).unwrap_or(Ordering::Equal)
+        }
     }
 
     pub(super) fn typed_array_to_string_tag_native(&mut self, this: Value) -> Value {
