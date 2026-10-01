@@ -4,6 +4,7 @@ use crate::{execute::VmError, value::Value};
 
 use super::{canonicalize, make_array, make_object, runtime_error, slot_string};
 
+#[path = "locale_methods.rs"]
 mod locale_methods;
 pub(crate) use locale_methods::prototype_method;
 
