@@ -27,12 +27,12 @@ impl<H: Host> Vm<H> {
         object_prototype: Value,
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlCollator, global, global);
-        self.intl_collator_constructors.insert(global, constructor);
+        self.realm.intrinsics.intl_collator_constructors.insert(global, constructor);
         self.set_builtin_function_name(constructor, "Collator")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_collator_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_collator_prototypes.insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_non_writable_property(constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -106,7 +106,7 @@ impl<H: Host> Vm<H> {
         let prototype = if self.is_object_like(prototype) {
             prototype
         } else {
-            self.intl_collator_prototypes
+            self.realm.intrinsics.intl_collator_prototypes
                 .get(&realm)
                 .copied()
                 .unwrap_or(self.object_proto)
@@ -285,8 +285,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::IntlCollator => {
-                let constructor = self
-                    .intl_collator_constructors
+                let constructor = self.realm.intrinsics.intl_collator_constructors
                     .get(&self.realm.globals)
                     .copied()
                     .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
