@@ -1,4 +1,4 @@
-use rqj::{Engine, Host, Vm};
+use rqj::{Engine, Host, Runtime};
 use std::{cell::RefCell, path::PathBuf, process::Command, rc::Rc};
 
 #[derive(Clone, Default)]
@@ -16,7 +16,7 @@ fn output(source: &str) -> Vec<String> {
     let host = Capture::default();
     let view = host.clone();
     let program = Engine::specialize(source, "test.js").unwrap();
-    Vm::new(host).execute(&program).unwrap();
+    Runtime::new(host).execute(&program).unwrap();
     Rc::try_unwrap(view.0).unwrap().into_inner()
 }
 
@@ -32,7 +32,7 @@ fn residual_binary_round_trip_preserves_execution() {
     std::fs::remove_file(path).unwrap();
     let host = Capture::default();
     let view = host.clone();
-    Vm::new(host).execute(&decoded).unwrap();
+    Runtime::new(host).execute(&decoded).unwrap();
     assert_eq!(
         Rc::try_unwrap(view.0).unwrap().into_inner(),
         ["12345678901234567890", "true", "7"]
