@@ -353,6 +353,80 @@ mod tests {
     }
 
     #[test]
+    fn regression_typed_iterable_roots_survive_collection() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var mode of ['construct', 'from']) {
+                for (var Constructor of [Uint8Array, BigInt64Array, BigUint64Array]) {
+                    var bigint = Constructor !== Uint8Array;
+                    var source = {[Symbol.iterator]() {
+                        var index = 0;
+                        return {next() {
+                            $262.gc();
+                            if (index === 3) return {done: true};
+                            var rank = ++index;
+                            return {get done() {$262.gc(); return false;}, get value() {
+                                return {valueOf() {$262.gc(); return bigint ? BigInt(rank) : rank;}};
+                            }};
+                        }};
+                    }};
+                    var result = mode === 'construct' ? new Constructor(source) : Constructor.from(source);
+                    print(result.join(','));
+                }
+            }
+            for (var mode of ['construct', 'from']) {
+                var log = [];
+                var marker = {};
+                var source = {[Symbol.iterator]() {return {
+                    next() {throw marker;},
+                    return() {log.push('close'); return {};}
+                };}};
+                try {if (mode === 'construct') new Uint8Array(source); else Uint8Array.from(source);}
+                catch (error) {print(error === marker);}
+                print(log.length);
+            }
+            "#,
+            &[
+                "1,2,3", "1,2,3", "1,2,3", "1,2,3", "1,2,3", "1,2,3", "true", "0", "true", "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_typed_array_like_conversion_is_incremental() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var Constructor of [Uint8Array, BigInt64Array, BigUint64Array]) {
+                var log = [];
+                var converted = false;
+                var source = {
+                    get [Symbol.iterator]() {$262.gc(); return undefined;},
+                    get length() {$262.gc(); return 2;},
+                    get 0() {log.push('get0'); return {valueOf() {$262.gc(); log.push('convert0'); converted = true; return '7';}};},
+                    get 1() {log.push('get1'); return {valueOf() {$262.gc(); log.push('convert1'); return converted ? '8' : '0';}};}
+                };
+                print(new Constructor(source).join(','));
+                print(log.join(','));
+                print(new Constructor({length: -1}).length);
+                try {new Constructor({length: Number.MAX_SAFE_INTEGER + 1});}
+                catch (error) {print(error instanceof RangeError);}
+            }
+            "#,
+            &[
+                "7,8",
+                "get0,convert0,get1,convert1",
+                "0", "true",
+                "7,8",
+                "get0,convert0,get1,convert1",
+                "0", "true",
+                "7,8",
+                "get0,convert0,get1,convert1",
+                "0", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_typed_fill_value_survives_collecting_bounds() {
         assert_output_in_execution_modes(
             r#"

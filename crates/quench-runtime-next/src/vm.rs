@@ -71,6 +71,7 @@ mod intl_number;
 mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
+mod iterator_list;
 mod iterators;
 mod json;
 mod method_cache;

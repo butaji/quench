@@ -1,6 +1,6 @@
 use super::wtf16::JsString;
 use super::{
-    CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, Vm,
+    CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, TypedArrayKind, Vm,
     activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Host, Value};
@@ -655,21 +655,101 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     assert!(vm.method_caches[0][1].target.is_none());
 }
 
+struct Test262Host;
+impl Host for Test262Host {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn globals(&self) -> &'static [crate::HostGlobal] {
+        &[crate::HostGlobal {
+            name: "$262",
+            capability: crate::CapabilityId::CreateRealm,
+        }]
+    }
+}
+
 #[test]
-fn typed_fill_and_assignment_roots_release_after_coercion() {
-    struct Test262Host;
-    impl Host for Test262Host {
-        fn write_line(&mut self, _: &str) {}
-        fn clock_millis(&mut self) -> f64 {
-            0.0
-        }
-        fn globals(&self) -> &'static [crate::HostGlobal] {
-            &[crate::HostGlobal {
-                name: "$262",
-                capability: crate::CapabilityId::CreateRealm,
-            }]
+fn typed_initialization_roots_release_after_iterator_and_conversion_errors() {
+    let sources = [
+        ("({length: Number.MAX_SAFE_INTEGER + 1})", true),
+        (
+            "({length: 2, 0: {valueOf() {$262.gc(); return '7'}}, 1: '8'})",
+            false,
+        ),
+        (
+            "({length: 2, 0: {valueOf() {$262.gc(); throw new Error('convert')}}, 1: '8'})",
+            true,
+        ),
+        (
+            "({[Symbol.iterator]() {let index = 0; return {get next() {$262.gc(); return function() {return index++ ? {done: true} : {value: {valueOf() {$262.gc(); return '7'}}, done: false}}}}}})",
+            false,
+        ),
+        (
+            "({[Symbol.iterator]() {return {next() {$262.gc(); throw new Error('next')}}}})",
+            true,
+        ),
+        (
+            "({[Symbol.iterator]() {return {next() {return {get done() {$262.gc(); throw new Error('done')}}}}}})",
+            true,
+        ),
+        (
+            "({[Symbol.iterator]() {return {next() {return {done: false, get value() {$262.gc(); throw new Error('value')}}}}}})",
+            true,
+        ),
+        (
+            "({[Symbol.iterator]() {let index = 0; return {next() {return index++ ? {done: true} : {value: {valueOf() {$262.gc(); throw new Error('convert')}}, done: false}}}}})",
+            true,
+        ),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (name, kind) in [
+            ("Uint8Array", TypedArrayKind::Uint8),
+            ("BigInt64Array", TypedArrayKind::BigInt64),
+            ("BigUint64Array", TypedArrayKind::BigUint64),
+        ] {
+            for (source, fails) in sources {
+                for from in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let program = compile(
+                        &format!("var source = {source};"),
+                        "typed-initialization-roots.js",
+                    )
+                    .unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("source");
+                    let source = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let atom = vm.intern_atom(name);
+                    let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let roots = vm.heap.root_count_for_test();
+                    let outcome = if from {
+                        vm.array_modern_native(
+                            &program,
+                            Native::TypedArrayFrom,
+                            constructor,
+                            &[source],
+                        )
+                    } else {
+                        vm.construct_typed_array_native(&program, &[source], kind, name)
+                    };
+                    assert_eq!(outcome.is_err(), fails, "{name}, from={from}, {source:?}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    if let Ok(result) = outcome {
+                        let handle = vm.heap.weak_handle(result).unwrap();
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
         }
     }
+}
+
+#[test]
+fn typed_fill_and_assignment_roots_release_after_coercion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
