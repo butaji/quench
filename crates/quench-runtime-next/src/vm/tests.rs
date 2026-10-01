@@ -670,6 +670,178 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn descriptor_record_roots_release_after_field_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "data-success",
+            "accessor-success",
+            "writable-throw",
+            "get-throw",
+            "set-throw",
+            "invalid-get",
+            "invalid-set",
+            "mixed",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var descriptor = '{phase}' === 'data-success' || '{phase}' === 'writable-throw' || '{phase}' === 'mixed'
+                    ? {{get value() {{$262.gc(); return {{rank:42}};}},
+                        get writable() {{$262.gc(); if ('{phase}' === 'writable-throw') throw {{kind:'{phase}'}}; return true;}}}}
+                    : {{}};
+                if ('{phase}' !== 'data-success' && '{phase}' !== 'writable-throw') {{
+                    Object.defineProperty(descriptor, 'get', {{get() {{$262.gc();
+                        if ('{phase}' === 'get-throw') throw {{kind:'{phase}'}};
+                        if ('{phase}' === 'invalid-get') return 1;
+                        return function() {{return 42;}};
+                    }}}});
+                    Object.defineProperty(descriptor, 'set', {{get() {{$262.gc();
+                        if ('{phase}' === 'set-throw') throw {{kind:'{phase}'}};
+                        if ('{phase}' === 'invalid-set') return 1;
+                        return function(value) {{this.saved = value;}};
+                    }}}});
+                }}
+            "#
+            );
+            let program = compile(&source, "descriptor-record-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("descriptor");
+            let descriptor = vm.own_property(vm.realm.globals, atom).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.to_property_descriptor(&program, descriptor);
+            assert_eq!(result.is_ok(), phase.ends_with("success"), "{phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            if let Err(error) = &result {
+                if phase.ends_with("-throw") {
+                    let thrown = error.thrown_value().unwrap();
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm.own_property(thrown, atom).unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                } else {
+                    assert!(vm.format_error(&program, error).contains("TypeError"));
+                }
+            }
+            if let Ok(record) = result {
+                let value = if phase == "data-success" {
+                    let value = record.value.unwrap();
+                    let atom = vm.intern_atom("rank");
+                    assert_eq!(vm.own_property(value, atom), Some(Value::number(42.0)));
+                    value
+                } else {
+                    let getter = record.getter.unwrap();
+                    assert_eq!(
+                        vm.call_value(&program, getter, Value::UNDEFINED, &[])
+                            .unwrap(),
+                        Value::number(42.0)
+                    );
+                    getter
+                };
+                let weak = vm.heap.weak_handle(value).unwrap();
+                let projection = vm.from_property_descriptor(record).unwrap();
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                let projection = vm.heap.weak_handle(projection).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(weak).is_none());
+                assert!(vm.heap.weak_value(projection).is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn reflect_definition_roots_release_after_callback_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "success",
+            "proxy-success",
+            "proxy-forward",
+            "proxy-revoke-during-getter",
+            "proxy-false",
+            "proxy-getter-throw",
+            "proxy-call-throw",
+            "proxy-revoked",
+            "descriptor-throw",
+            "key-throw",
+            "primitive-target",
+            "invalid-get",
+            "mixed",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var target = '{phase}' === 'primitive-target' ? 1 : {{}};
+                if ('{phase}' === 'proxy-revoke-during-getter') {{
+                    var revocable = Proxy.revocable(target, {{get defineProperty() {{
+                        revocable.revoke(); $262.gc(); return function(target, key, descriptor) {{$262.gc(); return true;}};
+                    }}}}); target = revocable.proxy;
+                }} else if ('{phase}'.startsWith('proxy-')) {{
+                    if ('{phase}' === 'proxy-revoked') {{var revocable = Proxy.revocable(target, {{}}); target = revocable.proxy; revocable.revoke();}}
+                    else target = new Proxy(target, {{get defineProperty() {{$262.gc();
+                        if ('{phase}' === 'proxy-forward') return undefined;
+                        if ('{phase}' === 'proxy-getter-throw') throw {{kind:'{phase}'}};
+                        return function(target, key, descriptor) {{$262.gc();
+                            if ('{phase}' === 'proxy-call-throw') throw {{kind:'{phase}'}};
+                            return '{phase}' !== 'proxy-false';
+                        }};
+                    }}}});
+                }}
+                var key = {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key-throw') throw {{kind:'{phase}'}}; return Symbol('entry');}}}};
+                var descriptor = {{get value() {{$262.gc(); if ('{phase}' === 'descriptor-throw') throw {{kind:'{phase}'}}; return {{rank:42}};}},
+                    get writable() {{$262.gc(); return true;}}, configurable:true}};
+                if ('{phase}' === 'invalid-get' || '{phase}' === 'mixed')
+                    Object.defineProperty(descriptor, 'get', {{get() {{$262.gc(); return '{phase}' === 'invalid-get' ? 1 : undefined;}}}});
+            "#
+            );
+            let program = compile(&source, "reflect-definition-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let args = ["target", "key", "descriptor"].map(|name| {
+                let atom = vm.intern_atom(name);
+                vm.own_property(vm.realm.globals, atom).unwrap()
+            });
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.reflect_define_property(&program, &args);
+            let succeeds = matches!(
+                phase,
+                "success"
+                    | "proxy-success"
+                    | "proxy-false"
+                    | "proxy-forward"
+                    | "proxy-revoke-during-getter"
+            );
+            assert_eq!(result.is_ok(), succeeds, "{phase}");
+
+            if let Err(error) = &result {
+                if phase.ends_with("-throw") {
+                    let thrown = error.thrown_value().unwrap();
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm.own_property(thrown, atom).unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                } else {
+                    assert!(vm.format_error(&program, error).contains("TypeError"));
+                }
+            }
+            if succeeds {
+                assert_eq!(
+                    result.unwrap(),
+                    Vm::<Test262Host>::integrity_bool(phase != "proxy-false")
+                );
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+        }
+    }
+}
+
+#[test]
 fn from_entries_roots_release_after_iterator_and_entry_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
