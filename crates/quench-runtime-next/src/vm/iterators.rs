@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
         self.install_iterator_helper_prototype(self.iterator_helper_proto, None)?;
         self.install_wrap_for_valid_iterator_prototype(self.wrap_for_valid_iterator_proto, None)?;
-        self.iterator_realm_prototypes.insert(
+        self.realm.iterator_prototypes.insert(
             self.realm.globals,
             IteratorRealmPrototypes {
                 helper: self.iterator_helper_proto,
@@ -1003,7 +1003,8 @@ impl<H: Host> Vm<H> {
         let source_root = self.heap.root(source);
         let next_root = self.heap.root(next_method);
         let prototypes = self
-            .iterator_realm_prototypes
+            .realm
+            .iterator_prototypes
             .get(&self.realm.globals)
             .copied();
         let prototype = prototypes
@@ -1037,7 +1038,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = self.iterator_record(p, source)?;
         let prototypes = self
-            .iterator_realm_prototypes
+            .realm
+            .iterator_prototypes
             .get(&self.realm.globals)
             .copied();
         let prototype = prototypes

@@ -1,6 +1,7 @@
 use super::wtf16::JsString;
 use super::{
-    CallTarget, JsError, MethodCache, Vm, activation::Completion, activation::Continuation,
+    CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, Vm,
+    activation::Completion, activation::Continuation,
 };
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -80,6 +81,79 @@ fn realm_lexical_state_follows_the_active_global_and_stays_rooted() {
     assert_eq!(
         vm.realm.global_lexical_bindings.get(&second_binding),
         Some(&Value::number(2.0))
+    );
+}
+
+#[test]
+fn realm_intrinsic_registries_keep_each_realm_rooted() {
+    let mut vm = Vm::new(SilentHost);
+    let first_global = vm.object();
+    let second_global = vm.object();
+    let first_error_prototype = vm.object();
+    let second_error_prototype = vm.object();
+    let first_iterator_prototype = vm.object();
+    let second_iterator_prototype = vm.object();
+    vm.realm.error_prototypes.insert(
+        (first_global, Native::TypeError),
+        first_error_prototype,
+    );
+    vm.realm.error_prototypes.insert(
+        (second_global, Native::TypeError),
+        second_error_prototype,
+    );
+    vm.realm.iterator_prototypes.insert(
+        first_global,
+        IteratorRealmPrototypes {
+            helper: first_iterator_prototype,
+            wrapper: first_iterator_prototype,
+            generator: first_iterator_prototype,
+            async_generator: first_iterator_prototype,
+        },
+    );
+    vm.realm.iterator_prototypes.insert(
+        second_global,
+        IteratorRealmPrototypes {
+            helper: second_iterator_prototype,
+            wrapper: second_iterator_prototype,
+            generator: second_iterator_prototype,
+            async_generator: second_iterator_prototype,
+        },
+    );
+
+    let program = Engine::specialize("print(0);", "realm-intrinsics.js").unwrap();
+    vm.collect_now(&program);
+
+    for object in [
+        first_global,
+        second_global,
+        first_error_prototype,
+        second_error_prototype,
+        first_iterator_prototype,
+        second_iterator_prototype,
+    ] {
+        assert!(vm.heap.get(object).is_some());
+    }
+    assert_eq!(
+        vm.realm.error_prototypes.get(&(first_global, Native::TypeError)),
+        Some(&first_error_prototype)
+    );
+    assert_eq!(
+        vm.realm.error_prototypes.get(&(second_global, Native::TypeError)),
+        Some(&second_error_prototype)
+    );
+    assert_eq!(
+        vm.realm
+            .iterator_prototypes
+            .get(&first_global)
+            .map(|prototypes| prototypes.generator),
+        Some(first_iterator_prototype)
+    );
+    assert_eq!(
+        vm.realm
+            .iterator_prototypes
+            .get(&second_global)
+            .map(|prototypes| prototypes.generator),
+        Some(second_iterator_prototype)
     );
 }
 

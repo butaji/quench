@@ -214,7 +214,8 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.error_prototypes
+                    self.realm
+                        .error_prototypes
                         .iter()
                         .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
                 )
@@ -322,7 +323,8 @@ impl<H: Host> Vm<H> {
                 )
                 .chain(self.natives.iter().map(|(_, value)| *value))
                 .chain(
-                    self.iterator_realm_prototypes
+                    self.realm
+                        .iterator_prototypes
                         .iter()
                         .flat_map(|(realm, prototypes)| {
                             [
