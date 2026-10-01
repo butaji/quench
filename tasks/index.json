@@ -118,7 +118,7 @@
     {"id":"55","file":"55.md","title":"Read process and os host facts from the OS","lane":"host","status":"pending","depends_on":["43"]},
     {"id":"56","file":"56.md","title":"Bound guest recursion by a runtime-owned stack budget","lane":"critical_path","status":"done","depends_on":["06"]},
     {"id":"57","file":"57.md","title":"Derive value-kind facts as static binding times","lane":"specializers","status":"pending","depends_on":["47","59"]},
-    {"id":"58","file":"58.md","title":"Own the runtime unit-suite failures","lane":"conformance","status":"pending","depends_on":["05"]},
+    {"id":"58","file":"58.md","title":"Own the runtime unit-suite failures","lane":"conformance","status":"done","depends_on":["05"]},
     {"id":"59","file":"59.md","title":"Reduce the kernel to a metacircular fundamental set","lane":"critical_path","status":"pending","depends_on":["11","12","13","14","15","16","17","18","35","36","39","44","45","47"]},
     {"id":"60","file":"60.md","title":"Model the core as categories and check the laws","lane":"critical_path","status":"pending","depends_on":["46"]},
     {"id":"61","file":"61.md","title":"Lead no-JIT engines on all eight V8-v7 fixtures","lane":"critical_path","status":"pending","depends_on":["26","51","62"]},
