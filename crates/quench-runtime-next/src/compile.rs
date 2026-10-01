@@ -133,6 +133,16 @@ pub(crate) struct StaticModulePlan {
     pub(crate) has_top_level_await: bool,
 }
 pub(crate) use crate::bytecode::ModuleReexport as StaticModuleReexport;
+fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) -> Option<Span> {
+    match body {
+        [Statement::ExpressionStatement(statement)] if directives.is_empty() => {
+            Some(statement.expression.span())
+        }
+        [] if directives.len() == 1 => Some(directives[0].expression.span()),
+        _ => None,
+    }
+}
+
 impl Engine {
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
@@ -245,15 +255,31 @@ impl Engine {
         if !parsed.diagnostics.is_empty() {
             return None;
         }
-        let span = match parsed.program.body.as_slice() {
-            [Statement::ExpressionStatement(statement)] if parsed.program.directives.is_empty() => {
-                statement.expression.span()
-            }
-            [] if parsed.program.directives.len() == 1 => {
-                parsed.program.directives[0].expression.span()
-            }
-            _ => return None,
+        let span = eval_expression_span(&parsed.program.body, &parsed.program.directives)?;
+        source.get(span.start as usize..span.end as usize)
+    }
+
+    /// Classify the body of the synthetic eval method in its private-name
+    /// grammar context instead of reparsing that body as a standalone Script.
+    pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice() else {
+            return None;
         };
+        let Expression::ClassExpression(class) = statement.expression.without_parentheses() else {
+            return None;
+        };
+        let ClassElement::MethodDefinition(method) = class.body.body.last()? else {
+            return None;
+        };
+        let body = method.value.body.as_ref()?;
+        // The synthetic class method is already strict. Literal directives
+        // have no effects before its sole expression.
+        let span = eval_expression_span(&body.statements, &[])?;
         source.get(span.start as usize..span.end as usize)
     }
 
