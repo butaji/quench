@@ -649,112 +649,61 @@ impl<H: Host> Vm<H> {
         Ok(Self::integrity_bool(named_ok && arrays_ok && symbols_ok))
     }
 
-    pub(super) fn validate_proxy_define_property(
+    pub(super) fn validate_proxy_define_property_record(
         &mut self,
         p: &ResidualProgram,
-        target: Value,
-        key: Value,
-        descriptor: Value,
+        target: RootId,
+        key: RootId,
+        descriptor: &super::property_definition::RootedPropertyDescriptor,
     ) -> Result<(), JsError> {
-        let current = self.object_get_own_property_descriptor(p, &[target, key])?;
-        if current.is_undefined() {
-            let extensible = self.object_is_extensible(p, &[target])?;
-            if !self.truthy(extensible) {
+        let object = self.heap.root_value(target).unwrap();
+        let property = self.heap.root_value(key).unwrap();
+        let current = self.object_get_own_property_descriptor(p, &[object, property])?;
+        let current = if current.is_undefined() {
+            None
+        } else {
+            let record = self.own_descriptor_record(current);
+            Some(super::property_definition::RootedPropertyDescriptor::new(
+                &mut self.heap,
+                record,
+            ))
+        };
+        let outcome = (|| {
+            let object = self.heap.root_value(target).unwrap();
+            let extensible = self.object_is_extensible(p, &[object])?;
+            let record = descriptor.resolve(&self.heap);
+            let current = current.as_ref().map(|r| r.resolve(&self.heap));
+            if !record.compatible_with(current, self.truthy(extensible), |a, b| {
+                self.same_value(a, b)
+            }) {
                 return Err(self.type_error(
                     p,
-                    "proxy defineProperty trap added a property to a non-extensible target".into(),
+                    "proxy defineProperty trap returned an incompatible descriptor".into(),
                 ));
             }
-            let configurable = self.intern_atom("configurable");
-            if self.own_property(descriptor, configurable).is_some()
-                && !self.descriptor_flag(descriptor, "configurable")
+            if record.configurable == Some(false)
+                && current.is_none_or(|r| r.configurable == Some(true))
             {
                 return Err(self.type_error(
                     p,
-                    "proxy defineProperty trap added a non-configurable property".into(),
+                    "proxy defineProperty trap introduced a non-configurable property".into(),
                 ));
             }
-            return Ok(());
-        }
-        let configurable = self.intern_atom("configurable");
-        let target_configurable = self.descriptor_flag(current, "configurable");
-        if target_configurable
-            && self.own_property(descriptor, configurable).is_some()
-            && !self.descriptor_flag(descriptor, "configurable")
-        {
-            return Err(self.type_error(
-                p,
-                "proxy defineProperty trap made a configurable target property non-configurable"
-                    .into(),
-            ));
-        }
-        if target_configurable {
-            return Ok(());
-        }
-        let enumerable = self.intern_atom("enumerable");
-        if self.descriptor_flag(descriptor, "configurable")
-            || (self.own_property(descriptor, enumerable).is_some()
-                && self.descriptor_flag(descriptor, "enumerable")
-                    != self.descriptor_flag(current, "enumerable"))
-        {
-            return Err(self.type_error(
-                p,
-                "proxy defineProperty trap changed a non-configurable target property".into(),
-            ));
-        }
-        let value = self.intern_atom("value");
-        let writable = self.intern_atom("writable");
-        let get = self.intern_atom("get");
-        let set = self.intern_atom("set");
-        let descriptor_data = self.own_property(descriptor, value).is_some()
-            || self.own_property(descriptor, writable).is_some();
-        let descriptor_accessor = self.own_property(descriptor, get).is_some()
-            || self.own_property(descriptor, set).is_some();
-        let current_data = self.own_property(current, value).is_some()
-            || self.own_property(current, writable).is_some();
-        if descriptor_data && !current_data || descriptor_accessor && current_data {
-            return Err(self.type_error(
-                p,
-                "proxy defineProperty trap changed a non-configurable property kind".into(),
-            ));
-        }
-        if descriptor_data && current_data {
-            let current_writable = self.descriptor_flag(current, "writable");
-            let descriptor_writable = self.own_property(descriptor, writable).is_some()
-                && self.descriptor_flag(descriptor, "writable");
-            if (!current_writable
-                && (descriptor_writable
-                    || self.own_property(descriptor, value).is_some_and(|next| {
-                        self.own_property(current, value)
-                            .is_some_and(|previous| !self.same_value(previous, next))
-                    })))
-                || (current_writable
-                    && self.own_property(descriptor, writable).is_some()
-                    && !descriptor_writable)
+            if current.is_some_and(|r| {
+                r.has_data_fields() && r.configurable == Some(false) && r.writable == Some(true)
+            }) && record.writable == Some(false)
             {
                 return Err(self.type_error(
                     p,
                     "proxy defineProperty trap changed a non-writable target property".into(),
                 ));
             }
-        } else if descriptor_accessor && !current_data {
-            for (name, text) in [("get", "getter"), ("set", "setter")] {
-                let atom = self.intern_atom(name);
-                if let Some(next) = self.own_property(descriptor, atom)
-                    && self
-                        .own_property(current, atom)
-                        .is_some_and(|previous| !self.same_value(previous, next))
-                {
-                    return Err(self.type_error(
-                        p,
-                        format!(
-                            "proxy defineProperty trap changed a non-configurable target {text}"
-                        )
-                        .into(),
-                    ));
-                }
-            }
+            Ok(())
+        })();
+        if let Some(current) = current {
+            current.release(&mut self.heap);
         }
-        Ok(())
+        outcome
     }
+
 }
