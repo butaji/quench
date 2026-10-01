@@ -957,7 +957,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
-            | Some(Cell::PromiseResolvingState { .. }) => Ok(None),
+            | Some(Cell::PromiseResolvingState { .. })
+            | Some(Cell::WasmBits64(_)) => Ok(None),
         }
     }
 

@@ -1,7 +1,7 @@
 //! Decode validated modules for the shared VM. There is no executor here.
 
 use crate::{Error, Module};
-use rqj::{Engine, WasmI32Function};
+use rqj::{Engine, WasmFunction, WasmFunctionBody, WasmI32Function, WasmSignature, WasmType};
 use wasmparser::{Encoding, ExternalKind, Parser, Payload, ValType};
 
 impl Module {
@@ -9,6 +9,26 @@ impl Module {
     /// JavaScript VM's residual bytecode. Stateful sections and unsupported operators fail
     /// explicitly until their shared lowering is implemented.
     pub fn lower_shared_i32(&self, export: &str) -> Result<WasmI32Function, Error> {
+        let function = self.lower_shared(export)?;
+        if function
+            .signature()
+            .params
+            .iter()
+            .any(|ty| *ty != WasmType::I32)
+            || function
+                .signature()
+                .result
+                .is_some_and(|ty| ty != WasmType::I32)
+        {
+            return Err(Error::Unsupported(
+                "function requires the typed Wasm boundary".into(),
+            ));
+        }
+        Ok(function)
+    }
+
+    /// Lower validated scalar module functions into the single shared VM.
+    pub fn lower_shared(&self, export: &str) -> Result<WasmFunction, Error> {
         let mut types = Vec::new();
         let mut functions = Vec::new();
         let mut bodies = Vec::new();
@@ -53,42 +73,54 @@ impl Module {
         let mut inputs = Vec::with_capacity(bodies.len());
         for (type_index, body) in functions.into_iter().zip(bodies) {
             let signature = &types[type_index as usize];
-            if signature
-                .params()
-                .iter()
-                .chain(signature.results())
-                .any(|ty| *ty != ValType::I32)
-                || signature.results().len() > 1
-            {
+            if signature.results().len() > 1 {
                 return Err(Error::Unsupported(
-                    "function requires non-i32 or multiple results".into(),
+                    "function requires multiple results".into(),
                 ));
             }
-            let params = u16::try_from(signature.params().len())
+            u16::try_from(signature.params().len())
                 .map_err(|_| Error::Unsupported("too many parameters".into()))?;
-            let mut locals = 0u16;
+            let signature = WasmSignature {
+                params: signature
+                    .params()
+                    .iter()
+                    .copied()
+                    .map(scalar_type)
+                    .collect::<Result<_, _>>()?,
+                result: signature
+                    .results()
+                    .first()
+                    .copied()
+                    .map(scalar_type)
+                    .transpose()?,
+            };
+            let mut locals = Vec::new();
             for local in body.get_locals_reader().map_err(parse_error)? {
                 let (count, ty) = local.map_err(parse_error)?;
-                if ty != ValType::I32 {
-                    return Err(Error::Unsupported(
-                        "function requires non-i32 locals".into(),
-                    ));
-                }
-                locals = u16::try_from(count)
-                    .ok()
-                    .and_then(|count| locals.checked_add(count))
+                let ty = scalar_type(ty)?;
+                let count = usize::try_from(count)
+                    .map_err(|_| Error::Unsupported("too many locals".into()))?;
+                let length = locals
+                    .len()
+                    .checked_add(count)
+                    .filter(|length| *length <= usize::from(u16::MAX))
                     .ok_or_else(|| Error::Unsupported("too many locals".into()))?;
+                locals.resize(length, ty);
             }
-            inputs.push((
-                params,
+            inputs.push(WasmFunctionBody {
+                signature,
                 locals,
-                !signature.results().is_empty(),
-                body.get_operators_reader().map_err(parse_error)?,
-            ));
+                operators: body.get_operators_reader().map_err(parse_error)?,
+            });
         }
-        Engine::lower_wasm_i32_module(export, selected as u32, inputs)
+        Engine::lower_wasm_module(export, selected as u32, inputs)
             .map_err(|error| Error::Unsupported(error.to_string()))
     }
+}
+
+fn scalar_type(ty: ValType) -> Result<WasmType, Error> {
+    WasmType::from_wasm(ty)
+        .ok_or_else(|| Error::Unsupported("function requires non-scalar types".into()))
 }
 
 fn parse_error(error: wasmparser::BinaryReaderError) -> Error {
@@ -271,3 +303,6 @@ mod control_tests;
 
 #[cfg(test)]
 mod call_tests;
+
+#[cfg(test)]
+mod scalar_tests;

@@ -184,7 +184,8 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::FinalizationRegistry { .. }
             | Cell::Iterator { .. }
             | Cell::Proxy { .. }
-            | Cell::ArrayFromAsyncState(_) => 0,
+            | Cell::ArrayFromAsyncState(_)
+            | Cell::WasmBits64(_) => 0,
             Cell::TemporalZonedDateTime {
                 time_zone,
                 calendar,

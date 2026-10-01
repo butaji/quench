@@ -34,6 +34,7 @@ pub enum Constant {
     String(String),
     StringUnits(Vec<u16>),
     BigInt(String),
+    WasmBits64(u64),
     Boolean(bool),
     Null,
     Undefined,
@@ -1015,7 +1016,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 33;
+    pub const FORMAT_VERSION: u8 = 34;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

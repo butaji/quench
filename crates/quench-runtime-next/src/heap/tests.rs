@@ -256,3 +256,16 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     assert!(heap.memory_stats().3 > before);
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
 }
+
+#[test]
+fn wasm_bits64_follow_the_shared_strong_root_lifecycle() {
+    let mut heap = Heap::new();
+    let bits = 0x7ffc_1234_5678_9abc;
+    let value = heap.alloc(Cell::WasmBits64(bits));
+    let root = heap.root(value);
+    heap.collect([]);
+    assert!(matches!(heap.get(value), Some(Cell::WasmBits64(actual)) if *actual == bits));
+    assert!(heap.release_root(root));
+    heap.collect([]);
+    assert!(heap.get(value).is_none());
+}
