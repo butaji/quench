@@ -134,6 +134,21 @@ impl Heap {
             ..Self::default()
         }
     }
+    /// Keep the complete allocation census available to ownership tests.
+    /// Explicit collection remains available; only threshold collection stops.
+    #[cfg(test)]
+    pub(crate) fn retain_allocations_for_test(&mut self) {
+        self.threshold = usize::MAX;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn environment_count_for_test(&self) -> usize {
+        self.slots
+            .iter()
+            .filter(|slot| matches!(slot.cell, Some(Cell::Environment { .. })))
+            .count()
+    }
+
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
