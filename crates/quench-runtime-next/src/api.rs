@@ -671,6 +671,20 @@ mod tests {
     }
 
     #[test]
+    fn root_handles_cannot_cross_runtime_boundaries() {
+        let mut owner = Runtime::new(Capture::default());
+        let mut other = Runtime::new(Capture::default());
+        let owned_root = owner.root(Value::number(1.0));
+        let other_root = other.root(Value::number(2.0));
+
+        assert_eq!(other.root_value(owned_root), None);
+        assert!(!other.update_root(owned_root, Value::number(3.0)));
+        assert!(!other.release_root(owned_root));
+        assert!(!other.enqueue_rooted_job(owned_root, &[]));
+        assert_eq!(other.root_value(other_root), Some(Value::number(2.0)));
+    }
+
+    #[test]
     fn descriptor_transitions_reject_mixed_fields_and_allow_configurable_kind_changes() {
         let host = Capture::default();
         let view = host.clone();
