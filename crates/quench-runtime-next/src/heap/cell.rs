@@ -65,7 +65,7 @@ impl WeakMapEntries {
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionReturnThis, FunctionReturnName, FunctionReturnClass, FunctionCaller, DynamicFunction, DynamicDerivedClass, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
+    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicFunction, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
@@ -628,9 +628,6 @@ impl Native {
         matches!(
             self,
             Self::Function
-                | Self::FunctionReturnThis
-                | Self::FunctionReturnName
-                | Self::FunctionReturnClass
                 | Self::DynamicFunction
                 | Self::AsyncFunction
                 | Self::GeneratorFunction

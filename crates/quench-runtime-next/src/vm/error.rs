@@ -743,18 +743,6 @@ impl<H: Host> Vm<H> {
         }
         let source = argument_strings.pop().unwrap_or_default();
         let source = source.trim();
-        if let Some(base_name) = dynamic_class_base(source) {
-            let base_atom = self.intern_atom(base_name);
-            let base_key = self.heap.alloc(Cell::String(JsString::from_str(base_name)));
-            if !self.has_property(program, function_realm, base_key)? {
-                return Err(self.reference_error(program, format!("{base_name} is not defined")));
-            }
-            let base = self.get_property(program, function_realm, base_atom)?;
-            if !self.is_constructable(program, base) {
-                return Err(JsError("dynamic class base is not a constructor".into()));
-            }
-            return Ok(self.native_with_env(Native::FunctionReturnClass, base));
-        }
         let parameters = argument_strings.join(",");
         let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
@@ -829,24 +817,6 @@ impl<H: Host> Vm<H> {
         Ok(function)
     }
 
-    pub(super) fn dynamic_class_native(&mut self, base: Value) -> Result<Value, JsError> {
-        let function = self.native_with_env(Native::DynamicDerivedClass, base);
-        let prototype = self.object();
-        if let Some(base_prototype_atom) = self.lookup_atom("prototype")
-            && let Some(base_prototype) = self.own_property(base, base_prototype_atom)
-            && let Some(object) = self.object_data_mut(prototype)
-        {
-            object.proto = base_prototype;
-        }
-        let prototype_atom = self.intern_atom("prototype");
-        self.set_property(function, prototype_atom, prototype)?;
-        self.set_builtin_value_named(prototype, "constructor", function)?;
-        if let Some(object) = self.object_data_mut(function) {
-            object.proto = base;
-        }
-        Ok(function)
-    }
-
     pub(super) fn call_function_dispatch(
         &mut self,
         program: &ResidualProgram,
@@ -854,26 +824,6 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         match native {
-            Native::FunctionReturnThis => {
-                Ok(self.active_native_env().unwrap_or(self.realm.globals))
-            }
-            Native::FunctionReturnClass => {
-                let base = self
-                    .active_native_env()
-                    .ok_or_else(|| JsError("invalid dynamic class environment".into()))?;
-                self.dynamic_class_native(base)
-            }
-            Native::FunctionReturnName => {
-                let name = self
-                    .active_native_env()
-                    .and_then(|value| match self.heap.get(value) {
-                        Some(Cell::String(name)) => Some(name.clone()),
-                        _ => None,
-                    })
-                    .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
-                let atom = self.intern_js_atom(&name);
-                self.get_property(program, self.realm.globals, atom)
-            }
             Native::DynamicFunction => {
                 let environment = self.active_native_env().unwrap_or(Value::NULL);
                 if let Some(result) = self.call_eval_super_arrow(program, environment)? {
@@ -1893,12 +1843,4 @@ impl<H: Host> Vm<H> {
         }
         outcome
     }
-}
-
-fn dynamic_class_base(source: &str) -> Option<&str> {
-    let rest = source.strip_prefix("return class ")?;
-    let (_, rest) = rest.split_once(" extends ")?;
-    let end = rest.find([' ', '{', '('])?;
-    let name = &rest[..end];
-    (!name.is_empty()).then_some(name)
 }
