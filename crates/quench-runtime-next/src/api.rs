@@ -724,6 +724,110 @@ mod tests {
     }
 
     #[test]
+    fn regression_from_entries_retains_collecting_entry_operands() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads = 0;
+            var symbol = Symbol('entry');
+            var events = [];
+            var source = {[Symbol.iterator]() {var index = 0; return {get next() {
+                reads++; $262.gc(); return function() {
+                    $262.gc(); if (index === 2) return {done:true};
+                    var rank = ++index;
+                    return {get done() {$262.gc(); return false;}, get value() {
+                        $262.gc(); return {get 0() {
+                            events.push('key'); $262.gc();
+                            return {[Symbol.toPrimitive]() {events.push('convert'); $262.gc(); return rank === 1 ? '__proto__' : symbol;}};
+                        }, get 1() {events.push('value'); $262.gc(); return {rank:rank};}};
+                    }};
+                };
+            }};}};
+            var result = Object.fromEntries(source);
+            print(reads);
+            print(events.join(','));
+            print(Object.getPrototypeOf(result) === Object.prototype);
+            print(result.__proto__.rank);
+            print(result[symbol].rank);
+            var descriptor = Object.getOwnPropertyDescriptor(result, '__proto__');
+            print(descriptor.writable && descriptor.enumerable && descriptor.configurable);
+            print(Reflect.ownKeys(result).length);
+            var realm = $262.createRealm();
+            var foreignObject = realm.global.Object;
+            var fromEntries = foreignObject.fromEntries;
+            var prototype = foreignObject.prototype;
+            Object.defineProperty(realm.global, 'Object', {configurable:true, get() {$262.gc(); throw 'global-read';}});
+            var foreign = fromEntries([['answer', 42]]);
+            print(Object.getPrototypeOf(foreign) === prototype);
+            print(foreign.answer);
+            "#,
+            &[
+                "1",
+                "key,value,convert,key,value,convert",
+                "true",
+                "1",
+                "2",
+                "true",
+                "2",
+                "true",
+                "42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_from_entries_avoids_descriptor_prototype_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            var calls = 0;
+            var names = ['value', 'writable', 'enumerable', 'configurable', 'get', 'set', 'entry'];
+            for (var name of names) {
+                var descriptor = Object.create(null);
+                descriptor.configurable = true;
+                descriptor.set = function() {calls++; $262.gc(); throw {kind:'prototype-hook'};};
+                Object.defineProperty(Object.prototype, name, descriptor);
+            }
+            var result;
+            try {result = Object.fromEntries([['entry', {rank:42}], ['entry', {rank:43}]]);}
+            finally {for (var name of names) delete Object.prototype[name];}
+            print(calls);
+            print(result.entry.rank);
+            var descriptor = Object.getOwnPropertyDescriptor(result, 'entry');
+            print(descriptor.writable && descriptor.enumerable && descriptor.configurable);
+            "#,
+            &["0", "43", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_from_entries_preserves_iterator_abrupt_completion() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var phase of ['next-getter', 'next', 'done', 'value', 'entry', 'key', 'entry-value', 'convert']) {
+                var closes = 0;
+                var source = {[Symbol.iterator]() {return {
+                    get next() {$262.gc(); if (phase === 'next-getter') throw {kind:phase}; return function() {
+                        $262.gc(); if (phase === 'next') throw {kind:phase};
+                        return {get done() {$262.gc(); if (phase === 'done') throw {kind:phase}; return false;},
+                            get value() {$262.gc(); if (phase === 'value') throw {kind:phase}; if (phase === 'entry') return 1;
+                                return {get 0() {$262.gc(); if (phase === 'key') throw {kind:phase};
+                                    return {[Symbol.toPrimitive]() {$262.gc(); throw {kind:phase};}};},
+                                    get 1() {$262.gc(); if (phase === 'entry-value') throw {kind:phase}; return {rank:42};}};}}
+                    ;};},
+                    get return() {closes++; $262.gc(); return function() {$262.gc(); throw {kind:'close'};};}
+                };}};
+                try {Object.fromEntries(source); print(false);}
+                catch (error) {print(phase === 'entry' ? error instanceof TypeError : error.kind === phase);}
+                print(closes);
+            }
+            "#,
+            &[
+                "true", "0", "true", "0", "true", "0", "true", "0", "true", "1", "true", "1", "true",
+                "1", "true", "1",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"

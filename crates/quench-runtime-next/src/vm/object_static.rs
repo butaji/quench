@@ -553,101 +553,82 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn object_from_entries(
+    pub(super) fn object_from_entries(
         &mut self,
         p: &ResidualProgram,
         iterable: Value,
     ) -> Result<Value, JsError> {
+        self.require_object_coercible(p, iterable)?;
         let iterator = self.get_iterator(p, iterable)?;
-        let result = self.object();
-        let mut roots = vec![self.heap.root(iterator), self.heap.root(result)];
+        let iterator = self.heap.root(iterator);
+        let mut next_root = None;
+        let mut result_root = None;
         let outcome = (|| {
-            let done_atom = self.intern_atom("done");
-            let value_atom = self.intern_atom("value");
-            let mut object = result;
+            let next_atom = self.intern_atom("next");
+            let receiver = self.heap.root_value(iterator).unwrap();
+            let next = self.get_property(p, receiver, next_atom)?;
+            let next = self.heap.root(next);
+            next_root = Some(next);
+            let prototype = self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(self.realm.globals, Native::Object))
+                .copied()
+                .unwrap_or(self.object_proto);
+            let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let result = self.heap.root(result);
+            result_root = Some(result);
             loop {
-                let iteration_roots = roots.len();
-                let iterator = self.heap.root_value(roots[0]).unwrap_or(iterator);
-                let step = match self.iterator_next(p, iterator) {
-                    Ok(step) => step,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
+                let Some(entry) = self.rooted_iterator_step_value(p, iterator, next)? else {
+                    return Ok(self.heap.root_value(result).unwrap());
                 };
-                roots.push(self.heap.root(step));
-                let step = self.heap.root_value(*roots.last().unwrap()).unwrap_or(step);
-                let done = match self.get_property(p, step, done_atom) {
-                    Ok(done) => done,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if self.truthy(done) {
-                    for root in roots.drain(iteration_roots..) {
-                        self.heap.release_root(root);
+                let entry = self.heap.root(entry);
+                let mut key_root = None;
+                let mut value_root = None;
+                let install = (|| {
+                    let object = self.heap.root_value(entry).unwrap();
+                    if !self.is_object_like(object) {
+                        return Err(
+                            self.type_error(p, "Object.fromEntries entry is not an object".into())
+                        );
                     }
-                    break;
-                }
-                let entry = match self.get_property(p, step, value_atom) {
-                    Ok(entry) => entry,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if !self.is_object_like(entry) {
-                    let error =
-                        self.type_error(p, "Object.fromEntries entry is not an object".into());
-                    return Err(self.iterator_abrupt(p, iterator, error));
-                }
-                roots.push(self.heap.root(entry));
-                let entry = self
-                    .heap
-                    .root_value(*roots.last().unwrap())
-                    .unwrap_or(entry);
-                let raw_key = match self.get_index(p, entry, Value::number(0.0)) {
-                    Ok(key) => key,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                roots.push(self.heap.root(raw_key));
-                let raw_key = self
-                    .heap
-                    .root_value(*roots.last().unwrap())
-                    .unwrap_or(raw_key);
-                let value = match self.get_index(p, entry, Value::number(1.0)) {
-                    Ok(value) => value,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                roots.push(self.heap.root(value));
-                let value = self
-                    .heap
-                    .root_value(*roots.last().unwrap())
-                    .unwrap_or(value);
-                let key = match self.to_property_key(p, raw_key) {
-                    Ok(key) => key,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                roots.push(self.heap.root(key));
-                let key = self.heap.root_value(*roots.last().unwrap()).unwrap_or(key);
-                let descriptor = self.object();
-                roots.push(self.heap.root(descriptor));
-                for (name, field) in [
-                    ("value", value),
-                    ("writable", Value::TRUE),
-                    ("enumerable", Value::TRUE),
-                    ("configurable", Value::TRUE),
-                ] {
-                    let atom = self.intern_atom(name);
-                    if let Err(error) = self.set_property(descriptor, atom, field) {
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                }
-                object = self.heap.root_value(roots[1]).unwrap_or(object);
-                if let Err(error) = self.object_define_property(p, &[object, key, descriptor]) {
-                    return Err(self.iterator_abrupt(p, iterator, error));
-                }
-                for root in roots.drain(iteration_roots..) {
+                    let key = self.get_index(p, object, Value::number(0.0))?;
+                    let key = self.heap.root(key);
+                    key_root = Some(key);
+                    let object = self.heap.root_value(entry).unwrap();
+                    let value = self.get_index(p, object, Value::number(1.0))?;
+                    let value = self.heap.root(value);
+                    value_root = Some(value);
+                    let raw_key = self.heap.root_value(key).unwrap();
+                    let property_key = self.to_property_key(p, raw_key)?;
+                    self.heap.update_root(key, property_key);
+                    let key = match self.heap.get(property_key).cloned() {
+                        Some(Cell::Symbol(_)) => PropertyKey::symbol(property_key),
+                        Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
+                    };
+                    let object = self.heap.root_value(result).unwrap();
+                    let value = self.heap.root_value(value).unwrap();
+                    // The unexposed ordinary result owns only default data properties.
+                    self.set_shape_property(object, key, value)
+                })();
+                let install = install.map_err(|error| {
+                    let receiver = self.heap.root_value(iterator).unwrap();
+                    self.iterator_abrupt(p, receiver, error)
+                });
+                for root in [Some(entry), key_root, value_root].into_iter().flatten() {
                     self.heap.release_root(root);
                 }
+                install?;
             }
-            Ok(self.heap.root_value(roots[1]).unwrap_or(object))
         })();
-        roots.into_iter().for_each(|root| {
+        for root in [Some(iterator), next_root, result_root]
+            .into_iter()
+            .flatten()
+        {
             self.heap.release_root(root);
-        });
+        }
         outcome
     }
 
