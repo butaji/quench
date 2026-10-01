@@ -670,6 +670,94 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn json_revival_roots_release_after_each_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "reviver-throw",
+            "get-throw",
+            "keys-throw",
+            "descriptor-throw",
+            "is-array-throw",
+            "length-throw",
+            "define-throw",
+            "delete-throw",
+            "success",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var marker = {{kind:'{phase}'}};
+                var revive = function(key,value) {{
+                    $262.gc();
+                    if (key === 'first') {{
+                        if ('{phase}' === 'get-throw') this.target = {{get entry() {{$262.gc(); throw marker;}}}};
+                        if ('{phase}' === 'keys-throw') this.target = new Proxy({{}}, {{ownKeys() {{$262.gc(); throw marker;}}}});
+                        if ('{phase}' === 'descriptor-throw') this.target = new Proxy({{entry:1}}, {{getOwnPropertyDescriptor() {{$262.gc(); throw marker;}}}});
+                        if ('{phase}' === 'is-array-throw') {{var revoked = Proxy.revocable({{}},{{}}); revoked.revoke(); this.target = revoked.proxy;}}
+                        if ('{phase}' === 'length-throw') this.target = new Proxy([], {{get(object,key) {{$262.gc(); if (key === 'length') throw marker; return Reflect.get(object,key);}}}});
+                        if ('{phase}' === 'define-throw') this.target = new Proxy({{entry:1}}, {{defineProperty() {{$262.gc(); throw marker;}}}});
+                        if ('{phase}' === 'delete-throw') this.target = new Proxy({{entry:1}}, {{deleteProperty() {{$262.gc(); throw marker;}}}});
+                    }}
+                    if (key === 'entry') {{
+                        if ('{phase}' === 'reviver-throw') throw marker;
+                        if ('{phase}' === 'delete-throw') return undefined;
+                        return {{rank:42}};
+                    }}
+                    return value;
+                }};
+            "#
+            );
+            let program = compile(&source, "json-revival-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let values = ["revive", "marker"].map(|name| {
+                let atom = vm.intern_atom(name);
+                vm.own_property(vm.realm.globals, atom).unwrap()
+            });
+            let text = vm.heap.alloc(super::Cell::String(
+                r#"{"first":0,"target":{"entry":1}}"#.into(),
+            ));
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.json_parse(&program, &[text, values[0]]);
+            let weak = match phase {
+                "success" => {
+                    let result = result.unwrap();
+                    let target = vm.intern_atom("target");
+                    let target = vm.own_property(result, target).unwrap();
+                    let entry = vm.intern_atom("entry");
+                    let entry = vm.own_property(target, entry).unwrap();
+                    let rank = vm.intern_atom("rank");
+                    assert_eq!(vm.own_property(entry, rank), Some(Value::number(42.0)));
+                    Some(vm.heap.weak_handle(result).unwrap())
+                }
+                "is-array-throw" => {
+                    let error = result.unwrap_err();
+                    assert!(vm.format_error(&program, &error).contains("TypeError"));
+                    None
+                }
+                _ => {
+                    assert_eq!(
+                        result.unwrap_err().thrown_value(),
+                        Some(values[1]),
+                        "{phase}"
+                    );
+                    None
+                }
+            };
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+            vm.collect_now(&program);
+            if let Some(weak) = weak {
+                assert!(vm.heap.weak_value(weak).is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn definition_batch_roots_release_after_each_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

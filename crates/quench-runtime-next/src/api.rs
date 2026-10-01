@@ -931,6 +931,79 @@ mod tests {
     }
 
     #[test]
+    fn regression_raw_json_brand_is_not_a_guest_property() {
+        assert_output_in_execution_modes(
+            r#"
+            var forged = {rawJSON:'not-json', ['\0rqj:raw-json']:true};
+            print(JSON.isRawJSON(forged)); print(JSON.stringify(forged).startsWith('{'));
+            var raw = JSON.rawJSON('42'); $262.gc();
+            print(JSON.isRawJSON(raw)); print(JSON.isRawJSON(Object.create(raw)));
+            print(JSON.isRawJSON(new Proxy(raw,{})));
+            print(JSON.stringify(new Proxy(raw,{}))); print(JSON.stringify(raw));
+            "#,
+            &[
+                "false",
+                "true",
+                "true",
+                "false",
+                "false",
+                "{\"rawJSON\":\"42\"}",
+                "42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_json_internal_definitions_ignore_inherited_descriptor_fields() {
+        assert_output_in_execution_modes(
+            r#"
+            var parsed, raw;
+            Object.defineProperty(Object.prototype, 'get', {configurable:true, get() {$262.gc(); throw 'inherited descriptor';}});
+            try {
+                parsed = JSON.parse('{"entry":1}', function(key,value) {$262.gc(); return key === 'entry' ? {rank:42} : value;});
+                raw = JSON.rawJSON('43');
+            } finally {delete Object.prototype.get;}
+            print(parsed.entry.rank); print(raw.rawJSON);
+            var descriptor = Object.getOwnPropertyDescriptor(raw,'rawJSON');
+            print(descriptor.writable); print(descriptor.enumerable); print(descriptor.configurable);
+            print(Object.isFrozen(raw)); print(Object.getPrototypeOf(raw) === null);
+            print(Object.keys(raw).join(',')); print(JSON.stringify(raw));
+            "#,
+            &[
+                "42", "43", "false", "true", "false", "true", "true", "rawJSON", "43",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_json_reviver_ignores_rejection_and_preserves_throw() {
+        assert_output_in_execution_modes(
+            r#"
+            var value = JSON.parse('{"first":1,"second":2}', function(key,value) {
+                if (key === 'first') {delete this.second; Object.preventExtensions(this);}
+                $262.gc(); return key === 'second' ? {rank:42} : value;
+            });
+            print(value.first); print(Object.hasOwn(value,'second'));
+            var calls = 0;
+            value = JSON.parse('{"first":0,"target":{}}', function(key,value) {
+                if (key === 'first') this.target = new Proxy({entry:1}, {defineProperty(object,key,descriptor) {
+                    $262.gc(); calls++; print(descriptor.value.rank); return false;
+                }});
+                return key === 'entry' ? {rank:43} : value;
+            });
+            print(calls); print(value.target.entry);
+            var marker = {rank:44};
+            try {JSON.parse('{"first":0,"target":{}}', function(key,value) {
+                if (key === 'first') this.target = new Proxy({entry:1}, {defineProperty() {$262.gc(); throw marker;}});
+                return value;
+            });}
+            catch (error) {print(error === marker);}
+            "#,
+            &["1", "false", "43", "1", "1", "true"],
+        );
+    }
+
+    #[test]
     fn regression_define_properties_collects_before_applying() {
         assert_output_in_execution_modes(
             r#"
