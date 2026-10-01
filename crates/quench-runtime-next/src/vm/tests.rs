@@ -670,6 +670,71 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn from_entries_roots_release_after_iterator_and_entry_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "success",
+            "next-getter",
+            "next",
+            "done",
+            "value",
+            "entry",
+            "key",
+            "entry-value",
+            "convert",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var source = {{[Symbol.iterator]() {{var index = 0; return {{
+                    get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'{phase}'}};
+                        return function() {{$262.gc(); if ('{phase}' === 'next') throw {{kind:'{phase}'}};
+                            if (index++) return {{done:true}};
+                            return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'{phase}'}}; return false;}},
+                                get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'{phase}'}};
+                                    if ('{phase}' === 'entry') return 1;
+                                    return {{get 0() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'{phase}'}};
+                                        return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'convert') throw {{kind:'{phase}'}}; return '__proto__';}}}};}},
+                                        get 1() {{$262.gc(); if ('{phase}' === 'entry-value') throw {{kind:'{phase}'}}; return {{rank:42}};}}}};}}
+                            }};
+                        }};
+                    }},
+                    get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
+                }};}}}};
+            "#
+            );
+            let program = compile(&source, "from-entries-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("source");
+            let source = vm.own_property(vm.realm.globals, atom).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.object_from_entries(&program, source);
+            assert_eq!(result.is_err(), phase != "success", "{phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            match result {
+                Ok(result) => {
+                    let weak = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(weak).is_none());
+                }
+                Err(error) if phase != "entry" => {
+                    let error = error.thrown_value().unwrap();
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm.own_property(error, atom).unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                }
+                Err(error) => assert!(vm.format_error(&program, &error).contains("TypeError")),
+            }
+        }
+    }
+}
+
+#[test]
 fn group_by_roots_release_after_iterator_and_callback_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
