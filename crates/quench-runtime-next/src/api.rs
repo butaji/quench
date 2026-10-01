@@ -528,8 +528,8 @@ mod tests {
                 name: "module.mjs",
                 kind: SourceKind::Module,
             })
-            .unwrap_err();
-        assert!(format!("{error:?}").contains("module compilation"));
+            .unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["module"]);
     }
 
     #[test]
