@@ -2,33 +2,42 @@
 
 ## Priorities and phases
 
-The queue directs three goals, in this exact order:
+The queue delivers one result: the best possible efficiency (lowest maximum
+RSS, highest Score) from an interpreter-only engine, reached by
+Futamura/Ershov staging, while keeping 100% of the pinned Test262 inventory,
+100% of the pinned WebAssembly testsuite directives on the same VM, and every
+covered Node compatibility fixture (task 19's frozen set). Two phases run in
+this order:
 
-1. **Correctness (phase A, gate task 27).** 100% of the pinned Test262
-   inventory, 100% of the pinned WebAssembly testsuite directives, and 100% of
-   the covered Node compatibility fixtures (task 19's frozen set), green in one
-   build (task 24), then the cutover that deletes the legacy runtime (task 27).
-2. **Right design (phase B, gate task 59).** Futamura/Ershov staging and the
-   categorical model on the single core: the kernel watermark (46), the
-   category laws (60), the generating extension and Futamura equation (47),
-   and the metacircular kernel (59).
-3. **Maximum efficiency (phase C, gate task 28).** Lowest maximum RSS and
-   highest Score on all eight V8-v7 fixtures against QuickJS, Bun/JSC with its
-   JIT disabled, and Node/V8 `--jitless` (task 61), reached without any form of
-   JIT in Quench. `../v2` is the reference for reaching high scores fast:
-   port its measured mechanisms first (task 26), then go beyond v2 (tasks 51,
-   61).
+1. **Correctness and cleanup (phase A, gate task 27).** All three suites green
+   in one build on the shared JS/Wasm VM (task 24), then cutover (task 27):
+   the legacy runtime and every migration-only or stale artifact is deleted,
+   leaving one VM and a clean tree.
+2. **Efficiency (phase B, gate task 28).** Lowest maximum RSS and highest
+   Score on all eight V8-v7 fixtures against QuickJS, Bun/JSC with its JIT
+   disabled, and Node/V8 `--jitless` (task 61), with no JIT of any kind. Two
+   tracks start at cutover:
+   - **v2 parity:** `../v2` is the reference for reaching high scores fast,
+     so its measured mechanisms are ported first (tasks 25, 49, 50, 26).
+   - **Staging spine:** the watermark tables (46) and the generating extension
+     derived from them, with the reference kernel as oracle (47). The
+     static-fact specializers (57, 70–76) and builtin accelerations (85) build
+     on them.
+
+   Task 61 then goes beyond v2 using task 77's coverage map, and task 28
+   closes the queue.
 
 `phases` in [`index.json`](index.json) lists each phase's tasks and gate, and
-`depends_on` encodes the gates: no phase-B task starts before task 27, and no
-phase-C task starts before task 59. Every phase may measure; only phase C may
-optimize. Tasks already `in_progress` when the phases were declared (45, 48)
-finish in place. Task 62 adds reference engines to the runner and is
-measurement only, so it may run in any phase.
+`depends_on` encodes the gate: no phase-B task starts before task 27. Phase A
+may measure but not optimize. Tasks already `in_progress` when the phases were
+declared (45, 48) finish in place. Task 62 adds reference engines to the
+runner, task 68 audits static-fact opportunities, and task 77 attributes time
+and RSS to the efficiency model's terms; all three are measurement only, so
+they may run in any phase.
 
 JavaScript and Wasm share one VM. There is one heap, one `Value`
 representation, one root set, one `opcodes!` vocabulary, one dispatch loop, one
-activation stack, and one `Engine` entry (tasks 37, 40, 41, 23). `quench-wasm`
+activation stack, and one `Engine` entry (tasks 37, 40, 23). `quench-wasm`
 owns decoding, validation, and wast scripting only; no other crate executes
 Wasm. Task 24 checks this structurally.
 
@@ -100,61 +109,171 @@ mechanism:
 | Static (source, syntax, lexical scope, validated Wasm types) | literal keys, `arguments`/`eval` use, capture candidates, strictness, operand types | decided once in the generating extension and encoded in the residual; new proofs are a `StaticValue` variant plus transfer rule in `compile/binding_time.rs`, never a new ad hoc matcher |
 | Specialization environment | atoms, constants, field/method/object sites, handler and root maps | compact tables indexed by instruction operands |
 | Dynamic (values, shapes, effects, executed paths) | receiver shape, operand tags, whether a closure was created | runtime check with exact generic fallback; per-site state lives in flat VM-owned arrays indexed by site ID, never in the instruction stream |
+| Dynamic, dependency-guarded (shared state that is rarely written) | prototype chain of a cached receiver, `Array.prototype[@@iterator]`, `@@species`, intrinsic identity behind a `CallKnown` | one named validity cell (a *protector*, declared as a task 46 fact row) owned by the cell or shape whose mutation would break the fact; the guard is one cell read, and the mutation is the explicit transition that trips it. It is still a guard, not a static fact |
 
-After the kernel watermark (tasks 46, 60, 47), each row reads its facts from the
-watermark tables. Static folding runs the statically evaluable kernel or
-library definition, which is Ershov's one definition for both binding times.
-The specialization environment addresses intrinsics and registry entries by
-index. Dynamic fast paths are accelerated primitives whose exact fallback is
-their library reference definition. Correctness is the Futamura equation,
-checked against the reference kernel (task 47). Routing existing folds and fast paths
-through the tables is structural. Adding new folds or accelerations is tuning
-and waits for task 59.
-
-### Categories
-
-Task 60 states the same design as categories, so each Futamura/Ershov rule is
-a checkable law rather than prose:
-
-| Structure | Objects | Morphisms | Law checked |
-| --------- | ------- | --------- | ----------- |
-| Representation category | value representations (JS types; Wasm `i32`, `i64`, `f32`, `f64`, `v128`, references) | conversion rows of the kernel primitive table | identity and composition, derived from the table |
-| Residual category | residual programs and their typed register interfaces | sequencing and structured control | — |
-| Front ends | OXC AST, validated Wasm | functors `F_js`, `F_wasm` into the one residual category | compositional lowering (functoriality) |
-| Semantics | residual programs | `⟦−⟧` into the Kleisli category of a graded effect monad; grades are task 46's effect classes | congruence as grade composition |
-| Specialization | — | natural transformation from `⟦−⟧ ∘ mix` to the interpreter | naturality square = the Futamura equation (tasks 42, 47) |
-| Kernel/library | fundamental primitives | the category they generate; accelerations are equal parallel morphisms | reference kernel passes all three suites (task 59) |
-
-The laws are derived from the watermark tables by macros and checked by
-tests. They add no runtime category framework.
+After the kernel watermark (tasks 46, 47), each row reads its facts from the
+watermark tables. Static folding runs the statically evaluable operation row
+(empty effect set), which is Ershov's one definition for both binding times.
+The specialization environment addresses intrinsics, operation rows, brands,
+and fact cells by index. Dynamic fast paths are `fast` entries on operation
+rows, guarded by fact rows, whose exact fallback is their row's library
+reference definition. Correctness is the residual run matching the reference
+kernel (no fast paths, no specialization) on all three suites (task 47).
+Routing existing folds and fast paths through the tables is task 47; adding
+new folds or accelerations belongs to the specializer tasks that depend on it.
 
 Observed dynamic facts never become unguarded static facts, whether the
 observation comes from a profile, a training run, or a counter. Per-object
 facts live on the object's cell or shape; identity-keyed `Vm` hash tables are
 not a semantic authority (see task 44).
 
+Every guarded fact has one provenance: a static proof, a per-site guard, or a
+protector. The fact itself is one row of task 46's fact table, whatever its
+provenance. A mechanism that needs a new kind of provenance extends this
+table. It does not add a parallel cache or profile system or its own guard
+vocabulary.
+
+Per-site adaptive state is a named state machine over a finite lattice whose
+transitions only move up: inline-cache degree (uninitialized ⊑ monomorphic ⊑
+polymorphic ⊑ megamorphic), numeric arming (generic ⊑ armed ⊑ disarmed),
+shape field representations, and array element kinds (task 50). A site moves
+down only at a named reset (GC boundary, realm teardown, program
+initialization). Its number of transitions is therefore bounded by the
+lattice height, so re-arm/deoptimize oscillation is impossible by
+construction. It is not bounded by a tuned retry count.
+
+Every guard names its resume point: the generic instruction, and the register
+state, from which the unspecialized path continues when the guard fails. For
+single-instruction sites this is the site itself. For fused windows (task 33)
+and binding-time-selected opcode sequences it is a derived map from the fused
+position to the unfused instruction. Exact fallback means continuing generically from the resume point is
+observably equal to continuing specialized; tasks 33 and 76 force each guard
+to fail to check it, and task 42 checks it suite-wide.
+
+### Static facts before execution
+
+A loaded script or module carries more static structure than the current
+analysis uses: `compile/binding_time.rs` is flow-insensitive, covers only the
+root function, and knows only exact constants and function identities. The
+catalogue below lists every fact domain the generating extension can compute
+before execution. Each domain belongs to one binding-time class, one
+authority, and one consumer task. Task 68 counts the opportunities for every
+row. Consumers start in the order of task 68's counts. Every domain is added
+to the one binding-time analysis in `compile/binding_time.rs`, flow-sensitive
+and over every function, with transfer rules read from task 46's tables. No
+consumer adds a separate pass with its own copy of scope or control-flow
+knowledge.
+
+| Domain | Evidence before execution | Class | Invalidated by | Consumer | Task |
+| ------ | ------------------------- | ----- | -------------- | -------- | ---- |
+| Closed scope | syntax: no direct `eval`, no `with`, no sloppy `arguments` aliasing or `Function.prototype.caller` exposure in or around the scope | Static | — | gates every row below; an open scope keeps the generic forms | 57 |
+| Scope resolution and slot addresses | OXC semantic scopes and declaration instantiation | Static in closed scopes | direct `eval`, `with` | local, environment and capture opcodes | 10, 32, 49 |
+| Capture and write sets per binding | syntax | Static | direct `eval` | environment layout; captured bindings with no writes become constants | 32, 81 |
+| Single assignment and constants | dataflow over closed scopes, in every function, not only the root | Static | a second reaching write | `LoadConst`, folds | 57 |
+| Value kinds, refinements, integer ranges, induction variables | dataflow with task 46's result-kind columns | Static | `reenters`/`throws` edges for heap facts | numeric opcode choice, `typeof` folds, TDZ and nullish elision, indexed-versus-named key selection | 57 |
+| Module and global references | the module graph; non-writable, non-configurable globals (`undefined`, `NaN`, `Infinity`); script-level lexical declarations | Static for module bindings, frozen globals and `const` lexical globals | TDZ only | direct slots and constants | 70 |
+| Global object properties and intrinsic identity (`Math.floor`, `Array.prototype.push`) | none: guest code can replace them | Dependency-guarded | a write to the property | global property cells, `CallKnown` behind a protector | 70 |
+| Call graph | known callees from bindings that are never reassigned; arity; use of `arguments`, `this`, `new.target`, `super`; strictness; recursion | Static for known callees | unknown callee | `CallKnown`, direct argument binding, no `this` coercion | 71, 31 |
+| Effect summaries | task 46's effect columns joined over the call graph | Static | unknown callee counts as `reenters` | heap facts survive calls; handler and root-map elision | 71 |
+| Allocation-site shapes | object and array literals with static keys and no `__proto__`, spread or computed key; class bodies; constructor `this.x =` sequences | Static for literal and class layouts; a layout hint for constructors | none for literals; a hint never changes semantics | allocate at the final shape; reserve inline slots; pre-intern transitions | 72 |
+| Allocation escape | dataflow plus effect summaries and allocation-site shapes | Static | a `reenters` edge, an unknown call, or an iterator protocol without a protector | scalar replacement of literals, destructuring temporaries, iterator results and `arguments` objects | 73 |
+| Static control flow | constant conditions, unreachable code, natural loops, loop-invariant pure operations, `try` bodies that cannot throw | Static | — | smaller residuals, fewer dispatches, no handler setup | 74 |
+| Liveness across suspension points | dataflow over generator and async bodies | Static | — | suspended-frame layout, register coalescing | 50 |
+| Literal preparation | RegExp literal pattern and flags; template and constant strings | Static | — | a matcher compiled once per literal site with static pattern facts (literal prefix, anchoring, capture count, backtracking-free classes) | 75 |
+| Known-callee bodies | call graph plus effect summaries | Static | stack traces, sloppy `caller`/`arguments.callee`, the recursion budget | inlining in the residual with declared resume maps | 76 |
+| Reachability | the call graph in closed scopes | Static | direct `eval`, dynamic property access to functions | lazy lowering order | 67 |
+| Wasm immutables | validation and link-time table contents | Static | — | constant and known-call materialization | 38 |
+
+Receiver shapes, parameter kinds, property existence, and observed types are
+not in the catalogue. They are dynamic (see task 57's evidence table), so they
+belong to guarded caches and never to this analysis.
+
+### Prior art
+
+The rules above re-derive, for an interpreter-only core, results that earlier
+dynamic-language VMs reached with JITs. This index names the lineage so that a
+reviewer can check a proposal against the known failure modes. It adds no rule
+of its own.
+
+| Rule | Prior art | Known failure mode it avoids | Tasks |
+| ---- | --------- | ---------------------------- | ----- |
+| One residual bytecode is the meaning; every tier specializes it | V8 after full-codegen/Crankshaft (Ignition feeds every tier); HotSpot bytecode; Truffle (P1 in production) | two front ends drifting into two semantics | 10, 37, 40, 42, 47 |
+| Immutable shapes with shared transition chains | Self maps; V8 hidden classes and field-representation tracking | quadratic transition cost; silent drops to dictionary mode | 08, 44 |
+| Inline-cache states are the type profile | Deutsch–Schiffman inline caches (Smalltalk-80); Hölzle's polymorphic inline caches (Self); V8 feedback vectors | a separate profiler; unbounded polymorphic lists; eager feedback allocation | 08, 29, 30 |
+| Dependency guards (protectors, validity cells) | V8 prototype validity cells and protectors; HotSpot class-hierarchy dependencies | re-checking every prototype level on every hit | 29, 34, 57 |
+| Monotone adaptive state | V8 elements-kind lattice; HotSpot/V8 reoptimization limits | deoptimization loops | 08, 30, 50 |
+| Resume points and exact fallback | Self-92 deoptimization; HotSpot uncommon traps and scope descriptors; V8 frame states | fast paths that cannot resume exactly | 33, 42, 76 |
+| Customization only where measured | Self-91 customization and splitting, then Self-93 adaptive recompilation | code-size blowup from eager specialization | 32, 33, 57 |
+| Optimize from guarded facts, not declared types | Strongtalk (optional types ignored by the optimizer) | static annotations standing in for guards | 57 |
+| Primitives with a reference fallback | Smalltalk primitive failure falling into the method body; V8 Torque builtins | fast path and slow path with two definitions | 46, 47 |
+| Kernel with library-defined semantics | Squeak VMMaker (Slang); Self's Klein | a kernel that grows semantics | 46, 47 |
+| Capabilities at the edge | Newspeak (Strongtalk's successor): no global state | ambient host effects inside the core | 43, 53, 54, 55 |
+| Startup heap as a derived artifact | Smalltalk images; V8 context snapshots | a hand-maintained snapshot that drifts from initialization code | 67 |
+| Compressed references and a young generation | Ungar's generation scavenging; HotSpot compressed oops; V8 pointer compression and Orinoco | per-object `malloc` and a full-heap trace per collection | 07, 50, 82 |
+| No constructs excluded from fast paths | Crankshaft's "optimization killers" | performance cliffs | 10, 31 |
+
+## Efficiency model
+
+Phase B optimizes two measured quantities on each V8-v7 fixture: Score, which
+is work per unit of wall time, and maximum RSS. Every efficiency task derives
+from the cost model below. It names the term it reduces, and it shows the
+change on that term and on the paired gate.
+
+```text
+time    = Σ_op N(op) · (dispatch + decode + work(op))      interpreter
+        + runtime library + allocation + collection         runtime
+        + memory stalls                                     every term above
+max RSS = touched binary text and data + stacks
+        + max over t of (live heap(t) · (1 + header overhead) · (1 + GC headroom)
+                         + fragmentation)
+        + residual and metadata + allocator overhead
+```
+
+| Principle | Terms it reduces | Owner tasks |
+| --------- | ---------------- | ----------- |
+| 1. Remove work at the earliest binding time: static, then load time, then guarded, then generic | `N(op)`, runtime library | 57, 67, 70–76 |
+| 2. Make the common dispatch the cheapest path: state in machine registers, operands the verifier has proved, one indirect branch per operation, cold paths out of line | dispatch, decode | 33, 78, 84 |
+| 3. Let representation carry the fast path: NaN-boxed values, shapes with inline slots, element kinds, and a Latin-1/rope/slice string lattice | `work(op)`, live heap | 06, 08, 50, 79 |
+| 4. Allocate less, allocate by bumping a pointer, and reclaim young objects cheaply | allocation, collection, live heap | 72, 73, 81, 82 |
+| 5. Bytes are time: smaller hot structures raise cache hit rates on the host's measured cache sizes and 16 KiB pages | memory stalls, RSS | 50, 77 |
+| 6. Touch fewer pages: create lazily, derive at the boundary, return pages to the OS | text/data, heap, startup | 67, 82, 83 |
+| 7. Choose each policy on the Score × RSS Pareto front under the paired gate, never on one axis | all | 26, 61, 77 |
+| 8. Accelerate a builtin only through a kernel primitive with a reference definition | runtime library | 47, 75, 80, 85 |
+| 9. Key every mechanism on semantics, never on fixture identity ([AGENTS.md](../AGENTS.md)) | — | all |
+
+Task 77 owns the attribution tooling and the
+[coverage map](77.md#coverage-map), which lists every known mechanism with its
+term, the fixtures it affects, prior art, v2's record, and its owner task.
+Task 61 closes only when every map row has a retained mechanism with paired
+evidence or a recorded negative result.
+
 ## Phase order
 
-Phase A closes before design refactors begin, and phase B closes before any
-tuning. Task 24 (Test262 100%, Wasm 100%, and the frozen Node set green in one
-build on the shared JS/Wasm VM) and cutover (27) close phase A. The watermark
-(46), category laws (60), generating extension (47), and metacircular kernel
-(59) then run on the single core, guarded by task 48's ratchet over all three
-suites. Task 25's lab, the specializer lane (29–34, 57), Wasm materialization
-(38), footprint and binding-time restoration (49, 50), the v2 parity step (26),
-and the no-JIT leadership gate (61) all depend on task 59.
+Task 24 (Test262 100%, Wasm 100%, and the frozen Node set green in one build
+on the shared JS/Wasm VM) and cutover (27) close phase A. Cutover also removes
+everything that exists only for the legacy engine or the migration (task 27's
+clutter list), so phase B starts from one VM and a clean tree.
 
-Before phase C, a "Performance evidence" section asks for measurement only:
+Phase B runs on that single core under task 48's ratchet over all three
+suites. The v2-parity track (25, 49, 50, 67, then 26) and the representation
+work (44, 45) start at cutover. The staging spine (46, then 47) gates the
+static-fact specializers (57, 70–72, 75 and their followers 73, 74, 76),
+Wasm materialization (38), and builtin acceleration (85). Task 25's lab gates
+the existing-specializer lane (29–34) and the efficiency mechanisms (78–85).
+Task 28 depends on every specializer task and on lazy compilation (67), so
+phase B cannot close with one of them open. Task 61 gates only on the
+mechanisms it needs.
+
+Before phase B, a "Performance evidence" section asks for measurement only:
 record the numbers and do not change code to move them. Existing
 specializations (field/method caches, numeric arming, superinstruction rows)
 stay as they are, frozen, and must pass task 42's optimized-versus-generic
 gate at every change; they are not extended.
 
 Phase A keeps the structural work that correctness needs: the foundation
-contracts (07–10, 52, 56), the shared Wasm lowering and engine entry (37, 40,
-41), and the specialization gate (42). Representation work that removes
-duplicate authorities (35, 36, 44) and the shared control-flow scope stack (39)
-is design, so it is phase B.
+contracts (07–10, 52, 56), stack traces (63), async-context hooks (64),
+resource limits (65), differential fuzzing (66), the shared Wasm lowering and
+engine entry (37, 40), and the specialization gate (42).
 
 ## Kernel watermark
 
@@ -171,38 +290,68 @@ comes first, and each family still moves only once:
    crates on the single core, then moves the builtin families of tasks 12–17
    onto the kernel API. Every move is a ratchet diff with zero regressions
    across all three suites.
-3. Task 60 states the categorical model and derives its laws from the tables.
-4. Task 47 derives the generating extension from the tables and proves the
-   Futamura equation (task 60's naturality square) against the reference
-   kernel.
-5. Task 59 reduces the kernel to a closed, named fundamental set. Every other
-   kernel entry is accelerated, with a library reference definition, and the
-   reference kernel alone passes all three conformance inventories. What
-   remains is one core: a minimal metacircular kernel, a library defined
-   through its API, and shared algorithm crates behind `AlgorithmBoundary`.
+3. Task 47 derives the generating extension from the tables. Every kernel
+   body that only speeds up a library operation becomes a fast path on that
+   library-bodied row, and the reference kernel (no fast paths, no
+   specialization) passes all three conformance inventories. What remains is
+   one core: a kernel, a library defined through its API, and shared
+   algorithm crates behind `AlgorithmBoundary`.
+
+In Self, everything is a message send, and an object's map decides how it
+responds. JavaScript's send is `Invoke` (`Get` then `Call`), and its selectors
+are property keys and well-known symbols. The 13 internal methods, `Call` and
+`Construct` included, form a complete object protocol; Proxy proves it can
+emulate any object. So the internal methods are selectors, dispatched by
+brand. Every object, the ordinary ones included, answers them through library
+handler rows. The fundamental set is only what the protocol cannot express:
+
+- a value algebra (tags, SameValue, primitive numeric operations);
+- strings;
+- storage: branded slots (internal slots, private names, and environment
+  records) and shape-backed property storage;
+- dispatch by brand;
+- enter activation, throw, and suspend/resume;
+- lifetime and agent primitives.
+
+Everything else is library code over that set. That includes every abstract
+operation, builtin, and opcode fallback, and every brand's handlers: Ordinary,
+the exotic kinds, and every kind of function. Speed and memory come from the
+kernel, not new semantics. Brand rows fix cell layouts. Fast paths are guarded
+by fact rows and fall back exactly to their row's library body. The compiler
+is the generating extension over the three tables, with budgets whose
+exhaustion yields the generic residual. The reference kernel, with no fast
+paths and no packed layouts, is the correctness oracle (tasks 46, 47).
 
 | Layer | Owns | May use |
 | ----- | ---- | ------- |
-| 0. Kernel | values, strings, heap, roots, shapes, storage, essential internal methods, Call/Construct, activations, realms, jobs, compiler, interpreter, specializers | nothing above it |
-| 1. Language library | spec abstract operations, exotic-object semantics, all intrinsics and builtins | the kernel API only |
+| 0. Kernel | fundamental row bodies, brand-derived layouts, shapes, storage, roots and GC, fact cells, fast-path bodies, activations, realms, jobs, compiler, interpreter, specializers | nothing above it |
+| 1. Language library | every other operation row: spec abstract operations, every brand's internal-method handlers (Ordinary included), opcode fallbacks, all intrinsics and builtins | the kernel API only |
 | 2. Algorithms | RegExp, Intl, Temporal, Date, numeric/string conversion (task 45) | the algorithm boundary trait only; no kernel or library types |
 
 The watermark between layers 0 and 1 is a crate boundary crossed only through
 three declared tables:
 
-- the **kernel primitive table**, which records each primitive's effect class
-  and whether it is fundamental or accelerated;
-- the **library operation registry**, one registry for builtins and opcode
-  fallbacks alike;
-- the **object-kind dispatch table** for exotic behavior.
+- **operations**: one row per kernel primitive, abstract operation, brand
+  handler, opcode fallback, and builtin. Each row has a body (`kernel` or
+  library), an effect set, optional fast paths, and install metadata for
+  intrinsics.
+- **brands**: fixed slot layouts plus internal-method overrides. These cover
+  object kinds, internal slots, private names, and environment records.
+- **facts**: named predicates with an owner, invalidating transitions, and a
+  `Valid → Invalidated` state machine. Protectors, validity cells, and
+  inline-cache shape checks are all fact rows.
 
-An accelerated primitive must name a library reference definition written
-with fundamental primitives only, so the kernel never adds semantics and a
-reference kernel without accelerations must pass the same conformance run.
-Every table row declares its effect class and static evaluability from the
-start, so the staging rules hold before anything is derived from them.
-Kernel experiments therefore change only the kernel. A change that forces
-library edits is a change to the primitive table and is reviewed as one.
+Roles are derived, not stored. A row is fundamental if its body is `kernel`,
+accelerated if it has fast paths, and statically evaluable if its effect set
+is empty. A fast path's exact fallback is its row's library body, so the
+kernel never adds semantics, and a reference kernel without fast paths must
+pass the same conformance run. The kernel API is opaque and cache-friendly:
+lookups return results a cache can hold, and value encoding stays private.
+Every row declares its body and effect set, and every fast path its facts,
+from the start, so the staging rules hold before anything is derived from
+them. Kernel experiments therefore change only the kernel. A change that
+forces library edits is a change to the operation or brand table and is
+reviewed as one.
 
 ## Migrating legacy semantics
 
@@ -262,9 +411,8 @@ Migration order (from 2026-09-29):
 4. Declare the watermark and the `AlgorithmBoundary` rows (task 46). Finish
    extracting next-core Temporal, Intl and Date into the shared crates (task
    45, already in progress).
-5. Move the builtin families onto the kernel API (task 46), state the laws
-   (task 60), derive the generating extension (task 47), then reduce the kernel
-   (task 59).
+5. Move the builtin families onto the kernel API (task 46), then derive the
+   generating extension (task 47).
 
 ## Conformance ratchet
 
@@ -296,6 +444,19 @@ dependency graph acyclic.
   executes Wasm.
 - The final tree contains no guest JIT, copy-and-patch stencil, executable-memory
   runtime, legacy backend, or sibling-checkout build dependency.
+
+## Out of scope
+
+These Node and VM facilities are deliberately not implemented, because the
+Node gate is task 19's frozen legacy passing set and no tracked fixture needs
+them. Adding one requires a task, not an incidental change:
+
+- the inspector protocol and debugger (`--inspect`, breakpoints, stepping);
+- source-map support for stack traces (`--enable-source-maps`);
+- CPU profiles and heap snapshots (`--cpu-prof`, `v8.writeHeapSnapshot`).
+
+Task 63's position table and frame walk are the foundation any of them would
+build on.
 
 The generic Lisp-mindset skill suggests size caps, but this repository's rules
 explicitly reject mandatory line-count or complexity ceilings. Cohesion and
