@@ -12,15 +12,14 @@ mod control;
 mod scalar;
 pub(crate) use scalar::ScalarBits;
 pub use scalar::{WasmFunctionBody, WasmSignature, WasmType, WasmValue};
+pub(crate) mod conversion;
 pub(crate) mod float;
 pub(crate) mod integer;
 mod numeric;
 use control::{Control, Reachability};
+use conversion::ScalarConversionOperator;
 use float::{F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator};
-use integer::{
-    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
-    IntegerConversionOperator,
-};
+use integer::{I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator};
 
 /// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,6 +28,7 @@ pub enum WasmTrap {
     CallStackExhausted,
     IntegerDivideByZero,
     IntegerOverflow,
+    InvalidConversionToInteger,
 }
 
 impl std::fmt::Display for WasmTrap {
@@ -38,6 +38,7 @@ impl std::fmt::Display for WasmTrap {
             Self::CallStackExhausted => "call stack exhausted",
             Self::IntegerDivideByZero => "integer divide by zero",
             Self::IntegerOverflow => "integer overflow",
+            Self::InvalidConversionToInteger => "invalid conversion to integer",
         })
     }
 }
@@ -352,7 +353,7 @@ mod tests {
             ),
             (
                 Operator::I32WrapI64,
-                Op::WasmIntegerConvert,
+                Op::WasmScalarConvert,
                 WasmType::I64,
                 WasmType::I32,
             ),
@@ -419,6 +420,17 @@ mod tests {
                 .execute_wasm(&function, &[ty.zero()])
                 .unwrap_err();
             assert_eq!(error.wasm_trap(), None);
+        }
+    }
+
+    #[test]
+    fn scalar_conversion_rows_own_input_output_types_and_selector_domain() {
+        assert_eq!(ScalarConversionOperator::from_tag(u32::MAX), None);
+        for operator in ScalarConversionOperator::ALL {
+            let input = operator.source_type().zero();
+            let output = operator.apply(input).unwrap();
+            assert_eq!(input.ty(), operator.source_type());
+            assert_eq!(output.ty(), operator.result_type());
         }
     }
 
@@ -700,8 +712,8 @@ impl Lowering<'_> {
                 I64UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmI64Unary, op as u32))
             });
         let numeric = numeric.or_else(|| {
-            IntegerConversionOperator::from_wasm(&operator)
-                .map(|op| (Op::WasmIntegerConvert, op as u32))
+            ScalarConversionOperator::from_wasm(&operator)
+                .map(|op| (Op::WasmScalarConvert, op as u32))
         });
         let numeric = numeric
             .or_else(|| {

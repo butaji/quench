@@ -846,14 +846,15 @@ impl<H: Host> Vm<H> {
                 let value = self.encode_wasm_scalar(operator.apply(value));
                 self.write(f, i.result_register(), value);
             }
-            Op::WasmIntegerConvert => {
-                let operator = crate::wasm::integer::IntegerConversionOperator::from_tag(i.imm())
-                    .expect("validated Wasm integer conversion");
+            Op::WasmScalarConvert => {
+                let operator = crate::wasm::conversion::ScalarConversionOperator::from_tag(i.imm())
+                    .expect("validated Wasm scalar conversion");
                 let value = self.decode_wasm_scalar(
                     self.read(f, i.register_b()),
                     operator.source_type(),
                 )?;
-                let value = operator.apply(value).expect("typed Wasm conversion operand");
+                let value = operator.apply(value).map_err(JsError::wasm_trap_error)?;
+                debug_assert_eq!(value.ty(), operator.result_type());
                 let value = self.encode_wasm_scalar(value);
                 self.write(f, i.result_register(), value);
             }

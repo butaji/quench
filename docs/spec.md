@@ -23,12 +23,13 @@ using `quench_wasm::Module::lower_shared(export)`, then executes through
 and result types. `WasmValue` carries i32/i64 values and exact f32/f64 IEEE bits,
 preserving signed zero and NaN payloads. Constants, locals (with typed zero
 initialization), calls, branches and select preserve all four scalar forms.
-Arithmetic supports the full i32/i64 and f32/f64 operator families, plus wrapping
-and signed/unsigned extension between integer widths. Floating-point min/max
-propagate NaNs and order signed zero; nearest rounds ties to even; abs, neg and
-copysign preserve payload bits. Remaining numeric conversions, references,
-multiple results and stateful module sections fail
-explicitly. Blocks support zero or one scalar result without block parameters.
+Arithmetic supports the full i32/i64 and f32/f64 operator families. Scalar
+conversions cover integer width changes, trapping and saturating float-to-integer
+conversion, signed/unsigned integer-to-float rounding, float promotion/demotion
+and bit reinterpretation. Floating-point min/max propagate NaNs and order signed
+zero; nearest rounds ties to even; abs, neg and copysign preserve payload bits.
+References, multiple results and stateful module sections fail explicitly.
+Blocks support zero or one scalar result without block parameters.
 
 32-bit payloads use existing immediate Value slots. Exact 64-bit payloads use
 an immutable leaf cell in the shared heap because they cannot fit the tagged
