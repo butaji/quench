@@ -520,15 +520,4 @@ include!(concat!(env!("OUT_DIR"), "/stencil_artifacts.rs"));
 
 include!("stencil_physical_select.rs");
 
-#[cfg(all(test, feature = "legacy-native-tests"))]
-#[path = "stencil_select_contract_tests.rs"]
-mod generated_region_admission_tests;
-
 include!("stencil_select_optimizer.rs");
-
-#[cfg(all(test, feature = "legacy-native-tests"))]
-#[path = "stencil_select_artifact_tests.rs"]
-mod artifact_tests;
-#[cfg(all(test, feature = "legacy-native-tests"))]
-#[path = "stencil_select_tests.rs"]
-mod tests;

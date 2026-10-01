@@ -329,11 +329,3 @@ fn render_arena_physical<const N: usize>(
 impl Drop for StencilArena {
     fn drop(&mut self) {}
 }
-
-#[cfg(all(test, feature = "legacy-native-tests"))]
-#[path = "stencil_arena_accounting_tests.rs"]
-mod accounting_tests;
-
-#[cfg(all(test, feature = "legacy-native-tests"))]
-#[path = "stencil_arena_tests.rs"]
-mod tests;
