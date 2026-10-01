@@ -1,7 +1,8 @@
 # WebAssembly boundary
 
 `quench-wasm` owns decoding, validation and spec-script adaptation;
-`quench-runtime` owns execution, memory, tables, exceptions and host calls.
+`quench-runtime-next` owns shared execution; the legacy `quench-runtime` still
+owns the remaining memory, table, exception and host-call coverage.
 Third-party decoding/validation is allowed; a separate guest executor is not.
 
 Use the shared typed register machinery and preserve distinct Wasm traps,
@@ -16,22 +17,31 @@ No fixture recognizers or skip-list-based claims. See
 [the runner](../crates/quench-wasm-test/README.md) and [repository rules](../AGENTS.md).
 These are requirements, not an assertion of complete conformance.
 
-The initial shared execution API lowers i32 module functions with a selected export from a
-validated `quench_wasm::Module` with `lower_shared_i32(export)`, then executes
-with `rqj::Runtime::execute_wasm_i32(&function, args)`. It supports constants,
-locals (including zero initialization), drop/nop, all i32 numeric operators,
-blocks, loops, if/else, branches, branch tables, select, return and direct calls
-between module functions. All functions must use the supported i32 subset. Blocks
-support zero or one i32 result and no block parameters.
-Integer division and remainder preserve signed/unsigned rules and report typed
-`WasmTrap` values for division by zero, signed division overflow and
-`unreachable`; ordinary call recursion reports `CallStackExhausted` using the
-shared stack budget. Unsupported operators and stateful module sections are rejected.
-Decoding and validation stay in `quench-wasm`; lowering uses the next runtime's
-`Engine`, residual instructions, root maps, activation frames and dispatch loop.
-Like JavaScript `Runtime::execute`, execution starts fresh and invalidates
-previous host roots. This API is an initial migration slice; the legacy spec
-harness still owns the remaining Wasm coverage.
+The shared scalar API lowers validated module functions with a selected export
+using `quench_wasm::Module::lower_shared(export)`, then executes through
+`rqj::Runtime::execute_wasm(&function, args)`. `WasmSignature` owns parameter
+and result types. `WasmValue` carries i32/i64 values and exact f32/f64 IEEE bits,
+preserving signed zero and NaN payloads. Constants, locals (with typed zero
+initialization), calls, branches and select preserve all four scalar forms.
+Arithmetic currently supports the full i32 operator family; remaining numeric
+operators, references, multiple results and stateful module sections fail
+explicitly. Blocks support zero or one scalar result without block parameters.
+
+32-bit payloads use existing immediate Value slots. Exact 64-bit payloads use
+an immutable leaf cell in the shared heap because they cannot fit the tagged
+Value payload. Both forms use existing frames, locals, root maps and dispatch;
+there is no second heap or executor. ScalarBits is the shared encoding authority
+for constants and execution views. Raw 64-bit constants survive bytecode
+serialization, and the same GC root lifecycle retains/releases scalar cells.
+
+The i32 convenience boundaries `lower_shared_i32` and `execute_wasm_i32` delegate
+to this typed path and reject incompatible entry signatures. `WasmI32Function`
+is a compatibility name for the same artifact, not another program representation.
+Integer division and remainder retain signed/unsigned rules; traps distinguish
+division by zero, signed division overflow, unreachable and call-stack exhaustion.
+Ordinary Wasm calls retain their callers and use the shared stack budget.
+Execution starts fresh and invalidates previous host roots, like JavaScript
+`Runtime::execute`. The legacy harness still owns remaining Wasm coverage.
 
 Run the focused shared execution regressions with:
 

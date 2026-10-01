@@ -924,6 +924,7 @@ impl<H: Host> Vm<H> {
         for constant in &program.constants {
             let value = match constant {
                 Constant::Number(v) => Value::number(*v),
+                Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
                 Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
                 Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
                 Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),

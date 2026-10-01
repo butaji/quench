@@ -6,13 +6,54 @@ impl<H: Host> Vm<H> {
         function: &crate::WasmI32Function,
         args: &[i32],
     ) -> Result<Option<i32>, JsError> {
+        if function
+            .signature
+            .params
+            .iter()
+            .any(|ty| *ty != crate::WasmType::I32)
+            || function
+                .signature
+                .result
+                .is_some_and(|ty| ty != crate::WasmType::I32)
+        {
+            return Err(JsError::validation(
+                "function requires the typed Wasm boundary".into(),
+            ));
+        }
+        let args: Vec<_> = args.iter().copied().map(crate::WasmValue::I32).collect();
+        self.execute_wasm(function, &args).map(|result| {
+            result.map(|value| {
+                let crate::WasmValue::I32(value) = value else {
+                    unreachable!("checked i32 signature")
+                };
+                value
+            })
+        })
+    }
+
+    pub(crate) fn execute_wasm(
+        &mut self,
+        function: &crate::WasmFunction,
+        args: &[crate::WasmValue],
+    ) -> Result<Option<crate::WasmValue>, JsError> {
         let program = &function.program;
         program.validate().map_err(JsError::validation)?;
-        if args.len() != usize::from(program.functions[function.entry as usize].params) {
+        if args.len() != function.signature.params.len() {
             return Err(JsError::validation("Wasm argument count mismatch".into()));
         }
+        if args
+            .iter()
+            .zip(&function.signature.params)
+            .any(|(value, ty)| value.ty() != *ty)
+        {
+            return Err(JsError::validation("Wasm argument type mismatch".into()));
+        }
         self.initialize(program)?;
-        let args = args.iter().copied().map(Value::integer).collect::<Vec<_>>();
+        let args = args
+            .iter()
+            .copied()
+            .map(|value| self.encode_wasm_scalar(value))
+            .collect::<Vec<_>>();
         let result = self.call_user(
             program,
             function.entry,
@@ -20,14 +61,34 @@ impl<H: Host> Vm<H> {
             Value::UNDEFINED,
             &args,
         )?;
-        if function.has_result {
-            result
-                .as_int()
-                .map(Some)
-                .ok_or_else(|| JsError::validation("invalid Wasm i32 result".into()))
-        } else {
-            Ok(None)
+        function
+            .signature
+            .result
+            .map(|ty| self.decode_wasm_scalar(result, ty))
+            .transpose()
+    }
+
+    pub(super) fn encode_wasm_scalar(&mut self, value: crate::WasmValue) -> Value {
+        match value.bits() {
+            crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),
+            crate::wasm::ScalarBits::Bits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
         }
+    }
+
+    pub(super) fn decode_wasm_scalar(
+        &self,
+        value: Value,
+        ty: crate::WasmType,
+    ) -> Result<crate::WasmValue, JsError> {
+        let bits = if let Some(bits) = value.as_int() {
+            Some(crate::wasm::ScalarBits::Bits32(bits as u32))
+        } else if let Some(Cell::WasmBits64(bits)) = self.heap.get(value) {
+            Some(crate::wasm::ScalarBits::Bits64(*bits))
+        } else {
+            None
+        };
+        bits.and_then(|bits| ty.decode(bits))
+            .ok_or_else(|| JsError::validation("invalid Wasm scalar representation".into()))
     }
 }
 

@@ -80,6 +80,14 @@ impl<H: Host> Runtime<H> {
 
     /// Execute a lowered i32 Wasm function on the same VM as JavaScript.
     /// Like `execute`, this starts a fresh execution and invalidates old roots.
+    pub fn execute_wasm(
+        &mut self,
+        function: &crate::WasmFunction,
+        args: &[crate::WasmValue],
+    ) -> Result<Option<crate::WasmValue>, JsError> {
+        self.vm.execute_wasm(function, args)
+    }
+
     pub fn execute_wasm_i32(
         &mut self,
         function: &crate::WasmI32Function,

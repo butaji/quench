@@ -1454,6 +1454,7 @@ enum ClassField<'a> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum ConstantKey {
     Number(u64),
+    WasmBits64(u64),
     String(String),
     StringUnits(Vec<u16>),
     BigInt(String),
@@ -1466,6 +1467,7 @@ impl From<&Constant> for ConstantKey {
     fn from(value: &Constant) -> Self {
         match value {
             Constant::Number(value) => Self::Number(value.to_bits()),
+            Constant::WasmBits64(bits) => Self::WasmBits64(*bits),
             Constant::String(value) => Self::String(value.clone()),
             Constant::StringUnits(value) => Self::StringUnits(value.clone()),
             Constant::BigInt(value) => Self::BigInt(value.clone()),

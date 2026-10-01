@@ -84,10 +84,11 @@ pub(crate) enum CellKind {
     TemporalPlainYearMonth,
     TemporalZonedDateTime,
     TemporalInstant,
+    WasmBits64,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
-    pub(crate) const COUNT: usize = Self::TemporalInstant as usize + 1;
+    pub(crate) const COUNT: usize = Self::WasmBits64 as usize + 1;
     #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
@@ -114,6 +115,7 @@ impl CellKind {
         "temporal_plain_year_month",
         "temporal_zoned_date_time",
         "temporal_instant",
+        "wasm_bits64",
     ];
 }
 #[derive(Default)]
@@ -659,7 +661,11 @@ impl Heap {
             | Cell::TemporalPlainYearMonth { object: value, .. }
             | Cell::TemporalZonedDateTime { object: value, .. }
             | Cell::TemporalInstant { object: value, .. } => object(value),
-            Cell::String(_) | Cell::BigInt(_) | Cell::Symbol(_) | Cell::Error(_) => {}
+            Cell::String(_)
+            | Cell::BigInt(_)
+            | Cell::Symbol(_)
+            | Cell::Error(_)
+            | Cell::WasmBits64(_) => {}
             _ => unreachable!("typed array backing handled above"),
         }
     }
@@ -684,6 +690,7 @@ impl Heap {
             Cell::Environment { .. } => CellKind::Environment,
             Cell::String(_) => CellKind::String,
             Cell::BigInt(_) => CellKind::BigInt,
+            Cell::WasmBits64(_) => CellKind::WasmBits64,
             Cell::Symbol(_) => CellKind::Symbol,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
@@ -717,7 +724,8 @@ impl Heap {
                 | Cell::TypedArray { .. }
                 | Cell::DataView { .. }
                 | Cell::WeakRef { .. }
-                | Cell::FinalizationRegistry { .. } => 0,
+                | Cell::FinalizationRegistry { .. }
+                | Cell::WasmBits64(_) => 0,
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }

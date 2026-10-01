@@ -6,6 +6,7 @@ use super::{
 };
 
 const RESIDUAL_MAGIC: &[u8; 5] = &[b'R', b'Q', b'J', 0, super::ResidualProgram::FORMAT_VERSION];
+const WASM_BITS64_TAG: u8 = 8;
 const EVAL_BINDING_LOCAL: u8 = 0;
 const EVAL_BINDING_CAPTURE: u8 = 1;
 const OPTIONAL_STRING_NONE: u8 = 0;
@@ -83,6 +84,10 @@ pub(super) fn write_program(
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
         match value {
+            Constant::WasmBits64(bits) => {
+                out.u8(WASM_BITS64_TAG);
+                out.u64(*bits);
+            }
             Constant::Number(value) => {
                 out.u8(0);
                 out.u64(value.to_bits());
@@ -327,6 +332,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     };
     let atoms = input.strings()?;
     let constants = input.list(|input| match input.u8()? {
+        WASM_BITS64_TAG => Ok(Constant::WasmBits64(input.u64()?)),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?)),
         7 => Ok(Constant::StringUnits(input.u16s()?)),
