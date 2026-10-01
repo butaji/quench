@@ -216,20 +216,12 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get_mut(generator)
         {
             *slot = Some(Box::new(GeneratorRecord {
-                continuation: Some(Continuation {
-                    program: frame.program,
-                    function: frame.function,
-                    pc: frame.pc,
-                    env: frame.env,
-                    this: frame.this,
-                    locals: std::mem::take(&mut frame.locals),
-                    registers: std::mem::take(&mut frame.registers),
-                    active_iterators: std::mem::take(&mut frame.active_iterators),
-                    completion: Completion::Yield(Value::UNDEFINED),
-                    captured: frame.captured,
-                    resume_register: None,
-                    promise: Value::UNDEFINED,
-                }),
+                continuation: Some(Continuation::from_frame(
+                    &mut frame,
+                    Completion::Yield(Value::UNDEFINED),
+                    None,
+                    Value::UNDEFINED,
+                )),
                 realm,
                 done: false,
                 running: false,
@@ -1277,21 +1269,10 @@ impl<H: Host> Vm<H> {
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = true;
         }
-        let mut frame = Frame {
-            program: continuation.program,
-            function: continuation.function,
-            pc: continuation.pc,
-            env: continuation.env,
-            this: continuation.this,
-            locals: continuation.locals,
-            dynamic_bindings: vec![],
-            captured: continuation.captured,
-            registers: continuation.registers,
-            active_iterators: continuation.active_iterators,
-            with_base: self.with_stack.len(),
-        };
+        let resume_register = continuation.resume_register;
+        let mut frame = continuation.into_frame(self.with_stack.len());
         if initial_error.is_none()
-            && let Some(register) = continuation.resume_register
+            && let Some(register) = resume_register
         {
             if register as usize >= frame.registers.len() {
                 self.frame_pool.push(Self::recycle_frame(frame));
@@ -1303,7 +1284,7 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
-        let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
+        let previous_program = std::mem::replace(&mut self.active_program, frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
@@ -1311,7 +1292,7 @@ impl<H: Host> Vm<H> {
             self.frames.len() - 1,
             initial_error,
         );
-        let frame = self.frames.pop().expect("generator frame exists");
+        let mut frame = self.frames.pop().expect("generator frame exists");
         self.active_program = previous_program;
         self.switch_realm_global(previous_global);
         let outcome = match result {
@@ -1334,20 +1315,12 @@ impl<H: Host> Vm<H> {
             } => {
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
-                    record.continuation = Some(Continuation {
-                        program: frame.program,
-                        function: frame.function,
-                        pc: frame.pc,
-                        env: frame.env,
-                        this: frame.this,
-                        locals: frame.locals,
-                        registers: frame.registers,
-                        active_iterators: frame.active_iterators,
-                        completion: Completion::Yield(value),
-                        captured: frame.captured,
-                        resume_register: Some(destination),
-                        promise: Value::UNDEFINED,
-                    });
+                    record.continuation = Some(Continuation::from_frame(
+                        &mut frame,
+                        Completion::Yield(value),
+                        Some(destination),
+                        Value::UNDEFINED,
+                    ));
                 }
                 match delegated_result {
                     Some(result) => Ok(result),
@@ -1524,21 +1497,10 @@ impl<H: Host> Vm<H> {
                 return Ok(promise);
             }
         };
-        let mut frame = Frame {
-            program: continuation.program,
-            function: continuation.function,
-            pc: continuation.pc,
-            env: continuation.env,
-            this: continuation.this,
-            locals: continuation.locals,
-            dynamic_bindings: vec![],
-            captured: continuation.captured,
-            registers: continuation.registers,
-            active_iterators: continuation.active_iterators,
-            with_base: self.with_stack.len(),
-        };
+        let resume_register = continuation.resume_register;
+        let mut frame = continuation.into_frame(self.with_stack.len());
         if initial_error.is_none()
-            && let Some(register) = continuation.resume_register
+            && let Some(register) = resume_register
         {
             if register as usize >= frame.registers.len() {
                 self.fail_async_generator(
@@ -1551,7 +1513,7 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = value;
         }
-        let previous_program = std::mem::replace(&mut self.active_program, continuation.program);
+        let previous_program = std::mem::replace(&mut self.active_program, frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
@@ -1559,7 +1521,7 @@ impl<H: Host> Vm<H> {
             self.frames.len() - 1,
             initial_error,
         );
-        let frame = self.frames.pop().expect("async generator frame exists");
+        let mut frame = self.frames.pop().expect("async generator frame exists");
         self.active_program = previous_program;
         self.switch_realm_global(previous_global);
         match result {
@@ -1590,20 +1552,12 @@ impl<H: Host> Vm<H> {
                 destination,
                 frame: None,
             }) => {
-                let continuation = Continuation {
-                    program: frame.program,
-                    function: frame.function,
-                    pc: frame.pc,
-                    env: frame.env,
-                    this: frame.this,
-                    locals: frame.locals,
-                    registers: frame.registers,
-                    active_iterators: frame.active_iterators,
-                    completion: Completion::Await(value),
-                    captured: frame.captured,
-                    resume_register: Some(destination),
+                let continuation = Continuation::from_frame(
+                    &mut frame,
+                    Completion::Await(value),
+                    Some(destination),
                     promise,
-                };
+                );
                 let id = self.suspend_continuation(continuation);
                 self.enqueue_async_resume(p, id, promise, Some(generator), value, false)?;
             }
@@ -1625,25 +1579,17 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         generator: Value,
         promise: Value,
-        frame: Frame,
+        mut frame: Frame,
         value: Value,
         destination: u16,
         delegated: bool,
     ) -> Result<(), JsError> {
-        let continuation = Continuation {
-            program: frame.program,
-            function: frame.function,
-            pc: frame.pc,
-            env: frame.env,
-            this: frame.this,
-            locals: frame.locals,
-            registers: frame.registers,
-            active_iterators: frame.active_iterators,
-            completion: Completion::Yield(value),
-            captured: frame.captured,
-            resume_register: Some(destination),
-            promise: Value::UNDEFINED,
-        };
+        let continuation = Continuation::from_frame(
+            &mut frame,
+            Completion::Yield(value),
+            Some(destination),
+            Value::UNDEFINED,
+        );
         if let Some(record) = self.generator_record_mut(generator) {
             record.running = !delegated;
             record.continuation = Some(continuation.clone());
