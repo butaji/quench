@@ -656,6 +656,74 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn typed_fill_and_assignment_roots_release_after_coercion() {
+    struct Test262Host;
+    impl Host for Test262Host {
+        fn write_line(&mut self, _: &str) {}
+        fn clock_millis(&mut self) -> f64 {
+            0.0
+        }
+        fn globals(&self) -> &'static [crate::HostGlobal] {
+            &[crate::HostGlobal {
+                name: "$262",
+                capability: crate::CapabilityId::CreateRealm,
+            }]
+        }
+    }
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for constructor in ["Uint8Array", "BigInt64Array", "BigUint64Array"] {
+            let element = if constructor == "Uint8Array" {
+                "7"
+            } else {
+                "7n"
+            };
+            for (setup, fails) in [
+                (format!("var value = {element}; var start = 0; var end = undefined;"), false),
+                ("var value = {valueOf() {$262.gc(); throw new Error('value')}}; var start = 0; var end = undefined;".into(), true),
+                (format!("var value = {element}; var start = {{valueOf() {{$262.gc(); throw new Error('start')}}}}; var end = undefined;"), true),
+                (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.gc(); throw new Error('end')}}}};"), true),
+                (format!("var value = {element}; var start = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 0}}}}; var end = undefined;"), true),
+                (format!("var value = {element}; var start = 0; var end = {{valueOf() {{$262.detachArrayBuffer(source.buffer); $262.gc(); return 1}}}};"), true),
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let program = compile(&format!("var source = new {constructor}(3); {setup}"), "typed-fill-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let mut values = Vec::new();
+                for name in ["source", "value", "start", "end"] {
+                    let atom = vm.intern_atom(name);
+                    values.push(vm.own_property(vm.realm.globals, atom).unwrap());
+                }
+                let roots = vm.heap.root_count_for_test();
+                let result = vm.typed_array_native(&program, Native::Uint8ArrayFill, values[0], &values[1..]);
+                assert_eq!(result.is_err(), fails, "{constructor}: {setup}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+            }
+            for fails in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let coercion = if fails {
+                    "throw new Error('value')".to_owned()
+                } else {
+                    format!("return {element}")
+                };
+                let program = compile(&format!("var source = new {constructor}(1); var value = {{valueOf() {{$262.gc(); {coercion}}}}};"), "typed-set-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let value_atom = vm.intern_atom("value");
+                let value = vm.own_property(vm.realm.globals, value_atom).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let result = vm.typed_array_set(&program, source, 0, value);
+                assert_eq!(result.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+            }
+        }
+    }
+}
+
+#[test]
 fn typed_sort_snapshot_roots_release_after_comparator_errors() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
