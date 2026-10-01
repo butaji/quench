@@ -353,6 +353,45 @@ mod tests {
     }
 
     #[test]
+    fn regression_bound_function_survives_collecting_metadata_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            function target(first, second) { return this.base + first.value + second; }
+            Object.defineProperty(target, 'length', {
+                configurable: true,
+                get() { print('length'); $262.gc(); return 2; }
+            });
+            Object.defineProperty(target, 'name', {
+                configurable: true,
+                get() { print('name'); $262.gc(); return 'target'; }
+            });
+            var bound = target.bind({base: 40}, {value: 1});
+            $262.gc();
+            print(bound.name);
+            print(bound.length);
+            print(bound(1));
+            var name = Object.getOwnPropertyDescriptor(bound, 'name');
+            var length = Object.getOwnPropertyDescriptor(bound, 'length');
+            print(name.writable + ',' + name.enumerable + ',' + name.configurable);
+            print(length.writable + ',' + length.enumerable + ',' + length.configurable);
+            for (var property of ['length', 'name']) {
+                var marker = {};
+                var victim = function() {};
+                Object.defineProperty(victim, property, {
+                    get() { $262.gc(); throw marker; }
+                });
+                try { victim.bind(null); }
+                catch (error) { print(error === marker); }
+            }
+            "#,
+            &[
+                "length", "name", "bound target", "1", "42",
+                "false,false,true", "false,false,true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_closure_identity_survives_collection() {
         assert_output_in_execution_modes(
             r#"
