@@ -12,9 +12,12 @@ mod control;
 mod scalar;
 pub(crate) use scalar::ScalarBits;
 pub use scalar::{WasmFunctionBody, WasmSignature, WasmType, WasmValue};
-pub(crate) mod i32;
+pub(crate) mod integer;
 use control::{Control, Reachability};
-use i32::{I32BinaryOperator, I32UnaryOperator};
+use integer::{
+    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
+    IntegerConversionOperator,
+};
 
 /// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -319,21 +322,57 @@ mod tests {
 
     #[test]
     fn residual_validation_rejects_unknown_wasm_numeric_selectors() {
-        for (operator, opcode) in [
-            (Operator::I32Add, Op::WasmI32Binary),
-            (Operator::I32Eqz, Op::WasmI32Unary),
+        for (operator, opcode, ty, result_type) in [
+            (
+                Operator::I32Add,
+                Op::WasmI32Binary,
+                WasmType::I32,
+                WasmType::I32,
+            ),
+            (
+                Operator::I32Eqz,
+                Op::WasmI32Unary,
+                WasmType::I32,
+                WasmType::I32,
+            ),
+            (
+                Operator::I64Add,
+                Op::WasmI64Binary,
+                WasmType::I64,
+                WasmType::I64,
+            ),
+            (
+                Operator::I64Clz,
+                Op::WasmI64Unary,
+                WasmType::I64,
+                WasmType::I64,
+            ),
+            (
+                Operator::I32WrapI64,
+                Op::WasmIntegerConvert,
+                WasmType::I64,
+                WasmType::I32,
+            ),
         ] {
             let mut operators = vec![Operator::LocalGet { local_index: 0 }];
-            if opcode == Op::WasmI32Binary {
+            if opcode
+                .field_layout(crate::bytecode::InstructionField::C)
+                .is_register_field()
+            {
                 operators.push(Operator::LocalGet { local_index: 0 });
             }
             operators.extend([operator, Operator::End]);
-            let mut function = Engine::lower_wasm_i32_function(
+            let mut function = Engine::lower_wasm_module(
                 "selector",
-                1,
                 0,
-                true,
-                operators.into_iter().map(Ok),
+                [WasmFunctionBody {
+                    signature: WasmSignature {
+                        params: vec![ty],
+                        result: Some(result_type),
+                    },
+                    locals: vec![],
+                    operators: operators.into_iter().map(Ok),
+                }],
             )
             .unwrap();
             let residual = &mut function.program.functions[0];
@@ -350,10 +389,55 @@ mod tests {
             residual.code[pc] = Instr::wide(index).unwrap();
             assert!(function.program.validate().is_err());
             let error = crate::Runtime::new(crate::SystemHost)
-                .execute_wasm_i32(&function, &[1])
+                .execute_wasm(&function, &[ty.zero()])
                 .unwrap_err();
             assert_eq!(error.wasm_trap(), None);
         }
+    }
+
+    #[test]
+    fn serialized_i64_numeric_rows_execute_after_decoding() {
+        let mut function = Engine::lower_wasm_module(
+            "i64 round trip",
+            0,
+            [WasmFunctionBody {
+                signature: WasmSignature {
+                    params: vec![WasmType::I64; 2],
+                    result: Some(WasmType::I64),
+                },
+                locals: vec![],
+                operators: [
+                    Operator::LocalGet { local_index: 0 },
+                    Operator::LocalGet { local_index: 1 },
+                    Operator::I64DivU,
+                    Operator::I64Clz,
+                    Operator::End,
+                ]
+                .into_iter()
+                .map(Ok),
+            }],
+        )
+        .unwrap();
+        let path =
+            std::env::temp_dir().join(format!("quench-shared-i64-{}.qbc", std::process::id()));
+        function.program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path);
+        std::fs::remove_file(path).unwrap();
+        function.program = decoded.unwrap();
+        let mut runtime = crate::Runtime::new(crate::SystemHost);
+        assert_eq!(
+            runtime
+                .execute_wasm(&function, &[WasmValue::I64(-1), WasmValue::I64(2)])
+                .unwrap(),
+            Some(WasmValue::I64(1))
+        );
+        assert_eq!(
+            runtime
+                .execute_wasm(&function, &[WasmValue::I64(1), WasmValue::I64(0)])
+                .unwrap_err()
+                .wasm_trap(),
+            Some(WasmTrap::IntegerDivideByZero)
+        );
     }
 
     #[test]
@@ -520,22 +604,36 @@ impl Lowering<'_> {
         if self.control_operator(&operator)? {
             return Ok(());
         }
-        if let Some(operator) = I32BinaryOperator::from_wasm(&operator) {
+        let numeric = I32BinaryOperator::from_wasm(&operator)
+            .map(|op| (Op::WasmI32Binary, op as u32))
+            .or_else(|| {
+                I32UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmI32Unary, op as u32))
+            })
+            .or_else(|| {
+                I64BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmI64Binary, op as u32))
+            })
+            .or_else(|| {
+                I64UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmI64Unary, op as u32))
+            });
+        let numeric = numeric.or_else(|| {
+            IntegerConversionOperator::from_wasm(&operator)
+                .map(|op| (Op::WasmIntegerConvert, op as u32))
+        });
+        if let Some((op, selector)) = numeric {
             if self.path == Reachability::Dead {
                 return Ok(());
             }
-            let right = self.pop()?;
+            let right = if op
+                .field_layout(crate::bytecode::InstructionField::C)
+                .is_register_field()
+            {
+                self.pop()?
+            } else {
+                0
+            };
             let left = self.pop()?;
             let result = self.push()?;
-            return self.emit(Op::WasmI32Binary, result, left, right, operator as u32);
-        }
-        if let Some(operator) = I32UnaryOperator::from_wasm(&operator) {
-            if self.path == Reachability::Dead {
-                return Ok(());
-            }
-            let value = self.pop()?;
-            let result = self.push()?;
-            return self.emit(Op::WasmI32Unary, result, value, 0, operator as u32);
+            return self.emit(op, result, left, right, selector);
         }
         match operator {
             Operator::I32Const { .. }
