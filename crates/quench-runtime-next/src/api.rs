@@ -651,6 +651,79 @@ mod tests {
     }
 
     #[test]
+    fn regression_group_by_retains_values_across_collecting_callbacks() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var group of [Map.groupBy, Object.groupBy]) {
+                var nextReads = 0;
+                var source = {[Symbol.iterator]() {
+                    var index = 0;
+                    return {get next() {
+                        nextReads++; $262.gc();
+                        return function() {
+                            $262.gc();
+                            if (index === 3) return {done: true};
+                            return {get done() {$262.gc(); return false;}, get value() {$262.gc(); return {rank: ++index};}};
+                        };
+                    }};
+                }};
+                var result = group(source, function(value, index) {$262.gc(); return value.rank % 2;});
+                var odd = group === Map.groupBy ? result.get(1) : result[1];
+                var even = group === Map.groupBy ? result.get(0) : result[0];
+                print(odd.map(value => value.rank).join(','));
+                print(even[0].rank);
+                print(nextReads);
+            }
+            var grouped = Map.groupBy([1, 2], function(value) {$262.gc(); return {rank: value};});
+            print(Array.from(grouped.keys()).map(key => key.rank).join(','));
+            print(Map.groupBy([1], () => -0).keys().next().value === 0);
+            print(Object.is(Map.groupBy([1], () => -0).keys().next().value, -0));
+            "#,
+            &["1,3", "2", "1", "1,3", "2", "1", "1,2", "true", "false"],
+        );
+    }
+
+    #[test]
+    fn regression_group_by_preserves_iterator_abrupt_completion() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var group of [Map.groupBy, Object.groupBy]) {
+                for (var phase of ['next', 'done', 'value', 'callback']) {
+                    var closes = 0;
+                    var source = {[Symbol.iterator]() {return {
+                        next() {
+                            $262.gc();
+                            if (phase === 'next') throw {kind: phase};
+                            return {get done() {$262.gc(); if (phase === 'done') throw {kind: phase}; return false;},
+                                get value() {$262.gc(); if (phase === 'value') throw {kind: phase}; return 1;}};
+                        },
+                        get return() {closes++; $262.gc(); return function() {$262.gc(); throw {kind: 'close'};};}
+                    };}};
+                    try {group(source, function() {$262.gc(); throw {kind: phase};}); print(false);}
+                    catch (error) {print(error.kind);}
+                    print(closes);
+                }
+            }
+            var closes = 0;
+            var source = {[Symbol.iterator]() {return {next() {return {value: 1, done: false};},
+                get return() {closes++; $262.gc(); throw {kind: 'close'};}};}};
+            try {Object.groupBy(source, function() {return {[Symbol.toPrimitive]() {$262.gc(); throw {kind: 'key'};}};}); print(false);}
+            catch (error) {print(error.kind);}
+            print(closes);
+            var result = Object.groupBy([{rank: 42}], function() {return {[Symbol.toPrimitive]() {$262.gc(); return '__proto__';}};});
+            print(Object.getPrototypeOf(result) === null);
+            print(result.__proto__[0].rank);
+            var descriptor = Object.getOwnPropertyDescriptor(result, '__proto__');
+            print(descriptor.writable && descriptor.enumerable && descriptor.configurable);
+            "#,
+            &[
+                "next", "0", "done", "0", "value", "0", "callback", "1", "next", "0", "done", "0",
+                "value", "0", "callback", "1", "key", "1", "true", "42", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"

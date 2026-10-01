@@ -72,6 +72,8 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
+mod group_by;
+use group_by::GroupByKind;
 mod iterators;
 mod json;
 mod method_cache;
