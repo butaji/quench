@@ -167,6 +167,8 @@ pub(crate) enum ImmediateRole {
     AdditionOperator,
     MultiplicationOperator,
     UnaryOperator,
+    WasmI32BinaryOperator,
+    WasmI32UnaryOperator,
     TemplateSiteIndex,
     JumpTarget,
     MethodSiteIndex,
@@ -512,9 +514,8 @@ opcodes!(
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
-    WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Binary => Effect::THROWS; layout Scalar; meaning WasmI32BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
 );
 
 const _: () = {
@@ -1013,7 +1014,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 30;
+    pub const FORMAT_VERSION: u8 = 31;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

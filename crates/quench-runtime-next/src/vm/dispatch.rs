@@ -805,19 +805,23 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::WasmI32Add | Op::WasmI32Subtract | Op::WasmI32Multiply => {
+            Op::WasmI32Binary => {
                 let (left, right) = Value::int_pair(
                     self.read(f, i.register_b()),
                     self.read(f, i.register_c()),
                 )
                 .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
-                let value = match i.op() {
-                    Op::WasmI32Add => left.wrapping_add(right),
-                    Op::WasmI32Subtract => left.wrapping_sub(right),
-                    Op::WasmI32Multiply => left.wrapping_mul(right),
-                    _ => unreachable!(),
-                };
+                let operator = crate::wasm::i32::I32BinaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm binary operator");
+                let value = operator.apply(left, right).map_err(JsError::wasm_trap_error)?;
                 self.write(f, i.result_register(), Value::integer(value));
+            }
+            Op::WasmI32Unary => {
+                let value = self.read(f, i.register_b()).as_int()
+                    .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))?;
+                let operator = crate::wasm::i32::I32UnaryOperator::from_tag(i.imm())
+                    .expect("validated Wasm unary operator");
+                self.write(f, i.result_register(), Value::integer(operator.apply(value)));
             }
             Op::IncDec => {
                 let input = self.read(f, i.register_b());

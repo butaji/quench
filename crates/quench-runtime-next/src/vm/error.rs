@@ -37,30 +37,34 @@ pub(crate) struct ErrorMessage {
 
 #[derive(Debug)]
 struct ErrorPayload {
-    text: String,
+    description: ErrorDescription,
     thrown: Option<Value>,
-    eval_parser_diagnostic: bool,
+}
+
+#[derive(Debug)]
+enum ErrorDescription {
+    Text {
+        message: String,
+        eval_parser_diagnostic: bool,
+    },
+    WasmTrap(crate::WasmTrap),
 }
 
 impl From<&str> for ErrorMessage {
     fn from(value: &str) -> Self {
-        Self {
-            payload: Box::new(ErrorPayload {
-                text: value.into(),
-                thrown: None,
-                eval_parser_diagnostic: false,
-            }),
-        }
+        Self::from(value.to_owned())
     }
 }
 
 impl From<String> for ErrorMessage {
-    fn from(value: String) -> Self {
+    fn from(message: String) -> Self {
         Self {
             payload: Box::new(ErrorPayload {
-                text: value,
+                description: ErrorDescription::Text {
+                    message,
+                    eval_parser_diagnostic: false,
+                },
                 thrown: None,
-                eval_parser_diagnostic: false,
             }),
         }
     }
@@ -68,7 +72,10 @@ impl From<String> for ErrorMessage {
 
 impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0.payload.text)
+        match &self.0.payload.description {
+            ErrorDescription::Text { message, .. } => f.write_str(message),
+            ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
+        }
     }
 }
 
@@ -76,9 +83,11 @@ impl JsError {
     pub(crate) fn thrown(value: Value, message: String) -> Self {
         Self(ErrorMessage {
             payload: Box::new(ErrorPayload {
-                text: message,
+                description: ErrorDescription::Text {
+                    message,
+                    eval_parser_diagnostic: false,
+                },
                 thrown: Some(value),
-                eval_parser_diagnostic: false,
             }),
         })
     }
@@ -88,12 +97,41 @@ impl JsError {
     }
 
     pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
-        self.0.payload.eval_parser_diagnostic
+        matches!(
+            self.0.payload.description,
+            ErrorDescription::Text {
+                eval_parser_diagnostic: true,
+                ..
+            }
+        )
     }
 
     pub(crate) fn mark_eval_parser_diagnostic(mut self) -> Self {
-        self.0.payload.eval_parser_diagnostic = true;
+        if let ErrorDescription::Text {
+            eval_parser_diagnostic,
+            ..
+        } = &mut self.0.payload.description
+        {
+            *eval_parser_diagnostic = true;
+        }
         self
+    }
+
+    /// Inspect a typed WebAssembly trap without treating it as a JS throw.
+    pub fn wasm_trap(&self) -> Option<crate::WasmTrap> {
+        match self.0.payload.description {
+            ErrorDescription::WasmTrap(trap) => Some(trap),
+            ErrorDescription::Text { .. } => None,
+        }
+    }
+
+    pub(crate) fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmTrap(trap),
+                thrown: None,
+            }),
+        })
     }
 
     pub(crate) fn validation(message: String) -> Self {
@@ -103,7 +141,10 @@ impl JsError {
     }
 
     pub(super) fn into_message(self) -> String {
-        self.0.payload.text.clone()
+        match self.0.payload.description {
+            ErrorDescription::Text { message, .. } => message,
+            ErrorDescription::WasmTrap(trap) => trap.to_string(),
+        }
     }
 }
 
