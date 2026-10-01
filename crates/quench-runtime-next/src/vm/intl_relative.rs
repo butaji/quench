@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_relative_time_format_prototypes
+        self.realm.intrinsics.intl_relative_time_format_prototypes
             .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -232,7 +232,7 @@ impl<H: Host> Vm<H> {
         let prototype = if self.is_object_like(candidate) {
             candidate
         } else {
-            self.intl_relative_time_format_prototypes
+            self.realm.intrinsics.intl_relative_time_format_prototypes
                 .get(&realm)
                 .copied()
                 .unwrap_or(self.object_proto)

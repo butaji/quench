@@ -93,15 +93,21 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
     let second_error_prototype = vm.object();
     let first_iterator_prototype = vm.object();
     let second_iterator_prototype = vm.object();
-    vm.realm.error_prototypes.insert(
+    let first_regexp_constructor = vm.object();
+    let first_regexp_prototype = vm.object();
+    let second_regexp_constructor = vm.object();
+    let second_regexp_prototype = vm.object();
+    let first_segmenter_prototype = vm.object();
+    let second_segmenter_prototype = vm.object();
+    vm.realm.intrinsics.error_prototypes.insert(
         (first_global, Native::TypeError),
         first_error_prototype,
     );
-    vm.realm.error_prototypes.insert(
+    vm.realm.intrinsics.error_prototypes.insert(
         (second_global, Native::TypeError),
         second_error_prototype,
     );
-    vm.realm.iterator_prototypes.insert(
+    vm.realm.intrinsics.iterator_prototypes.insert(
         first_global,
         IteratorRealmPrototypes {
             helper: first_iterator_prototype,
@@ -110,7 +116,29 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
             async_generator: first_iterator_prototype,
         },
     );
-    vm.realm.iterator_prototypes.insert(
+    vm.realm.intrinsics.regexp_intrinsics.insert(
+        first_global,
+        RegExpIntrinsics {
+            constructor: first_regexp_constructor,
+            prototype: first_regexp_prototype,
+        },
+    );
+    vm.realm.intrinsics.regexp_intrinsics.insert(
+        second_global,
+        RegExpIntrinsics {
+            constructor: second_regexp_constructor,
+            prototype: second_regexp_prototype,
+        },
+    );
+    vm.realm
+        .intrinsics
+        .intl_segmenter_prototypes
+        .insert(first_global, first_segmenter_prototype);
+    vm.realm
+        .intrinsics
+        .intl_segmenter_prototypes
+        .insert(second_global, second_segmenter_prototype);
+    vm.realm.intrinsics.iterator_prototypes.insert(
         second_global,
         IteratorRealmPrototypes {
             helper: second_iterator_prototype,
@@ -134,23 +162,21 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         assert!(vm.heap.get(object).is_some());
     }
     assert_eq!(
-        vm.realm.error_prototypes.get(&(first_global, Native::TypeError)),
+        vm.realm.intrinsics.error_prototypes.get(&(first_global, Native::TypeError)),
         Some(&first_error_prototype)
     );
     assert_eq!(
-        vm.realm.error_prototypes.get(&(second_global, Native::TypeError)),
+        vm.realm.intrinsics.error_prototypes.get(&(second_global, Native::TypeError)),
         Some(&second_error_prototype)
     );
     assert_eq!(
-        vm.realm
-            .iterator_prototypes
+        vm.realm.intrinsics.iterator_prototypes
             .get(&first_global)
             .map(|prototypes| prototypes.generator),
         Some(first_iterator_prototype)
     );
     assert_eq!(
-        vm.realm
-            .iterator_prototypes
+        vm.realm.intrinsics.iterator_prototypes
             .get(&second_global)
             .map(|prototypes| prototypes.generator),
         Some(second_iterator_prototype)
@@ -161,6 +187,36 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
 fn js_error_is_pointer_sized() {
     assert_eq!(size_of::<JsError>(), size_of::<usize>());
 }
+    assert_eq!(
+        vm.realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&first_global)
+            .map(|intrinsics| (intrinsics.constructor, intrinsics.prototype)),
+        Some((first_regexp_constructor, first_regexp_prototype))
+    );
+    assert_eq!(
+        vm.realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&second_global)
+            .map(|intrinsics| (intrinsics.constructor, intrinsics.prototype)),
+        Some((second_regexp_constructor, second_regexp_prototype))
+    );
+    assert_eq!(
+        vm.realm
+            .intrinsics
+            .intl_segmenter_prototypes
+            .get(&first_global),
+        Some(&first_segmenter_prototype)
+    );
+    assert_eq!(
+        vm.realm
+            .intrinsics
+            .intl_segmenter_prototypes
+            .get(&second_global),
+        Some(&second_segmenter_prototype)
+    );
 
 #[test]
 fn dynamic_primitive_strings_are_canonicalized() {

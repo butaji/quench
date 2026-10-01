@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_plural_rules_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_plural_rules_prototypes.insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_non_writable_property(constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -93,7 +93,7 @@ impl<H: Host> Vm<H> {
         let prototype = if self.is_object_like(candidate) {
             candidate
         } else {
-            self.intl_plural_rules_prototypes
+            self.realm.intrinsics.intl_plural_rules_prototypes
                 .get(&realm)
                 .copied()
                 .unwrap_or(self.object_proto)

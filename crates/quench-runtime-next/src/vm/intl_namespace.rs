@@ -24,7 +24,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_locale_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_locale_prototypes.insert(global, prototype);
         self.set_builtin_function_name(locale, "Locale")?;
         self.set_builtin_value_named(locale, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -390,7 +390,7 @@ impl<H: Host> Vm<H> {
             prototype
         } else {
             let realm = self.function_realm(p, new_target)?;
-            self.intl_locale_prototypes
+            self.realm.intrinsics.intl_locale_prototypes
                 .get(&realm)
                 .copied()
                 .unwrap_or(self.object_proto)

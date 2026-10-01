@@ -59,8 +59,7 @@ impl<H: Host> Vm<H> {
         value: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self
-            .intl_number_format_constructors
+        let constructor = self.realm.intrinsics.intl_number_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.NumberFormat intrinsic is not installed".into()))?;
@@ -81,17 +80,17 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
-        self.intl_number_format_constructors
+        self.realm.intrinsics.intl_number_format_constructors
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "NumberFormat")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_number_format_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_number_format_prototypes.insert(global, prototype);
         let fallback_symbol = self.heap.alloc(Cell::Symbol(Some(
             "IntlLegacyConstructedSymbol".into(),
         )));
-        self.intl_number_format_fallback_symbols
+        self.realm.intrinsics.intl_number_format_fallback_symbols
             .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -287,8 +286,7 @@ impl<H: Host> Vm<H> {
                 self.native_value(Native::IntlNumberFormat),
             );
         }
-        let Some(symbol) = self
-            .intl_number_format_fallback_symbols
+        let Some(symbol) = self.realm.intrinsics.intl_number_format_fallback_symbols
             .get(&self.realm.globals)
             .copied()
         else {
@@ -334,8 +332,7 @@ impl<H: Host> Vm<H> {
         if self.hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT).is_some() {
             return Ok(true);
         }
-        let prototypes = self
-            .intl_number_format_prototypes
+        let prototypes = self.realm.intrinsics.intl_number_format_prototypes
             .values()
             .copied()
             .collect::<Vec<_>>();
@@ -354,8 +351,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let Some(symbol) = self
-            .intl_number_format_fallback_symbols
+        let Some(symbol) = self.realm.intrinsics.intl_number_format_fallback_symbols
             .get(&self.realm.globals)
             .copied()
         else {
@@ -380,8 +376,7 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        Ok(self
-            .intl_number_format_prototypes
+        Ok(self.realm.intrinsics.intl_number_format_prototypes
             .get(&realm)
             .copied()
             .unwrap_or(self.object_proto))

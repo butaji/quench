@@ -72,9 +72,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.intl_duration_format_constructors
+        self.realm.intrinsics.intl_duration_format_constructors
             .insert(global, constructor);
-        self.intl_duration_format_prototypes
+        self.realm.intrinsics.intl_duration_format_prototypes
             .insert(global, prototype);
         self.set_builtin_function_name(constructor, "DurationFormat")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -143,8 +143,7 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        Ok(self
-            .intl_duration_format_prototypes
+        Ok(self.realm.intrinsics.intl_duration_format_prototypes
             .get(&realm)
             .copied()
             .unwrap_or(self.object_proto))
