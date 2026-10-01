@@ -8,12 +8,15 @@ use crate::bytecode::{
 use crate::{Diagnostic, Engine};
 use wasmparser::{BinaryReaderError, Operator};
 
+mod control;
 pub(crate) mod i32;
+use control::{Control, Reachability};
 use i32::{I32BinaryOperator, I32UnaryOperator};
 
 /// A WebAssembly trap, distinct from a JavaScript throw or invalid residual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WasmTrap {
+    Unreachable,
     IntegerDivideByZero,
     IntegerOverflow,
 }
@@ -21,6 +24,7 @@ pub enum WasmTrap {
 impl std::fmt::Display for WasmTrap {
     fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         output.write_str(match self {
+            Self::Unreachable => "unreachable",
             Self::IntegerDivideByZero => "integer divide by zero",
             Self::IntegerOverflow => "integer overflow",
         })
@@ -31,7 +35,7 @@ const ZERO_LOCAL_CONSTANT: u32 = 0;
 const VOID_RESULT_CONSTANT: u32 = 1;
 
 /// A lowered, standalone i32 function. This initial shared execution slice
-/// supports locals and straight-line wrapping arithmetic; module state and
+/// supports locals, i32 numeric operators and structured control flow; module state and
 /// cross-function calls require the subsequent module lowering work.
 pub struct WasmI32Function {
     pub(crate) program: ResidualProgram,
@@ -67,6 +71,8 @@ impl Engine {
             constants: vec![Constant::Number(0.0), Constant::Undefined],
             depth: 0,
             registers: 1,
+            controls: vec![Control::function(has_result)],
+            path: Reachability::Live,
         };
         // Shared JS frames initialize non-parameter locals to undefined. Wasm
         // initialization is therefore explicit residual code, not another frame.
@@ -74,27 +80,14 @@ impl Engine {
         for slot in params..local_count {
             lowering.emit(Op::StoreLocal, 0, 0, 0, u32::from(slot))?;
         }
-        let mut ended = false;
         for operator in operators {
             let operator = operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
-            if ended {
+            if lowering.controls.is_empty() {
                 return Err(error("operators after Wasm function end"));
             }
-            match operator {
-                Operator::End => {
-                    if lowering.depth != u16::from(has_result) {
-                        return Err(error("invalid Wasm result stack"));
-                    }
-                    if !has_result {
-                        lowering.emit(Op::LoadConst, 0, 0, 0, VOID_RESULT_CONSTANT)?;
-                    }
-                    lowering.emit(Op::Return, 0, 0, 0, 0)?;
-                    ended = true;
-                }
-                operator => lowering.operator(operator)?,
-            }
+            lowering.operator(operator)?;
         }
-        if !ended {
+        if !lowering.controls.is_empty() {
             return Err(error("missing Wasm function end"));
         }
         let function = Function {
@@ -166,6 +159,54 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lowering_rejects_invalid_control_structure_and_stack_domains() {
+        for operators in [
+            vec![Operator::Else, Operator::End],
+            vec![
+                Operator::Br {
+                    relative_depth: u32::MAX,
+                },
+                Operator::End,
+            ],
+            vec![
+                Operator::Block {
+                    blockty: wasmparser::BlockType::Empty,
+                },
+                Operator::End,
+            ],
+            vec![
+                Operator::I32Const { value: 1 },
+                Operator::Block {
+                    blockty: wasmparser::BlockType::Empty,
+                },
+                Operator::Drop,
+                Operator::End,
+                Operator::End,
+            ],
+            vec![
+                Operator::I32Const { value: 1 },
+                Operator::If {
+                    blockty: wasmparser::BlockType::Type(wasmparser::ValType::I32),
+                },
+                Operator::I32Const { value: 2 },
+                Operator::End,
+                Operator::End,
+            ],
+        ] {
+            assert!(
+                Engine::lower_wasm_i32_function(
+                    "invalid control",
+                    0,
+                    0,
+                    false,
+                    operators.into_iter().map(Ok)
+                )
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn lowering_boundary_rejects_invalid_operand_and_local_domains() {
@@ -290,6 +331,8 @@ struct Lowering<'a> {
     constants: Vec<Constant>,
     depth: Register,
     registers: u16,
+    controls: Vec<Control>,
+    path: Reachability,
 }
 
 impl Lowering<'_> {
@@ -331,6 +374,12 @@ impl Lowering<'_> {
     }
 
     fn pop(&mut self) -> Result<Register, Diagnostic> {
+        if self.depth <= self.control_base() {
+            return Err(Diagnostic::unsupported(
+                self.name,
+                "Wasm operand stack underflow",
+            ));
+        }
         self.depth = self
             .depth
             .checked_sub(1)
@@ -338,25 +387,41 @@ impl Lowering<'_> {
         Ok(self.depth)
     }
 
+    fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
+        let constant = u32::try_from(self.constants.len())
+            .map_err(|_| Diagnostic::unsupported(self.name, "too many Wasm constants"))?;
+        self.constants.push(Constant::Number(f64::from(value)));
+        self.emit(Op::LoadConst, result, 0, 0, constant)
+    }
+
     fn operator(&mut self, operator: Operator<'_>) -> Result<(), Diagnostic> {
+        if self.control_operator(&operator)? {
+            return Ok(());
+        }
         if let Some(operator) = I32BinaryOperator::from_wasm(&operator) {
+            if self.path == Reachability::Dead {
+                return Ok(());
+            }
             let right = self.pop()?;
             let left = self.pop()?;
             let result = self.push()?;
             return self.emit(Op::WasmI32Binary, result, left, right, operator as u32);
         }
         if let Some(operator) = I32UnaryOperator::from_wasm(&operator) {
+            if self.path == Reachability::Dead {
+                return Ok(());
+            }
             let value = self.pop()?;
             let result = self.push()?;
             return self.emit(Op::WasmI32Unary, result, value, 0, operator as u32);
         }
         match operator {
             Operator::I32Const { value } => {
-                let constant = u32::try_from(self.constants.len())
-                    .map_err(|_| Diagnostic::unsupported(self.name, "too many Wasm constants"))?;
-                self.constants.push(Constant::Number(f64::from(value)));
+                if self.path == Reachability::Dead {
+                    return Ok(());
+                }
                 let result = self.push()?;
-                self.emit(Op::LoadConst, result, 0, 0, constant)
+                self.load_i32(result, value)
             }
             Operator::LocalGet { local_index }
             | Operator::LocalSet { local_index }
@@ -366,6 +431,9 @@ impl Lowering<'_> {
                         self.name,
                         "Wasm local out of bounds",
                     ));
+                }
+                if self.path == Reachability::Dead {
+                    return Ok(());
                 }
                 let (op, register) = match operator {
                     Operator::LocalGet { .. } => (Op::LoadLocal, self.push()?),
@@ -379,7 +447,8 @@ impl Lowering<'_> {
                 };
                 self.emit(op, register, 0, 0, local_index)
             }
-            Operator::Drop => self.pop().map(drop),
+            Operator::Drop if self.path == Reachability::Live => self.pop().map(drop),
+            Operator::Drop => Ok(()),
             Operator::Nop => Ok(()),
             operator => Err(Diagnostic::unsupported(
                 self.name,
