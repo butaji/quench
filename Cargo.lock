@@ -2902,6 +2902,7 @@ dependencies = [
  "serde_json",
  "unicode-normalization",
  "unicode-segmentation",
+ "wasmparser",
 ]
 
 [[package]]
@@ -2929,6 +2930,7 @@ name = "quench-wasm"
 version = "0.1.0"
 dependencies = [
  "quench-runtime",
+ "quench-runtime-next",
  "wasmparser",
  "wast",
 ]

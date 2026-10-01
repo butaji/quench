@@ -7,6 +7,7 @@ use std::fmt;
 
 mod decode;
 mod legacy_try;
+mod shared;
 mod wast_exec;
 mod wast_script;
 
@@ -20,6 +21,7 @@ pub use wast_script::{run_wast, DirectiveResult, WastReport};
 pub enum Error {
     Parse(String),
     Validate(String),
+    Unsupported(String),
 }
 
 impl fmt::Display for Error {
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
         match self {
             Self::Parse(message) => write!(f, "parse error: {message}"),
             Self::Validate(message) => write!(f, "validate error: {message}"),
+            Self::Unsupported(message) => write!(f, "unsupported shared Wasm: {message}"),
         }
     }
 }

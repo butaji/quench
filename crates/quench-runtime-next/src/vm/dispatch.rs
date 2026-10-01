@@ -805,6 +805,20 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
+            Op::WasmI32Add | Op::WasmI32Subtract | Op::WasmI32Multiply => {
+                let (left, right) = Value::int_pair(
+                    self.read(f, i.register_b()),
+                    self.read(f, i.register_c()),
+                )
+                .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
+                let value = match i.op() {
+                    Op::WasmI32Add => left.wrapping_add(right),
+                    Op::WasmI32Subtract => left.wrapping_sub(right),
+                    Op::WasmI32Multiply => left.wrapping_mul(right),
+                    _ => unreachable!(),
+                };
+                self.write(f, i.result_register(), Value::integer(value));
+            }
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");

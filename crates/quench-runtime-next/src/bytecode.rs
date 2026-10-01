@@ -15,6 +15,7 @@ pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
+pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
 pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 pub(crate) const SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT: u16 = 1;
@@ -511,6 +512,9 @@ opcodes!(
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
 );
 
 const _: () = {
@@ -954,6 +958,7 @@ pub(crate) enum ProgramKind {
     Script,
     Module,
     Eval,
+    Wasm,
 }
 
 impl ProgramKind {
@@ -962,6 +967,7 @@ impl ProgramKind {
             Self::Script => 0,
             Self::Module => 1,
             Self::Eval => 2,
+            Self::Wasm => 3,
         }
     }
 
@@ -970,6 +976,7 @@ impl ProgramKind {
             0 => Some(Self::Script),
             1 => Some(Self::Module),
             2 => Some(Self::Eval),
+            3 => Some(Self::Wasm),
             _ => None,
         }
     }
@@ -1006,7 +1013,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 29;
+    pub const FORMAT_VERSION: u8 = 30;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

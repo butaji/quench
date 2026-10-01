@@ -452,7 +452,7 @@ impl<H: Host> Vm<H> {
                     // conservative scan for that activation.
                     let register_mask = self.programs.get(frame.program).and_then(|program| {
                         let function = program.functions.get(frame.function as usize)?;
-                        (function.register_root_offset != u32::MAX)
+                        (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
                             .then(|| {
                                 program
                                     .register_roots
