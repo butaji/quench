@@ -149,6 +149,11 @@ impl Heap {
             .count()
     }
 
+    #[cfg(test)]
+    pub(crate) fn root_count_for_test(&self) -> usize {
+        self.roots.values().count()
+    }
+
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {

@@ -656,6 +656,38 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn bound_function_metadata_roots_release_on_normal_and_abrupt_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (metadata, fails) in [(None, false), (Some("length"), true), (Some("name"), true)] {
+            let mut vm = Vm::new(SilentHost);
+            let source = match metadata {
+                None => "function target() {}".to_owned(),
+                Some(property) => format!(
+                    "function target() {{}} Object.defineProperty(target, '{property}', \
+                     {{get() {{throw new Error('{property}')}}}});"
+                ),
+            };
+            let program = compile(&source, "bound-metadata-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("target");
+            let target = vm.own_property(vm.realm.globals, atom).unwrap();
+            let roots_before = vm.heap.root_count_for_test();
+            let outcome = vm.bind_function(&program, target, &[]);
+            assert_eq!(outcome.is_err(), fails, "{metadata:?}");
+            assert_eq!(vm.heap.root_count_for_test(), roots_before, "{metadata:?}");
+            if let Ok(function) = outcome {
+                let handle = vm.heap.weak_handle(function).unwrap();
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn closure_identity_cache_prunes_collected_cells_and_keeps_rooted_cells() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("function kept() {}", "closure-cache-gc.js").unwrap();
