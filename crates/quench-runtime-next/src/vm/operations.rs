@@ -133,9 +133,6 @@ impl<H: Host> Vm<H> {
             Native::AbstractModuleSourceToStringTag => {
                 Ok(self.abstract_module_source_to_string_tag(this))
             }
-            Native::DynamicDerivedClass => Err(JsError(
-                "class constructor cannot be called without new".into(),
-            )),
             Native::WithEnter => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 if value.is_null() || value.is_undefined() {

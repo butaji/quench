@@ -540,6 +540,65 @@ mod tests {
     }
 
     #[test]
+    fn regression_function_constructor_classes_use_parameters_and_class_bodies() {
+        assert_output_in_execution_modes(
+            r#"
+            class Base {constructor(value) {this.value = value;}}
+            var factory = Function('Parent', 'return class Derived extends Parent { constructor(value) {super(value); this.extra = 1;} #private = 8; get twice() {return this.value * 2;} getPrivate() {return this.#private;} static marker() {return 42;} }');
+            var Derived = factory(Base);
+            var value = new Derived(21);
+            print(value.twice);
+            print(value.extra);
+            print(value.getPrivate());
+            print(Derived.marker());
+            print(Derived.name);
+            print(Object.getPrototypeOf(Derived) === Base);
+            print(value instanceof Base);
+            var Generator = (function*() {}).constructor;
+            var generatorFactory = Generator('Parent', 'return class Derived extends Parent {field = 42;}');
+            var Generated = generatorFactory(Base).next().value;
+            print(new Generated().field);
+            var Async = (async function() {}).constructor;
+            Async('Parent', 'return class Derived extends Parent {field = 43;}')(Base).then(function(Generated) {print(new Generated().field);});
+            var AsyncGenerator = (async function*() {}).constructor;
+            AsyncGenerator('Parent', 'return class Derived extends Parent {field = 44;}')(Base).next().then(function(step) {print(new step.value().field);});
+            "#,
+            &[
+                "42", "1", "8", "42", "Derived", "true", "true", "42", "43", "44",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_dynamic_class_heritage_is_evaluated_when_the_factory_runs() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads = 0;
+            var Current = class First {};
+            Object.defineProperty(globalThis, 'Parent', {configurable: true, get() {reads++; $262.gc(); return Current;}});
+            var factory = Function('return class Derived extends Parent {field = 42; static value = 7;}');
+            print(reads);
+            Current = class Second {};
+            var Derived = factory();
+            print(reads);
+            print(Object.getPrototypeOf(Derived) === Current);
+            print(new Derived().field);
+            print(Derived.value);
+            print(Derived.name);
+            try {Derived(); print(false);} catch (error) {print(error instanceof TypeError);}
+            var Missing = Function('return class Derived extends MissingParent {}');
+            print(typeof Missing);
+            try {Missing(); print(false);} catch (error) {print(error instanceof ReferenceError);}
+            try {Function('return class Derived extends Object { missing('); print(false);}
+            catch (error) {print(error instanceof SyntaxError);}
+            "#,
+            &[
+                "0", "1", "true", "42", "7", "Derived", "true", "function", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_constructor_operands_survive_collecting_prototype_lookup() {
         assert_output_in_execution_modes(
             r#"
