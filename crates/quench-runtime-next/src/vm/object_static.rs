@@ -496,7 +496,7 @@ impl<H: Host> Vm<H> {
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
-            Native::ObjectGroupBy => self.object_group_by(p, args),
+            Native::ObjectGroupBy => self.group_by(p, args, GroupByKind::Object),
             Native::ObjectIs => {
                 let left = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let right = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -551,112 +551,6 @@ impl<H: Host> Vm<H> {
             Native::ObjectIsFrozen => self.object_is_integrity_level(p, args, true),
             _ => Err(JsError("invalid object native".into())),
         }
-    }
-
-    fn object_group_by(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
-        let iterable = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if self.call_target(callback).is_err() {
-            return Err(self.type_error(p, "Object.groupBy callback is not callable".into()));
-        }
-        let iterator = self.get_iterator(p, iterable)?;
-        let result = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-        let roots = [self.heap.root(iterator), self.heap.root(result)];
-        let outcome = (|| {
-            let done_atom = self.intern_atom("done");
-            let value_atom = self.intern_atom("value");
-            let mut index = 0usize;
-            loop {
-                let iterator = self.heap.root_value(roots[0]).unwrap_or(iterator);
-                let result = self.heap.root_value(roots[1]).unwrap_or(result);
-                let step = match self.iterator_next(p, iterator) {
-                    Ok(step) => step,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                let step_root = self.heap.root(step);
-                let step = self.heap.root_value(step_root).unwrap_or(step);
-                let done = match self.get_property(p, step, done_atom) {
-                    Ok(done) => done,
-                    Err(error) => {
-                        self.heap.release_root(step_root);
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                };
-                if self.truthy(done) {
-                    self.heap.release_root(step_root);
-                    return Ok(result);
-                }
-                let value = match self.get_property(p, step, value_atom) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        self.heap.release_root(step_root);
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                };
-                let value_root = self.heap.root(value);
-                let value = self.heap.root_value(value_root).unwrap_or(value);
-                let key = match self.call_value(
-                    p,
-                    callback,
-                    Value::UNDEFINED,
-                    &[value, Value::number(index as f64)],
-                ) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.heap.release_root(value_root);
-                        self.heap.release_root(step_root);
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                };
-                let key = match self.to_property_key(p, key) {
-                    Ok(key) => key,
-                    Err(error) => {
-                        self.heap.release_root(value_root);
-                        self.heap.release_root(step_root);
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                };
-                let group = match self.heap.get(key).cloned() {
-                    Some(Cell::Symbol(_)) => self.symbol_property(result, key),
-                    Some(Cell::String(name)) => {
-                        let atom = self.intern_js_atom(&name);
-                        self.own_property(result, atom)
-                    }
-                    _ => None,
-                };
-                if let Some(group) = group {
-                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(group) {
-                        Rc::make_mut(elements).push(value);
-                    }
-                } else {
-                    let group = self.heap.alloc(Cell::Array {
-                        object: Self::empty_object(self.array_proto),
-                        elements: Rc::new(vec![value]),
-                    });
-                    let set_result = match self.heap.get(key).cloned() {
-                        Some(Cell::Symbol(_)) => self.set_index(p, result, key, group),
-                        Some(Cell::String(name)) => {
-                            let atom = self.intern_js_atom(&name);
-                            self.set_property(result, atom, group)
-                        }
-                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
-                    };
-                    if let Err(error) = set_result {
-                        self.heap.release_root(value_root);
-                        self.heap.release_root(step_root);
-                        return Err(self.iterator_abrupt(p, iterator, error));
-                    }
-                }
-                self.heap.release_root(value_root);
-                self.heap.release_root(step_root);
-                index += 1;
-            }
-        })();
-        self.heap.release_root(roots[0]);
-        self.heap.release_root(roots[1]);
-        outcome
     }
 
     fn object_from_entries(

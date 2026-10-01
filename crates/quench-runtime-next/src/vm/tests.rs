@@ -670,6 +670,67 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn group_by_roots_release_after_iterator_and_callback_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in [super::GroupByKind::Object, super::GroupByKind::Map] {
+            for phase in [
+                "success",
+                "next-getter",
+                "next",
+                "done",
+                "value",
+                "callback",
+                "key",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var source = {{[Symbol.iterator]() {{var index = 0; return {{
+                        get next() {{$262.gc(); if ('{phase}' === 'next-getter') throw {{kind:'next-getter'}}; return function() {{
+                            $262.gc(); if ('{phase}' === 'next') throw {{kind:'next'}};
+                            if (index++) return {{done:true}};
+                            return {{get done() {{$262.gc(); if ('{phase}' === 'done') throw {{kind:'done'}}; return false;}},
+                                get value() {{$262.gc(); if ('{phase}' === 'value') throw {{kind:'value'}}; return {{rank:42}};}}}};
+                        }};}},
+                        get return() {{$262.gc(); return function() {{$262.gc(); throw {{kind:'close'}};}};}}
+                    }};}}}};
+                    var callback = function(value) {{$262.gc(); if ('{phase}' === 'callback') throw {{kind:'callback'}};
+                        return {{[Symbol.toPrimitive]() {{$262.gc(); if ('{phase}' === 'key') throw {{kind:'key'}}; return 'group';}}}};}};
+                "#
+                );
+                let program = compile(&source, "group-by-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let callback_atom = vm.intern_atom("callback");
+                let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.group_by(&program, &[source, callback], kind);
+                let fails = phase != "success"
+                    && !(phase == "key" && matches!(kind, super::GroupByKind::Map));
+                assert_eq!(result.is_err(), fails, "{phase}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                if let Ok(result) = result {
+                    let weak = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(weak).is_none());
+                } else if let Err(error) = result {
+                    let error = error.thrown_value().unwrap();
+                    let kind_atom = vm.intern_atom("kind");
+                    let value = vm.own_property(error, kind_atom).unwrap();
+                    assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn dynamic_constructor_roots_release_after_prototype_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

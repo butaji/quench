@@ -373,6 +373,10 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, Native::Map), self.map_proto);
         for (name, native) in [
             ("get", Native::MapGet),
             ("set", Native::MapSet),
@@ -876,11 +880,7 @@ impl<H: Host> Vm<H> {
                     Native::MapGetOrInsert => args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     Native::MapGetOrInsertComputed => {
                         let callback = computed_callback.unwrap_or(Value::UNDEFINED);
-                        let canonical_key = if key.as_number() == Some(0.0) {
-                            Value::number(0.0)
-                        } else {
-                            key
-                        };
+                        let canonical_key = canonicalize_keyed_collection_key(key);
                         let computed =
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
                         if let Some(index) = self.map_entry_index(this, key) {
@@ -901,7 +901,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(value)
             }
-            Native::MapGroupBy => self.map_group_by(p, args),
+            Native::MapGroupBy => self.group_by(p, args, GroupByKind::Map),
             Native::SetAdd => {
                 if !matches!(self.heap.get(this), Some(Cell::Set { .. })) {
                     return Err(self.type_error(
@@ -1219,52 +1219,6 @@ impl<H: Host> Vm<H> {
             _ => Err(JsError("invalid collection native".into())),
         }
     }
-    fn map_group_by(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
-        let iterable = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if self.call_target(callback).is_err() {
-            return Err(self.type_error(p, "Map.groupBy callback is not callable".into()));
-        }
-        let iterator = self.get_iterator(p, iterable)?;
-        let result = self.heap.alloc(Cell::Map {
-            object: Self::empty_object(self.map_proto),
-            entries: Vec::new(),
-        });
-        let mut index = 0usize;
-        loop {
-            let step = self.iterator_next(p, iterator)?;
-            let done_atom = self.intern_atom("done");
-            let done = self.get_property(p, step, done_atom)?;
-            if self.truthy(done) {
-                return Ok(result);
-            }
-            let value_atom = self.intern_atom("value");
-            let value = self.get_property(p, step, value_atom)?;
-            let key = self.call_value(
-                p,
-                callback,
-                Value::UNDEFINED,
-                &[value, Value::number(index as f64)],
-            )?;
-            if let Some(position) = self.map_entry_index(result, key) {
-                if let Some(Cell::Map { entries, .. }) = self.heap.get(result) {
-                    let group = entries[position].1;
-                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(group) {
-                        Rc::make_mut(elements).push(value);
-                    }
-                }
-            } else {
-                let group = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![value]),
-                });
-                if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(result) {
-                    entries.push((key, group));
-                }
-            }
-            index += 1;
-        }
-    }
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
@@ -1327,5 +1281,13 @@ impl<H: Host> Vm<H> {
         entries
             .iter()
             .position(|candidate| self.same_value_zero(*candidate, value))
+    }
+}
+
+pub(super) fn canonicalize_keyed_collection_key(key: Value) -> Value {
+    if key.as_number() == Some(0.0) {
+        Value::number(0.0)
+    } else {
+        key
     }
 }
