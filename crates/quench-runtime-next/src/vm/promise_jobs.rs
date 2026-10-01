@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
         let fulfilled = self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
         let rejected_cleanup =
             self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
-        self.promise.finally_continuation_jobs.insert(
+        self.realm.promise.finally_continuation_jobs.insert(
             fulfilled,
             FinallyContinuationJob {
                 next,
@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
                 value,
             },
         );
-        self.promise.finally_continuation_jobs.insert(
+        self.realm.promise.finally_continuation_jobs.insert(
             rejected_cleanup,
             FinallyContinuationJob {
                 next,
@@ -39,11 +39,11 @@ impl<H: Host> Vm<H> {
             on_rejected: rejected_cleanup,
             next: self.promise_object(),
         };
-        let Some(record) = self.promise.records.get(&cleanup).cloned() else {
+        let Some(record) = self.realm.promise.records.get(&cleanup).cloned() else {
             return;
         };
         if record.state == PromiseState::Pending {
-            self.promise
+            self.realm.promise
                 .records
                 .get_mut(&cleanup)
                 .expect("cleanup Promise record exists")
@@ -139,7 +139,7 @@ impl<H: Host> Vm<H> {
         } else {
             source
         };
-        self.promise.aggregates.insert(
+        self.realm.promise.aggregates.insert(
             output,
             AggregateRecord {
                 mode,
@@ -216,7 +216,7 @@ impl<H: Host> Vm<H> {
             };
             self.heap.release_root(step_root);
             let index = {
-                let record = self.promise.aggregates.get_mut(&output).unwrap();
+                let record = self.realm.promise.aggregates.get_mut(&output).unwrap();
                 let index = record.values.len();
                 record.values.push(Value::UNDEFINED);
                 record.called.push(false);
@@ -242,13 +242,13 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(iterator_root);
         if !failed {
             let (remaining, values) = {
-                let record = self.promise.aggregates.get_mut(&output).unwrap();
+                let record = self.realm.promise.aggregates.get_mut(&output).unwrap();
                 record.remaining = record.remaining.saturating_sub(1);
                 (record.remaining, record.values.clone())
             };
             if remaining == 0 {
                 if mode.is_all() || mode.is_all_settled() {
-                    let record = self.promise.aggregates[&output].clone();
+                    let record = self.realm.promise.aggregates[&output].clone();
                     let values = self.aggregate_result(&record, values)?;
                     if let Err(error) = self.call_value(p, resolve, Value::UNDEFINED, &[values]) {
                         self.reject_aggregate_completion(p, reject, error)?;
@@ -283,26 +283,23 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise aggregate job without callback".into()))?;
-        let aggregate_job = self
-            .promise
+        let aggregate_job = self.realm.promise
             .aggregate_jobs
             .get(&job)
             .copied()
             .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
-        let Some(mode) = self
-            .promise
+        let Some(mode) = self.realm.promise
             .aggregates
             .get(&aggregate_job.aggregate)
             .map(|record| record.mode)
         else {
             return Ok(Value::UNDEFINED);
         };
-        let record = self.promise.aggregates[&aggregate_job.aggregate].clone();
+        let record = self.realm.promise.aggregates[&aggregate_job.aggregate].clone();
         match mode {
             AggregateMode::Race => {
                 let settler = if aggregate_job.rejected {
@@ -327,7 +324,7 @@ impl<H: Host> Vm<H> {
                 if record.called.get(index).copied().unwrap_or(true) {
                     return Ok(Value::UNDEFINED);
                 }
-                self.promise
+                self.realm.promise
                     .aggregates
                     .get_mut(&aggregate_job.aggregate)
                     .unwrap()
@@ -355,8 +352,7 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let (remaining, values) = {
-                    let record = self
-                        .promise
+                    let record = self.realm.promise
                         .aggregates
                         .get_mut(&aggregate_job.aggregate)
                         .unwrap();
@@ -393,7 +389,7 @@ impl<H: Host> Vm<H> {
             reaction.on_rejected
         };
         let job = self.native_with_env(Native::PromiseReactionJob, Value::NULL);
-        self.promise.jobs.insert(
+        self.realm.promise.jobs.insert(
             job,
             PromiseJob {
                 handler,
@@ -412,7 +408,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) {
         let job = self.native_with_env(Native::PromiseFinallyJob, Value::NULL);
-        self.promise.finally_jobs.insert(
+        self.realm.promise.finally_jobs.insert(
             job,
             FinallyJob {
                 handler: reaction.handler,
@@ -429,13 +425,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise job without callback".into()))?;
-        let reaction = self
-            .promise
+        let reaction = self.realm.promise
             .jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise job".into()))?;
@@ -471,7 +465,7 @@ impl<H: Host> Vm<H> {
         state: PromiseState,
         value: Value,
     ) -> Result<(), JsError> {
-        let capability = self.promise.reaction_capabilities.remove(&next);
+        let capability = self.realm.promise.reaction_capabilities.remove(&next);
         if let Some((resolve, reject)) = capability {
             let settler = if state == PromiseState::Fulfilled {
                 resolve
@@ -489,13 +483,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
-        let thenable = self
-            .promise
+        let thenable = self.realm.promise
             .thenable_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
@@ -513,13 +505,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise finally job without callback".into()))?;
-        let reaction = self
-            .promise
+        let reaction = self.realm.promise
             .finally_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally job".into()))?;
@@ -550,13 +540,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         cleanup_value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self
-            .promise
+        let job = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
-        let continuation = self
-            .promise
+        let continuation = self.realm.promise
             .finally_continuation_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;

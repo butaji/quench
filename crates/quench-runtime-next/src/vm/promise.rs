@@ -1101,8 +1101,7 @@ impl Default for PromiseRuntime {
 impl<H: Host> Vm<H> {
     pub(super) fn abstract_module_source_to_string_tag(&mut self, receiver: Value) -> Value {
         if !self.is_object_like(receiver)
-            || !self
-                .promise
+            || !self.realm.promise
                 .module_sources
                 .values()
                 .any(|module_source| *module_source == receiver)
@@ -1125,12 +1124,12 @@ impl<H: Host> Vm<H> {
             _ => self.realm.globals,
         };
         let previous_global = self.switch_realm_global(realm);
-        self.promise.active_native.push(callee);
+        self.realm.promise.active_native.push(callee);
         let result = (|| {
             let _stack = self.enter_stack()?;
             self.call_native(p, native, this, args)
         })();
-        self.promise.active_native.pop();
+        self.realm.promise.active_native.pop();
         self.switch_realm_global(previous_global);
         result
     }
@@ -1197,10 +1196,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.promise.proto = self.object();
+        self.realm.promise.proto = self.object();
         let promise = self.native_value(Native::Promise);
         self.set_builtin_function_name(promise, "Promise")?;
-        self.set_named(program, promise, "prototype", self.promise.proto)?;
+        self.set_named(program, promise, "prototype", self.realm.promise.proto)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             promise,
@@ -1214,10 +1213,10 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(program, self.promise.proto, "constructor", promise)?;
+        self.set_named(program, self.realm.promise.proto, "constructor", promise)?;
         let constructor = self.intern_atom("constructor");
         self.set_property_attributes(
-            self.promise.proto,
+            self.realm.promise.proto,
             property_key::PropertyKey::string(constructor),
             PropertyAttributes {
                 writable: true,
@@ -1228,15 +1227,15 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_builtin_named(program, self.promise.proto, "then", Native::PromiseThen)?;
-        self.set_builtin_named(program, self.promise.proto, "catch", Native::PromiseCatch)?;
+        self.set_builtin_named(program, self.realm.promise.proto, "then", Native::PromiseThen)?;
+        self.set_builtin_named(program, self.realm.promise.proto, "catch", Native::PromiseCatch)?;
         self.set_builtin_named(
             program,
-            self.promise.proto,
+            self.realm.promise.proto,
             "finally",
             Native::PromiseFinally,
         )?;
-        self.install_builtin_to_string_tag(self.promise.proto, "Promise")?;
+        self.install_builtin_to_string_tag(self.realm.promise.proto, "Promise")?;
         self.set_builtin_named(program, promise, "resolve", Native::PromiseResolve)?;
         self.set_builtin_named(program, promise, "reject", Native::PromiseReject)?;
         let with_resolvers = self.native_value(Native::PromiseWithResolvers);
@@ -1291,8 +1290,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn promise_object(&mut self) -> Value {
         let promise = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.promise.proto)));
-        self.promise.records.insert(
+            .alloc(Cell::Object(Self::empty_object(self.realm.promise.proto)));
+        self.realm.promise.records.insert(
             promise,
             PromiseRecord {
                 state: PromiseState::Pending,
@@ -1461,7 +1460,7 @@ impl<H: Host> Vm<H> {
                         ));
                     }
                     if let Some(value) = args.first().copied()
-                        && self.promise.records.contains_key(&value)
+                        && self.realm.promise.records.contains_key(&value)
                     {
                         let constructor_atom = self.intern_atom("constructor");
                         if self.get_property(p, value, constructor_atom)? == this {
@@ -1591,8 +1590,7 @@ impl<H: Host> Vm<H> {
                     }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
-                    if let Some(outcome) = self
-                        .promise
+                    if let Some(outcome) = self.realm.promise
                         .modules
                         .get(&cache_key)
                         .map(|record| record.outcome)
@@ -1601,8 +1599,7 @@ impl<H: Host> Vm<H> {
                             ModuleOutcome::Evaluated(namespace) => {
                                 let namespace =
                                     if phase == crate::bytecode::ModuleRequestPhase::Defer {
-                                        let deferred = self
-                                            .promise
+                                        let deferred = self.realm.promise
                                             .modules
                                             .get(&cache_key)
                                             .and_then(ModuleRecord::deferred_namespace);
@@ -1611,7 +1608,7 @@ impl<H: Host> Vm<H> {
                                             None => {
                                                 let namespace =
                                                     self.deferred_module_namespace(p, &module)?;
-                                                self.promise
+                                                self.realm.promise
                                                     .modules
                                                     .get_mut(&cache_key)
                                                     .expect("module record found above")
@@ -1641,8 +1638,7 @@ impl<H: Host> Vm<H> {
                                 if phase == crate::bytecode::ModuleRequestPhase::Defer
                                     && module_type == "javascript"
                                 {
-                                    let namespace = self
-                                        .promise
+                                    let namespace = self.realm.promise
                                         .modules
                                         .get(&cache_key)
                                         .and_then(ModuleRecord::deferred_namespace);
@@ -1651,7 +1647,7 @@ impl<H: Host> Vm<H> {
                                         None => {
                                             let namespace =
                                                 self.deferred_module_namespace(p, &module)?;
-                                            self.promise
+                                            self.realm.promise
                                                 .modules
                                                 .get_mut(&cache_key)
                                                 .expect("module record found above")
@@ -1671,8 +1667,7 @@ impl<H: Host> Vm<H> {
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Pending(_) => {
-                                let joined = self
-                                    .promise
+                                let joined = self.realm.promise
                                     .modules
                                     .get_mut(&cache_key)
                                     .expect("module record found above")
@@ -1683,7 +1678,7 @@ impl<H: Host> Vm<H> {
                         }
                     }
                     if let Some(namespace) = self.root_module_namespace(p, &module)? {
-                        self.promise
+                        self.realm.promise
                             .modules
                             .insert(cache_key, ModuleRecord::evaluating_root(namespace, promise));
                         return Ok(Value::UNDEFINED);
@@ -1692,15 +1687,14 @@ impl<H: Host> Vm<H> {
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
                         && self.deferred_dependency_batch
                     {
-                        if let Some(job) = self
-                            .promise
+                        if let Some(job) = self.realm.promise
                             .dynamic_import_jobs
                             .iter_mut()
                             .find(|job| job.cache_key == cache_key)
                         {
                             job.promises.push(promise);
                         } else {
-                            self.promise.dynamic_import_jobs.push(DynamicImportJob {
+                            self.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
                                 cache_key,
                                 module,
                                 promises: vec![promise],
@@ -1721,7 +1715,7 @@ impl<H: Host> Vm<H> {
                         )?;
                         if asynchronous.is_empty() {
                             let namespace = self.deferred_module_namespace(p, &module)?;
-                            self.promise
+                            self.realm.promise
                                 .modules
                                 .insert(cache_key, ModuleRecord::deferred(namespace));
                             self.promise_resolve_value(p, promise, namespace)?;
@@ -1736,14 +1730,13 @@ impl<H: Host> Vm<H> {
                                 .is_some_and(|plan| plan.has_top_level_await);
                         if !entry_has_tla {
                             let namespace = self.deferred_module_namespace(p, &module)?;
-                            self.promise
+                            self.realm.promise
                                 .modules
                                 .insert(cache_key, ModuleRecord::deferred(namespace));
                             self.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
-                        if let Some(ModuleOutcome::Evaluated(namespace)) = self
-                            .promise
+                        if let Some(ModuleOutcome::Evaluated(namespace)) = self.realm.promise
                             .modules
                             .get(&cache_key)
                             .map(|record| record.outcome)
@@ -1762,8 +1755,7 @@ impl<H: Host> Vm<H> {
                             self.evaluate_static_module_source(p, module.clone(), &mut active);
                         self.deferred_dependency_batch = outer_batch;
                         evaluation?;
-                        match self
-                            .promise
+                        match self.realm.promise
                             .modules
                             .get(&cache_key)
                             .map(|record| record.outcome)
@@ -1775,8 +1767,7 @@ impl<H: Host> Vm<H> {
                                 self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                             }
                             Some(ModuleOutcome::Pending(_)) => {
-                                let joined = self
-                                    .promise
+                                let joined = self.realm.promise
                                     .modules
                                     .get_mut(&cache_key)
                                     .expect("module record found above")
@@ -1798,11 +1789,10 @@ impl<H: Host> Vm<H> {
                     debug_assert!(linked);
                     let evaluating = record.begin_evaluation();
                     debug_assert!(evaluating);
-                    self.promise.modules.insert(cache_key.clone(), record);
+                    self.realm.promise.modules.insert(cache_key.clone(), record);
                     match self.evaluate_dynamic_module(p, &module, module_type, phase) {
                         Ok(namespace) => {
-                            let waiters = self
-                                .promise
+                            let waiters = self.realm.promise
                                 .modules
                                 .get_mut(&cache_key)
                                 .expect("module record inserted above")
@@ -1816,8 +1806,7 @@ impl<H: Host> Vm<H> {
                             let reason = error.thrown_value().unwrap_or_else(|| {
                                 self.heap.alloc(Cell::Error(error.into_message()))
                             });
-                            let waiters = self
-                                .promise
+                            let waiters = self.realm.promise
                                 .modules
                                 .get_mut(&cache_key)
                                 .expect("module record inserted above")
@@ -1930,7 +1919,7 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let key = module_cache_key(&p.source_name, "javascript");
-        if !self.promise.modules.contains_key(&key) {
+        if !self.realm.promise.modules.contains_key(&key) {
             return Ok(());
         }
         match result {
@@ -1957,12 +1946,12 @@ impl<H: Host> Vm<H> {
         key: &str,
         promise: Value,
     ) -> Result<(), JsError> {
-        let Some(completion) = self.promise.records.get(&promise).cloned() else {
+        let Some(completion) = self.realm.promise.records.get(&promise).cloned() else {
             return Err(self.type_error(p, "module completion promise is unavailable".into()));
         };
         match completion.state {
             PromiseState::Pending => {
-                let Some(record) = self.promise.modules.get_mut(key) else {
+                let Some(record) = self.realm.promise.modules.get_mut(key) else {
                     return Ok(());
                 };
                 let Some(namespace) = record.pending_namespace() else {
@@ -1970,7 +1959,7 @@ impl<H: Host> Vm<H> {
                 };
                 record.begin_async_evaluation(namespace);
                 record.track_evaluation_promise(promise);
-                self.promise.async_module_order.push_back(key.to_owned());
+                self.realm.promise.async_module_order.push_back(key.to_owned());
                 Ok(())
             }
             PromiseState::Fulfilled => self.complete_main_module(p, key),
@@ -1985,8 +1974,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn complete_main_module(&mut self, p: &ResidualProgram, key: &str) -> Result<(), JsError> {
-        let Some((namespace, waiters)) = self
-            .promise
+        let Some((namespace, waiters)) = self.realm.promise
             .modules
             .get_mut(key)
             .and_then(ModuleRecord::evaluate_root)
@@ -2005,8 +1993,7 @@ impl<H: Host> Vm<H> {
         key: &str,
         reason: Value,
     ) -> Result<(), JsError> {
-        let waiters = self
-            .promise
+        let waiters = self.realm.promise
             .modules
             .get_mut(key)
             .and_then(|record| record.fail(reason));
@@ -2068,7 +2055,7 @@ impl<H: Host> Vm<H> {
 
     fn module_source_value(&mut self, module: &ModuleSource) -> Value {
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
-        if let Some(value) = self.promise.module_sources.get(&identity) {
+        if let Some(value) = self.realm.promise.module_sources.get(&identity) {
             return *value;
         }
         let prototype_atom = self.intern_atom("prototype");
@@ -2077,7 +2064,7 @@ impl<H: Host> Vm<H> {
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
         let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.promise.module_sources.insert(identity, value);
+        self.realm.promise.module_sources.insert(identity, value);
         value
     }
 
@@ -2179,8 +2166,7 @@ impl<H: Host> Vm<H> {
             return Ok(namespace);
         };
         let cache_key = module_cache_key(&module.name, "javascript");
-        match self
-            .promise
+        match self.realm.promise
             .modules
             .get(&cache_key)
             .map(|record| record.outcome)
@@ -2209,7 +2195,7 @@ impl<H: Host> Vm<H> {
                 "deferred module is not ready for synchronous evaluation".into(),
             ));
         }
-        let Some(record) = self.promise.modules.get_mut(&cache_key) else {
+        let Some(record) = self.realm.promise.modules.get_mut(&cache_key) else {
             return Err(self.type_error(p, "deferred module record is unavailable".into()));
         };
         if record.begin_deferred_evaluation().is_none() {
@@ -2269,8 +2255,7 @@ impl<H: Host> Vm<H> {
         if !seen.insert(identity) {
             return Ok(true);
         }
-        match self
-            .promise
+        match self.realm.promise
             .modules
             .get(&module_cache_key(&module.name, "javascript"))
             .map(|record| record.outcome)
@@ -2393,7 +2378,7 @@ impl<H: Host> Vm<H> {
             bytes: Vec::new(),
         };
         if let Some(namespace) = self.root_module_namespace(p, &root)? {
-            self.promise.modules.insert(
+            self.realm.promise.modules.insert(
                 module_cache_key(&p.source_name, "javascript"),
                 ModuleRecord::evaluating_main(namespace),
             );
@@ -2411,7 +2396,7 @@ impl<H: Host> Vm<H> {
         self.deferred_dependency_batch = outer_batch;
         requests?;
         self.advance_dynamic_import_jobs(p, false)?;
-        let pending_async_evaluation = self.promise.modules.values().any(|record| {
+        let pending_async_evaluation = self.realm.promise.modules.values().any(|record| {
             matches!(
                 record.phase(),
                 ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies
@@ -2438,10 +2423,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
-        let jobs = std::mem::take(&mut self.promise.dynamic_import_jobs);
+        let jobs = std::mem::take(&mut self.realm.promise.dynamic_import_jobs);
         for job in jobs {
-            if let Some(outcome) = self
-                .promise
+            if let Some(outcome) = self.realm.promise
                 .modules
                 .get(&job.cache_key)
                 .map(|record| record.outcome)
@@ -2450,7 +2434,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             if !allow_evaluation {
-                self.promise.dynamic_import_jobs.push(job);
+                self.realm.promise.dynamic_import_jobs.push(job);
                 continue;
             }
             let mut active = ModuleEvaluationStack::default();
@@ -2463,14 +2447,13 @@ impl<H: Host> Vm<H> {
                 }
                 continue;
             }
-            let outcome = self
-                .promise
+            let outcome = self.realm.promise
                 .modules
                 .get(&job.cache_key)
                 .map(|record| record.outcome)
                 .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
             if !self.settle_dynamic_import_waiters(p, &job.promises, outcome)?
-                && let Some(record) = self.promise.modules.get_mut(&job.cache_key)
+                && let Some(record) = self.realm.promise.modules.get_mut(&job.cache_key)
             {
                 for promise in job.promises {
                     record.add_waiter(promise);
@@ -2596,14 +2579,12 @@ impl<H: Host> Vm<H> {
             }
             let module_type = import.module_type.as_deref().unwrap_or("javascript");
             let key = module_cache_key(&module.name, module_type);
-            let outcome = self.promise.modules.get(&key).map(|record| record.outcome);
-            let deferred_namespace = self
-                .promise
+            let outcome = self.realm.promise.modules.get(&key).map(|record| record.outcome);
+            let deferred_namespace = self.realm.promise
                 .modules
                 .get(&key)
                 .and_then(ModuleRecord::deferred_namespace);
-            let pending_namespace = self
-                .promise
+            let pending_namespace = self.realm.promise
                 .modules
                 .get(&key)
                 .and_then(ModuleRecord::pending_namespace);
@@ -2741,7 +2722,7 @@ impl<H: Host> Vm<H> {
         let Some(namespace) = self.root_module_namespace(p, module)? else {
             return Ok(None);
         };
-        if let Some(record) = self.promise.modules.get_mut(key) {
+        if let Some(record) = self.realm.promise.modules.get_mut(key) {
             record.cache_pending_namespace(namespace);
         }
         Ok(Some(namespace))
@@ -2777,7 +2758,7 @@ impl<H: Host> Vm<H> {
                     if let Some(cycle) = active.cycle_to(&identity) {
                         for member in cycle {
                             let key = module_cache_key(&member.to_string_lossy(), "javascript");
-                            if let Some(record) = self.promise.modules.get_mut(&key) {
+                            if let Some(record) = self.realm.promise.modules.get_mut(&key) {
                                 record.set_async_cycle_root(identity.clone());
                             }
                         }
@@ -2801,17 +2782,16 @@ impl<H: Host> Vm<H> {
         module: ModuleSource,
     ) -> Result<(), JsError> {
         let key = module_cache_key(&module.name, "javascript");
-        match self.promise.modules.get(&key).map(|record| record.outcome) {
+        match self.realm.promise.modules.get(&key).map(|record| record.outcome) {
             Some(ModuleOutcome::Evaluated(_)) => {
-                if self
-                    .promise
+                if self.realm.promise
                     .modules
                     .get(&key)
                     .and_then(ModuleRecord::deferred_namespace)
                     .is_none()
                 {
                     let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.promise
+                    self.realm.promise
                         .modules
                         .get_mut(&key)
                         .expect("module record checked above")
@@ -2821,15 +2801,14 @@ impl<H: Host> Vm<H> {
             }
             Some(ModuleOutcome::Deferred(_)) => return Ok(()),
             Some(ModuleOutcome::Pending(_)) => {
-                if self
-                    .promise
+                if self.realm.promise
                     .modules
                     .get(&key)
                     .and_then(ModuleRecord::deferred_namespace)
                     .is_none()
                 {
                     let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.promise
+                    self.realm.promise
                         .modules
                         .get_mut(&key)
                         .expect("module record checked above")
@@ -2838,15 +2817,14 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
             Some(ModuleOutcome::Errored(_)) => {
-                if self
-                    .promise
+                if self.realm.promise
                     .modules
                     .get(&key)
                     .and_then(ModuleRecord::deferred_namespace)
                     .is_none()
                 {
                     let namespace = self.deferred_module_namespace(p, &module)?;
-                    self.promise
+                    self.realm.promise
                         .modules
                         .get_mut(&key)
                         .expect("module record checked above")
@@ -2883,17 +2861,17 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|plan| plan.has_top_level_await);
             if entry_has_tla {
                 let namespace = self.deferred_module_namespace(p, &module)?;
-                if let Some(record) = self.promise.modules.get_mut(&key) {
+                if let Some(record) = self.realm.promise.modules.get_mut(&key) {
                     record.cache_deferred_namespace(namespace);
                 }
                 return Ok(());
             }
         }
         let namespace = self.deferred_module_namespace(p, &module)?;
-        match self.promise.modules.get_mut(&key) {
+        match self.realm.promise.modules.get_mut(&key) {
             Some(record) => record.cache_deferred_namespace(namespace),
             None => {
-                self.promise
+                self.realm.promise
                     .modules
                     .insert(key, ModuleRecord::deferred(namespace));
             }
@@ -2912,7 +2890,7 @@ impl<H: Host> Vm<H> {
             "javascript" => self.evaluate_static_module_source(p, module, active),
             module_type @ ("json" | "text" | "bytes") => {
                 let key = module_cache_key(&module.name, module_type);
-                if self.promise.modules.contains_key(&key) {
+                if self.realm.promise.modules.contains_key(&key) {
                     return Ok(());
                 }
                 let namespace = self.evaluate_dynamic_module(
@@ -2921,7 +2899,7 @@ impl<H: Host> Vm<H> {
                     module_type,
                     crate::bytecode::ModuleRequestPhase::Evaluation,
                 )?;
-                self.promise
+                self.realm.promise
                     .modules
                     .insert(key, ModuleRecord::materialized(namespace));
                 Ok(())
@@ -2942,14 +2920,13 @@ impl<H: Host> Vm<H> {
         }
         let cache_key = module_cache_key(&module.name, "javascript");
         let resuming_waiting = matches!(
-            self.promise
+            self.realm.promise
                 .modules
                 .get(&cache_key)
                 .map(|record| record.outcome),
             Some(ModuleOutcome::Pending(ModulePhase::WaitingForDependencies))
         );
-        match self
-            .promise
+        match self.realm.promise
             .modules
             .get(&cache_key)
             .map(|record| record.outcome)
@@ -2959,8 +2936,7 @@ impl<H: Host> Vm<H> {
                 if self.static_module_has_pending_dependencies(p, &module)? {
                     return Ok(());
                 }
-                if !self
-                    .promise
+                if !self.realm.promise
                     .modules
                     .get_mut(&cache_key)
                     .is_some_and(ModuleRecord::begin_after_dependencies)
@@ -2990,7 +2966,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
         };
         if !resuming_waiting {
-            self.promise
+            self.realm.promise
                 .modules
                 .insert(cache_key.clone(), ModuleRecord::evaluating_static());
         }
@@ -3000,13 +2976,12 @@ impl<H: Host> Vm<H> {
         match result {
             Ok(Some(namespace)) => self.settle_static_module(p, &cache_key, Ok(namespace)),
             Ok(None) => {
-                let waiting = self
-                    .promise
+                let waiting = self.realm.promise
                     .modules
                     .get_mut(&cache_key)
                     .is_some_and(ModuleRecord::wait_for_dependencies);
                 if waiting {
-                    self.promise.waiting_static_modules.push(module);
+                    self.realm.promise.waiting_static_modules.push(module);
                 }
                 Ok(())
             }
@@ -3047,31 +3022,29 @@ impl<H: Host> Vm<H> {
             self.refresh_static_module_bindings(p, value)?;
         }
         if state == PromiseState::Fulfilled
-            && self
-                .promise
+            && self.realm.promise
                 .modules
                 .get(cache_key)
                 .and_then(ModuleRecord::evaluation_promise)
                 .is_some_and(|promise| {
-                    self.promise
+                    self.realm.promise
                         .records
                         .get(&promise)
                         .is_some_and(|record| record.state == PromiseState::Pending)
                 })
         {
-            let Some(record) = self.promise.modules.get_mut(cache_key) else {
+            let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
                 return Err(
                     self.type_error(p, "module record disappeared during evaluation".into())
                 );
             };
             record.begin_async_evaluation(value);
-            self.promise
+            self.realm.promise
                 .async_module_order
                 .push_back(cache_key.to_owned());
             return Ok(());
         }
-        let deferred_namespace = self
-            .promise
+        let deferred_namespace = self.realm.promise
             .modules
             .get(cache_key)
             .and_then(ModuleRecord::deferred_namespace);
@@ -3080,7 +3053,7 @@ impl<H: Host> Vm<H> {
         {
             self.copy_module_namespace(value, namespace, p)?;
         }
-        let Some(record) = self.promise.modules.get_mut(cache_key) else {
+        let Some(record) = self.realm.promise.modules.get_mut(cache_key) else {
             return Err(self.type_error(p, "module record disappeared during evaluation".into()));
         };
         let waiters = match state {
@@ -3111,7 +3084,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         dependency_key: &str,
     ) -> Result<bool, JsError> {
-        let waiting = self.promise.waiting_static_modules.clone();
+        let waiting = self.realm.promise.waiting_static_modules.clone();
         for parent in waiting {
             let Some(plan) = crate::Engine::static_module_plan(&parent.source, &parent.name) else {
                 return Err(self.type_error(p, "static module metadata is unavailable".into()));
@@ -3172,14 +3145,14 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
         self.settle_pending_async_modules(p)?;
-        let waiting = std::mem::take(&mut self.promise.waiting_static_modules);
+        let waiting = std::mem::take(&mut self.realm.promise.waiting_static_modules);
         for module in waiting {
             if self.static_module_has_pending_dependencies(p, &module)? {
-                self.promise.waiting_static_modules.push(module);
+                self.realm.promise.waiting_static_modules.push(module);
                 continue;
             }
             let cache_key = module_cache_key(&module.name, "javascript");
-            let Some(record) = self.promise.modules.get(&cache_key) else {
+            let Some(record) = self.realm.promise.modules.get(&cache_key) else {
                 continue;
             };
             if record.phase() != ModulePhase::WaitingForDependencies {
@@ -3195,12 +3168,11 @@ impl<H: Host> Vm<H> {
     }
 
     fn settle_pending_async_modules(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let pending = self
-            .promise
+        let pending = self.realm.promise
             .async_module_order
             .iter()
             .filter_map(|key| {
-                let module = self.promise.modules.get(key)?;
+                let module = self.realm.promise.modules.get(key)?;
                 (module.phase() == ModulePhase::EvaluatingAsync).then(|| {
                     Some((
                         key.clone(),
@@ -3211,7 +3183,7 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         for (key, promise, namespace) in pending {
-            let Some(record) = self.promise.records.get(&promise).cloned() else {
+            let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
                 continue;
             };
             match record.state {
@@ -3227,8 +3199,8 @@ impl<H: Host> Vm<H> {
                 )?,
             }
         }
-        self.promise.async_module_order.retain(|key| {
-            self.promise
+        self.realm.promise.async_module_order.retain(|key| {
+            self.realm.promise
                 .modules
                 .get(key)
                 .is_some_and(|module| module.phase() == ModulePhase::EvaluatingAsync)
@@ -3260,7 +3232,7 @@ impl<H: Host> Vm<H> {
                     self.type_error(p, "static module request was not resolved".into())
                 })?;
             let dependency_key = module_cache_key(&dependency.name, "javascript");
-            let dependency_record = self.promise.modules.get(&dependency_key);
+            let dependency_record = self.realm.promise.modules.get(&dependency_key);
             let phase = dependency_record.map(ModuleRecord::phase);
             if matches!(
                 phase,
@@ -3274,7 +3246,7 @@ impl<H: Host> Vm<H> {
             let cycle_root_phase = cycle_root
                 .filter(|root| **root != module_identity)
                 .and_then(|root| {
-                    self.promise
+                    self.realm.promise
                         .modules
                         .get(&module_cache_key(&root.to_string_lossy(), "javascript"))
                 })
@@ -3370,14 +3342,13 @@ impl<H: Host> Vm<H> {
                 .first()
                 .is_some_and(|function| function.is_async)
             {
-                let pending = self
-                    .promise
+                let pending = self.realm.promise
                     .records
                     .get(&evaluation)
                     .is_some_and(|record| record.state == PromiseState::Pending);
                 if pending && self.deferred_dependency_batch {
                     let key = module_cache_key(&module.name, "javascript");
-                    let Some(module_record) = self.promise.modules.get_mut(&key) else {
+                    let Some(module_record) = self.realm.promise.modules.get_mut(&key) else {
                         return Err(self.type_error(
                             p,
                             "module record disappeared during asynchronous evaluation".into(),
@@ -3387,7 +3358,7 @@ impl<H: Host> Vm<H> {
                 } else if pending {
                     self.drain_jobs_until_promise(&residual, evaluation)?;
                 }
-                let Some(record) = self.promise.records.get(&evaluation).cloned() else {
+                let Some(record) = self.realm.promise.records.get(&evaluation).cloned() else {
                     return Err(
                         self.type_error(p, "module evaluation promise is unavailable".into())
                     );
@@ -3883,8 +3854,7 @@ impl<H: Host> Vm<H> {
             && crate::module_identity::same_name(&module.name, &p.source_name)
         {
             let key = module_cache_key(&module.name, "javascript");
-            let namespace = self
-                .promise
+            let namespace = self.realm.promise
                 .modules
                 .get(&key)
                 .and_then(ModuleRecord::pending_namespace);
@@ -3929,8 +3899,7 @@ impl<H: Host> Vm<H> {
             return result;
         }
         let key = module_cache_key(&module.name, "javascript");
-        let namespace = self
-            .promise
+        let namespace = self.realm.promise
             .modules
             .get(&key)
             .and_then(|record| match record.outcome {
@@ -4103,12 +4072,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let key = module_cache_key(&name, "javascript");
         if let Some(ModuleOutcome::Evaluated(namespace)) =
-            self.promise.modules.get(&key).map(|record| record.outcome)
+            self.realm.promise.modules.get(&key).map(|record| record.outcome)
         {
             return Ok(namespace);
         }
         let namespace = self.module_namespace_from_static(exports)?;
-        self.promise
+        self.realm.promise
             .modules
             .insert(key, ModuleRecord::materialized(namespace));
         Ok(namespace)
@@ -4248,7 +4217,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn active_native_env(&self) -> Option<Value> {
-        let callee = self.promise.active_native.last().copied()?;
+        let callee = self.realm.promise.active_native.last().copied()?;
         match self.heap.get(callee) {
             Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
@@ -4287,7 +4256,7 @@ impl<H: Host> Vm<H> {
             return self.promise_settle(p, promise, PromiseState::Fulfilled, value);
         }
         let job = self.native_with_env(Native::PromiseThenableJob, Value::NULL);
-        self.promise.thenable_jobs.insert(
+        self.realm.promise.thenable_jobs.insert(
             job,
             ThenableJob {
                 then,
@@ -4304,7 +4273,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        if self.promise.records.contains_key(&value) {
+        if self.realm.promise.records.contains_key(&value) {
             let constructor_atom = self.intern_atom("constructor");
             let constructor = self.get_property(p, value, constructor_atom)?;
             if constructor == self.native_value(Native::Promise) {
@@ -4323,12 +4292,12 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        let Some(record) = self.promise.records.get(&promise).cloned() else {
+        let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         };
         let constructor = self.promise_species_constructor(p, promise)?;
         let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
-        self.promise
+        self.realm.promise
             .reaction_capabilities
             .insert(next, (resolve, reject));
         self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
@@ -4342,12 +4311,12 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        let Some(record) = self.promise.records.get(&promise).cloned() else {
+        let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
         };
         let next = self.promise_object();
         let (resolve, reject) = self.promise_resolving_functions(next);
-        self.promise
+        self.realm.promise
             .reaction_capabilities
             .insert(next, (resolve, reject));
         self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
@@ -4377,7 +4346,7 @@ impl<H: Host> Vm<H> {
             next,
         };
         if record.state == PromiseState::Pending {
-            self.promise
+            self.realm.promise
                 .records
                 .get_mut(&promise)
                 .unwrap()
@@ -4419,7 +4388,7 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<Value, JsError> {
-        if self.promise.records.contains_key(&value) {
+        if self.realm.promise.records.contains_key(&value) {
             let constructor_atom = self.intern_atom("constructor");
             if self.get_property(p, value, constructor_atom)? == constructor {
                 return Ok(value);
@@ -4437,7 +4406,7 @@ impl<H: Host> Vm<H> {
         original_rejected: bool,
     ) -> Value {
         let function = self.native_with_env(Native::PromiseFinallyHandler, Value::UNDEFINED);
-        self.promise.finally_handler_callbacks.insert(
+        self.realm.promise.finally_handler_callbacks.insert(
             function,
             FinallyHandlerCallback {
                 handler,
@@ -4451,7 +4420,7 @@ impl<H: Host> Vm<H> {
     fn finally_continuation_function(&mut self, original_rejected: bool, original: Value) -> Value {
         let function =
             self.native_with_env(Native::PromiseFinallyContinuationHandler, Value::UNDEFINED);
-        self.promise.finally_continuation_callbacks.insert(
+        self.realm.promise.finally_continuation_callbacks.insert(
             function,
             FinallyContinuationCallback {
                 original_rejected,
@@ -4466,13 +4435,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let function = *self
-            .promise
+        let function = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise finally handler without callback".into()))?;
-        let callback = *self
-            .promise
+        let callback = *self.realm.promise
             .finally_handler_callbacks
             .get(&function)
             .ok_or_else(|| JsError("stale Promise finally handler".into()))?;
@@ -4493,13 +4460,11 @@ impl<H: Host> Vm<H> {
         _p: &ResidualProgram,
         _args: &[Value],
     ) -> Result<Value, JsError> {
-        let function = *self
-            .promise
+        let function = *self.realm.promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
-        let callback = *self
-            .promise
+        let callback = *self.realm.promise
             .finally_continuation_callbacks
             .get(&function)
             .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;

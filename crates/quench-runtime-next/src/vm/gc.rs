@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
                     self.weak_set_proto,
                     self.weak_ref_proto,
                     self.finalization_registry_proto,
-                    self.promise.proto,
+                    self.realm.promise.proto,
                     self.iterator_proto,
                     self.string_iterator_proto,
                     self.regexp_string_iterator_proto,
@@ -335,10 +335,10 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(self.test262_agent.roots())
-                .chain(self.promise.active_native.iter().copied())
-                .chain(self.promise.modules.values().flat_map(ModuleRecord::roots))
-                .chain(self.promise.module_sources.values().copied())
-                .chain(self.promise.records.iter().flat_map(|(promise, record)| {
+                .chain(self.realm.promise.active_native.iter().copied())
+                .chain(self.realm.promise.modules.values().flat_map(ModuleRecord::roots))
+                .chain(self.realm.promise.module_sources.values().copied())
+                .chain(self.realm.promise.records.iter().flat_map(|(promise, record)| {
                     std::iter::once(*promise)
                         .chain(std::iter::once(record.result))
                         .chain(record.reactions.iter().flat_map(|reaction| {
@@ -351,11 +351,11 @@ impl<H: Host> Vm<H> {
                                 .flat_map(|reaction| [reaction.handler, reaction.next]),
                         )
                 }))
-                .chain(self.promise.jobs.iter().flat_map(|(job, reaction)| {
+                .chain(self.realm.promise.jobs.iter().flat_map(|(job, reaction)| {
                     [*job, reaction.handler, reaction.next, reaction.value]
                 }))
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .thenable_jobs
                         .iter()
                         .flat_map(|(job, thenable)| {
@@ -363,7 +363,7 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .finally_jobs
                         .iter()
                         .flat_map(|(job, finally_job)| {
@@ -376,21 +376,21 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.promise.finally_continuation_jobs.iter().flat_map(
+                    self.realm.promise.finally_continuation_jobs.iter().flat_map(
                         |(job, continuation)| [*job, continuation.next, continuation.value],
                     ),
                 )
-                .chain(self.promise.finally_handler_callbacks.iter().flat_map(
+                .chain(self.realm.promise.finally_handler_callbacks.iter().flat_map(
                     |(function, callback)| [*function, callback.handler, callback.constructor],
                 ))
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .finally_continuation_callbacks
                         .iter()
                         .flat_map(|(function, callback)| [*function, callback.original]),
                 )
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .aggregates
                         .iter()
                         .flat_map(|(aggregate, record)| {
@@ -403,19 +403,19 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .aggregate_jobs
                         .iter()
                         .flat_map(|(job, aggregate_job)| [*job, aggregate_job.aggregate]),
                 )
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .reaction_capabilities
                         .iter()
                         .flat_map(|(promise, (resolve, reject))| [*promise, *resolve, *reject]),
                 )
                 .chain(
-                    self.promise
+                    self.realm.promise
                         .async_resume_jobs
                         .iter()
                         .flat_map(|(job, resume)| {
@@ -491,37 +491,37 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
-        self.promise
+        self.realm.promise
             .records
             .retain(|promise, _| self.heap.get(*promise).is_some());
-        self.promise
+        self.realm.promise
             .jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.promise
+        self.realm.promise
             .thenable_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.promise
+        self.realm.promise
             .finally_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.promise
+        self.realm.promise
             .finally_continuation_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.promise
+        self.realm.promise
             .finally_handler_callbacks
             .retain(|function, _| self.heap.get(*function).is_some());
-        self.promise
+        self.realm.promise
             .finally_continuation_callbacks
             .retain(|function, _| self.heap.get(*function).is_some());
-        self.promise
+        self.realm.promise
             .aggregates
             .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
-        self.promise
+        self.realm.promise
             .aggregate_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.promise
+        self.realm.promise
             .reaction_capabilities
             .retain(|promise, _| self.heap.get(*promise).is_some());
-        self.promise
+        self.realm.promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         #[cfg(feature = "profile-aggregate")]
@@ -615,8 +615,7 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         let mut index = 0;
-        while self
-            .promise
+        while self.realm.promise
             .records
             .get(&promise)
             .is_some_and(|record| record.state == PromiseState::Pending)
