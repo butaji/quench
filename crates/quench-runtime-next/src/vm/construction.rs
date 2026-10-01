@@ -143,7 +143,6 @@ impl<H: Host> Vm<H> {
                         | Native::BigInt64Array
                         | Native::BigUint64Array
                         | Native::Float16Array
-                        | Native::DynamicDerivedClass
                         | Native::Float32Array
                         | Native::Float64Array
                         | Native::DataView
@@ -495,13 +494,6 @@ impl<H: Host> Vm<H> {
                     {
                         return Err(JsError("arrow function is not a constructor".into()));
                     }
-                }
-                if let FunctionKind::Native(Native::DynamicDerivedClass) = kind {
-                    let base = match vm.heap.get(callee) {
-                        Some(Cell::Function { env, .. }) => *env,
-                        _ => return Err(JsError("not a constructor".into())),
-                    };
-                    return vm.construct_value_with_new_target(p, base, new_target, args);
                 }
                 if let FunctionKind::Native(Native::FunctionBoundCall) = kind {
                     let env = match vm.heap.get(callee) {
