@@ -131,17 +131,13 @@ fn host_boundary_rejects_type_mismatches_and_i32_convenience_misuse() {
 }
 
 #[test]
-fn unsupported_numeric_conversions_and_reference_types_fail_explicitly() {
-    for wat in [
-        r#"(module (func (export "f") (result i64) f64.const 1 i64.trunc_f64_s))"#,
-        r#"(module (func (export "f") (result externref) ref.null extern))"#,
-    ] {
-        assert!(matches!(
-            crate::Engine::new()
-                .compile_wat(wat)
-                .unwrap()
-                .lower_shared("f"),
-            Err(Error::Unsupported(_))
-        ));
-    }
+fn reference_types_fail_explicitly() {
+    let wat = r#"(module (func (export "f") (result externref) ref.null extern))"#;
+    assert!(matches!(
+        crate::Engine::new()
+            .compile_wat(wat)
+            .unwrap()
+            .lower_shared("f"),
+        Err(Error::Unsupported(_))
+    ));
 }

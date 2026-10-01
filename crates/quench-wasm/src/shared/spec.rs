@@ -49,6 +49,10 @@ fn pinned_f32_bitwise_operators_use_shared_execution() {
 fn pinned_f64_bitwise_operators_use_shared_execution() {
     run_numeric_spec("f64_bitwise");
 }
+#[test]
+fn pinned_conversion_directives_use_shared_execution() {
+    run_numeric_spec("conversions");
+}
 
 fn run_numeric_spec(file: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -95,6 +99,7 @@ fn run_numeric_spec(file: &str) {
                 let expected = match *message {
                     "integer divide by zero" => WasmTrap::IntegerDivideByZero,
                     "integer overflow" => WasmTrap::IntegerOverflow,
+                    "invalid conversion to integer" => WasmTrap::InvalidConversionToInteger,
                     _ => panic!("{file}.wast:{line}: unexpected trap class"),
                 };
                 assert_eq!(error.wasm_trap(), Some(expected), "{file}.wast:{line}");

@@ -3,7 +3,7 @@
 
 use super::{WasmTrap, WasmValue};
 
-use super::numeric::{NumericResult, selectors};
+use super::numeric::{selectors, NumericResult};
 
 macro_rules! binary_family {
     ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,
@@ -99,29 +99,4 @@ integer_unary_operators! { Signed, value;
     ExtendSigned8, I32Extend8S, I64Extend8S => NumericResult::Value(value as i8 as Signed);
     ExtendSigned16, I32Extend16S, I64Extend16S => NumericResult::Value(value as i16 as Signed);
     @i64 ExtendSigned32, I64Extend32S => NumericResult::Value(value as i32 as Signed);
-}
-
-macro_rules! integer_conversions {
-    ($argument:ident; $($name:ident, $wasm:ident, $source:ident => $body:expr;)+) => {
-        selectors!(IntegerConversionOperator; $($name, $wasm;)+);
-        impl IntegerConversionOperator {
-            pub(crate) fn source_type(self) -> super::WasmType {
-                match self { $(Self::$name => super::WasmType::$source,)+ }
-            }
-            pub(crate) fn apply(self, value: WasmValue) -> Option<WasmValue> {
-                match self {
-                    $(Self::$name => match value {
-                        WasmValue::$source($argument) => Some($body),
-                        _ => None,
-                    },)+
-                }
-            }
-        }
-    };
-}
-
-integer_conversions! { value;
-    WrapI64, I32WrapI64, I64 => WasmValue::I32(value as i32);
-    ExtendI32Signed, I64ExtendI32S, I32 => WasmValue::I64(i64::from(value));
-    ExtendI32Unsigned, I64ExtendI32U, I32 => WasmValue::I64(i64::from(value as u32));
 }
