@@ -656,6 +656,68 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 }
 
 #[test]
+fn flattening_roots_release_after_success_and_abrupt_completion() {
+    let cases = [
+        ("var source = [1]; var mapper = value => [value];", false, false),
+        ("var source = [1]; var mapper = value => [value]; \
+          Object.defineProperty(source, '0', {get() {throw new Error('source')}});", true, true),
+        ("var nested = [1]; Object.defineProperty(nested, '0', \
+          {get() {throw new Error('nested')}}); var source = [nested]; var mapper = value => value;", true, true),
+        ("var source = [1]; var mapper = value => [value]; \
+          source.constructor = {[Symbol.species]: function() { \
+          return new Proxy({}, {defineProperty() {return false}})}};", true, true),
+        ("var source = [1]; var mapper = value => {throw new Error('mapper')};", false, true),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (source, flat_fails, flat_map_fails) in cases {
+            for (native, fails) in [
+                (Native::ArrayFlat, flat_fails),
+                (Native::ArrayFlatMap, flat_map_fails),
+            ] {
+                let mut vm = Vm::new(SilentHost);
+                let program = compile(source, "flatten-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let source_atom = vm.intern_atom("source");
+                let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
+                let mapper_atom = vm.intern_atom("mapper");
+                let mapper = vm.own_property(vm.realm.globals, mapper_atom).unwrap();
+                let args = if native == Native::ArrayFlatMap { vec![mapper] } else { vec![] };
+                let roots_before = vm.heap.root_count_for_test();
+                let outcome = vm.array_flatten_native(&program, native, source, &args);
+                assert_eq!(outcome.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots_before);
+                if let Ok(result) = outcome {
+                    let handle = vm.heap.weak_handle(result).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn flattening_uses_rooted_frames_instead_of_native_recursion() {
+    const NESTING_DEPTH: usize = 4096;
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("", "deep-flatten.js").unwrap();
+    vm.initialize(&program).unwrap();
+    let mut nested = Value::number(42.0);
+    for _ in 0..NESTING_DEPTH {
+        nested = vm.new_array(vec![nested]);
+    }
+    let roots_before = vm.heap.root_count_for_test();
+    let result = vm.array_flatten_native(
+        &program, Native::ArrayFlat, nested, &[Value::number(f64::INFINITY)],
+    ).unwrap();
+    assert_eq!(vm.array_value_at(result, 0), Value::number(42.0));
+    assert_eq!(vm.heap.root_count_for_test(), roots_before);
+}
+
+#[test]
 fn bound_function_metadata_roots_release_on_normal_and_abrupt_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
