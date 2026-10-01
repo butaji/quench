@@ -515,7 +515,7 @@ impl<H: Host> Vm<H> {
                 if let Some(descriptors) = args.get(1).copied()
                     && !descriptors.is_undefined()
                 {
-                    self.object_define_properties(p, &[object, descriptors])?;
+                    return self.object_define_properties(p, &[object, descriptors]);
                 }
                 Ok(object)
             }
