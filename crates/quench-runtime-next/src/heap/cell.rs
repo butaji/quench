@@ -931,6 +931,7 @@ pub(crate) struct Object {
 struct ObjectExtras {
     arguments_map: Option<Vec<u16>>,
     arguments_object: bool,
+    raw_json: bool,
     module_namespace: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
@@ -1024,6 +1025,13 @@ impl Object {
             .as_deref()
             .is_some_and(|extras| extras.arguments_object)
     }
+    pub(crate) fn is_raw_json(&self) -> bool {
+        self.extras.as_deref().is_some_and(|extras| extras.raw_json)
+    }
+    pub(crate) fn set_raw_json(&mut self) {
+        self.extras_mut().raw_json = true;
+    }
+
     pub(crate) fn is_module_namespace(&self) -> bool {
         self.extras
             .as_deref()
