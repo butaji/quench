@@ -152,6 +152,10 @@ impl<H: Host> Vm<H> {
             let private_names = self
                 .direct_eval_private_names(p)
                 .map_or_else(Vec::new, |(_, names)| names);
+            let context_source = eval_method_context_source(&text, &private_names);
+            if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
+                return self.eval_compiled_expression(p, expression, inherited_strict);
+            }
             let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
                 .map(|atom| self.atom_name(atom as u32).to_owned())
                 .collect::<Vec<_>>();

@@ -339,6 +339,34 @@ mod tests {
     }
 
     #[test]
+    fn regression_direct_eval_private_expressions_use_the_class_environment() {
+        assert_output_in_execution_modes(
+            r#"
+            var Box = class {
+                #value = 42;
+                read() {
+                    print(eval('this.#value'));
+                    print(eval("'use strict'; this.#value"));
+                    print(eval('this.#value += 1'));
+                    var read = eval('() => this.#value');
+                    $262.gc();
+                    print(read());
+                    print(eval('#value in this'));
+                    try { eval('this.#missing'); }
+                    catch (error) { print(error instanceof SyntaxError); }
+                    try { (0, eval)('this.#value'); }
+                    catch (error) { print(error instanceof SyntaxError); }
+                    try { eval('({}).#value'); }
+                    catch (error) { print(error instanceof TypeError); }
+                }
+            };
+            new Box().read();
+            "#,
+            &["42", "42", "43", "43", "true", "true", "true", "true"],
+        );
+    }
+
+    #[test]
     fn regression_strict_eval_retains_method_and_private_syntax_context() {
         assert_output_in_execution_modes(
             r#"
