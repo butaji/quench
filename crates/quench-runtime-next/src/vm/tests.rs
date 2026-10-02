@@ -5319,3 +5319,228 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
         }
     }
 }
+
+#[test]
+fn array_iterator_advance_roots_owner_and_applies_index_transition() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [Native::ArrayKeys, Native::ArrayValues, Native::ArrayEntries] {
+            for phase in ["value", "length", "item", "done"] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"function source() {{return {{
+                    get length() {{$262.gc(); if ('{phase}'==='length') throw {{kind:'length'}}; return '{phase}'==='done'?0:2;}},
+                    get 0() {{$262.gc(); if ('{phase}'==='item') throw {{kind:'item'}};return {{tag:42}};}}
+                }};}}"#
+                );
+                let program = compile(&source, "array-iterator-advance.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("source");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let source = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let iterator = vm.array_iterator_native(&program, native, source).unwrap();
+                let handles = [iterator, source].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.iterator_next(&program, iterator);
+                let throws = phase == "length" || (phase == "item" && native != Native::ArrayKeys);
+                assert_eq!(result.is_err(), throws);
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                assert_eq!(
+                    vm.heap.weak_value(handles[0]),
+                    Some(iterator),
+                    "{native:?} {phase}"
+                );
+                match result {
+                    Ok(result) => {
+                        let atom = vm.intern_atom("done");
+                        assert_eq!(
+                            vm.own_property(result, atom),
+                            Some(if phase == "done" {
+                                Value::TRUE
+                            } else {
+                                Value::FALSE
+                            })
+                        );
+                        if phase != "done" {
+                            let atom = vm.intern_atom("value");
+                            let mut value = vm.own_property(result, atom).unwrap();
+                            if native == Native::ArrayEntries {
+                                value = match vm.heap.get(value) {
+                                    Some(super::Cell::Array { elements, .. }) => {
+                                        assert_eq!(elements[0].as_number(), Some(0.0));
+                                        elements[1]
+                                    }
+                                    _ => panic!("entry"),
+                                };
+                            }
+                            if native == Native::ArrayKeys {
+                                assert_eq!(value.as_number(), Some(0.0));
+                            } else {
+                                let atom = vm.intern_atom("tag");
+                                assert_eq!(
+                                    vm.own_property(value, atom).unwrap().as_number(),
+                                    Some(42.0)
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    }
+                }
+                match vm.heap.get(iterator) {
+                    Some(super::Cell::Iterator {
+                        index,
+                        done,
+                        source: owner,
+                        ..
+                    }) => {
+                        assert_eq!(
+                            *index,
+                            if phase == "length" || phase == "done" {
+                                0
+                            } else {
+                                1
+                            }
+                        );
+                        assert_eq!(*done, phase == "done");
+                        assert_eq!(
+                            *owner,
+                            if phase == "done" {
+                                Value::UNDEFINED
+                            } else {
+                                source
+                            }
+                        );
+                    }
+                    _ => panic!("iterator"),
+                }
+                let owner = vm.heap.root(iterator);
+                vm.collect_now(&program);
+                assert_eq!(vm.heap.weak_value(handles[1]).is_none(), phase == "done");
+                vm.heap.release_root(owner);
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn array_iterator_retains_captured_source_after_reentrant_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(Test262Host);
+        let program = compile(
+            r#"
+            var iterator,nested=false;
+            function lengthValue() {return {[Symbol.toPrimitive]() {
+                nested=true;iterator.next();$262.gc();return 1;
+            }};}
+            function source() {return {
+                get length() {return nested?0:lengthValue();},
+                get 0() {$262.gc();return {tag:42};}
+            };}
+        "#,
+            "array-iterator-captured-source.js",
+        )
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let atom = vm.intern_atom("source");
+        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+        let source = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let iterator = vm
+            .array_iterator_native(&program, Native::ArrayValues, source)
+            .unwrap();
+        let atom = vm.intern_atom("iterator");
+        vm.set_property(vm.realm.globals, atom, iterator).unwrap();
+        let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+        let roots = vm.heap.root_count_for_test();
+        let calls = vm.active_call_roots.len();
+        let result = vm.iterator_next(&program, iterator).unwrap();
+        let value_atom = vm.intern_atom("value");
+        let value = vm.own_property(result, value_atom).unwrap();
+        let tag = vm.intern_atom("tag");
+        assert_eq!(vm.own_property(value, tag).unwrap().as_number(), Some(42.0));
+        assert_eq!(vm.heap.weak_value(handles[0]), Some(source));
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        assert_eq!(vm.active_call_roots.len(), calls);
+        assert!(
+            matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {source,index:1,done:true,..}) if source.is_undefined())
+        );
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(handles[0]).is_none());
+        assert_eq!(vm.heap.weak_value(handles[1]), Some(iterator));
+        vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+            .unwrap();
+        vm.collect_now(&program);
+        assert!(vm.heap.weak_value(handles[1]).is_none());
+    }
+}
+
+#[test]
+fn completed_typed_array_iterators_release_source_and_backing() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [
+            Native::Uint8ArrayKeys,
+            Native::Uint8ArrayValues,
+            Native::Uint8ArrayEntries,
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let program = compile(
+                "function source() {return new Uint8Array([42]);}",
+                "typed-iterator-release.js",
+            )
+            .unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("source");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let source = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let buffer = match vm.heap.get(source) {
+                Some(super::Cell::TypedArray { buffer, .. }) => *buffer,
+                _ => panic!("typed source"),
+            };
+            let iterator = vm.array_iterator_native(&program, native, source).unwrap();
+            let handles = [iterator, source, buffer].map(|v| vm.heap.weak_handle(v).unwrap());
+            let owner = vm.heap.root(iterator);
+            vm.collect_now(&program);
+            for (handle, value) in handles.iter().zip([iterator, source, buffer]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value));
+            }
+            vm.iterator_next(&program, iterator).unwrap();
+            let result = vm.iterator_next(&program, iterator).unwrap();
+            let atom = vm.intern_atom("done");
+            assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
+            vm.collect_now(&program);
+            assert_eq!(vm.heap.weak_value(handles[0]), Some(iterator));
+            assert!(vm.heap.weak_value(handles[1]).is_none());
+            assert!(vm.heap.weak_value(handles[2]).is_none());
+            let result = vm.iterator_next(&program, iterator).unwrap();
+            assert_eq!(vm.own_property(result, atom), Some(Value::TRUE));
+            vm.heap.release_root(owner);
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(handles[0]).is_none());
+        }
+    }
+}
