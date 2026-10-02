@@ -162,6 +162,7 @@ pub(crate) enum ImmediateRole {
     AtomIndex,
     LocalSlot,
     FunctionNamePrefix,
+    PropertyDefinitionMode,
     BooleanFlag,
     ArrayIndex,
     BinaryOperator,
@@ -185,6 +186,35 @@ pub(crate) enum ImmediateRole {
     FieldLookup,
     WideInstructionIndex,
 }
+
+macro_rules! property_definition_modes {
+    ($($mode:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u32)]
+        pub(crate) enum PropertyDefinitionMode { $($mode),+ }
+
+        impl PropertyDefinitionMode {
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$mode),+];
+
+            pub(crate) fn from_word(word: u32) -> Option<Self> {
+                Self::ALL.get(usize::try_from(word).ok()?).copied()
+            }
+
+            pub(crate) const fn word(self) -> u32 {
+                self as u32
+            }
+        }
+    };
+}
+
+property_definition_modes!(
+    Method,
+    ReadonlyMethod,
+    Getter,
+    Setter,
+    EnumerableGetter,
+    EnumerableSetter,
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldLookup {
@@ -532,6 +562,7 @@ opcodes!(
     WasmF64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmF64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmF64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
+    DefinePropertyRecord => CALL_EFFECT; layout Scalar; meaning PropertyDefinitionMode, @ Register, @ fields(Register, Register, Register),
 );
 
 const _: () = {
@@ -1030,7 +1061,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 36;
+    pub const FORMAT_VERSION: u8 = 37;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

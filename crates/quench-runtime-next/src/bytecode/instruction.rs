@@ -475,6 +475,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn property_definition_mode(self) -> Option<super::PropertyDefinitionMode> {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::PropertyDefinitionMode
+                );
+                super::PropertyDefinitionMode::from_word(self.imm())
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn boolean_flag(self) -> Option<bool> {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::BooleanFlag);
                 match self.imm() {

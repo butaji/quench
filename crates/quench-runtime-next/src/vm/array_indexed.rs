@@ -260,7 +260,7 @@ impl<H: Host> Vm<H> {
             return Err(self.range_error(p, "invalid array length".into()));
         }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+        if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));
         }
         let result = match native {
@@ -416,7 +416,7 @@ impl<H: Host> Vm<H> {
         typed_array: bool,
     ) -> Result<Value, JsError> {
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+        if !self.is_function(callback) {
             return Err(self.type_error(p, "reduce callback is not callable".into()));
         }
         let object_root = self.heap.root(object);

@@ -1,3 +1,4 @@
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 use super::*;
@@ -2578,26 +2579,22 @@ impl<H: Host> Vm<H> {
         if receiver == self.iterator_proto {
             return Err(self.type_error(p, "Cannot assign to Iterator.prototype intrinsic".into()));
         }
+        let receiver_root = self.heap.root(receiver);
+        let value_root = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
         let key = if name == "constructor" {
             self.heap.alloc(Cell::String(JsString::from_str(name)))
         } else {
-            self.well_known_symbols
-                .get("toStringTag")
-                .copied()
-                .unwrap_or(Value::UNDEFINED)
+            self.well_known_symbols.get("toStringTag").copied().unwrap()
         };
-        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let descriptor = self.object();
-        for (field, field_value) in [
-            ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
-        ] {
-            let atom = self.intern_atom(field);
-            self.set_property(descriptor, atom, field_value)?;
-        }
-        self.object_define_property(p, &[receiver, key, descriptor])?;
+        let receiver = self.heap.root_value(receiver_root).unwrap();
+        let value = self.heap.root_value(value_root).unwrap();
+        let result =
+            self.define_property_or_throw(p, receiver, key, PropertyDescriptorRecord::data(value));
+        self.heap.release_root(value_root);
+        self.heap.release_root(receiver_root);
+        result?;
         Ok(Value::UNDEFINED)
     }
 

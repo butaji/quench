@@ -583,51 +583,13 @@ impl FunctionCompiler<'_, '_> {
                 crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
             );
         }
-        let descriptor = self.reg();
-        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
-        for (field, value) in [
-            ("value", function),
-            (
-                "writable",
-                self.literal(Constant::Boolean(
-                    !name.is_some_and(|name| name.starts_with("\0rqj:private:")),
-                )),
-            ),
-            ("enumerable", self.literal(Constant::Boolean(false))),
-            ("configurable", self.literal(Constant::Boolean(true))),
-        ] {
-            let atom = self.owner.atom(field);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, value, descriptor, cache, atom);
-        }
-        let object = self.load_name("Object");
-        let define = self.reg();
-        let define_atom = self.owner.atom("defineProperty");
-        let define_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            define,
-            FieldBase::register(object).0,
-            define_cache,
-            define_atom,
-        );
-        let key =
-            computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
-        let base = self.next_reg;
-        let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
-        let key_arg = self.reg();
-        self.emit(Op::Move, key_arg, key, 0, 0);
-        let descriptor_arg = self.reg();
-        self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
-        let result = self.reg();
-        self.emit(
-            Op::Call,
-            result,
-            define,
-            object,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 3, false, false),
-        );
+        let key = computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
+        let mode = if name.is_some_and(|name| name.starts_with("\0rqj:private:")) {
+            crate::bytecode::PropertyDefinitionMode::ReadonlyMethod
+        } else {
+            crate::bytecode::PropertyDefinitionMode::Method
+        };
+        self.emit(Op::DefinePropertyRecord, function, target, key, mode.word());
     }
 
     fn define_class_accessor(
@@ -638,55 +600,15 @@ impl FunctionCompiler<'_, '_> {
         name: Option<&str>,
         accessor: &str,
     ) {
-        let descriptor = self.reg();
-        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
-        let accessor_atom = self.owner.atom(accessor);
-        let descriptor_cache = self.owner.cache_site();
-        self.emit(
-            Op::SetField,
-            function,
-            descriptor,
-            descriptor_cache,
-            accessor_atom,
-        );
-        for (field, value) in [
-            ("enumerable", self.literal(Constant::Boolean(false))),
-            ("configurable", self.literal(Constant::Boolean(true))),
-        ] {
-            let atom = self.owner.atom(field);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, value, descriptor, cache, atom);
-        }
-
-        let object = self.load_name("Object");
-        let define = self.reg();
-        let define_atom = self.owner.atom("defineProperty");
-        let define_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            define,
-            FieldBase::register(object).0,
-            define_cache,
-            define_atom,
-        );
         let key = computed_key.unwrap_or_else(|| {
             self.literal(Constant::String(name.expect("named class accessor").into()))
         });
-        let base = self.next_reg;
-        let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
-        let key_arg = self.reg();
-        self.emit(Op::Move, key_arg, key, 0, 0);
-        let descriptor_arg = self.reg();
-        self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
-        let result = self.reg();
-        self.emit(
-            Op::Call,
-            result,
-            define,
-            object,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 3, false, false),
-        );
+        let mode = match accessor {
+            "get" => crate::bytecode::PropertyDefinitionMode::Getter,
+            "set" => crate::bytecode::PropertyDefinitionMode::Setter,
+            _ => unreachable!("class accessor kind"),
+        };
+        self.emit(Op::DefinePropertyRecord, function, target, key, mode.word());
     }
 
     fn set_prototype(&mut self, target: Register, prototype: Register) {

@@ -1,4 +1,5 @@
 use super::property_key::PropertyKey;
+use crate::bytecode::PropertyDefinitionMode;
 use super::*;
 
 pub(super) enum TypedArrayIndexKey {
@@ -26,6 +27,25 @@ impl PropertyDescriptorRecord {
             configurable: Some(true),
             getter: None,
             setter: None,
+        }
+    }
+
+    pub(super) fn for_definition(mode: PropertyDefinitionMode, value: Value) -> Self {
+        use PropertyDefinitionMode::*;
+        match mode {
+            Method | ReadonlyMethod => Self {
+                writable: Some(mode == Method),
+                enumerable: Some(false),
+                ..Self::data(value)
+            },
+            Getter | Setter | EnumerableGetter | EnumerableSetter => Self {
+                value: None,
+                writable: None,
+                enumerable: Some(matches!(mode, EnumerableGetter | EnumerableSetter)),
+                configurable: Some(true),
+                getter: matches!(mode, Getter | EnumerableGetter).then_some(value),
+                setter: matches!(mode, Setter | EnumerableSetter).then_some(value),
+            },
         }
     }
 

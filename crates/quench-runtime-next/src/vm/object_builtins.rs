@@ -48,14 +48,7 @@ impl<H: Host> Vm<H> {
             for (key, descriptor) in &definitions {
                 let object = self.heap.root_value(target).unwrap();
                 let property = self.heap.root_value(*key).unwrap();
-                if !self.define_own_property_record(
-                    p,
-                    object,
-                    property,
-                    descriptor.resolve(&self.heap),
-                )? {
-                    return Err(self.type_error(p, "cannot define property".into()));
-                }
+                self.define_property_or_throw(p, object, property, descriptor.resolve(&self.heap))?;
             }
             Ok(self.heap.root_value(target).unwrap())
         })();

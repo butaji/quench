@@ -75,14 +75,14 @@ impl<H: Host> Vm<H> {
             let record = self.to_property_descriptor(p, descriptor)?;
             let target = self.heap.root_value(source).unwrap();
             let property = self.heap.root_value(key).unwrap();
-            let accepted = self.define_own_property_record(p, target, property, record)?;
             match kind {
-                PropertyDefinitionKind::Reflect => Ok(Self::integrity_bool(accepted)),
-                PropertyDefinitionKind::Object if accepted => {
-                    Ok(self.heap.root_value(source).unwrap())
+                PropertyDefinitionKind::Reflect => {
+                    let accepted = self.define_own_property_record(p, target, property, record)?;
+                    Ok(Self::integrity_bool(accepted))
                 }
                 PropertyDefinitionKind::Object => {
-                    Err(self.type_error(p, "cannot define property".into()))
+                    self.define_property_or_throw(p, target, property, record)?;
+                    Ok(self.heap.root_value(source).unwrap())
                 }
             }
         })();
@@ -93,6 +93,20 @@ impl<H: Host> Vm<H> {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    pub(super) fn define_property_or_throw(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+        descriptor: PropertyDescriptorRecord,
+    ) -> Result<(), JsError> {
+        if self.define_own_property_record(p, target, key, descriptor)? {
+            Ok(())
+        } else {
+            Err(self.type_error(p, "cannot define property".into()))
+        }
     }
 
     pub(super) fn define_own_property_record(
@@ -126,7 +140,7 @@ impl<H: Host> Vm<H> {
                                 object,
                                 index,
                                 descriptor.resolve(&self.heap),
-                            )
+                            );
                         }
                         TypedArrayIndexKey::Invalid => return Ok(false),
                         TypedArrayIndexKey::NotCanonical => {}
