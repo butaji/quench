@@ -64,58 +64,30 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         iterator: Value,
     ) -> Result<Value, JsError> {
-        let iterator_root = self.heap.root(iterator);
-        let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-        if let Some(Cell::Iterator {
-            source,
-            kind: IteratorKind::Protocol,
-            ..
-        }) = self.heap.get(iterator)
-        {
-            let source = *source;
-            self.heap.release_root(iterator_root);
-            return self.iterator_close(p, source);
-        }
-        if let Some(Cell::Iterator {
-            source,
-            kind: IteratorKind::AsyncFromSync,
-            ..
-        }) = self.heap.get(iterator)
-        {
-            let source = *source;
-            self.heap.release_root(iterator_root);
-            return self.iterator_close(p, source);
-        }
-        let atom = self.intern_atom("return");
-        let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-        let method = match self.get_property(p, iterator, atom) {
-            Ok(method) => method,
-            Err(error) => {
-                self.heap.release_root(iterator_root);
-                return Err(error);
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([iterator], |vm| {
+            if let Some(Cell::Iterator {
+                source,
+                kind: IteratorKind::Protocol | IteratorKind::AsyncFromSync,
+                ..
+            }) = vm.heap.get(iterator)
+            {
+                return vm.iterator_close(p, *source);
             }
-        };
-        let method_root = self.heap.root(method);
-        if method.is_undefined() || method.is_null() {
-            self.heap.release_root(method_root);
-            self.heap.release_root(iterator_root);
-            return Ok(Value::UNDEFINED);
-        }
-        if !self.is_function(method) {
-            self.heap.release_root(method_root);
-            self.heap.release_root(iterator_root);
-            return Err(self.type_error(p, "iterator return method is not callable".into()));
-        }
-        let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
-        let method = self.heap.root_value(method_root).unwrap_or(method);
-        let result = self.call_value(p, method, iterator, &[]);
-        self.heap.release_root(method_root);
-        self.heap.release_root(iterator_root);
-        let result = result?;
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "iterator return result is not an object".into()));
-        }
-        Ok(result)
+            let atom = vm.intern_atom("return");
+            let method = vm.get_property(p, iterator, atom)?;
+            if method.is_undefined() || method.is_null() {
+                return Ok(Value::UNDEFINED);
+            }
+            if !vm.is_function(method) {
+                return Err(vm.type_error(p, "iterator return method is not callable".into()));
+            }
+            let result = vm.call_value(p, method, iterator, &[])?;
+            if !vm.is_object_like(result) {
+                return Err(vm.type_error(p, "iterator return result is not an object".into()));
+            }
+            Ok(result)
+        })
     }
     pub(super) fn install_iterators(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.iterator_proto = self.object();
