@@ -168,6 +168,7 @@ impl FunctionCompiler<'_, '_> {
         if self.iterator_closures.is_empty() {
             return;
         }
+        let start = self.code.len() as u32;
         let close_fn = self.load_name("\0rqj:iterator-close");
         let iterators = self.iterator_closures.clone();
         for closure in iterators.into_iter().rev() {
@@ -175,6 +176,7 @@ impl FunctionCompiler<'_, '_> {
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
         }
+        self.record_iterator_close_exclusion(start);
     }
 
     fn close_iterators_leaving(&mut self, control_index: usize) {
@@ -188,11 +190,21 @@ impl FunctionCompiler<'_, '_> {
         if closures.is_empty() {
             return;
         }
+        let start = self.code.len() as u32;
         let close_fn = self.load_name("\0rqj:iterator-close");
         for closure in closures {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
             self.emit(Op::Call, ignored, close_fn, iterator, 0);
+        }
+        self.record_iterator_close_exclusion(start);
+    }
+
+    fn record_iterator_close_exclusion(&mut self, start: u32) {
+        let end = self.code.len() as u32;
+        self.iterator_close_ranges.push((start, end));
+        if let Some(ranges) = self.iterator_close_exclusions.last_mut() {
+            ranges.push((start, end));
         }
     }
     fn return_expression(&mut self, expression: &Expression<'_>) {

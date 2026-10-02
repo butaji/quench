@@ -2120,6 +2120,28 @@ mod tests {
     }
 
     #[test]
+    fn regression_iterator_close_throw_bypasses_exited_inner_catch() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var abrupt of ['return', 'break']) {
+                var calls=0, caught=0, finalized=0, steps=0;
+                var iterable={[Symbol.iterator](){return {
+                    next(){if(++steps>3)throw 'continued after close';return {done:false};},
+                    return(){calls++;throw 42;}
+                };}};
+                var body=abrupt==='return'
+                    ? 'for(var x of iterable){try{return;}catch(e){caught++;}finally{finalized++;}}'
+                    : 'for(var x of iterable){try{break;}catch(e){caught++;}finally{finalized++;}}';
+                try { Function('iterable', body)(iterable); print(false); }
+                catch(e) { print(e===42); }
+                print(calls);print(caught);print(finalized);
+            }
+            "#,
+            &["true", "1", "0", "1", "true", "1", "0", "1"],
+        );
+    }
+
+    #[test]
     fn regression_number_format_legacy_views_obey_brand_and_method_realm() {
         assert_output_in_execution_modes(
             r#"
