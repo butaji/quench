@@ -2925,7 +2925,7 @@ impl<H: Host> Vm<H> {
                     if global {
                         let matched_atom = vm.intern_atom("0");
                         let matched = vm.get_property(p, result, matched_atom)?;
-                        if vm.regexp_input_string(p, matched)?.units().is_empty() {
+                        if vm.coerce_js_string(p, matched)?.units().is_empty() {
                             let last_index_atom = vm.intern_atom("lastIndex");
                             let last_index = vm.get_property(p, source, last_index_atom)?;
                             let index = vm.regexp_to_length_value(p, last_index)?;

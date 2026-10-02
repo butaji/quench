@@ -131,7 +131,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
             return Ok(receiver);
         }
-        let text = self.regexp_input_string(p, receiver)?;
+        let text = self.coerce_js_string(p, receiver)?;
         Ok(self.heap.alloc(Cell::String(text)))
     }
 
@@ -262,48 +262,43 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(object, name, function)
     }
 
-    pub(super) fn string_raw(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let template = args.first().copied().unwrap_or(Value::UNDEFINED);
-        self.require_object_coercible(p, template)?;
-        let template = if self.is_object_like(template) {
-            template
-        } else {
-            self.box_primitive_object(template)?
-        };
-        let raw_key = self.intern_atom("raw");
-        let raw = self.get_property(p, template, raw_key)?;
-        self.require_object_coercible(p, raw)?;
-        let raw = if self.is_object_like(raw) {
-            raw
-        } else {
-            self.box_primitive_object(raw)?
-        };
-        let length_key = self.intern_atom("length");
-        let raw_length = self.get_property(p, raw, length_key)?;
-        let length = super::regexp::regexp_to_length(self.to_number(p, raw_length)?);
-        if length == 0 {
-            return self.string_from_units(&[]);
-        }
-        let mut result = JsString::from_str("");
-        for index in 0..length {
-            let key = self.intern_atom(&index.to_string());
-            let segment = self.get_property(p, raw, key)?;
-            let segment = self.coerce_js_string(p, segment)?;
-            result.push_js_string(&segment);
-            if index + 1 < length {
-                let substitution = args
-                    .get(index + 1)
-                    .copied()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
-                let substitution = self.coerce_js_string(p, substitution)?;
-                result.push_js_string(&substitution);
-            }
-        }
-        Ok(self.heap.alloc(Cell::String(result)))
+    pub(super) fn string_raw(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+        self.with_call_roots(args.iter().copied(), |vm| {
+            let template = args.first().copied().unwrap_or(Value::UNDEFINED);
+            vm.require_object_coercible(p, template)?;
+            let template = if vm.is_object_like(template) {
+                template
+            } else {
+                vm.box_primitive_object(template)?
+            };
+            let atom = vm.intern_atom("raw");
+            let raw = vm.get_property(p, template, atom)?;
+            vm.require_object_coercible(p, raw)?;
+            let raw = if vm.is_object_like(raw) {
+                raw
+            } else {
+                vm.box_primitive_object(raw)?
+            };
+            vm.with_call_roots([raw], |vm| {
+                let atom = vm.intern_atom("length");
+                let length = vm.get_property(p, raw, atom)?;
+                let length = vm.regexp_to_length_value(p, length)?;
+                let mut output = JsString::from_str("");
+                for index in 0..length {
+                    let atom = vm.intern_atom(&index.to_string());
+                    let segment = vm.get_property(p, raw, atom)?;
+                    let segment = vm.coerce_js_string(p, segment)?;
+                    output.push_js_string(&segment);
+                    if index + 1 < length {
+                        if let Some(substitution) = args.get(index + 1) {
+                            let substitution = vm.coerce_js_string(p, *substitution)?;
+                            output.push_js_string(&substitution);
+                        }
+                    }
+                }
+                Ok(vm.heap.alloc(Cell::String(output)))
+            })
+        })
     }
 
     pub(super) fn string_basic_native(
@@ -470,9 +465,9 @@ impl<H: Host> Vm<H> {
                 }
             }
 
-            let input = vm.regexp_input_string(p, this)?;
+            let input = vm.coerce_js_string(p, this)?;
             let limit = vm.regexp_split_limit(p, limit)?;
-            let separator_string = vm.regexp_input_string(p, separator)?;
+            let separator_string = vm.coerce_js_string(p, separator)?;
             let parts = if limit == 0 {
                 Vec::new()
             } else if separator.is_undefined() {
@@ -544,7 +539,7 @@ impl<H: Host> Vm<H> {
                     let atom = vm.intern_atom("flags");
                     let flags = vm.get_property(p, pattern, atom)?;
                     vm.require_object_coercible(p, flags)?;
-                    let flags = vm.regexp_input_string(p, flags)?;
+                    let flags = vm.coerce_js_string(p, flags)?;
                     if !flags.host_string().contains(MATCH_ALL_FLAGS) {
                         return Err(vm.type_error(
                             p,
@@ -574,7 +569,7 @@ impl<H: Host> Vm<H> {
         flags: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots([receiver, pattern, flags], |vm| {
-            let input = vm.regexp_input_string(p, receiver)?;
+            let input = vm.coerce_js_string(p, receiver)?;
             let input = vm.heap.alloc(Cell::String(input));
             vm.with_call_roots([input], |vm| {
                 let matcher = vm.regexp_create(p, pattern, flags)?;
@@ -605,7 +600,7 @@ impl<H: Host> Vm<H> {
                     let atom = vm.intern_atom("flags");
                     let flags = vm.get_property(p, search_value, atom)?;
                     vm.require_object_coercible(p, flags)?;
-                    let flags = vm.regexp_input_string(p, flags)?;
+                    let flags = vm.coerce_js_string(p, flags)?;
                     if !flags.host_string().contains(MATCH_ALL_FLAGS) {
                         return Err(vm.type_error(
                             p,
@@ -626,12 +621,12 @@ impl<H: Host> Vm<H> {
                     return vm.call_value(p, method, search_value, &[this, replacement_value]);
                 }
             }
-            let input = vm.regexp_input_string(p, this)?;
-            let search = vm.regexp_input_string(p, search_value)?;
+            let input = vm.coerce_js_string(p, this)?;
+            let search = vm.coerce_js_string(p, search_value)?;
             let replacement = if vm.is_function(replacement_value) {
                 StringReplacement::Callable(replacement_value)
             } else {
-                StringReplacement::Template(vm.regexp_input_string(p, replacement_value)?)
+                StringReplacement::Template(vm.coerce_js_string(p, replacement_value)?)
             };
             let Some(first) = input.find_units(search.units(), 0) else {
                 return Ok(vm.heap.alloc(Cell::String(input)));
@@ -663,7 +658,7 @@ impl<H: Host> Vm<H> {
                                 Value::UNDEFINED,
                                 &[matched, Value::number(index as f64), input],
                             )?;
-                            vm.regexp_input_string(p, value)?
+                            vm.coerce_js_string(p, value)?
                         }
                         StringReplacement::Template(template) => vm.replacement_substitution(
                             p,
