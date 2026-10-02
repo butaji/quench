@@ -1371,7 +1371,7 @@ impl<H: Host> Vm<H> {
         }
         self.install_realm_default_bindings(global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
-        self.install_intl_number_format_for_realm(program, global, object_prototype)?;
+        self.install_intl_for_realm(program, global, object_prototype)?;
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
         self.set_builtin_named(program, realm, "gc", Native::CollectGarbage)?;

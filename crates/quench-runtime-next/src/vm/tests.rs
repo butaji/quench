@@ -7879,3 +7879,111 @@ fn list_format_roots_fresh_iterators_across_step_getters() {
         }
     }
 }
+
+#[test]
+fn segmenter_cursors_own_source_and_release_derived_records() {
+    let cases: &[(&str, &str, &[(&str, usize)])] = &[
+        ("grapheme", "A😀B", &[("A", 0), ("😀", 1), ("B", 3)]),
+        ("word", "hi there", &[("hi", 0), (" ", 2), ("there", 3)]),
+        ("sentence", "Hi. Bye.", &[("Hi. ", 0), ("Bye.", 4)]),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for &(granularity, input, expected) in cases {
+            let source = format!(
+                r#"
+            function formatter(){{return new Intl.Segmenter('en',{{granularity:'{granularity}'}});}}
+            function input(){{return {{toString(){{$262.gc();return '{input}';}}}};}}
+            function make(formatter){{return formatter.segment(input());}}
+            "#
+            );
+            let program = compile(&source, "segmenter-source-ownership.js").unwrap();
+            let mut vm = Vm::new(Test262Host);
+            vm.execute(&program).unwrap();
+            let initial = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let atom = vm.intern_atom("formatter");
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            let formatter = vm
+                .call_value(&program, function, Value::UNDEFINED, &[])
+                .unwrap();
+            let formatter_weak = vm.heap.weak_handle(formatter).unwrap();
+            let formatter_owner = vm.heap.root(formatter);
+            let atom = vm.intern_atom("make");
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            let segments = vm
+                .call_value(&program, function, Value::UNDEFINED, &[formatter])
+                .unwrap();
+            let segments_weak = vm.heap.weak_handle(segments).unwrap();
+            let segments_owner = vm.heap.root(segments);
+            let iterator = vm.get_iterator(&program, segments).unwrap();
+            let iterator_weak = vm.heap.weak_handle(iterator).unwrap();
+            let iterator_owner = vm.heap.root(iterator);
+            vm.heap.release_root(formatter_owner);
+            vm.heap.release_root(segments_owner);
+            vm.collect_now(&program);
+            assert!(
+                vm.heap.weak_value(formatter_weak).is_some(),
+                "{granularity}: cursor must own formatter"
+            );
+            assert!(
+                vm.heap.weak_value(segments_weak).is_none(),
+                "{granularity}: cursor must release public Segments wrapper"
+            );
+            let mut input_identity = None;
+            for &(text, index) in expected {
+                let roots = vm.heap.root_count_for_test();
+                let record = vm.iterator_step_value(&program, iterator).unwrap().unwrap();
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let weak = vm.heap.weak_handle(record).unwrap();
+                let owner = vm.heap.root(record);
+                vm.collect_now(&program);
+                let atom = vm.intern_atom("segment");
+                let value = vm.own_property(record, atom).unwrap();
+                assert_eq!(vm.to_string(&program, value).unwrap(), text);
+                let atom = vm.intern_atom("index");
+                assert_eq!(
+                    vm.own_property(record, atom).unwrap(),
+                    Value::number(index as f64)
+                );
+                let atom = vm.intern_atom("input");
+                let value = vm.own_property(record, atom).unwrap();
+                assert_eq!(vm.to_string(&program, value).unwrap(), input);
+                if let Some(previous) = input_identity {
+                    assert_eq!(previous, value);
+                } else {
+                    input_identity = Some(value);
+                }
+                vm.heap.release_root(owner);
+                vm.collect_now(&program);
+                assert!(
+                    vm.heap.weak_value(weak).is_none(),
+                    "derived record must not be retained by its source"
+                );
+            }
+            assert!(
+                vm.iterator_step_value(&program, iterator)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                vm.iterator_step_value(&program, iterator)
+                    .unwrap()
+                    .is_none()
+            );
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(formatter_weak).is_some());
+            assert!(vm.heap.weak_value(segments_weak).is_none());
+            vm.heap.release_root(iterator_owner);
+            vm.collect_now(&program);
+            for weak in [formatter_weak, segments_weak, iterator_weak] {
+                assert!(vm.heap.weak_value(weak).is_none());
+            }
+            assert_eq!(vm.heap.root_count_for_test(), initial);
+            assert_eq!(vm.active_call_roots.len(), calls);
+        }
+    }
+}

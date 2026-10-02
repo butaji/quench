@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
             self.set_named_constant(program, number, name, Value::number(value))?;
         }
         self.global(program, "Number", number)?;
-        self.install_intl_number_format_for_realm(program, self.realm.globals, self.object_proto)
+        Ok(())
     }
 
     pub(super) fn install_number_for_realm(
@@ -220,7 +220,7 @@ impl<H: Host> Vm<H> {
             self.set_named_constant(program, constructor, name, Value::number(value))?;
         }
         self.set_builtin_value_named(global, "Number", constructor)?;
-        self.install_intl_number_format_for_realm(program, global, object_prototype)
+        Ok(())
     }
 
     pub(super) fn number_receiver_value(

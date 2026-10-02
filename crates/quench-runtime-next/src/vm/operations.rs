@@ -271,7 +271,8 @@ impl<H: Host> Vm<H> {
             | Native::IntlSegmenterSegment
             | Native::IntlSegmenterResolvedOptions
             | Native::IntlSegmenterSegmentsIterator
-            | Native::IntlSegmenterSegmentsContaining => {
+            | Native::IntlSegmenterSegmentsContaining
+            | Native::IntlSegmenterIteratorNext => {
                 self.intl_segmenter_native(p, native, this, args)
             }
             Native::IntlCollator

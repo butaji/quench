@@ -2120,6 +2120,86 @@ mod tests {
     }
 
     #[test]
+    fn regression_segmenter_derives_fresh_records_from_owned_input() {
+        assert_output_in_execution_modes(
+            r#"
+            for(var granularity of ['grapheme','word','sentence']){
+                var source=granularity==='grapheme'?'AB':granularity==='word'?'hi there':'Hi. Bye.';
+                var segments=new Intl.Segmenter('en',{granularity}).segment(source);
+                var first=segments.containing(0);var again=segments.containing(0);
+                print(first!==again && first.segment===again.segment && first.input===source);
+                first.segment='changed';first.index=999;first.input='changed';first.isWordLike=false;
+                print(segments.containing(0).segment===again.segment && segments.containing(0).index===0);
+                var left=segments[Symbol.iterator](),right=segments[Symbol.iterator]();
+                var a=left.next().value,b=right.next().value;
+                print(a!==b && a!==again && a.segment===again.segment);
+                a.segment='changed';a.index=999;
+                print(segments.containing(0).segment===again.segment && right.next().value.index>0);
+                var record=segments.containing({[Symbol.toPrimitive](hint){$262.gc();print(hint==='number');return 0;}});
+                print(record.segment===again.segment);
+                print(Object.keys(record).join(',')===(granularity==='word'?'segment,index,input,isWordLike':'segment,index,input'));
+                print(Object.keys(record).every(key=>{var d=Object.getOwnPropertyDescriptor(record,key);return d.writable&&d.enumerable&&d.configurable;}));
+                print(segments.containing(NaN).index===0 && segments.containing(-0.9).index===0 && segments.containing(Infinity)===undefined && segments.containing(-Infinity)===undefined && segments.containing(source.length)===undefined);
+            }
+            var segments=new Intl.Segmenter('en').segment({[Symbol.toPrimitive](hint){$262.gc();print(hint==='string');return '\ud800😀\udfff';}});
+            var list=Array.from(segments);
+            print(list.length===3 && list[0].segment.charCodeAt(0)===55296 && list[1].segment==='😀' && list[2].segment.charCodeAt(0)===57343);
+            print(list.map(value=>value.index).join(',')==='0,1,3' && segments.containing(2).segment==='😀');
+            var iterator=segments[Symbol.iterator](),prototype=Object.getPrototypeOf(iterator);
+            print(Object.getPrototypeOf(prototype)===Iterator.prototype && Object.prototype.toString.call(iterator)==='[object Segmenter String Iterator]' && Object.prototype.toString.call(segments)==='[object Object]');
+            var next=Object.getOwnPropertyDescriptor(prototype,'next');var tag=Object.getOwnPropertyDescriptor(prototype,Symbol.toStringTag);
+            print(next.value.name==='next' && next.value.length===0 && next.writable && !next.enumerable && next.configurable && !tag.writable && !tag.enumerable && tag.configurable);
+            print(iterator[Symbol.iterator]()===iterator);
+            try{prototype.next.call([][Symbol.iterator]());print(false);}catch(e){print(e instanceof TypeError);}
+            try{Object.getPrototypeOf([][Symbol.iterator]()).next.call(iterator);print(false);}catch(e){print(e instanceof TypeError);}
+            try{segments.containing(Symbol());print(false);}catch(e){print(e instanceof TypeError);}
+            try{segments.containing(1n);print(false);}catch(e){print(e instanceof TypeError);}
+            var thrown={};try{segments.containing({valueOf(){$262.gc();throw thrown;}});print(false);}catch(e){print(e===thrown);}
+            print(Array.from(new Intl.Segmenter().segment('')).length===0);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_segmenter_and_iterator_results_use_method_realm() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign=$262.createRealm().global;
+            var segmenter=new Intl.Segmenter('en');
+            var local=segmenter.segment('AB');
+            print(Object.getPrototypeOf(foreign.Intl.Segmenter.prototype.resolvedOptions.call(segmenter))===foreign.Object.prototype);
+            var source=foreign.Intl.Segmenter.prototype.segment.call(segmenter,'AB');
+            var foreignSegments=new foreign.Intl.Segmenter('en').segment('AB');
+            print(Object.getPrototypeOf(source)===Object.getPrototypeOf(foreignSegments));
+            print(Object.getPrototypeOf(foreignSegments.containing.call(local,0))===foreign.Object.prototype);
+            var foreignIterator=foreignSegments[Symbol.iterator].call(local);
+            var iterator=local[Symbol.iterator]();
+            print(Object.getPrototypeOf(foreignIterator)===Object.getPrototypeOf(foreignSegments[Symbol.iterator]()));
+            print(Object.getPrototypeOf(Object.getPrototypeOf(foreignIterator))===foreign.Iterator.prototype);
+            var next=Object.getPrototypeOf(foreignIterator).next;
+            var result=next.call(iterator);
+            print(Object.getPrototypeOf(result)===foreign.Object.prototype && Object.getPrototypeOf(result.value)===foreign.Object.prototype);
+            var result=Object.getPrototypeOf(iterator).next.call(foreignIterator);
+            print(Object.getPrototypeOf(result)===Object.prototype && Object.getPrototypeOf(result.value)===Object.prototype);
+            print(Object.getPrototypeOf(foreign.Iterator.from([1]).map(value=>value).next())===foreign.Object.prototype);
+            var prototype=foreign.Iterator.prototype;var object=foreign.Object.prototype;
+            foreign.Iterator={};foreign.Object={};$262.gc();
+            var iterator=foreignSegments[Symbol.iterator]();
+            print(Object.getPrototypeOf(Object.getPrototypeOf(iterator))===prototype && Object.getPrototypeOf(iterator.next())===object);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_array_join_owns_box_and_preserves_string_units() {
         assert_output_in_execution_modes(
             r#"
