@@ -6694,3 +6694,114 @@ fn string_split_roots_protocol_and_conversion_inputs() {
         }
     }
 }
+
+#[test]
+fn regexp_replace_roots_inputs_results_and_converted_captures() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (callable, phases) in [
+            (
+                false,
+                &[
+                    "input",
+                    "replacement",
+                    "flags",
+                    "flags-string",
+                    "set-index",
+                    "exec",
+                    "matched",
+                    "matched-string",
+                    "length",
+                    "length-number",
+                    "index",
+                    "index-number",
+                    "capture",
+                    "capture-string",
+                    "groups",
+                    "group",
+                    "group-string",
+                ][..],
+            ),
+            (
+                true,
+                &[
+                    "input",
+                    "flags",
+                    "flags-string",
+                    "set-index",
+                    "exec",
+                    "matched",
+                    "matched-string",
+                    "length",
+                    "length-number",
+                    "index",
+                    "index-number",
+                    "capture",
+                    "capture-string",
+                    "groups",
+                    "call",
+                    "return-string",
+                ][..],
+            ),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function input(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
+                    function replacement(){{if(!{callable})return {{[Symbol.toPrimitive](hint){{hit('replacement');return '$<x>';}}}};return function(matched,capture,missing,index,input,groups){{hit('call');if(matched!=='a'||capture!=='C'||missing!==undefined||index!==0||input!=='a-a'||groups.tag!==44)throw {{kind:'arguments'}};return {{[Symbol.toPrimitive](hint){{hit('return-string');return 'X';}}}};}};}}
+                    function receiver(){{var calls=0;return {{get flags(){{hit('flags');return {{[Symbol.toPrimitive](hint){{hit('flags-string');return 'g';}}}};}},set lastIndex(value){{hit('set-index');}},exec(input){{hit('exec');if(input!=='a-a')throw {{kind:'exec-input'}};if(calls++>0)return null;return {{get 0(){{hit('matched');return {{[Symbol.toPrimitive](hint){{hit('matched-string');return 'a';}}}};}},get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');if(hint!=='number')throw {{kind:'length-hint'}};return 3;}}}};}},get index(){{hit('index');return {{[Symbol.toPrimitive](hint){{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};}},get 1(){{hit('capture');return {{[Symbol.toPrimitive](hint){{hit('capture-string');return 'C';}}}};}},get groups(){{hit('groups');return {{tag:44,get x(){{hit('group');return {{[Symbol.toPrimitive](hint){{hit('group-string');return 'X';}}}};}}}};}}}};}}}};}}
+                "#
+                    );
+                    let program = compile(&source, "regexp-replace-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["receiver", "input", "replacement"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|v| vm.heap.weak_handle(*v).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = vm.regexp_symbol_replace(&program, values[0], &values[1..]);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{callable}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                    }
+                    match outcome {
+                        Ok(value) => assert_eq!(vm.to_string(&program, value).unwrap(), "X-a"),
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
