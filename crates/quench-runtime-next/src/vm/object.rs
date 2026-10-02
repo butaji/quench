@@ -573,7 +573,14 @@ impl<H: Host> Vm<H> {
             target, handler, ..
         }) = self.heap.get(target).cloned()
         {
-            return self.proxy_set(p, target, handler, receiver, atom, value);
+            return self.proxy_set(
+                p,
+                target,
+                handler,
+                receiver,
+                PropertyKey::string(atom),
+                value,
+            );
         }
         self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
 
@@ -587,9 +594,7 @@ impl<H: Host> Vm<H> {
                     {
                         return self.typed_array_set(p, current, index, value);
                     }
-                    super::object_descriptors::TypedArrayIndexKey::Invalid
-                        if current == receiver =>
-                    {
+                    super::object_descriptors::TypedArrayIndexKey::Invalid if current == receiver => {
                         if let Some(kind) = self.typed_array_kind(current) {
                             self.typed_array_convert_value(p, kind, value)?;
                         }
@@ -614,7 +619,14 @@ impl<H: Host> Vm<H> {
                 target, handler, ..
             }) = self.heap.get(current).cloned()
             {
-                return self.proxy_set(p, target, handler, receiver, atom, value);
+                return self.proxy_set(
+                    p,
+                    target,
+                    handler,
+                    receiver,
+                    PropertyKey::string(atom),
+                    value,
+                );
             }
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom))
                 && (self.own_property(current, atom).is_some() || attributes.accessor)
@@ -677,40 +689,22 @@ impl<H: Host> Vm<H> {
                 super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
             }
         }
-        let receiver_descriptor = if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-            Some(self.object_get_own_property_descriptor(p, &[receiver, key])?)
-        } else {
-            None
-        };
-        let receiver_has_own = receiver_descriptor
-            .is_some_and(|descriptor| !descriptor.is_undefined())
-            || self.own_property(receiver, atom).is_some();
-        if receiver_has_own {
-            if let Some(descriptor) = receiver_descriptor.filter(|value| !value.is_undefined()) {
-                let getter = self.descriptor_field(p, descriptor, "get")?;
-                let setter = self.descriptor_field(p, descriptor, "set")?;
-                let writable = self
-                    .descriptor_field(p, descriptor, "writable")?
-                    .is_some_and(|value| self.truthy(value));
-                if getter.is_some() || setter.is_some() || !writable {
-                    return Ok(false);
-                }
-            } else if let Some(attributes) =
-                self.property_attributes(receiver, PropertyKey::string(atom))
-                && (attributes.accessor || !attributes.writable)
-            {
-                return Ok(false);
-            }
-            if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-                return self.define_receiver_proxy_data_property(p, receiver, atom, value, false);
-            }
-            return self.define_receiver_data_property(p, receiver, atom, value, false);
-        }
         if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-            return self.define_receiver_proxy_data_property(p, receiver, atom, value, true);
+            return self.set_receiver_proxy_data_property(
+                p,
+                receiver,
+                PropertyKey::string(atom),
+                value,
+            );
         }
-        self.define_receiver_data_property(p, receiver, atom, value, true)
+        let new_property = self.own_property(receiver, atom).is_none();
+        if !new_property
+            && let Some(attributes) = self.property_attributes(receiver, PropertyKey::string(atom))
+            && (attributes.accessor || !attributes.writable)
+        {
+            return Ok(false);
+        }
+        self.define_receiver_data_property(p, receiver, atom, value, new_property)
     }
 
     fn define_receiver_data_property(
@@ -723,15 +717,6 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         if let Some(defined) = self.define_receiver_array_data_property(p, receiver, atom, value)? {
             return Ok(defined);
-        }
-        if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-            return self.define_receiver_proxy_data_property(
-                p,
-                receiver,
-                atom,
-                value,
-                new_property,
-            );
         }
         if new_property
             && !self
@@ -784,20 +769,57 @@ impl<H: Host> Vm<H> {
         )))
     }
 
-    fn define_receiver_proxy_data_property(
+    pub(super) fn set_receiver_proxy_data_property(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
-        atom: Atom,
+        property: PropertyKey,
         value: Value,
-        new_property: bool,
     ) -> Result<bool, JsError> {
-        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-        let mut descriptor = super::object_descriptors::PropertyDescriptorRecord::value(value);
-        if new_property {
-            descriptor = super::object_descriptors::PropertyDescriptorRecord::data(value);
+        let key = match property {
+            PropertyKey::String(atom) => self.heap.alloc(Cell::String(self.atom_value(atom))),
+            PropertyKey::Symbol(key) => key,
+            PropertyKey::Private(_) => {
+                unreachable!("private keys cannot reach Proxy DefineOwnProperty")
+            }
+        };
+        let receiver = self.heap.root(receiver);
+        let key = self.heap.root(key);
+        let value = self.heap.root(value);
+        let outcome = (|| {
+            let current = self.object_get_own_property_descriptor(
+                p,
+                &[
+                    self.heap.root_value(receiver).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                ],
+            )?;
+            let descriptor = if current.is_undefined() {
+                super::object_descriptors::PropertyDescriptorRecord::data(
+                    self.heap.root_value(value).unwrap(),
+                )
+            } else {
+                if self.descriptor_field(p, current, "get")?.is_some()
+                    || self.descriptor_field(p, current, "set")?.is_some()
+                    || !self.descriptor_flag(current, "writable")
+                {
+                    return Ok(false);
+                }
+                super::object_descriptors::PropertyDescriptorRecord::value(
+                    self.heap.root_value(value).unwrap(),
+                )
+            };
+            self.define_own_property_record(
+                p,
+                self.heap.root_value(receiver).unwrap(),
+                self.heap.root_value(key).unwrap(),
+                descriptor,
+            )
+        })();
+        for root in [receiver, key, value] {
+            self.heap.release_root(root);
         }
-        self.define_own_property_record(p, receiver, key, descriptor)
+        outcome
     }
 
     pub(super) fn set_shape_property(
@@ -872,7 +894,7 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written = self.proxy_set(p, target, handler, object, atom, value)?;
+            let written = self.proxy_set(p, target, handler, object, PropertyKey::string(atom), value)?;
             return if written || !strict {
                 Ok(())
             } else {
