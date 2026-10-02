@@ -30,13 +30,9 @@ impl<H: Host> Vm<H> {
         }
         match native {
             Native::ReflectHas => {
-                let key =
-                    self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                Ok(if self.has_property(p, target, key)? {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let key = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let present = self.has_property(p, target, key)?;
+                Ok(Self::integrity_bool(present))
             }
             Native::ReflectApply => {
                 if !self.is_function(target) {

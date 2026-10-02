@@ -44,90 +44,104 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<bool, JsError> {
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(object).cloned()
-        {
-            if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
-            }
-            let trap_atom = self.intern_atom("has");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let key = self.to_property_key(p, key)?;
-                let result = self.call_value(p, trap, handler, &[target, key])?;
-                if self.truthy(result) {
-                    return Ok(true);
+        if !self.is_object_like(object) {
+            return Err(self.type_error(p, "right-hand side of 'in' is not an object".into()));
+        }
+        self.with_call_roots([object, key], |vm| {
+            let key = vm.to_property_key(p, key)?;
+            vm.has_property_key(p, object, key)
+        })
+    }
+
+    fn has_property_key(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        key: Value,
+    ) -> Result<bool, JsError> {
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([object, key], |vm| {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = vm.heap.get(object).cloned()
+            {
+                if handler.is_null() {
+                    return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
                 }
-                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-                if !descriptor.is_undefined() {
-                    let extensible = self.object_is_extensible(p, &[target])?;
-                    if !self.descriptor_flag(descriptor, "configurable") || !self.truthy(extensible)
+                return vm.with_call_roots([target, handler], |vm| {
+                    let trap_name = "has";
+                    let trap_atom = vm.intern_atom(trap_name);
+                    let trap = vm.get_property(p, handler, trap_atom)?;
+                    if trap.is_null() || trap.is_undefined() {
+                        return vm.has_property_key(p, target, key);
+                    }
+                    if !vm.is_function(trap) {
+                        return Err(vm.type_error(p, "proxy has trap is not callable".into()));
+                    }
+                    let result = vm.call_value(p, trap, handler, &[target, key])?;
+                    if vm.truthy(result) {
+                        return Ok(true);
+                    }
+                    vm.validate_proxy_property_absence(p, target, key, trap_name)?;
+                    Ok(false)
+                });
+            }
+            let key_atom = match vm.heap.get(key).cloned() {
+                Some(Cell::String(name)) => Some(vm.intern_js_atom(&name)),
+                _ => None,
+            };
+            if matches!(vm.heap.get(object), Some(Cell::TypedArray { .. }))
+                && let Some(Cell::String(name)) = vm.heap.get(key).cloned()
+            {
+                match Self::typed_array_index_key(name.host_string()) {
+                    super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                        return Ok(vm
+                            .typed_array_length(object)
+                            .is_some_and(|length| index < length));
+                    }
+                    super::object_descriptors::TypedArrayIndexKey::Invalid => return Ok(false),
+                    super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                }
+            }
+            let current_root = vm.heap.root(object);
+            let result = (|| {
+                loop {
+                    let current = vm
+                        .root_value(current_root)
+                        .expect("rooted property lookup object");
+                    if matches!(vm.heap.get(current), Some(Cell::Proxy { .. })) {
+                        return vm.has_property_key(p, current, key);
+                    }
+                    if let Some(atom) = key_atom
+                        && vm
+                            .object_data(current)
+                            .is_some_and(Object::is_module_namespace)
                     {
-                        return Err(self.type_error(
+                        vm.evaluate_deferred_namespace_for_key(
                             p,
-                            "proxy has trap hid a property from a non-extensible target".into(),
-                        ));
+                            current,
+                            Some(crate::vm::property_key::PropertyKey::string(atom)),
+                        )?;
+                        if vm.module_binding_value(current, atom).is_some()
+                            || vm.own_property(current, atom).is_some()
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    let descriptor = vm.object_get_own_property_descriptor(p, &[current, key])?;
+                    if !descriptor.is_undefined() {
+                        return Ok(true);
+                    }
+                    let next = vm.object_get_prototype_of(p, current)?;
+                    vm.heap.update_root(current_root, next);
+                    if next.is_null() {
+                        return Ok(false);
                     }
                 }
-                return Ok(false);
-            }
-            if trap.is_null() || trap.is_undefined() {
-                return self.has_property(p, target, key);
-            }
-            return Err(self.type_error(p, "proxy has trap is not callable".into()));
-        }
-        if !self.is_object_like(object) {
-            return Err(JsError("right-hand side of 'in' is not an object".into()));
-        }
-        let key = self.to_property_key(p, key)?;
-        let key_atom = match self.heap.get(key).cloned() {
-            Some(Cell::String(name)) => Some(self.intern_js_atom(&name)),
-            _ => None,
-        };
-        if matches!(self.heap.get(object), Some(Cell::TypedArray { .. }))
-            && let Some(Cell::String(name)) = self.heap.get(key).cloned()
-        {
-            match Self::typed_array_index_key(name.host_string()) {
-                super::object_descriptors::TypedArrayIndexKey::Index(index) => {
-                    return Ok(self
-                        .typed_array_length(object)
-                        .is_some_and(|length| index < length));
-                }
-                super::object_descriptors::TypedArrayIndexKey::Invalid => return Ok(false),
-                super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
-            }
-        }
-        let mut current = object;
-        loop {
-            if matches!(self.heap.get(current), Some(Cell::Proxy { .. })) {
-                return self.has_property(p, current, key);
-            }
-            if let Some(atom) = key_atom
-                && self
-                    .object_data(current)
-                    .is_some_and(Object::is_module_namespace)
-            {
-                self.evaluate_deferred_namespace_for_key(
-                    p,
-                    current,
-                    Some(crate::vm::property_key::PropertyKey::string(atom)),
-                )?;
-                if self.module_binding_value(current, atom).is_some()
-                    || self.own_property(current, atom).is_some()
-                {
-                    return Ok(true);
-                }
-            }
-            let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
-            if !descriptor.is_undefined() {
-                return Ok(true);
-            }
-            current = self.object_get_prototype_of(p, current)?;
-            if current.is_null() {
-                return Ok(false);
-            }
-        }
+            })();
+            vm.heap.release_root(current_root);
+            result
+        })
     }
 
     pub(super) fn instanceof(
