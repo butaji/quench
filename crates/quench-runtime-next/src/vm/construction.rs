@@ -525,28 +525,21 @@ impl<H: Host> Vm<H> {
                     let result = vm.construct_native_with_new_target(p, native, args, new_target);
                     vm.switch_realm_global(previous_global);
                     let result = result?;
-                    let result = if !matches!(
-                        native,
-                        Native::Proxy
-                            | Native::Array
-                            | Native::ArrayBuffer
-                            | Native::SharedArrayBuffer
-                            | Native::RegExp
-                            | Native::AggregateError
-                            | Native::IntlCollator
-                            | Native::IntlNumberFormat
-                            | Native::IntlDateTimeFormat
-                            | Native::IntlPluralRules
-                            | Native::IntlRelativeTimeFormat
-                            | Native::IntlListFormat
-                            | Native::IntlSegmenter
-                            | Native::IntlDisplayNames
-                            | Native::IntlDurationFormat
-                    ) && !(native == Native::Object
-                        && new_target == vm.native_value(Native::Object)
-                        && args
-                            .first()
-                            .is_some_and(|value| !value.is_null() && !value.is_undefined()))
+                    let result = if vm.intl_constructor_prototypes(native).is_none()
+                        && !matches!(
+                            native,
+                            Native::Proxy
+                                | Native::Array
+                                | Native::ArrayBuffer
+                                | Native::SharedArrayBuffer
+                                | Native::RegExp
+                                | Native::AggregateError
+                        )
+                        && !(native == Native::Object
+                            && new_target == vm.native_value(Native::Object)
+                            && args
+                                .first()
+                                .is_some_and(|value| !value.is_null() && !value.is_undefined()))
                     {
                         vm.set_constructed_prototype(p, result, new_target, native)?
                     } else {
