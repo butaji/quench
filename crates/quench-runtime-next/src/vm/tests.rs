@@ -7194,3 +7194,108 @@ fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
         }
     }
 }
+
+#[test]
+fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, phases) in [
+            (
+                "object",
+                &[
+                    "raw",
+                    "length",
+                    "length-number",
+                    "segment0",
+                    "segment0-string",
+                    "substitution0-string",
+                    "segment1",
+                    "segment1-string",
+                    "substitution1-string",
+                    "segment2",
+                    "segment2-string",
+                ][..],
+            ),
+            (
+                "string",
+                &["raw", "substitution0-string", "substitution1-string"][..],
+            ),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                    function template(){{return {{get raw(){{hit('raw');if('{kind}'==='string')return 'abc';return {{get length(){{hit('length');return {{[Symbol.toPrimitive](hint){{hit('length-number');return 3.9;}}}};}},get 0(){{hit('segment0');return text('segment0-string','a');}},get 1(){{hit('segment1');return text('segment1-string','b');}},get 2(){{hit('segment2');return text('segment2-string','c');}}}};}}}};}}
+                    function first(){{return text('substitution0-string','X');}}
+                    function second(){{return text('substitution1-string','Y');}}
+                "#
+                    );
+                    let program = compile(&source, "string-raw-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["template", "first", "second"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    if kind != "object" {
+                        for owner in &owners {
+                            vm.heap.release_root(*owner);
+                        }
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|value| vm.heap.weak_handle(*value).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = vm.string_raw(&program, &values);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(
+                            vm.heap.weak_value(*handle),
+                            Some(*value),
+                            "{kind}/{phase}/{abrupt}"
+                        );
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            assert_eq!(vm.to_string(&program, value).unwrap(), "aXbYc");
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    if kind == "object" {
+                        for owner in owners {
+                            vm.heap.release_root(owner);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}

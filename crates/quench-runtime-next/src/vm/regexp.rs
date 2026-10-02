@@ -350,19 +350,19 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let replacement = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let callable = vm.is_function(replacement);
                 let template = if callable {
                     None
                 } else {
-                    Some(vm.regexp_input_string(p, replacement)?)
+                    Some(vm.coerce_js_string(p, replacement)?)
                 };
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
                 vm.with_call_roots([input_value], |vm| {
                     let atom = vm.intern_atom("flags");
                     let flags = vm.get_property(p, receiver, atom)?;
-                    let flags = vm.regexp_input_string(p, flags)?;
+                    let flags = vm.coerce_js_string(p, flags)?;
                     let global = flags.host_string().contains('g');
                     let unicode =
                         flags.host_string().contains('u') || flags.host_string().contains('v');
@@ -391,7 +391,7 @@ impl<H: Host> Vm<H> {
                         }
                         let atom = vm.intern_atom("0");
                         let matched = vm.get_property(p, result, atom)?;
-                        let matched = vm.regexp_input_string(p, matched)?;
+                        let matched = vm.coerce_js_string(p, matched)?;
                         if matched.units().is_empty() {
                             let index = vm.get_property(p, receiver, last_index_atom)?;
                             let index = vm.regexp_to_length_value(p, index)?;
@@ -414,7 +414,7 @@ impl<H: Host> Vm<H> {
                             let length = vm.regexp_to_length_value(p, length)?;
                             let atom = vm.intern_atom("0");
                             let matched = vm.get_property(p, result, atom)?;
-                            let matched = vm.regexp_input_string(p, matched)?;
+                            let matched = vm.coerce_js_string(p, matched)?;
                             let atom = vm.intern_atom("index");
                             let position = vm.get_property(p, result, atom)?;
                             let position = vm.to_primitive(p, position, "number")?;
@@ -427,7 +427,7 @@ impl<H: Host> Vm<H> {
                                 let capture = if capture.is_undefined() {
                                     capture
                                 } else {
-                                    let string = vm.regexp_input_string(p, capture)?;
+                                    let string = vm.coerce_js_string(p, capture)?;
                                     vm.heap.alloc(Cell::String(string))
                                 };
                                 captures.push(capture);
@@ -448,7 +448,7 @@ impl<H: Host> Vm<H> {
                                     }
                                     let value =
                                         vm.call_value(p, replacement, Value::UNDEFINED, &args)?;
-                                    vm.regexp_input_string(p, value)
+                                    vm.coerce_js_string(p, value)
                                 } else {
                                     let groups = if groups.is_undefined() || vm.is_object_like(groups) {
                                         groups
@@ -545,7 +545,7 @@ impl<H: Host> Vm<H> {
                     if let Some((capture, consumed)) = selected {
                         let value = captures[capture - 1];
                         if !value.is_undefined() {
-                            let value = self.regexp_input_string(p, value)?;
+                            let value = self.coerce_js_string(p, value)?;
                             output.extend_from_slice(value.units());
                         }
                         cursor += consumed + 1;
@@ -569,7 +569,7 @@ impl<H: Host> Vm<H> {
                         .alloc(Cell::String(JsString::from_units(&units[cursor + 2..end])));
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
-                        let value = self.regexp_input_string(p, value)?;
+                        let value = self.coerce_js_string(p, value)?;
                         output.extend_from_slice(value.units());
                     }
                     cursor = end + 1;
@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = vm.intern_atom("lastIndex");
                 let previous = vm.get_property(p, receiver, atom)?;
                 vm.with_call_roots([previous], |vm| {
@@ -639,12 +639,12 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
                     let atom = vm.intern_atom("flags");
                     let value = vm.get_property(p, receiver, atom)?;
-                    let mut flags = vm.regexp_input_string(p, value)?;
+                    let mut flags = vm.coerce_js_string(p, value)?;
                     let unicode =
                         flags.host_string().contains('u') || flags.host_string().contains('v');
                     if !flags.host_string().contains('y') {
@@ -789,12 +789,12 @@ impl<H: Host> Vm<H> {
                     ));
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let constructor = vm.regexp_species_constructor(p, receiver)?;
                 let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
                     let atom = vm.intern_atom("flags");
                     let value = vm.get_property(p, receiver, atom)?;
-                    let flags = vm.regexp_input_string(p, value)?;
+                    let flags = vm.coerce_js_string(p, value)?;
                     let value = vm.heap.alloc(Cell::String(flags.clone()));
                     let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
                     Ok::<_, JsError>((flags, matcher))
@@ -863,18 +863,6 @@ impl<H: Host> Vm<H> {
         Ok(matches!(self.heap.get(value), Some(Cell::RegExp { .. })))
     }
 
-    pub(super) fn regexp_input_string(
-        &mut self,
-        program: &ResidualProgram,
-        value: Value,
-    ) -> Result<JsString, JsError> {
-        let primitive = self.to_primitive(program, value, "string")?;
-        if let Some(Cell::String(string)) = self.heap.get(primitive) {
-            return Ok(string.clone());
-        }
-        self.to_string(program, primitive).map(JsString::from)
-    }
-
     pub(super) fn regexp_symbol_match(
         &mut self,
         p: &ResidualProgram,
@@ -890,10 +878,10 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let atom = vm.intern_atom("flags");
                 let value = vm.get_property(p, receiver, atom)?;
-                let flags = vm.regexp_input_string(p, value)?;
+                let flags = vm.coerce_js_string(p, value)?;
                 if !flags.host_string().contains('g') {
                     let input = vm.heap.alloc(Cell::String(input));
                     return vm.regexp_exec_value(p, receiver, input);
@@ -919,7 +907,7 @@ impl<H: Host> Vm<H> {
                         let empty = vm.with_call_roots([result], |vm| {
                             let zero = vm.intern_atom("0");
                             let value = vm.get_property(p, result, zero)?;
-                            let matched = vm.regexp_input_string(p, value)?;
+                            let matched = vm.coerce_js_string(p, value)?;
                             let empty = matched.units().is_empty();
                             let matched = vm.heap.alloc(Cell::String(matched));
                             vm.append_fresh_array_element(array, matched);
@@ -1179,7 +1167,7 @@ impl<H: Host> Vm<H> {
             let source = if pattern.is_undefined() {
                 JsString::from_str("")
             } else {
-                vm.regexp_input_string(p, pattern)?
+                vm.coerce_js_string(p, pattern)?
             };
             let flags = if flags.is_undefined() {
                 String::new()
@@ -1297,9 +1285,9 @@ impl<H: Host> Vm<H> {
             let source_atom = vm.intern_atom("source");
             let flags_atom = vm.intern_atom("flags");
             let source = vm.get_property(p, receiver, source_atom)?;
-            let source = vm.regexp_input_string(p, source)?;
+            let source = vm.coerce_js_string(p, source)?;
             let flags = vm.get_property(p, receiver, flags_atom)?;
-            let flags = vm.regexp_input_string(p, flags)?;
+            let flags = vm.coerce_js_string(p, flags)?;
             let mut output = Vec::new();
             output.push(REGEXP_DELIMITER);
             output.extend_from_slice(source.units());
@@ -1334,7 +1322,7 @@ impl<H: Host> Vm<H> {
                     return Err(vm.type_error(p, "RegExp.prototype.test called on non-object".into()));
                 }
                 let input =
-                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let input = vm.heap.alloc(Cell::String(input));
                 let result = vm.regexp_exec_value(p, receiver, input)?;
                 Ok(if result.is_null() {
@@ -1356,7 +1344,7 @@ impl<H: Host> Vm<H> {
             if !matches!(vm.heap.get(this), Some(Cell::RegExp { .. })) {
                 return Err(vm.type_error(p, "RegExp method called on incompatible receiver".into()));
             }
-            let input = vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let input = vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
             let last_index_atom = vm.intern_atom("lastIndex");
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;

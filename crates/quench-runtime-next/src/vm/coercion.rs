@@ -93,10 +93,15 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         value: Value,
     ) -> Result<JsString, JsError> {
-        if let Some(Cell::String(text)) = self.heap.get(value) {
+        let primitive = if self.is_object_like(value) {
+            self.to_primitive(program, value, "string")?
+        } else {
+            value
+        };
+        if let Some(Cell::String(text)) = self.heap.get(primitive) {
             return Ok(text.clone());
         }
-        Ok(self.to_string(program, value)?.into())
+        self.to_string(program, primitive).map(JsString::from)
     }
 
     pub(super) fn unary(
