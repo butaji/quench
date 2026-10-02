@@ -2731,16 +2731,8 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let is_array_iterator = matches!(
-            self.heap.get(this),
-            Some(Cell::Iterator {
-                kind: IteratorKind::Array
-                    | IteratorKind::ArrayKeys
-                    | IteratorKind::ArrayValues
-                    | IteratorKind::ArrayEntries,
-                ..
-            })
-        );
+        let is_array_iterator =
+            matches!(self.heap.get(this), Some(Cell::Iterator {kind,..}) if kind.is_array_iterator());
         if !is_array_iterator {
             return Err(self.type_error(
                 p,
@@ -2896,229 +2888,230 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let (source, kind, index) = match self.heap.get(this) {
-            Some(Cell::Iterator {
-                source,
-                kind,
-                index,
-                done,
-                ..
-            }) if !done => (*source, *kind, *index),
-            Some(Cell::Iterator { done: true, .. }) => {
-                return self.iterator_result(Value::UNDEFINED, true);
-            }
-            _ => {
-                let atom = self.intern_atom("next");
-                let method = self.get_property(p, this, atom)?;
-                if !self.is_function(method) {
-                    return Err(self.type_error(p, "iterator next method is not callable".into()));
-                }
-                let result = self.call_value(p, method, this, args)?;
-                if !self.is_object_like(result) {
-                    return Err(self.type_error(p, "iterator next result is not an object".into()));
-                }
-                return Ok(result);
-            }
-        };
-        if kind == IteratorKind::Generator {
-            return self.generator_next(p, this, args);
-        }
-        if kind == IteratorKind::Protocol {
-            let next_method = match self.heap.get(this) {
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let (source, kind, index) = match vm.heap.get(this) {
                 Some(Cell::Iterator {
-                    next_method: Some(next_method),
+                    source,
+                    kind,
+                    index,
+                    done,
                     ..
-                }) => *next_method,
-                _ => return Err(self.type_error(p, "iterator next method is not callable".into())),
+                }) if !done => (*source, *kind, *index),
+                Some(Cell::Iterator { done: true, .. }) => {
+                    return vm.iterator_result(Value::UNDEFINED, true);
+                }
+                _ => {
+                    let atom = vm.intern_atom("next");
+                    let method = vm.get_property(p, this, atom)?;
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "iterator next method is not callable".into()));
+                    }
+                    let result = vm.call_value(p, method, this, args)?;
+                    if !vm.is_object_like(result) {
+                        return Err(vm.type_error(p, "iterator next result is not an object".into()));
+                    }
+                    return Ok(result);
+                }
             };
-            return self.call_value(p, next_method, source, &[]);
-        }
-        if kind == IteratorKind::RegExpStringMatchAll {
-            let (input, global, unicode) = match self.heap.get(this) {
-                Some(Cell::Iterator {
-                    helper: Some(helper),
-                    ..
-                }) => match helper.as_ref() {
-                    IteratorHelper::RegExpStringMatchAll {
-                        input,
-                        global,
-                        unicode,
-                    } => (input.clone(), *global, *unicode),
-                    _ => return Err(self.type_error(p, "invalid RegExp string iterator".into())),
-                },
-                _ => return Err(self.type_error(p, "invalid RegExp string iterator".into())),
-            };
-            let result = self.regexp_exec(p, source, input.host_string())?;
-            if result.is_null() {
-                if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
+            if kind == IteratorKind::Generator {
+                return vm.generator_next(p, this, args);
+            }
+            if kind == IteratorKind::Protocol {
+                let next_method = match vm.heap.get(this) {
+                    Some(Cell::Iterator {
+                        next_method: Some(next_method),
+                        ..
+                    }) => *next_method,
+                    _ => return Err(vm.type_error(p, "iterator next method is not callable".into())),
+                };
+                return vm.call_value(p, next_method, source, &[]);
+            }
+            if kind == IteratorKind::RegExpStringMatchAll {
+                let (input, global, unicode) = match vm.heap.get(this) {
+                    Some(Cell::Iterator {
+                        helper: Some(helper),
+                        ..
+                    }) => match helper.as_ref() {
+                        IteratorHelper::RegExpStringMatchAll {
+                            input,
+                            global,
+                            unicode,
+                        } => (input.clone(), *global, *unicode),
+                        _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
+                    },
+                    _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
+                };
+                let result = vm.regexp_exec(p, source, input.host_string())?;
+                if result.is_null() {
+                    if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(this) {
+                        *done = true;
+                    }
+                    return vm.iterator_result(Value::UNDEFINED, true);
+                }
+                if global {
+                    let matched_atom = vm.intern_atom("0");
+                    let matched = vm.get_property(p, result, matched_atom)?;
+                    if vm.to_string(p, matched)?.is_empty() {
+                        let last_index_atom = vm.intern_atom("lastIndex");
+                        let last_index = vm.get_property(p, source, last_index_atom)?;
+                        let index = vm.to_number(p, last_index)?;
+                        let index = super::regexp::regexp_to_length(index);
+                        let next =
+                            super::regexp::advance_string_index_units(input.units(), index, unicode);
+                        vm.set_property(source, last_index_atom, Value::number(next as f64))?;
+                    }
+                } else if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(this) {
                     *done = true;
                 }
-                return self.iterator_result(Value::UNDEFINED, true);
+                return vm.iterator_result(result, false);
             }
-            if global {
-                let matched_atom = self.intern_atom("0");
-                let matched = self.get_property(p, result, matched_atom)?;
-                if self.to_string(p, matched)?.is_empty() {
-                    let last_index_atom = self.intern_atom("lastIndex");
-                    let last_index = self.get_property(p, source, last_index_atom)?;
-                    let index = self.to_number(p, last_index)?;
-                    let index = super::regexp::regexp_to_length(index);
-                    let next =
-                        super::regexp::advance_string_index_units(input.units(), index, unicode);
-                    self.set_property(source, last_index_atom, Value::number(next as f64))?;
+            if matches!(
+                kind,
+                IteratorKind::Map
+                    | IteratorKind::Filter
+                    | IteratorKind::Take
+                    | IteratorKind::Drop
+                    | IteratorKind::FlatMap
+                    | IteratorKind::Concat
+                    | IteratorKind::Zip
+            ) {
+                return vm.iterator_helper_next(p, this, args);
+            }
+            if kind == IteratorKind::AsyncGenerator {
+                return vm.async_generator_next(p, this, args);
+            }
+            if kind == IteratorKind::AsyncFromSync {
+                let result = vm.iterator_next_with_args(p, source, args)?;
+                if !vm.is_object_like(result) {
+                    return Err(vm.type_error(p, "iterator next result is not an object".into()));
                 }
-            } else if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
-                *done = true;
+                return vm.async_from_sync_result(p, this, result, true);
             }
-            return self.iterator_result(result, false);
-        }
-        if matches!(
-            kind,
-            IteratorKind::Map
-                | IteratorKind::Filter
-                | IteratorKind::Take
-                | IteratorKind::Drop
-                | IteratorKind::FlatMap
-                | IteratorKind::Concat
-                | IteratorKind::Zip
-        ) {
-            return self.iterator_helper_next(p, this, args);
-        }
-        if kind == IteratorKind::AsyncGenerator {
-            return self.async_generator_next(p, this, args);
-        }
-        if kind == IteratorKind::AsyncFromSync {
-            let result = self.iterator_next_with_args(p, source, args)?;
-            if !self.is_object_like(result) {
-                return Err(self.type_error(p, "iterator next result is not an object".into()));
-            }
-            return self.async_from_sync_result(p, this, result, true);
-        }
-        let selected = match kind {
-            IteratorKind::Array
-            | IteratorKind::ArrayKeys
-            | IteratorKind::ArrayValues
-            | IteratorKind::ArrayEntries => self.array_iterator_item(p, source, kind, index)?,
-            _ => match (kind, self.heap.get(source)) {
-                (IteratorKind::String, Some(Cell::String(text))) => {
-                    let units = text.units();
-                    {
-                        let mut element = 0;
-                        let mut offset = 0;
-                        let mut selected = None;
-                        while offset < units.len() {
-                            let end = if units.get(offset + 1).is_some_and(|low| {
-                                crate::unicode::decode_surrogate_pair(units[offset], *low).is_some()
-                            }) {
-                                offset + 2
-                            } else {
-                                offset + 1
-                            };
-                            if element == index {
-                                let value = self.heap.alloc(Cell::String(
-                                    super::wtf16::JsString::from_units(&units[offset..end]),
-                                ));
-                                selected = Some((value, None));
-                                break;
+            let selected = match kind {
+                kind if kind.is_array_iterator() => {
+                    vm.array_iterator_item(p, this, source, kind, index)?
+                }
+                _ => match (kind, vm.heap.get(source)) {
+                    (IteratorKind::String, Some(Cell::String(text))) => {
+                        let units = text.units();
+                        {
+                            let mut element = 0;
+                            let mut offset = 0;
+                            let mut selected = None;
+                            while offset < units.len() {
+                                let end = if units.get(offset + 1).is_some_and(|low| {
+                                    crate::unicode::decode_surrogate_pair(units[offset], *low).is_some()
+                                }) {
+                                    offset + 2
+                                } else {
+                                    offset + 1
+                                };
+                                if element == index {
+                                    let value = vm.heap.alloc(Cell::String(
+                                        super::wtf16::JsString::from_units(&units[offset..end]),
+                                    ));
+                                    selected = Some((value, None));
+                                    break;
+                                }
+                                element += 1;
+                                offset = end;
                             }
-                            element += 1;
-                            offset = end;
+                            selected
                         }
-                        selected
+                    }
+                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
+                        entries.get(index).map(|(key, _)| (*key, None))
+                    }
+                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
+                        entries.get(index).map(|(_, value)| (*value, None))
+                    }
+                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
+                        entries.get(index).map(|(key, value)| (*key, Some(*value)))
+                    }
+                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
+                        entries.get(index).map(|value| (*value, None))
+                    }
+                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
+                        entries.get(index).map(|value| (*value, Some(*value)))
+                    }
+                    _ => None,
+                },
+            };
+            let item = selected.map(|(value, second)| {
+                second.map_or(value, |second| {
+                    vm.heap.alloc(Cell::Array {
+                        object: Self::empty_object(vm.array_proto),
+                        elements: Rc::new(vec![value, second]),
+                    })
+                })
+            });
+            if let Some(value) = item {
+                if !kind.is_array_iterator()
+                    && let Some(Cell::Iterator { index, .. }) = vm.heap.get_mut(this)
+                {
+                    *index += 1;
+                }
+                vm.iterator_result(value, false)
+            } else {
+                if let Some(Cell::Iterator { done, source, .. }) = vm.heap.get_mut(this) {
+                    *done = true;
+                    if kind.is_array_iterator() {
+                        *source = Value::UNDEFINED;
                     }
                 }
-                (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
-                    entries.get(index).map(|(key, _)| (*key, None))
-                }
-                (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
-                    entries.get(index).map(|(_, value)| (*value, None))
-                }
-                (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
-                    entries.get(index).map(|(key, value)| (*key, Some(*value)))
-                }
-                (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
-                    entries.get(index).map(|value| (*value, None))
-                }
-                (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
-                    entries.get(index).map(|value| (*value, Some(*value)))
-                }
-                _ => None,
-            },
-        };
-        let item = selected.map(|(value, second)| {
-            second.map_or(value, |second| {
-                self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![value, second]),
-                })
-            })
-        });
-        if let Some(value) = item {
-            if let Some(Cell::Iterator { index, .. }) = self.heap.get_mut(this) {
-                *index += 1;
+                vm.iterator_result(Value::UNDEFINED, true)
             }
-            self.iterator_result(value, false)
-        } else {
-            if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(this) {
-                *done = true;
-            }
-            self.iterator_result(Value::UNDEFINED, true)
-        }
+        })
     }
 
     fn array_iterator_item(
         &mut self,
         p: &ResidualProgram,
+        iterator: Value,
         source: Value,
         kind: IteratorKind,
         index: usize,
     ) -> Result<Option<(Value, Option<Value>)>, JsError> {
-        if let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source)
-            && (self.array_buffer_detached(*buffer) || self.typed_array_out_of_bounds(source))
-        {
-            return Err(self.type_error(p, "typed array is out of bounds".into()));
-        }
-        if let Some(length) = self.typed_array_length(source) {
+        self.with_call_roots([source], |vm| {
+            if let Some(Cell::TypedArray { buffer, .. }) = vm.heap.get(source)
+                && (vm.array_buffer_detached(*buffer) || vm.typed_array_out_of_bounds(source))
+            {
+                return Err(vm.type_error(p, "typed array is out of bounds".into()));
+            }
+            let typed_length = vm.typed_array_length(source);
+            let length = match typed_length {
+                Some(length) => length,
+                None => vm.array_like_length(p, source)?,
+            };
             if index >= length {
                 return Ok(None);
+            }
+            if let Some(Cell::Iterator { index: next, .. }) = vm.heap.get_mut(iterator) {
+                *next = index + 1;
             }
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));
             }
-            let Some(value) = self.typed_array_get(source, index) else {
-                return Ok(None);
+            let value = match typed_length {
+                Some(_) => {
+                    let Some(value) = vm.typed_array_get(source, index) else {
+                        return Ok(None);
+                    };
+                    value
+                }
+                None => vm.get_index(p, source, Value::number(index as f64))?,
             };
-            return Ok(match kind {
-                IteratorKind::ArrayKeys => Some((Value::number(index as f64), None)),
+            Ok(match kind {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
-                    let entry = self.heap.alloc(Cell::Array {
-                        object: Self::empty_object(self.array_proto),
+                    let entry = vm.heap.alloc(Cell::Array {
+                        object: Self::empty_object(vm.array_proto),
                         elements: Rc::new(vec![Value::number(index as f64), value]),
                     });
                     Some((entry, None))
                 }
                 _ => None,
-            });
-        }
-        let length = self.array_like_length(p, source)?;
-        if index >= length {
-            return Ok(None);
-        }
-        if kind == IteratorKind::ArrayKeys {
-            return Ok(Some((Value::number(index as f64), None)));
-        }
-        let value = self.get_index(p, source, Value::number(index as f64))?;
-        Ok(match kind {
-            IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
-            IteratorKind::ArrayEntries => {
-                let entry = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(vec![Value::number(index as f64), value]),
-                });
-                Some((entry, None))
-            }
-            _ => None,
+            })
         })
     }
 
