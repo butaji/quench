@@ -1175,6 +1175,121 @@ fn descriptor_record_roots_release_after_field_completion() {
 }
 
 #[test]
+fn error_stack_setter_roots_release_after_each_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "missing",
+            "data",
+            "accessor",
+            "empty-accessor",
+            "getter-only",
+            "readonly",
+            "nonextensible",
+            "home",
+            "primitive",
+            "nonstring",
+            "descriptor-lookup-throw",
+            "descriptor-call-throw",
+            "define-lookup-throw",
+            "define-call-throw",
+            "define-false",
+            "set-false",
+            "set-call-throw",
+            "accessor-throw",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var marker = {{rank:42}};
+                function factory() {{
+                    if ('{phase}' === 'home') return Error.prototype;
+                    if ('{phase}' === 'primitive') return 1;
+                    var target = {{}};
+                    if ('{phase}' === 'data' || '{phase}' === 'readonly' || '{phase}'.startsWith('set-'))
+                        Object.defineProperty(target, 'stack', {{value:'old', writable:'{phase}' !== 'readonly', configurable:true}});
+                    if ('{phase}' === 'accessor' || '{phase}' === 'accessor-throw')
+                        Object.defineProperty(target, 'stack', {{set(v) {{$262.gc(); if ('{phase}' === 'accessor-throw') throw marker; this.saved = v;}}}});
+                    if ('{phase}' === 'empty-accessor') Object.defineProperty(target, 'stack', {{get:undefined, set:undefined}});
+                    if ('{phase}' === 'getter-only') Object.defineProperty(target, 'stack', {{get() {{return 'old';}}}});
+                    if ('{phase}' === 'nonextensible') Object.preventExtensions(target);
+                    if ('{phase}'.startsWith('descriptor-') || '{phase}'.startsWith('define-') || '{phase}'.startsWith('set-'))
+                        return new Proxy(target, {{
+                            get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
+                                return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
+                            }},
+                            get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
+                                return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
+                                    if ('{phase}' === 'define-false') return false; return Reflect.defineProperty(t,k,d);}};
+                            }},
+                            set(t,k,v) {{$262.gc(); if ('{phase}' === 'set-call-throw') throw marker;
+                                if ('{phase}' === 'set-false') return false; return Reflect.set(t,k,v,t);
+                            }}
+                        }});
+                    return target;
+                }}
+            "#
+            );
+            let program = compile(&source, "error-stack-root-lifecycle.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("factory");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let target = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let hold = vm.heap.root(target);
+            let value = if phase == "nonstring" {
+                Value::number(1.0)
+            } else {
+                vm.heap
+                    .alloc(crate::heap::Cell::String("fresh-stack".into()))
+            };
+            let target = vm.heap.root_value(hold).unwrap();
+            let target_weak = vm.heap.weak_handle(target);
+            let value_weak = vm.heap.weak_handle(value);
+            vm.heap.release_root(hold);
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = vm.error_stack_setter(&program, target, &[value]);
+            assert_eq!(
+                outcome.is_ok(),
+                matches!(phase, "missing" | "data" | "accessor"),
+                "{phase}"
+            );
+            if let Err(error) = outcome {
+                if phase.ends_with("-throw") {
+                    let atom = vm.intern_atom("marker");
+                    assert_eq!(
+                        error.thrown_value(),
+                        vm.own_property(vm.realm.globals, atom)
+                    );
+                } else {
+                    assert!(
+                        vm.format_error(&program, &error).starts_with("TypeError:"),
+                        "{phase}"
+                    );
+                }
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls);
+            vm.collect_now(&program);
+            if let Some(weak) = target_weak {
+                assert_eq!(
+                    vm.heap.weak_value(weak).is_some(),
+                    phase == "home",
+                    "{phase}"
+                );
+            }
+            if let Some(weak) = value_weak {
+                assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
+            }
+        }
+    }
+}
+
+#[test]
 fn module_namespace_operations_share_uninitialized_export_errors() {
     for compile in [
         Engine::specialize_module as fn(&str, &str) -> _,
