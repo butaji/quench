@@ -258,47 +258,19 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn number_format_legacy_receiver(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-    ) -> Result<bool, JsError> {
-        if !self.is_object_like(receiver) || receiver == self.realm.globals {
-            return Ok(false);
-        }
-        if self.hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT).is_some() {
-            return Ok(true);
-        }
-        let prototypes = self.realm.intrinsics.intl_number_format_prototypes
-            .values()
-            .copied()
-            .collect::<Vec<_>>();
-        let mut prototype = self.object_get_prototype_of(p, receiver)?;
-        while !prototype.is_null() {
-            if prototypes.contains(&prototype) {
-                return Ok(true);
-            }
-            prototype = self.object_get_prototype_of(p, prototype)?;
-        }
-        Ok(false)
+    fn number_format_legacy_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<bool, JsError> {
+        if !self.is_object_like(receiver) { return Ok(false); }
+        let constructor = self.realm.intrinsics.intl_number_format_constructors[&self.realm.globals];
+        self.ordinary_has_instance(p, constructor, receiver)
     }
 
-    fn number_format_unwrap_receiver(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-    ) -> Result<Value, JsError> {
-        let Some(symbol) = self.realm.intrinsics.intl_number_format_fallback_symbols
-            .get(&self.realm.globals)
-            .copied()
-        else {
-            return Ok(receiver);
-        };
-        let fallback = self.get_symbol_property_with_receiver(p, receiver, symbol, receiver)?;
-        Ok(if fallback.is_undefined() {
-            receiver
-        } else {
-            fallback
+    fn number_format_unwrap_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<Value, JsError> {
+        self.with_call_roots([receiver], |vm| {
+            if !vm.is_object_like(receiver) { return Err(vm.type_error(p, "incompatible NumberFormat receiver".into())); }
+            if vm.hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT).is_some()
+                || !vm.number_format_legacy_receiver(p, receiver)? { return Ok(receiver); }
+            let symbol = vm.realm.intrinsics.intl_number_format_fallback_symbols[&vm.realm.globals];
+            vm.get_symbol_property_with_receiver(p, receiver, symbol, receiver)
         })
     }
 
@@ -308,21 +280,23 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let this = self.number_format_unwrap_receiver(p, this)?;
-        if self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT).is_none() {
-            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
-        }
-        if let Some(bound) = self.hidden_value(this, NUMBER_FORMAT_BOUND_SLOT) {
-            return Ok(bound);
-        }
-        let function = self.native_with_realm(
-            Native::IntlNumberFormatFormat,
-            Value::NULL,
-            self.realm.globals,
-        );
-        let bound = self.bind_function(p, function, &[this])?;
-        self.override_builtin_function_name(bound, "")?;
-        self.set_hidden_value(this, NUMBER_FORMAT_BOUND_SLOT, bound)?;
-        Ok(bound)
+        self.with_call_roots([this], |vm| {
+            if vm.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT).is_none() {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            }
+            if let Some(bound) = vm.hidden_value(this, NUMBER_FORMAT_BOUND_SLOT) {
+                return Ok(bound);
+            }
+            let function = vm.native_with_realm(
+                Native::IntlNumberFormatFormat,
+                Value::NULL,
+                vm.realm.globals,
+            );
+            let bound = vm.bind_function(p, function, &[this])?;
+            vm.override_builtin_function_name(bound, "")?;
+            vm.set_hidden_value(this, NUMBER_FORMAT_BOUND_SLOT, bound)?;
+            Ok(bound)
+        })
     }
 
     fn number_format_locale(
@@ -735,151 +709,152 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let this = self.number_format_unwrap_receiver(p, this)?;
-        let Some(locale) = self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
-            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
-        };
-        let Some(style) = self.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
-            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
-        };
-        let minimum_fraction_digits = self
-            .hidden_value(this, NUMBER_FORMAT_MIN_FRACTION_SLOT)
-            .and_then(Value::as_number)
-            .unwrap_or_default() as usize;
-        let maximum_fraction_digits = self
-            .hidden_value(this, NUMBER_FORMAT_MAX_FRACTION_SLOT)
-            .and_then(Value::as_number)
-            .map(|digits| digits as usize);
-        let rounding_mode = self
-            .hidden_string(this, NUMBER_FORMAT_ROUNDING_MODE_SLOT)
-            .unwrap_or_else(|| "halfExpand".into());
-        let maximum_significant_digits = self
-            .hidden_value(this, NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT)
-            .and_then(Value::as_number)
-            .map(|digits| digits as usize);
-        let minimum_significant_digits = self
-            .hidden_value(this, NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT)
-            .and_then(Value::as_number)
-            .map(|digits| digits as usize);
-        let rounding_increment = self
-            .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
-            .and_then(Value::as_number)
-            .unwrap_or(1.0) as usize;
-        let notation = self
-            .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
-            .unwrap_or_else(|| "standard".into());
-        let compact_display = self
-            .hidden_string(this, NUMBER_FORMAT_COMPACT_DISPLAY_SLOT)
-            .unwrap_or_else(|| "short".into());
-        let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let formatted = if let Some(Cell::BigInt(value)) = self.heap.get(value) {
-            quench_intl::format_bigint(
-                value,
-                &quench_intl::BigIntFormatOptions {
-                    locale: &locale,
-                    style: &style,
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let Some(locale) = vm.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            };
+            let Some(style) = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            };
+            let minimum_fraction_digits = vm
+                .hidden_value(this, NUMBER_FORMAT_MIN_FRACTION_SLOT)
+                .and_then(Value::as_number)
+                .unwrap_or_default() as usize;
+            let maximum_fraction_digits = vm
+                .hidden_value(this, NUMBER_FORMAT_MAX_FRACTION_SLOT)
+                .and_then(Value::as_number)
+                .map(|digits| digits as usize);
+            let rounding_mode = vm
+                .hidden_string(this, NUMBER_FORMAT_ROUNDING_MODE_SLOT)
+                .unwrap_or_else(|| "halfExpand".into());
+            let maximum_significant_digits = vm
+                .hidden_value(this, NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT)
+                .and_then(Value::as_number)
+                .map(|digits| digits as usize);
+            let minimum_significant_digits = vm
+                .hidden_value(this, NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT)
+                .and_then(Value::as_number)
+                .map(|digits| digits as usize);
+            let rounding_increment = vm
+                .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
+                .and_then(Value::as_number)
+                .unwrap_or(1.0) as usize;
+            let notation = vm
+                .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
+                .unwrap_or_else(|| "standard".into());
+            let compact_display = vm
+                .hidden_string(this, NUMBER_FORMAT_COMPACT_DISPLAY_SLOT)
+                .unwrap_or_else(|| "short".into());
+            let value = vm.to_primitive(p, args.first().copied().unwrap_or(Value::UNDEFINED), "number")?;
+            let formatted = if let Some(Cell::BigInt(value)) = vm.heap.get(value) {
+                quench_intl::format_bigint(
+                    value,
+                    &quench_intl::BigIntFormatOptions {
+                        locale: &locale,
+                        style: &style,
+                        minimum_fraction_digits,
+                        maximum_significant_digits,
+                    },
+                )
+            } else if style == "decimal"
+                && notation == "standard"
+                && minimum_significant_digits.is_none()
+                && maximum_significant_digits.is_none()
+                && rounding_increment == 1
+                && let Some(Cell::String(raw)) = vm.heap.get(value)
+                && let Some(formatted) = format_decimal_string(
+                    raw.host_string(),
+                    &locale,
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+                        .unwrap_or_else(|| "latn".into()),
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
+                        .unwrap_or_else(|| "auto".into()),
+                    vm.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
+                        .and_then(Value::as_number)
+                        .unwrap_or(1.0) as usize,
                     minimum_fraction_digits,
+                    maximum_fraction_digits.unwrap_or(3),
+                    &rounding_mode,
+                )
+            {
+                formatted
+            } else {
+                let number = vm.to_number(p, value)?;
+                vm.format_number_value(
+                    number,
+                    &style,
+                    vm.hidden_string(this, NUMBER_FORMAT_UNIT_SLOT).as_deref(),
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
+                        .unwrap_or_else(|| "short".into()),
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+                        .unwrap_or_else(|| "latn".into()),
+                    &locale,
+                    vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
+                        .filter(|currency| !currency.is_empty())
+                        .as_deref(),
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
+                        .unwrap_or_else(|| "symbol".into()),
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
+                        .unwrap_or_else(|| "standard".into()),
+                    &notation,
+                    &compact_display,
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
+                        .unwrap_or_else(|| "auto".into()),
+                    vm.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
+                        .and_then(Value::as_number)
+                        .unwrap_or(1.0) as usize,
+                    minimum_fraction_digits,
+                    maximum_fraction_digits,
+                    minimum_significant_digits,
                     maximum_significant_digits,
-                },
-            )
-        } else if style == "decimal"
-            && notation == "standard"
-            && minimum_significant_digits.is_none()
-            && maximum_significant_digits.is_none()
-            && rounding_increment == 1
-            && let Some(Cell::String(raw)) = self.heap.get(value)
-            && let Some(formatted) = format_decimal_string(
-                raw.host_string(),
-                &locale,
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
-                    .unwrap_or_else(|| "latn".into()),
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
-                    .unwrap_or_else(|| "auto".into()),
-                self.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
-                    .and_then(Value::as_number)
-                    .unwrap_or(1.0) as usize,
-                minimum_fraction_digits,
-                maximum_fraction_digits.unwrap_or(3),
-                &rounding_mode,
-            )
-        {
-            formatted
-        } else {
-            let number = self.to_number(p, value)?;
-            self.format_number_value(
-                number,
-                &style,
-                self.hidden_string(this, NUMBER_FORMAT_UNIT_SLOT).as_deref(),
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
-                    .unwrap_or_else(|| "short".into()),
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
-                    .unwrap_or_else(|| "latn".into()),
-                &locale,
-                self.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
-                    .filter(|currency| !currency.is_empty())
-                    .as_deref(),
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
-                    .unwrap_or_else(|| "symbol".into()),
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
-                    .unwrap_or_else(|| "standard".into()),
-                &notation,
-                &compact_display,
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
-                    .unwrap_or_else(|| "auto".into()),
-                self.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
-                    .and_then(Value::as_number)
-                    .unwrap_or(1.0) as usize,
-                minimum_fraction_digits,
-                maximum_fraction_digits,
-                minimum_significant_digits,
-                maximum_significant_digits,
-                &self
-                    .hidden_string(this, NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT)
-                    .unwrap_or_else(|| "auto".into()),
-                rounding_increment,
-                &rounding_mode,
-            )
-        };
-        let sign_display = self
-            .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
-            .unwrap_or_else(|| "auto".into());
-        let accounting_negative = formatted.starts_with('(');
-        let negative = formatted.starts_with('-') || accounting_negative;
-        let nan = formatted.ends_with("NaN") || formatted == "非數值";
-        let digits = formatted
-            .chars()
-            .filter(|character| character.is_ascii_digit())
-            .collect::<String>();
-        let rounded_zero = !digits.is_empty() && digits.chars().all(|character| character == '0');
-        let formatted = match sign_display.as_str() {
-            "never" => formatted
-                .trim_start_matches('-')
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .to_owned(),
-            "negative" if negative && rounded_zero => formatted
-                .trim_start_matches('-')
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .to_owned(),
-            "always" if !negative && !formatted.starts_with('+') => format!("+{formatted}"),
-            "exceptZero" if rounded_zero && negative => formatted
-                .trim_start_matches('-')
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .to_owned(),
-            "exceptZero" if !nan && !rounded_zero && !negative => format!("+{formatted}"),
-            "always" | "exceptZero" if accounting_negative => formatted,
-            _ => formatted,
-        };
-        Ok(self.heap.alloc(Cell::String(formatted.into())))
+                    &vm
+                        .hidden_string(this, NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT)
+                        .unwrap_or_else(|| "auto".into()),
+                    rounding_increment,
+                    &rounding_mode,
+                )
+            };
+            let sign_display = vm
+                .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
+                .unwrap_or_else(|| "auto".into());
+            let accounting_negative = formatted.starts_with('(');
+            let negative = formatted.starts_with('-') || accounting_negative;
+            let nan = formatted.ends_with("NaN") || formatted == "非數值";
+            let digits = formatted
+                .chars()
+                .filter(|character| character.is_ascii_digit())
+                .collect::<String>();
+            let rounded_zero = !digits.is_empty() && digits.chars().all(|character| character == '0');
+            let formatted = match sign_display.as_str() {
+                "never" => formatted
+                    .trim_start_matches('-')
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+                    .to_owned(),
+                "negative" if negative && rounded_zero => formatted
+                    .trim_start_matches('-')
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+                    .to_owned(),
+                "always" if !negative && !formatted.starts_with('+') => format!("+{formatted}"),
+                "exceptZero" if rounded_zero && negative => formatted
+                    .trim_start_matches('-')
+                    .trim_start_matches('(')
+                    .trim_end_matches(')')
+                    .to_owned(),
+                "exceptZero" if !nan && !rounded_zero && !negative => format!("+{formatted}"),
+                "always" | "exceptZero" if accounting_negative => formatted,
+                _ => formatted,
+            };
+            Ok(vm.heap.alloc(Cell::String(formatted.into())))
+        })
     }
 
     pub(super) fn intl_number_format_resolved_options(
@@ -888,125 +863,127 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let this = self.number_format_unwrap_receiver(p, this)?;
-        let Some(locale) = self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
-            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
-        };
-        let Some(style) = self.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
-            return Err(self.type_error(p, "incompatible NumberFormat receiver".into()));
-        };
-        let result = self.object();
-        let locale_value = self.heap.alloc(Cell::String(locale.clone().into()));
-        self.set_named(p, result, "locale", locale_value)?;
-        let numbering_system = self
-            .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-        let numbering_system_value = self.heap.alloc(Cell::String(numbering_system.into()));
-        self.set_named(p, result, "numberingSystem", numbering_system_value)?;
-        let style_value = self.heap.alloc(Cell::String(style.clone().into()));
-        self.set_named(p, result, "style", style_value)?;
-        if style == "currency" {
-            let currency = self
-                .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
-                .unwrap_or_default();
-            let currency = self.heap.alloc(Cell::String(currency.into()));
-            self.set_named(p, result, "currency", currency)?;
-            let display = self.heap.alloc(Cell::String(
-                self.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
-                    .unwrap_or_else(|| "symbol".into())
-                    .into(),
-            ));
-            self.set_named(p, result, "currencyDisplay", display)?;
-            let sign = self.heap.alloc(Cell::String(
-                self.hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
-                    .unwrap_or_else(|| "standard".into())
-                    .into(),
-            ));
-            self.set_named(p, result, "currencySign", sign)?;
-        }
-        if style == "unit" {
-            let unit = self
-                .hidden_string(this, NUMBER_FORMAT_UNIT_SLOT)
-                .unwrap_or_default();
-            let unit = self.heap.alloc(Cell::String(unit.into()));
-            self.set_named(p, result, "unit", unit)?;
-            let unit_display = self
-                .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
-                .unwrap_or_else(|| "short".into());
-            let unit_display = self.heap.alloc(Cell::String(unit_display.into()));
-            self.set_named(p, result, "unitDisplay", unit_display)?;
-        }
-        for (name, slot, fallback) in [
-            ("minimumIntegerDigits", NUMBER_FORMAT_MIN_INTEGER_SLOT, 1.0),
-            ("minimumFractionDigits", NUMBER_FORMAT_MIN_FRACTION_SLOT, 0.0),
-        ] {
-            let value = self
-                .hidden_value(this, slot)
+        self.with_call_roots([this], |vm| {
+            let Some(locale) = vm.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT) else {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            };
+            let Some(style) = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            };
+            let result = vm.heap.alloc(Cell::Object(Self::empty_object(vm.realm_object_prototype(vm.realm.globals))));
+            let locale_value = vm.heap.alloc(Cell::String(locale.clone().into()));
+            vm.set_named(p, result, "locale", locale_value)?;
+            let numbering_system = vm
+                .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
+            let numbering_system_value = vm.heap.alloc(Cell::String(numbering_system.into()));
+            vm.set_named(p, result, "numberingSystem", numbering_system_value)?;
+            let style_value = vm.heap.alloc(Cell::String(style.clone().into()));
+            vm.set_named(p, result, "style", style_value)?;
+            if style == "currency" {
+                let currency = vm
+                    .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
+                    .unwrap_or_default();
+                let currency = vm.heap.alloc(Cell::String(currency.into()));
+                vm.set_named(p, result, "currency", currency)?;
+                let display = vm.heap.alloc(Cell::String(
+                    vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
+                        .unwrap_or_else(|| "symbol".into())
+                        .into(),
+                ));
+                vm.set_named(p, result, "currencyDisplay", display)?;
+                let sign = vm.heap.alloc(Cell::String(
+                    vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
+                        .unwrap_or_else(|| "standard".into())
+                        .into(),
+                ));
+                vm.set_named(p, result, "currencySign", sign)?;
+            }
+            if style == "unit" {
+                let unit = vm
+                    .hidden_string(this, NUMBER_FORMAT_UNIT_SLOT)
+                    .unwrap_or_default();
+                let unit = vm.heap.alloc(Cell::String(unit.into()));
+                vm.set_named(p, result, "unit", unit)?;
+                let unit_display = vm
+                    .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
+                    .unwrap_or_else(|| "short".into());
+                let unit_display = vm.heap.alloc(Cell::String(unit_display.into()));
+                vm.set_named(p, result, "unitDisplay", unit_display)?;
+            }
+            for (name, slot, fallback) in [
+                ("minimumIntegerDigits", NUMBER_FORMAT_MIN_INTEGER_SLOT, 1.0),
+                ("minimumFractionDigits", NUMBER_FORMAT_MIN_FRACTION_SLOT, 0.0),
+            ] {
+                let value = vm
+                    .hidden_value(this, slot)
+                    .and_then(Value::as_number)
+                    .unwrap_or(fallback);
+                vm.set_named(p, result, name, Value::number(value))?;
+            }
+            let maximum_fraction_digits = vm
+                .hidden_value(this, NUMBER_FORMAT_MAX_FRACTION_SLOT)
                 .and_then(Value::as_number)
-                .unwrap_or(fallback);
-            self.set_named(p, result, name, Value::number(value))?;
-        }
-        let maximum_fraction_digits = self
-            .hidden_value(this, NUMBER_FORMAT_MAX_FRACTION_SLOT)
-            .and_then(Value::as_number)
-            .unwrap_or(if style == "currency" { 2.0 } else { 3.0 });
-        self.set_named(
-            p,
-            result,
-            "maximumFractionDigits",
-            Value::number(maximum_fraction_digits),
-        )?;
-        let min_significant = self.hidden_value(this, NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT);
-        let max_significant = self.hidden_value(this, NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT);
-        let compact = self
-            .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
-            .as_deref()
-            == Some("compact");
-        if compact
-            || min_significant
-            .is_some_and(|value| !value.is_undefined())
-            || max_significant.is_some_and(|value| !value.is_undefined())
-        {
-            let minimum = min_significant
-                .filter(|value| !value.is_undefined())
+                .unwrap_or(if style == "currency" { 2.0 } else { 3.0 });
+            vm.set_named(
+                p,
+                result,
+                "maximumFractionDigits",
+                Value::number(maximum_fraction_digits),
+            )?;
+            let min_significant = vm.hidden_value(this, NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT);
+            let max_significant = vm.hidden_value(this, NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT);
+            let compact = vm
+                .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
+                .as_deref()
+                == Some("compact");
+            if compact
+                || min_significant
+                .is_some_and(|value| !value.is_undefined())
+                || max_significant.is_some_and(|value| !value.is_undefined())
+            {
+                let minimum = min_significant
+                    .filter(|value| !value.is_undefined())
+                    .unwrap_or(Value::number(1.0));
+                let maximum = max_significant
+                    .filter(|value| !value.is_undefined())
+                    .unwrap_or(Value::number(if compact { 2.0 } else { NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS }));
+                vm.set_named(p, result, "minimumSignificantDigits", minimum)?;
+                vm.set_named(p, result, "maximumSignificantDigits", maximum)?;
+            }
+            let grouping = vm
+                .hidden_value(this, NUMBER_FORMAT_GROUPING_SLOT)
+                .unwrap_or_else(|| vm.heap.alloc(Cell::String("auto".into())));
+            vm.set_named(p, result, "useGrouping", grouping)?;
+            let notation = vm
+                .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
+                .unwrap_or_else(|| "standard".into());
+            vm.set_intl_string_property(result, "notation", &notation)?;
+            if compact {
+                let display = vm
+                    .hidden_string(this, NUMBER_FORMAT_COMPACT_DISPLAY_SLOT)
+                    .unwrap_or_else(|| "short".into());
+                vm.set_intl_string_property(result, "compactDisplay", &display)?;
+            }
+            let sign_display = vm
+                .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
+                .unwrap_or_else(|| "auto".into());
+            vm.set_intl_string_property(result, "signDisplay", &sign_display)?;
+            let increment = vm
+                .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
                 .unwrap_or(Value::number(1.0));
-            let maximum = max_significant
-                .filter(|value| !value.is_undefined())
-                .unwrap_or(Value::number(if compact { 2.0 } else { NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS }));
-            self.set_named(p, result, "minimumSignificantDigits", minimum)?;
-            self.set_named(p, result, "maximumSignificantDigits", maximum)?;
-        }
-        let grouping = self
-            .hidden_value(this, NUMBER_FORMAT_GROUPING_SLOT)
-            .unwrap_or_else(|| self.heap.alloc(Cell::String("auto".into())));
-        self.set_named(p, result, "useGrouping", grouping)?;
-        let notation = self
-            .hidden_string(this, NUMBER_FORMAT_NOTATION_SLOT)
-            .unwrap_or_else(|| "standard".into());
-        self.set_intl_string_property(result, "notation", &notation)?;
-        if compact {
-            let display = self
-                .hidden_string(this, NUMBER_FORMAT_COMPACT_DISPLAY_SLOT)
-                .unwrap_or_else(|| "short".into());
-            self.set_intl_string_property(result, "compactDisplay", &display)?;
-        }
-        let sign_display = self
-            .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
-            .unwrap_or_else(|| "auto".into());
-        self.set_intl_string_property(result, "signDisplay", &sign_display)?;
-        let increment = self
-            .hidden_value(this, NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT)
-            .unwrap_or(Value::number(1.0));
-        self.set_named(p, result, "roundingIncrement", increment)?;
-        for (key, slot, default) in [
-            ("roundingMode", NUMBER_FORMAT_ROUNDING_MODE_SLOT, "halfExpand"),
-            ("roundingPriority", NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT, "auto"),
-            ("trailingZeroDisplay", NUMBER_FORMAT_TRAILING_ZERO_SLOT, "auto"),
-        ] {
-            let text = self.hidden_string(this, slot).unwrap_or_else(|| default.into());
-            self.set_intl_string_property(result, key, &text)?;
-        }
-        Ok(result)
+            vm.set_named(p, result, "roundingIncrement", increment)?;
+            for (key, slot, default) in [
+                ("roundingMode", NUMBER_FORMAT_ROUNDING_MODE_SLOT, "halfExpand"),
+                ("roundingPriority", NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT, "auto"),
+                ("trailingZeroDisplay", NUMBER_FORMAT_TRAILING_ZERO_SLOT, "auto"),
+            ] {
+                let text = vm.hidden_string(this, slot).unwrap_or_else(|| default.into());
+                vm.set_intl_string_property(result, key, &text)?;
+            }
+            Ok(result)
+        })
     }
 
     pub(super) fn intl_number_format_format_to_parts(
@@ -1015,17 +992,18 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let this = self.number_format_unwrap_receiver(p, this)?;
-        let formatted = self.intl_number_format_format(p, this, args)?;
-        let Some(Cell::String(formatted)) = self.heap.get(formatted) else {
-            return Err(JsError("NumberFormat output is not a string".into()));
-        };
-        let text = formatted.to_string();
-        let parts = self.number_format_parts_for_text(this, &text)?;
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(parts),
-        }))
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let formatted = vm.intl_number_format_format(p, this, args)?;
+            let Some(Cell::String(formatted)) = vm.heap.get(formatted) else {
+                return Err(JsError("NumberFormat output is not a string".into()));
+            };
+            let text = formatted.to_string();
+            let parts = vm.number_format_parts_for_text(this, &text)?;
+            Ok(vm.heap.alloc(Cell::Array {
+                object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+                elements: Rc::new(parts),
+            }))
+        })
     }
 
     pub(super) fn intl_number_format_format_range(
@@ -1034,56 +1012,57 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let this = self.number_format_unwrap_receiver(p, this)?;
-        let locale = self.number_format_locale_from_receiver(p, this)?;
-        let (start, end) = self.number_format_range_values(p, args)?;
-        let start_value = args.first().copied().unwrap_or(Value::number(start));
-        let end_value = args.get(1).copied().unwrap_or(Value::number(end));
-        let first = self.intl_number_format_format(p, this, &[start_value])?;
-        let second = self.intl_number_format_format(p, this, &[end_value])?;
-        let first = self.to_string(p, first)?;
-        let second = self.to_string(p, second)?;
-        let range = if first == second {
-            if start == end {
-                first
-            } else {
-                format!("~{first}")
-            }
-        } else {
-            let style = self.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT).unwrap_or_default();
-            let separator = if locale.starts_with("pt") {
-                " - "
-            } else if style == "currency" {
-                " – "
-            } else {
-                "–"
-            };
-            let collapsed_separator = if locale.starts_with("pt") { " - " } else { "–" };
-            let sign_display = self
-                .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
-                .unwrap_or_else(|| "auto".into());
-            if style == "currency" {
-                let currency = self.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT).unwrap_or_default();
-                let display = self.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT).unwrap_or_else(|| "symbol".into());
-                let symbol = number_currency_symbol(&currency, &display, &locale);
-                let prefix = shared_prefix_before_number(&first, &second);
-                if sign_display == "always" && prefix.contains(&symbol) {
-                    format!("{first}{collapsed_separator}{}", &second[prefix.len()..])
-                } else if first.ends_with(&symbol) && second.ends_with(&symbol) {
-                    let suffix = shared_currency_suffix(&first, &second, &symbol);
-                    let mut second = second[..second.len() - suffix.len()].to_owned();
-                    if sign_display == "always" && first.starts_with('+') && second.starts_with('+') {
-                        second.remove(0);
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let locale = vm.number_format_locale_from_receiver(p, this)?;
+            let (start_value, end_value, start, end) = vm.number_format_range_values(p, args)?;
+            vm.with_call_roots([start_value, end_value], |vm| {
+                let first = vm.intl_number_format_format(p, this, &[start_value])?;
+                let first = vm.to_string(p, first)?;
+                let second = vm.intl_number_format_format(p, this, &[end_value])?;
+                let second = vm.to_string(p, second)?;
+                let range = if first == second {
+                    if start == end {
+                        first
+                    } else {
+                        format!("~{first}")
                     }
-                    format!("{}{collapsed_separator}{second}{suffix}", &first[..first.len() - suffix.len()])
                 } else {
-                    format!("{first}{separator}{second}")
-                }
-            } else {
-                format!("{first}{separator}{second}")
-            }
-        };
-        Ok(self.heap.alloc(Cell::String(range.into())))
+                    let style = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT).unwrap_or_default();
+                    let separator = if locale.starts_with("pt") {
+                        " - "
+                    } else if style == "currency" {
+                        " – "
+                    } else {
+                        "–"
+                    };
+                    let collapsed_separator = if locale.starts_with("pt") { " - " } else { "–" };
+                    let sign_display = vm
+                        .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
+                        .unwrap_or_else(|| "auto".into());
+                    if style == "currency" {
+                        let currency = vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT).unwrap_or_default();
+                        let display = vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT).unwrap_or_else(|| "symbol".into());
+                        let symbol = number_currency_symbol(&currency, &display, &locale);
+                        let prefix = shared_prefix_before_number(&first, &second);
+                        if sign_display == "always" && prefix.contains(&symbol) {
+                            format!("{first}{collapsed_separator}{}", &second[prefix.len()..])
+                        } else if first.ends_with(&symbol) && second.ends_with(&symbol) {
+                            let suffix = shared_currency_suffix(&first, &second, &symbol);
+                            let mut second = second[..second.len() - suffix.len()].to_owned();
+                            if sign_display == "always" && first.starts_with('+') && second.starts_with('+') {
+                                second.remove(0);
+                            }
+                            format!("{}{collapsed_separator}{second}{suffix}", &first[..first.len() - suffix.len()])
+                        } else {
+                            format!("{first}{separator}{second}")
+                        }
+                    } else {
+                        format!("{first}{separator}{second}")
+                    }
+                };
+                Ok(vm.heap.alloc(Cell::String(range.into())))
+            })
+        })
     }
 
     pub(super) fn intl_number_format_format_range_to_parts(
@@ -1092,32 +1071,35 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let this = self.number_format_unwrap_receiver(p, this)?;
-        self.number_format_locale_from_receiver(p, this)?;
-        let (start, end) = self.number_format_range_values(p, args)?;
-        let start_value = args.first().copied().unwrap_or(Value::number(start));
-        let end_value = args.get(1).copied().unwrap_or(Value::number(end));
-        let first = self.intl_number_format_format_to_parts(p, this, &[start_value])?;
-        let second = self.intl_number_format_format_to_parts(p, this, &[end_value])?;
-        let mut parts = Vec::new();
-        let first_text = self.number_format_parts_text(p, first)?;
-        let second_text = self.number_format_parts_text(p, second)?;
-        if first_text == second_text {
-            let approximate = self.number_format_part("approximatelySign", "~", None)?;
-            self.set_intl_string_property(approximate, "source", "shared")?;
-            parts.push(approximate);
-            parts.extend(self.number_format_tag_parts(p, first, "shared")?);
-        } else {
-            parts.extend(self.number_format_tag_parts(p, first, "startRange")?);
-            let literal = self.number_format_part("literal", " – ", None)?;
-            self.set_intl_string_property(literal, "source", "shared")?;
-            parts.push(literal);
-            parts.extend(self.number_format_tag_parts(p, second, "endRange")?);
-        }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(parts),
-        }))
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            vm.number_format_locale_from_receiver(p, this)?;
+            let (start_value, end_value, _, _) = vm.number_format_range_values(p, args)?;
+            vm.with_call_roots([start_value, end_value], |vm| {
+                let first = vm.intl_number_format_format_to_parts(p, this, &[start_value])?;
+                vm.with_call_roots([first], |vm| {
+                    let second = vm.intl_number_format_format_to_parts(p, this, &[end_value])?;
+                    let mut parts = Vec::new();
+                    let first_text = vm.number_format_parts_text(p, first)?;
+                    let second_text = vm.number_format_parts_text(p, second)?;
+                    if first_text == second_text {
+                        let approximate = vm.number_format_part("approximatelySign", "~", None)?;
+                        vm.set_intl_string_property(approximate, "source", "shared")?;
+                        parts.push(approximate);
+                        parts.extend(vm.number_format_tag_parts(p, first, "shared")?);
+                    } else {
+                        parts.extend(vm.number_format_tag_parts(p, first, "startRange")?);
+                        let literal = vm.number_format_part("literal", " – ", None)?;
+                        vm.set_intl_string_property(literal, "source", "shared")?;
+                        parts.push(literal);
+                        parts.extend(vm.number_format_tag_parts(p, second, "endRange")?);
+                    }
+                    Ok(vm.heap.alloc(Cell::Array {
+                        object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+                        elements: Rc::new(parts),
+                    }))
+                })
+            })
+        })
     }
 
     fn number_format_locale_from_receiver(
@@ -1125,7 +1107,6 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         this: Value,
     ) -> Result<String, JsError> {
-        let this = self.number_format_unwrap_receiver(p, this)?;
         self.hidden_string(this, NUMBER_FORMAT_LOCALE_SLOT)
             .ok_or_else(|| self.type_error(p, "incompatible NumberFormat receiver".into()))
     }
@@ -1134,19 +1115,23 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         args: &[Value],
-    ) -> Result<(f64, f64), JsError> {
+    ) -> Result<(Value, Value, f64, f64), JsError> {
         let Some(start) = args.first().copied().filter(|value| !value.is_undefined()) else {
             return Err(self.type_error(p, "range start is required".into()));
         };
         let Some(end) = args.get(1).copied().filter(|value| !value.is_undefined()) else {
             return Err(self.type_error(p, "range end is required".into()));
         };
-        let start = self.number_format_range_value(p, start)?;
-        let end = self.number_format_range_value(p, end)?;
-        if start.is_nan() || end.is_nan() {
-            return Err(self.range_error(p, "invalid number range".into()));
-        }
-        Ok((start, end))
+        let start = self.to_primitive(p, start, "number")?;
+        self.with_call_roots([start], |vm| {
+            let start_number = vm.number_format_range_value(p, start)?;
+            let end = vm.to_primitive(p, end, "number")?;
+            let end_number = vm.number_format_range_value(p, end)?;
+            if start_number.is_nan() || end_number.is_nan() {
+                return Err(vm.range_error(p, "invalid number range".into()));
+            }
+            Ok((start, end, start_number, end_number))
+        })
     }
 
     fn number_format_range_value(
@@ -1198,7 +1183,7 @@ impl<H: Host> Vm<H> {
         value: &str,
         unit: Option<&str>,
     ) -> Result<Value, JsError> {
-        let object = self.object();
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(self.realm_object_prototype(self.realm.globals))));
         self.set_intl_string_property(object, "type", kind)?;
         self.set_intl_string_property(object, "value", value)?;
         if let Some(unit) = unit {
