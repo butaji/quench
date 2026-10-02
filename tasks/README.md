@@ -6,34 +6,40 @@ The queue delivers one result: the best possible efficiency (lowest maximum
 RSS, highest Score) from an interpreter-only engine, reached by
 Futamura/Ershov staging, while keeping 100% of the pinned Test262 inventory,
 100% of the pinned WebAssembly testsuite directives on the same VM, and every
-covered Node compatibility fixture (task 19's frozen set). Two phases run in
-this order:
+covered Node compatibility fixture (task 19's frozen set). Three phases run
+strictly in this order: make it work, make it right, make it efficient.
 
-1. **Correctness and cleanup (phase A, gate task 27).** All three suites green
-   in one build on the shared JS/Wasm VM (task 24), then cutover (task 27):
-   the legacy runtime and every migration-only or stale artifact is deleted,
-   leaving one VM and a clean tree.
-2. **Efficiency (phase B, gate task 28).** Lowest maximum RSS and highest
-   Score on all eight V8-v7 fixtures against QuickJS, Bun/JSC with its JIT
-   disabled, and Node/V8 `--jitless` (task 61), with no JIT of any kind. Two
-   tracks start at cutover:
-   - **v2 parity:** `../v2` is the reference for reaching high scores fast,
-     so its measured mechanisms are ported first (tasks 25, 49, 50, 26).
-   - **Staging spine:** the watermark tables (46) and the generating extension
-     derived from them, with the reference kernel as oracle (47). The
-     static-fact specializers (57, 70–76) and builtin accelerations (85) build
-     on them.
-
-   Task 61 then goes beyond v2 using task 77's coverage map, and task 28
-   closes the queue.
+1. **Make it work (phase A, gate task 27).** All three suites green in one
+   build on the shared JS/Wasm VM (task 24), then cutover (task 27): the next
+   core becomes the production runtime and the legacy runtime is deleted.
+   Phase A changes code only to make behavior correct; it may measure.
+2. **Make it right (phase B, gate task 47).** Restructure the working engine
+   without changing behavior or optimizing it: delete migration clutter (86),
+   extract shared algorithm crates (45), put per-object facts on cells (44),
+   encode static facts in the residual instead of rediscovering them (49),
+   declare the kernel watermark tables and move the builtin families onto the
+   kernel API (46), and derive the generating extension from the tables (47).
+   Phase B closes when the reference kernel, with no fast paths or
+   specialization, passes all three suites: that is the oracle every
+   optimization is checked against.
+3. **Make it efficient (phase C, gate task 28).** Lowest maximum RSS and
+   highest Score on all eight V8-v7 fixtures against QuickJS, Bun/JSC with its
+   JIT disabled, and Node/V8 `--jitless` (task 61), with no JIT of any kind.
+   `../v2` is the reference for reaching high scores fast, so its measured
+   mechanisms are ported first (tasks 25, 50, 26). The static-fact
+   specializers (57, 70–76) and builtin accelerations (85) add table entries
+   to the watermark. Task 61 then goes beyond v2 using task 77's coverage map,
+   and task 28 closes the queue.
 
 `phases` in [`index.json`](index.json) lists each phase's tasks and gate, and
-`depends_on` encodes the gate: no phase-B task starts before task 27. Phase A
-may measure but not optimize. Tasks already `in_progress` when the phases were
-declared (45, 48) finish in place. Task 62 adds reference engines to the
-runner, task 68 audits static-fact opportunities, and task 77 attributes time
-and RSS to the efficiency model's terms; all three are measurement only, so
-they may run in any phase.
+`depends_on` encodes the gates: every phase-B task depends on task 27, and
+every phase-C task that changes the engine depends on task 47. No phase starts
+work of the next kind early; a performance problem found in phase A or B is
+recorded and owned by a phase-C task, and a structural problem found in phase A
+is recorded and owned by a phase-B task unless correctness needs it now. Task
+62 adds reference engines to the runner, task 68 audits static-fact
+opportunities, and task 77 attributes time and RSS to the efficiency model's
+terms; all three are measurement only, so they may run in any phase.
 
 JavaScript and Wasm share one VM. There is one heap, one `Value`
 representation, one root set, one `opcodes!` vocabulary, one dispatch loop, one
@@ -214,7 +220,7 @@ of its own.
 
 ## Efficiency model
 
-Phase B optimizes two measured quantities on each V8-v7 fixture: Score, which
+Phase C optimizes two measured quantities on each V8-v7 fixture: Score, which
 is work per unit of wall time, and maximum RSS. Every efficiency task derives
 from the cost model below. It names the term it reduces, and it shows the
 change on that term and on the paired gate.
@@ -250,21 +256,26 @@ evidence or a recorded negative result.
 ## Phase order
 
 Task 24 (Test262 100%, Wasm 100%, and the frozen Node set green in one build
-on the shared JS/Wasm VM) and cutover (27) close phase A. Cutover also removes
-everything that exists only for the legacy engine or the migration (task 27's
-clutter list), so phase B starts from one VM and a clean tree.
+on the shared JS/Wasm VM) and cutover (27) close phase A.
 
-Phase B runs on that single core under task 48's ratchet over all three
-suites. The v2-parity track (25, 49, 50, 67, then 26) and the representation
-work (44, 45) start at cutover. The staging spine (46, then 47) gates the
-static-fact specializers (57, 70–72, 75 and their followers 73, 74, 76),
-Wasm materialization (38), and builtin acceleration (85). Task 25's lab gates
-the existing-specializer lane (29–34) and the efficiency mechanisms (78–85).
-Task 28 depends on every specializer task and on lazy compilation (67), so
-phase B cannot close with one of them open. Task 61 gates only on the
-mechanisms it needs.
+Phase B starts from that single core. Task 86 first removes everything that
+existed only for the legacy engine or the migration, so the restructuring
+starts from a clean tree. Tasks 45, 44 and 49 then give every fact one
+authority, task 46 declares the watermark and moves the builtin families onto
+the kernel API, and task 47 derives the generating extension and proves the
+reference kernel on all three suites. Every phase-B change is a ratchet diff
+with zero regressions and no speed claim.
 
-Before phase B, a "Performance evidence" section asks for measurement only:
+Phase C runs on the restructured core under task 48's ratchet over all three
+suites. Task 25's lab opens it and gates the v2-parity track (50, then 26), the
+existing-specializer lane (29–34) and the efficiency mechanisms (78–85). Lazy
+compilation (67), the static-fact specializers (57, 70–72, 75 and their
+followers 73, 74, 76) and Wasm materialization (38) start from task 47. Task
+28 depends on every specializer task and on lazy compilation (67), so phase C
+cannot close with one of them open. Task 61 gates only on the mechanisms it
+needs.
+
+Before phase C, a "Performance evidence" section asks for measurement only:
 record the numbers and do not change code to move them. Existing
 specializations (field/method caches, numeric arming, superinstruction rows)
 stay as they are, frozen, and must pass task 42's optimized-versus-generic
@@ -272,8 +283,9 @@ gate at every change; they are not extended.
 
 Phase A keeps the structural work that correctness needs: the foundation
 contracts (07–10, 52, 56), stack traces (63), async-context hooks (64),
-resource limits (65), differential fuzzing (66), the shared Wasm lowering and
-engine entry (37, 40), and the specialization gate (42).
+resource limits (65), differential fuzzing (66), the host facade (43), the
+shared Wasm lowering and engine entry (37, 40), and the specialization gate
+(42).
 
 ## Kernel watermark
 
@@ -407,12 +419,12 @@ Migration order (from 2026-09-29):
    the next core fails.
 2. Freeze the next core's 100% pass set as the ratchet (task 48).
 3. Close Wasm and Node on the shared VM (tasks 23, 22), prove them together
-   (task 24), and delete legacy at cutover (task 27).
-4. Declare the watermark and the `AlgorithmBoundary` rows (task 46). Finish
-   extracting next-core Temporal, Intl and Date into the shared crates (task
-   45, already in progress).
+   (task 24), and delete legacy at cutover (task 27). This ends phase A.
+4. Clean the tree (task 86). Finish extracting next-core Temporal, Intl and
+   Date into the shared crates (task 45; the extraction already landed stays)
+   and declare the watermark and the `AlgorithmBoundary` rows (task 46).
 5. Move the builtin families onto the kernel API (task 46), then derive the
-   generating extension (task 47).
+   generating extension (task 47). This ends phase B.
 
 ## Conformance ratchet
 
