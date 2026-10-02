@@ -58,33 +58,50 @@ impl<H: Host> Vm<H> {
         index: usize,
         input: Value,
     ) -> Result<(), JsError> {
-        let then_atom = self.intern_atom("then");
-        let then = self.get_property(p, input, then_atom)?;
-        if !self.is_function(then) {
-            return Err(self.type_error(p, "Promise resolve result has no callable then".into()));
+        let input_root = self.heap.root(input);
+        let aggregate_root = self.heap.root(aggregate);
+        let mut then_root = None;
+        let outcome = (|| {
+            let then_atom = self.intern_atom("then");
+            let then = self.get_property(p, self.heap.root_value(input_root).unwrap(), then_atom)?;
+            if !self.is_function(then) {
+                return Err(self.type_error(p, "Promise resolve result has no callable then".into()));
+            }
+            then_root = Some(self.heap.root(then));
+            let aggregate = self.heap.root_value(aggregate_root).unwrap();
+            let (mode, resolve, reject) = self
+                .realm
+                .promise
+                .aggregates
+                .get(&aggregate)
+                .map(|record| (record.mode, record.resolve, record.reject))
+                .ok_or_else(|| JsError("invalid Promise aggregate".into()))?;
+            let (fulfilled, rejected) = match mode {
+                AggregateMode::Race => (resolve, reject),
+                AggregateMode::All | AggregateMode::AllKeyed => (
+                    self.aggregate_element_function(aggregate, index, false),
+                    reject,
+                ),
+                AggregateMode::Any => (
+                    resolve,
+                    self.aggregate_element_function(aggregate, index, true),
+                ),
+                AggregateMode::AllSettled | AggregateMode::AllSettledKeyed => (
+                    self.aggregate_element_function(aggregate, index, false),
+                    self.aggregate_element_function(aggregate, index, true),
+                ),
+            };
+            let then = self.heap.root_value(then_root.unwrap()).unwrap();
+            let input = self.heap.root_value(input_root).unwrap();
+            self.call_value(p, then, input, &[fulfilled, rejected])?;
+            Ok(())
+        })();
+        self.heap.release_root(input_root);
+        self.heap.release_root(aggregate_root);
+        if let Some(root) = then_root {
+            self.heap.release_root(root);
         }
-        let record = self.realm.promise
-            .aggregates
-            .get(&aggregate)
-            .cloned()
-            .ok_or_else(|| JsError("invalid Promise aggregate".into()))?;
-        let (fulfilled, rejected) = match record.mode {
-            AggregateMode::Race => (record.resolve, record.reject),
-            AggregateMode::All | AggregateMode::AllKeyed => (
-                self.aggregate_element_function(aggregate, index, false),
-                record.reject,
-            ),
-            AggregateMode::Any => (
-                record.resolve,
-                self.aggregate_element_function(aggregate, index, true),
-            ),
-            AggregateMode::AllSettled | AggregateMode::AllSettledKeyed => (
-                self.aggregate_element_function(aggregate, index, false),
-                self.aggregate_element_function(aggregate, index, true),
-            ),
-        };
-        self.call_value(p, then, input, &[fulfilled, rejected])?;
-        Ok(())
+        outcome
     }
 
     fn aggregate_element_function(
