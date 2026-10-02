@@ -716,103 +716,112 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(
-                p,
-                "RegExp.prototype[@@split] receiver is not an object".into(),
-            ));
-        }
-        let input = self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let constructor = self.regexp_species_constructor(p, receiver)?;
-        let (unicode, splitter) = self.with_call_roots([constructor], |vm| {
-            let flags_atom = vm.intern_atom("flags");
-            let flags_value = vm.get_property(p, receiver, flags_atom)?;
-            let flags = vm.to_string(p, flags_value)?;
-            let unicode = flags.contains('u') || flags.contains('v');
-            let splitter_flags = if flags.contains('y') {
-                flags
-            } else {
-                format!("{flags}y")
-            };
-            let splitter_flags = vm.heap.alloc(Cell::String(splitter_flags.into()));
-            let splitter = vm.construct_value(p, constructor, &[receiver, splitter_flags])?;
-            Ok::<_, JsError>((unicode, splitter))
-        })?;
-        let limit = self.regexp_split_limit(p, args.get(1).copied())?;
-        if limit == 0 {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(Vec::new()),
-            }));
-        }
-
-        let input_value = self.heap.alloc(Cell::String(input.clone()));
-        let size = input.units().len();
-        if size == 0 {
-            let result = self.regexp_exec_value(p, splitter, input_value)?;
-            let values = if result.is_null() {
-                vec![input_value]
-            } else {
-                Vec::new()
-            };
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(values),
-            }));
-        }
-
-        let last_index_atom = self.intern_atom("lastIndex");
-        let length_atom = self.intern_atom("length");
-        let mut values = Vec::new();
-        let mut p_index = 0usize;
-        let mut q = 0usize;
-        while q < size {
-            self.set_property_with_program_mode(
-                p,
-                splitter,
-                last_index_atom,
-                Value::number(q as f64),
-                true,
-            )?;
-            let result = self.regexp_exec_value(p, splitter, input_value)?;
-            if result.is_null() {
-                q = advance_string_index_units(input.units(), q, unicode);
-                continue;
-            }
-            let end_value = self.get_property(p, splitter, last_index_atom)?;
-            let end = regexp_to_length(self.to_number(p, end_value)?);
-            if end == p_index {
-                q = advance_string_index_units(input.units(), q, unicode);
-                continue;
-            }
-            let piece_end = q.min(size);
-            values.push(self.heap.alloc(Cell::String(JsString::from_units(
-                &input.units()[p_index.min(size)..piece_end],
-            ))));
-            if values.len() >= limit {
-                break;
-            }
-            let length = self.get_property(p, result, length_atom)?;
-            let captures = regexp_to_length(self.to_number(p, length)?).saturating_sub(1);
-            for index in 1..=captures {
-                if values.len() >= limit {
-                    break;
+        self.with_call_roots(
+            std::iter::once(receiver).chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_object_like(receiver) {
+                    return Err(vm.type_error(
+                        p,
+                        "RegExp.prototype[@@split] receiver is not an object".into(),
+                    ));
                 }
-                let capture_atom = self.intern_atom(&index.to_string());
-                values.push(self.get_property(p, result, capture_atom)?);
-            }
-            p_index = end;
-            q = p_index;
-        }
-        if values.len() < limit {
-            values.push(self.heap.alloc(Cell::String(JsString::from_units(
-                &input.units()[p_index.min(size)..],
-            ))));
-        }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+                let input =
+                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let constructor = vm.regexp_species_constructor(p, receiver)?;
+                let (unicode, splitter) = vm.with_call_roots([constructor], |vm| {
+                    let atom = vm.intern_atom("flags");
+                    let value = vm.get_property(p, receiver, atom)?;
+                    let mut flags = vm.regexp_input_string(p, value)?;
+                    let unicode =
+                        flags.host_string().contains('u') || flags.host_string().contains('v');
+                    if !flags.host_string().contains('y') {
+                        flags.push_js_string(&JsString::from_str("y"));
+                    }
+                    let flags = vm.heap.alloc(Cell::String(flags));
+                    let splitter = vm.construct_value(p, constructor, &[receiver, flags])?;
+                    Ok::<_, JsError>((unicode, splitter))
+                })?;
+                let array = vm.new_array(Vec::new());
+                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                vm.with_call_roots([splitter, array, input_value], |vm| {
+                    // The fresh, unexposed array owns every accumulated value; appending
+                    // creates an own data element without consulting prototype setters.
+                    let append = |vm: &mut Self, value| {
+                        let Some(Cell::Array { elements, .. }) = vm.heap.get_mut(array) else {
+                            unreachable!("split owns its fresh result array");
+                        };
+                        let elements = Rc::make_mut(elements);
+                        elements.push(value);
+                        elements.len()
+                    };
+                    let limit = vm.regexp_split_limit(p, args.get(1).copied())?;
+                    if limit == 0 {
+                        return Ok(array);
+                    }
+                    let size = input.units().len();
+                    if size == 0 {
+                        if vm.regexp_exec_value(p, splitter, input_value)?.is_null() {
+                            append(vm, input_value);
+                        }
+                        return Ok(array);
+                    }
+                    let last_index_atom = vm.intern_atom("lastIndex");
+                    let length_atom = vm.intern_atom("length");
+                    let mut p_index = 0usize;
+                    let mut q = 0usize;
+                    while q < size {
+                        vm.set_property_with_program_mode(
+                            p,
+                            splitter,
+                            last_index_atom,
+                            Value::number(q as f64),
+                            true,
+                        )?;
+                        let result = vm.regexp_exec_value(p, splitter, input_value)?;
+                        if result.is_null() {
+                            q = advance_string_index_units(input.units(), q, unicode);
+                            continue;
+                        }
+                        let (next, full) = vm.with_call_roots([result], |vm| {
+                            let value = vm.get_property(p, splitter, last_index_atom)?;
+                            let end = vm.regexp_to_length_value(p, value)?.min(size);
+                            if end == p_index {
+                                return Ok::<_, JsError>((
+                                    advance_string_index_units(input.units(), q, unicode),
+                                    false,
+                                ));
+                            }
+                            let piece = vm.heap.alloc(Cell::String(JsString::from_units(
+                                &input.units()[p_index..q],
+                            )));
+                            if append(vm, piece) >= limit {
+                                return Ok((end, true));
+                            }
+                            p_index = end;
+                            let length = vm.get_property(p, result, length_atom)?;
+                            let captures = vm.regexp_to_length_value(p, length)?.saturating_sub(1);
+                            for index in 1..=captures {
+                                let atom = vm.intern_atom(&index.to_string());
+                                let capture = vm.get_property(p, result, atom)?;
+                                if append(vm, capture) >= limit {
+                                    return Ok((end, true));
+                                }
+                            }
+                            Ok((end, false))
+                        })?;
+                        if full {
+                            return Ok(array);
+                        }
+                        q = next;
+                    }
+                    let tail = vm.heap.alloc(Cell::String(JsString::from_units(
+                        &input.units()[p_index..],
+                    )));
+                    append(vm, tail);
+                    Ok(array)
+                })
+            },
+        )
     }
 
     fn regexp_species_constructor(
@@ -855,12 +864,10 @@ impl<H: Host> Vm<H> {
         let Some(value) = value.filter(|value| !value.is_undefined()) else {
             return Ok(u32::MAX as usize);
         };
-        let number = self.to_number(p, value)?;
-        if !number.is_finite() || number == 0.0 {
-            return Ok(0);
-        }
-        let modulus = f64::from(u32::MAX) + 1.0;
-        Ok(number.trunc().rem_euclid(modulus) as u32 as usize)
+        self.with_call_roots([value], |vm| {
+            let value = vm.to_primitive(p, value, "number")?;
+            Ok(number_to_u32(vm.to_number(p, value)?) as usize)
+        })
     }
 
     pub(super) fn regexp_symbol_match_all(

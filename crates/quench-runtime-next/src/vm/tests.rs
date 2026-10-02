@@ -5861,3 +5861,109 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
         }
     }
 }
+
+#[test]
+fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "limit",
+            "set",
+            "exec-get",
+            "exec",
+            "index",
+            "index-number",
+            "length",
+            "length-number",
+            "capture1",
+            "capture2",
+            "second-exec",
+        ] {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function hit(name) {{if (name==='{phase}') {{$262.gc();if ({abrupt}) throw {{kind:name}};}}}}
+                    function capture(tag) {{return {{tag:tag}};}}
+                    function result() {{return {{
+                        get length() {{hit('length');return {{valueOf() {{hit('length-number');return 3;}}}};}},
+                        get 1() {{hit('capture1');return capture(42);}},
+                        get 2() {{hit('capture2');return capture(43);}}
+                    }};}}
+                    function matcher() {{var index=0,matched=0;return {{
+                        set lastIndex(value) {{hit('set');index=value;}},
+                        get lastIndex() {{hit('index');return {{valueOf() {{hit('index-number');return index;}}}};}},
+                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if (input!=='a,b,c') throw {{kind:'input'}};if (index===1||index===3) {{if (matched++) hit('second-exec');index++;return result();}}return null;}};}}
+                    }};}}
+                    function receiver() {{return {{constructor:{{[Symbol.species]:function Species() {{return matcher();}}}},flags:'g'}};}}
+                    function limit() {{return {{valueOf() {{hit('limit');return 100;}}}};}}
+                "#
+                );
+                let program = compile(&source, "regexp-split-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let factory = vm.intern_atom("receiver");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let receiver = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let input = vm.heap.alloc(super::Cell::String("a,b,c".into()));
+                let receiver_root = vm.heap.root(receiver);
+                let input_root = vm.heap.root(input);
+                let factory = vm.intern_atom("limit");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let limit = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                vm.heap.release_root(receiver_root);
+                vm.heap.release_root(input_root);
+                let handles = [receiver, input, limit].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.regexp_symbol_split(&program, receiver, &[input, limit]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip([receiver, input, limit]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+                }
+                match outcome {
+                    Ok(array) => {
+                        let array_root = vm.heap.root(array);
+                        vm.collect_now(&program);
+                        for (index, expected) in [(0, "a"), (3, "b"), (6, "c")] {
+                            let value = vm
+                                .get_index(&program, array, Value::number(index as f64))
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), expected, "{phase}");
+                        }
+                        for (index, expected) in [(1, 42.0), (2, 43.0), (4, 42.0), (5, 43.0)] {
+                            let value = vm
+                                .get_index(&program, array, Value::number(index as f64))
+                                .unwrap();
+                            let tag = vm.intern_atom("tag");
+                            assert_eq!(
+                                vm.own_property(value, tag).and_then(Value::as_number),
+                                Some(expected),
+                                "{phase}/{index}"
+                            );
+                        }
+                        vm.heap.release_root(array_root);
+                    }
+                    Err(error) => {
+                        let kind = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), kind)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+                }
+            }
+        }
+    }
+}
