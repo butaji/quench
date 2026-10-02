@@ -264,14 +264,7 @@ fn run_case_process(
     if status.success() {
         Ok(())
     } else {
-        let reason = String::from_utf8_lossy(&stderr).trim().to_string();
-        Err(if status.code().is_none() {
-            format!("case process exited with {status}")
-        } else if reason.is_empty() {
-            format!("case process exited with {status}")
-        } else {
-            reason
-        })
+        Err(quench_test262::reporting::process_failure(status, String::from_utf8_lossy(&stderr).into_owned()))
     }
 }
 
