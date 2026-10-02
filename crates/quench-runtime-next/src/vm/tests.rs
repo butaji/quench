@@ -6805,3 +6805,140 @@ fn regexp_replace_roots_inputs_results_and_converted_captures() {
         }
     }
 }
+
+#[test]
+fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, phases) in [
+            ("identity", &["is-regexp", "constructor"][..]),
+            (
+                "observable-call",
+                &[
+                    "is-regexp",
+                    "constructor",
+                    "source",
+                    "flags",
+                    "source-string",
+                    "flags-string",
+                ][..],
+            ),
+            (
+                "observable-new",
+                &[
+                    "is-regexp",
+                    "source",
+                    "flags",
+                    "prototype",
+                    "source-string",
+                    "flags-string",
+                ][..],
+            ),
+            (
+                "raw-new",
+                &["is-regexp", "prototype", "source-string", "flags-string"][..],
+            ),
+            (
+                "internal-new",
+                &["is-regexp", "prototype", "flags-string"][..],
+            ),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                        function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                        function pattern(){{if('{kind}'==='internal-new'){{var value=/a/g;Object.defineProperty(value,Symbol.match,{{get(){{hit('is-regexp');return false;}}}});return value;}}
+                            return {{get [Symbol.match](){{hit('is-regexp');return '{kind}'!=='raw-new';}},get constructor(){{hit('constructor');return '{kind}'==='identity'?RegExp:null;}},get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','i');}},[Symbol.toPrimitive](hint){{hit('source-string');if(hint!=='string')throw {{kind:'hint'}};return 'a';}}}};}}
+                        function flags(){{return text('flags-string','i');}}
+                        function target(){{return new Proxy(function(){{}},{{get(object,key,receiver){{if(key==='prototype'){{hit('prototype');return {{tag:42}};}}return Reflect.get(object,key,receiver);}}}});}}
+                    "#
+                    );
+                    let program = compile(&source, "regexp-construction-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let construct = kind.ends_with("new");
+                    let explicit_flags = matches!(kind, "raw-new" | "internal-new");
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in [
+                        Some("pattern"),
+                        explicit_flags.then_some("flags"),
+                        construct.then_some("target"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|value| vm.heap.weak_handle(*value).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let args = if explicit_flags {
+                        &values[..2]
+                    } else {
+                        &values[..1]
+                    };
+                    let target = construct.then(|| *values.last().unwrap());
+                    let outcome = vm.construct_regexp_native(&program, args, target);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                    }
+                    match outcome {
+                        Ok(value) if kind == "identity" => assert_eq!(value, values[0]),
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            let Some(super::Cell::RegExp {
+                                object,
+                                source,
+                                flags,
+                            }) = vm.heap.get(value)
+                            else {
+                                panic!("constructor returns RegExp");
+                            };
+                            assert_eq!(source.units(), &[u16::from(b'a')]);
+                            assert_eq!(flags, "i");
+                            if construct {
+                                let proto = object.proto;
+                                let atom = vm.intern_atom("tag");
+                                let tag = vm.own_property(proto, atom).unwrap();
+                                assert_eq!(tag, Value::number(42.0));
+                            }
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
