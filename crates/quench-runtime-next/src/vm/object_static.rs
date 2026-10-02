@@ -1,5 +1,6 @@
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::object_keys::EnumerableOwnPropertyKind;
+use super::object_symbols::PropertyCopyKind;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -227,38 +228,34 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target =
-            self.box_object_or_type_error(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        for source in args.iter().copied().skip(1) {
-            if source.is_null() || source.is_undefined() {
-                continue;
+        let args = args
+            .iter()
+            .map(|value| self.heap.root(*value))
+            .collect::<Vec<_>>();
+        let mut target_root = None;
+        let outcome = (|| {
+            let target = args
+                .first()
+                .map(|root| self.heap.root_value(*root).unwrap())
+                .unwrap_or(Value::UNDEFINED);
+            let target = self.box_object_or_type_error(p, target)?;
+            let target = self.heap.root(target);
+            target_root = Some(target);
+            for source in args.iter().skip(1) {
+                self.copy_enumerable_properties(
+                    p,
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(*source).unwrap(),
+                    &[],
+                    PropertyCopyKind::Set,
+                )?;
             }
-            let source = self.box_object(source)?;
-            let enumerable_atom = self.intern_atom("enumerable");
-            for key in self.object_own_key_values(p, source)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
-                if descriptor.is_undefined() {
-                    continue;
-                }
-                let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
-                if !self.truthy(enumerable) {
-                    continue;
-                }
-                match self.heap.get(key).cloned() {
-                    Some(Cell::Symbol(_)) => {
-                        let value = self.get_index(p, source, key)?;
-                        self.set_index_mode(p, target, key, value, true)?;
-                    }
-                    Some(Cell::String(name)) => {
-                        let atom = self.intern_js_atom(&name);
-                        let value = self.get_property(p, source, atom)?;
-                        self.set_property_with_program_mode(p, target, atom, value, true)?;
-                    }
-                    _ => unreachable!("validated own property key"),
-                }
-            }
+            Ok(self.heap.root_value(target).unwrap())
+        })();
+        for root in args.into_iter().chain(target_root) {
+            self.heap.release_root(root);
         }
-        Ok(target)
+        outcome
     }
 
     pub(super) fn object_for_in_keys(
