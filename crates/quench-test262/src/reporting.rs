@@ -26,6 +26,14 @@ pub fn normalize_failure(reason: &str) -> String {
     normalized
 }
 
+/// Preserve signal termination even when a worker produces no diagnostic.
+pub fn process_failure(status: std::process::ExitStatus, stderr: String) -> String {
+    let reason = stderr.trim();
+    if status.code().is_none() || reason.is_empty() {
+        format!("case process exited with {status}: {reason}")
+    } else { reason.to_owned() }
+}
+
 pub fn classify_outcome(reason: &str) -> &'static str {
     if reason.starts_with("timed_out") || reason.starts_with("test timed out") {
         "timed_out"
@@ -94,6 +102,17 @@ pub fn compare_reports(before: &Value, after: &Value) -> Result<Vec<String>, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn empty_worker_stderr_preserves_signal_failure() {
+        use std::os::unix::process::ExitStatusExt;
+        let reason = process_failure(std::process::ExitStatus::from_raw(9), String::new());
+        assert!(reason.contains("signal"));
+        assert_eq!(classify_outcome(&reason), "crashed");
+        let reason = process_failure(std::process::ExitStatus::from_raw(1 << 8), "TypeError: bad receiver".into());
+        assert_eq!(reason, "TypeError: bad receiver");
+        assert_eq!(classify_outcome(&reason), "failed");
+    }
     #[test]
     fn preserves_process_failure_classifications() {
         for (reason, expected) in [("test timed out after 30ms", "timed_out"),

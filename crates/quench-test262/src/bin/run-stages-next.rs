@@ -304,7 +304,7 @@ fn run_test_with_timeout(
     if status.success() {
         Ok(Ok(()))
     } else {
-        Ok(Err(String::from_utf8_lossy(&stderr).trim().to_string()))
+        Ok(Err(quench_test262::reporting::process_failure(status, String::from_utf8_lossy(&stderr).into_owned())))
     }
 }
 
