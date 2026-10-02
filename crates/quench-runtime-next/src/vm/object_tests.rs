@@ -617,3 +617,97 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         }
     }
 }
+
+#[test]
+fn static_index_field_cache_admits_only_shape_backed_storage() {
+    let source = r#"
+      var ordinary = {'0': 41};
+      var array = [42];
+      var view = new Uint8Array([43]);
+      view['01'] = 44;
+      function first(value) {return value['0'];}
+      function noncanonical(value) {return value['01'];}
+      print(first(ordinary)); print(first(ordinary));
+      print(first(array)); print(first(view));
+      print(noncanonical(view)); print(noncanonical(view));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "static-index-cache.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["41", "41", "42", "43", "44", "44"],
+            "{mode}"
+        );
+        if vm.specialized {
+            let atom = vm.intern_atom("ordinary");
+            let ordinary = vm.own_property(vm.realm.globals, atom).unwrap();
+            let index = vm.intern_atom("0");
+            let entries = vm
+                .field_caches
+                .iter()
+                .filter(|entry| entry.atom == index)
+                .collect::<Vec<_>>();
+            assert!(
+                !entries.is_empty(),
+                "ordinary indexed names must still exercise the field cache"
+            );
+            assert!(entries.iter().all(|entry| entry.owner == ordinary));
+            let atom = vm.intern_atom("view");
+            let view = vm.own_property(vm.realm.globals, atom).unwrap();
+            let noncanonical = vm.intern_atom("01");
+            assert!(
+                vm.field_caches
+                    .iter()
+                    .any(|entry| entry.atom == noncanonical && entry.owner == view),
+                "noncanonical typed-array names use ordinary shape storage"
+            );
+        }
+    }
+}
+
+#[test]
+fn exhausted_field_cache_preserves_generic_reads() {
+    let count = FIELD_MEGAMORPHIC_LIMIT + 1;
+    let source = format!(
+        "var sum = 0; function read(value) {{return value.payload;}} for (var index = 1; index <= {count}; index++) {{var value = {{payload:index}}; value['shape' + index] = index; sum += read(value);}} print(sum);"
+    );
+    let expected = (count * (count + 1) / 2).to_string();
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(&source, "field-cache-exhaustion.js").unwrap();
+        vm.initialize(&program).unwrap();
+        vm.heap.retain_allocations_for_test();
+        let root = vm.closure(&program, 0, Value::NULL).unwrap();
+        vm.call_value(&program, root, vm.realm.globals, &[])
+            .unwrap();
+        assert_eq!(
+            vm.heap.stats().1,
+            0,
+            "cache budget must fill before collection clears it"
+        );
+        assert_eq!(output.borrow().as_slice(), [expected.as_str()], "{mode}");
+        if vm.specialized {
+            assert!(
+                vm.megamorphic_fields
+                    .iter()
+                    .any(|set| set.len() == FIELD_MEGAMORPHIC_LIMIT),
+                "test must exhaust the existing per-site shape budget"
+            );
+            assert!(
+                vm.megamorphic_fields
+                    .iter()
+                    .all(|set| set.len() <= FIELD_MEGAMORPHIC_LIMIT)
+            );
+        }
+    }
+}

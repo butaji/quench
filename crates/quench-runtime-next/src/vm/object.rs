@@ -308,9 +308,8 @@ impl FieldCacheSet {
             .copied()
     }
     fn insert(&mut self, cache: FieldCache) {
-        const LIMIT: usize = 256;
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < LIMIT || entries.contains_key(&cache.receiver) {
+            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&cache.receiver) {
                 entries.insert(cache.receiver, cache);
             }
             return;
@@ -424,22 +423,10 @@ impl<H: Host> Vm<H> {
         if !self.specialized || !p.specialized {
             return self.get_property(p, object, atom);
         }
-        if !object.is_heap()
-            || atom == self.length_atom
-            || atom == self.size_atom
-            || atom == self.byte_length_atom
-            || atom == self.byte_offset_atom
-            || atom == self.buffer_atom
-        {
-            return self.get_property(p, object, atom);
-        }
-        let Some(receiver) = self.object_data(object) else {
+        let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return self.get_property(p, object, atom);
         };
         let receiver_shape = receiver.shape();
-        if receiver.is_module_namespace() || self.shape_is_dictionary(receiver_shape) {
-            return self.get_property(p, object, atom);
-        }
         // SAFETY: cache-site ids are emitted only by the compiler and execute
         // against the exactly-sized cache vector initialized for this program.
         let cache = unsafe { *self.field_caches.get_unchecked(site as usize) };
@@ -488,49 +475,23 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        if self.property_accessor(object, atom).is_some() {
-            return self.get_property(p, object, atom);
-        }
-        if let Some(value) = self.array_buffer_virtual_property(object, atom) {
-            return Ok(value);
-        }
-        if atom == self.byte_length_atom
-            && let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(object)
-        {
-            return Ok(Value::number(if self.array_buffer_detached(object) {
-                0.0
-            } else {
-                bytes.len() as f64
-            }));
-        }
-        if let Some(value) = self.indexed_view_property(object, atom) {
-            return Ok(value);
-        }
         let mut owner = object;
         let mut depth = 0u16;
         loop {
-            if matches!(self.heap.get(owner), Some(Cell::Proxy { .. })) {
+            let Some(current) = self.shape_property_lookup(owner, atom) else {
                 return self.get_property(p, object, atom);
-            }
-            let Some(current) = self.object_data(owner) else {
-                return Ok(Value::UNDEFINED);
             };
-            if current.is_module_namespace() {
+            if self
+                .property_attributes(owner, PropertyKey::string(atom))
+                .is_some_and(|attributes| attributes.accessor)
+            {
                 return self.get_property(p, object, atom);
             }
             if let Some(slot) = self.shape_slot(current.shape(), atom)
                 && let Some(value) = self.heap.property_get(current, slot)
             {
-                if slot < FIELD_CACHE_SLOT_CAPACITY
-                    && !self.shape_is_dictionary(current.shape())
-                    && !self
-                        .object_data(object)
-                        .is_some_and(|receiver| self.shape_is_dictionary(receiver.shape()))
-                {
-                    let receiver = self
-                        .object_data(object)
-                        .map(Object::shape)
-                        .unwrap_or(u32::MAX);
+                if slot < FIELD_CACHE_SLOT_CAPACITY {
+                    let receiver = self.object_data(object).unwrap().shape();
                     self.record_field_cache(
                         site,
                         FieldCache {
@@ -549,7 +510,10 @@ impl<H: Host> Vm<H> {
             if owner.is_null() {
                 return Ok(Value::UNDEFINED);
             }
-            depth = depth.saturating_add(1);
+            let Some(next_depth) = depth.checked_add(1) else {
+                return self.get_property(p, object, atom);
+            };
+            depth = next_depth;
         }
     }
     pub(super) fn set_property(

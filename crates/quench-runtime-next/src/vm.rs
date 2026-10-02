@@ -240,6 +240,8 @@ const EMPTY_CACHE: FieldCache = FieldCache {
 };
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
+// Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
+const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],

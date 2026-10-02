@@ -207,10 +207,7 @@ impl<H: Host> Vm<H> {
             if !matches!(self.heap.get(owner), Some(Cell::Object(_))) {
                 return None;
             }
-            let data = self.object_data(owner)?;
-            if data.is_module_namespace() || self.shape_is_dictionary(data.shape()) {
-                return None;
-            }
+            let data = self.shape_property_lookup(owner, atom)?;
             if let Some(slot) = self.shape_slot(data.shape(), atom) {
                 if slot > u16::MAX as usize
                     || self
