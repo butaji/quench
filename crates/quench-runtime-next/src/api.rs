@@ -2086,6 +2086,26 @@ mod tests {
     }
 
     #[test]
+    fn regression_bound_has_instance_dispatches_the_target_method() {
+        assert_output_in_execution_modes(
+            r#"
+            function C() {}
+            var calls = 0, value = {tag:42};
+            Object.defineProperty(C, Symbol.hasInstance, {configurable:true, value:function(v) {
+                $262.gc(); calls++; return this===C && v===value;
+            }});
+            var bound = C.bind(null).bind(null);
+            print(value instanceof bound);
+            print(Function.prototype[Symbol.hasInstance].call(bound,value));
+            print(calls);
+            Object.defineProperty(C, Symbol.hasInstance, {get:function() {$262.gc(); throw value;}});
+            try {value instanceof bound; print(false);} catch (error) {print(error===value);}
+            "#,
+            &["true", "true", "2", "true"],
+        );
+    }
+
+    #[test]
     fn regression_binary_operand_coercion_preserves_order_and_hints() {
         assert_output_in_execution_modes(
             r#"
