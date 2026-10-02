@@ -1,5 +1,7 @@
 use super::*;
 
+const MATCH_ALL_FLAGS: &str = "g";
+
 const STRING_METHODS: &[(&str, Native, f64)] = &[
     ("at", Native::StringAt, 1.0),
     ("charAt", Native::StringCharAt, 1.0),
@@ -522,18 +524,7 @@ impl<H: Host> Vm<H> {
                     return vm.call_value(p, method, pattern, &[this]);
                 }
             }
-            let input = vm.regexp_input_string(p, this)?;
-            let input = vm.heap.alloc(Cell::String(input));
-            vm.with_call_roots([input], |vm| {
-                let matcher = vm.regexp_create(p, pattern, Value::UNDEFINED)?;
-                vm.with_call_roots([matcher], |vm| {
-                    let method = vm.get_index(p, matcher, symbol)?;
-                    if !vm.is_function(method) {
-                        return Err(vm.type_error(p, "RegExp method is not callable".into()));
-                    }
-                    vm.call_value(p, method, matcher, &[input])
-                })
-            })
+            vm.string_regexp_fallback(p, this, pattern, symbol, Value::UNDEFINED)
         })
     }
 
@@ -543,64 +534,62 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if this.is_null() || this.is_undefined() {
-            return Err(self.type_error(
-                p,
-                "String.prototype.matchAll called on nullish value".into(),
-            ));
-        }
-        let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if self.regexp_is_regexp(p, pattern)? {
-            let flags_atom = self.intern_atom("flags");
-            let flags_value = self.get_property(p, pattern, flags_atom)?;
-            let flags = self.to_string(p, flags_value)?;
-            if !flags.contains('g') {
-                return Err(self.type_error(
-                    p,
-                    "String.prototype.matchAll requires a global RegExp".into(),
-                ));
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            vm.require_object_coercible(p, this)?;
+            let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let symbol = vm
+                .well_known_symbols
+                .get("matchAll")
+                .copied()
+                .ok_or_else(|| vm.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
+            if vm.is_object_like(pattern) {
+                if vm.regexp_is_regexp(p, pattern)? {
+                    let atom = vm.intern_atom("flags");
+                    let flags = vm.get_property(p, pattern, atom)?;
+                    vm.require_object_coercible(p, flags)?;
+                    let flags = vm.regexp_input_string(p, flags)?;
+                    if !flags.host_string().contains(MATCH_ALL_FLAGS) {
+                        return Err(vm.type_error(
+                            p,
+                            "String.prototype.matchAll requires a global RegExp".into(),
+                        ));
+                    }
+                }
+                let method = vm.get_index(p, pattern, symbol)?;
+                if !method.is_undefined() && !method.is_null() {
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "@@matchAll is not callable".into()));
+                    }
+                    return vm.call_value(p, method, pattern, &[this]);
+                }
             }
-        }
-        let symbol = self
-            .well_known_symbols
-            .get("matchAll")
-            .copied()
-            .ok_or_else(|| self.type_error(p, "RegExp matchAll symbol is unavailable".into()))?;
-        if !self.is_object_like(pattern) {
-            let regexp_atom = self.intern_atom("RegExp");
-            let constructor = self.get_property(p, self.realm.globals, regexp_atom)?;
-            let global_flag = self.heap.alloc(Cell::String("g".into()));
-            let matcher = self.construct_value(p, constructor, &[pattern, global_flag])?;
-            let method = self.get_index(p, matcher, symbol)?;
-            if !self.is_function(method) {
-                return Err(self.type_error(p, "RegExp @@matchAll is not callable".into()));
-            }
-            let input = self.regexp_input_string(p, this)?;
-            let pattern_string = self.heap.alloc(Cell::String(input));
-            return self.call_value(p, method, matcher, &[pattern_string]);
-        }
-        let method = self.get_index(p, pattern, symbol)?;
-        let method = if method.is_undefined() || method.is_null() {
-            let regexp_atom = self.intern_atom("RegExp");
-            let constructor = self.get_property(p, self.realm.globals, regexp_atom)?;
-            let global_flag = self.heap.alloc(Cell::String("g".into()));
-            let matcher = self.construct_value(p, constructor, &[pattern, global_flag])?;
-            let method = self.get_index(p, matcher, symbol)?;
-            if !self.is_function(method) {
-                return Err(self.type_error(p, "RegExp @@matchAll is not callable".into()));
-            }
-            let input = self.regexp_input_string(p, this)?;
-            let pattern_string = self.heap.alloc(Cell::String(input));
-            return self.call_value(p, method, matcher, &[pattern_string]);
-        } else {
-            method
-        };
-        if !self.is_function(method) {
-            return Err(self.type_error(p, "@@matchAll is not callable".into()));
-        }
-        let input = self.regexp_input_string(p, this)?;
-        let input = self.heap.alloc(Cell::String(input));
-        self.call_value(p, method, pattern, &[input])
+            let flags = vm.heap.alloc(Cell::String(MATCH_ALL_FLAGS.into()));
+            vm.string_regexp_fallback(p, this, pattern, symbol, flags)
+        })
+    }
+
+    fn string_regexp_fallback(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        pattern: Value,
+        symbol: Value,
+        flags: Value,
+    ) -> Result<Value, JsError> {
+        self.with_call_roots([receiver, pattern, flags], |vm| {
+            let input = vm.regexp_input_string(p, receiver)?;
+            let input = vm.heap.alloc(Cell::String(input));
+            vm.with_call_roots([input], |vm| {
+                let matcher = vm.regexp_create(p, pattern, flags)?;
+                vm.with_call_roots([matcher], |vm| {
+                    let method = vm.get_index(p, matcher, symbol)?;
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "RegExp method is not callable".into()));
+                    }
+                    vm.call_value(p, method, matcher, &[input])
+                })
+            })
+        })
     }
 
     pub(super) fn string_replace_native(
