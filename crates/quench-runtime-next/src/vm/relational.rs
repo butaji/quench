@@ -156,27 +156,26 @@ impl<H: Host> Vm<H> {
         value: Value,
         constructor: Value,
     ) -> Result<bool, JsError> {
-        if !self.is_object_like(constructor) {
-            return Err(
-                self.type_error(p, "right-hand side of 'instanceof' is not an object".into())
-            );
-        }
-        if let Some(has_instance) = self.well_known_symbols.get("hasInstance").copied() {
-            let method = self.get_index(p, constructor, has_instance)?;
-            if !method.is_undefined() && !method.is_null() {
-                if !self.is_function(method) {
-                    return Err(self.type_error(p, "@@hasInstance is not callable".into()));
-                }
-                let result = self.call_value(p, method, constructor, &[value])?;
-                return Ok(self.truthy(result));
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([value, constructor], |vm| {
+            if !vm.is_object_like(constructor) {
+                return Err(vm.type_error(p, "right-hand side of 'instanceof' is not an object".into()));
             }
-        }
-        if !self.is_function(constructor) {
-            return Err(
-                self.type_error(p, "right-hand side of 'instanceof' is not callable".into())
-            );
-        }
-        self.ordinary_has_instance(p, constructor, value)
+            if let Some(has_instance) = vm.well_known_symbols.get("hasInstance").copied() {
+                let method = vm.get_index(p, constructor, has_instance)?;
+                if !method.is_undefined() && !method.is_null() {
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "@@hasInstance is not callable".into()));
+                    }
+                    let result = vm.call_value(p, method, constructor, &[value])?;
+                    return Ok(vm.truthy(result));
+                }
+            }
+            if !vm.is_function(constructor) {
+                return Err(vm.type_error(p, "right-hand side of 'instanceof' is not callable".into()));
+            }
+            vm.ordinary_has_instance(p, constructor, value)
+        })
     }
 
     pub(super) fn ordinary_has_instance(
@@ -185,43 +184,57 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<bool, JsError> {
-        if !self.is_function(constructor) {
-            return Ok(false);
-        }
-        let bound_env = match self.heap.get(constructor) {
-            Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionBoundCall),
-                env,
-                ..
-            }) => Some(*env),
-            _ => None,
-        };
-        if let Some(env) = bound_env {
-            let target_atom = self.intern_atom("\0rqj:bound-target");
-            let target = self
-                .own_property(env, target_atom)
-                .unwrap_or(Value::UNDEFINED);
-            return self.ordinary_has_instance(p, target, value);
-        }
-        if self.object_data(value).is_none() {
-            return Ok(false);
-        }
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
-        if self.object_data(prototype).is_none() {
-            return Err(self.type_error(p, "instanceof prototype is not an object".into()));
-        }
-        let mut current = self.object_get_prototype_of(p, value)?;
-        loop {
-            if current == prototype {
-                return Ok(true);
-            }
-            if current.is_null() {
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([constructor, value], |vm| {
+            if !vm.is_function(constructor) {
                 return Ok(false);
             }
-            current = self.object_get_prototype_of(p, current)?;
-        }
+            let bound_env = match vm.heap.get(constructor) {
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::FunctionBoundCall),
+                    env,
+                    ..
+                }) => Some(*env),
+                _ => None,
+            };
+            if let Some(env) = bound_env {
+                let target_atom = vm.intern_atom("\0rqj:bound-target");
+                let target = vm
+                    .own_property(env, target_atom)
+                    .unwrap_or(Value::UNDEFINED);
+                return vm.instanceof(p, value, target);
+            }
+            if !vm.is_object_like(value) {
+                return Ok(false);
+            }
+            let prototype_atom = vm.intern_atom("prototype");
+            let prototype = vm.get_property(p, constructor, prototype_atom)?;
+            if !vm.is_object_like(prototype) {
+                return Err(vm.type_error(p, "instanceof prototype is not an object".into()));
+            }
+            vm.with_call_roots([prototype], |vm| {
+                let current_root = vm.heap.root(value);
+                let result = (|| {
+                    loop {
+                        let current = vm
+                            .root_value(current_root)
+                            .expect("rooted instanceof traversal object");
+                        let next = vm.object_get_prototype_of(p, current)?;
+                        vm.heap.update_root(current_root, next);
+                        if next.is_null() {
+                            return Ok(false);
+                        }
+                        if next == prototype {
+                            return Ok(true);
+                        }
+                    }
+                })();
+                vm.heap.release_root(current_root);
+                result
+            })
+        })
     }
+
 }
 
 fn compare_numbers(left: f64, right: f64, operator: super::operations::RelationalOperator) -> bool {
