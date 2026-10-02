@@ -2086,6 +2086,61 @@ mod tests {
     }
 
     #[test]
+    fn regression_property_copy_snapshots_survive_collecting_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            var symbol=Symbol('entry');
+            function source() {return new Proxy({first:42, later:43, [symbol]:44}, {
+                getOwnPropertyDescriptor(object,key) {$262.gc(); return Reflect.getOwnPropertyDescriptor(object,key);},
+                get(object,key) {$262.gc(); return Reflect.get(object,key);}
+            });}
+            var target=Object.assign(1,source());
+            print(target.valueOf()); print(target.first);print(target.later);print(target[symbol]);
+            var spread={...source()};print(spread.first);print(spread.later);print(spread[symbol]);
+            var {first,...rest}=source(); print(first);print(Object.hasOwn(rest,'first'));print(rest.later);print(rest[symbol]);
+            var getterReads=0;
+            var overwritten={get first() {getterReads++;return 99;},...{first:42}};
+            print(overwritten.first);print(Object.getOwnPropertyDescriptor(overwritten,'first').writable);print(getterReads);
+            var setterCalls=0;
+            Object.assign({set first(value) {$262.gc();setterCalls++;print(value.rank);}}, {get first() {$262.gc();return {rank:45};}});
+            print(setterCalls);
+            Object.assign=function() {throw new Error('overridden assign');};
+            print(({...{first:46}}).first);print(Object.keys({...null,...undefined}).length);
+            "#,
+            &[
+                "1", "42", "43", "44", "42", "43", "44", "42", "false", "43", "44", "42", "true", "0",
+                "45", "1", "46", "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_descriptor_snapshot_preserves_fresh_destination() {
+        assert_output_in_execution_modes(
+            r#"
+            var symbol=Symbol('entry'), events=[];
+            var source=new Proxy({first:42,later:43,[symbol]:44}, {
+                getOwnPropertyDescriptor(object,key) {events.push(typeof key==='symbol' ? 'symbol' : key);$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);}
+            });
+            var result=Object.getOwnPropertyDescriptors(source);
+            print(result.first.value); print(result.later.value); print(result[symbol].value);print(events.join(','));
+            print(Object.keys(result).join(','));
+            var attributes=Object.getOwnPropertyDescriptor(result,'first');print(attributes.writable && attributes.enumerable && attributes.configurable);
+            print(Object.getOwnPropertyDescriptors('ab')[0].value);
+            "#,
+            &[
+                "42",
+                "43",
+                "44",
+                "first,later,symbol",
+                "first,later",
+                "true",
+                "a",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_array_like_arguments_keep_earlier_collecting_values() {
         assert_output_in_execution_modes(
             r#"
