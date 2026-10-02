@@ -68,6 +68,25 @@ Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
 `TEST262_BATCH_SIZE` subset still writes its report but does not update or
 compare the full-inventory ratchet.
 
+For an explicitly authorized all-pass assumption, freeze expectations without
+executing any cases:
+
+```sh
+TEST262_TEST_TIMEOUT_MS=30000 \
+  cargo run --profile iteration -p quench-test262 --bin run-all-next -- \
+  --freeze-expected-pass-set
+```
+
+This refuses to overwrite an existing baseline and records
+`basis: user_assumption` and the suite revision, without generating observed
+outcomes. A later complete observed all-pass run replaces that basis with
+`observed`. `run-stages-next` compares only baseline expectations owned by its
+selected stages and path filter, including previously expected paths removed
+from discovery. Focused runs never update the baseline. `TEST262_RATCHET`
+selects the same baseline in both runners; an explicitly selected missing or
+invalid baseline is an error. A stage selection discovering no cases is an
+error.
+
 For long runs, advance one stage at a time with `run-stages-next`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
 discovery order. Do not use the legacy `run-all` batch wrapper for the current

@@ -11,6 +11,7 @@ mod harness_cache;
 pub mod module_graph;
 pub mod next_host;
 mod runner_support;
+pub mod ratchet;
 pub mod runtime_host;
 mod stages;
 pub use harness_cache::HarnessCache;
