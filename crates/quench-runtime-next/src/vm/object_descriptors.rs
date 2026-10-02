@@ -434,256 +434,263 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
-        {
-            if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
+        let target =
+            self.box_object_or_type_error(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let source = self.heap.root(target);
+        let input = self
+            .heap
+            .root(args.get(1).copied().unwrap_or(Value::UNDEFINED));
+        let mut key_root = None;
+        let outcome = (|| {
+            let key = self.to_property_key(p, self.heap.root_value(input).unwrap())?;
+            let key = self.heap.root(key);
+            key_root = Some(key);
+            let target = self.heap.root_value(source).unwrap();
+            let key = self.heap.root_value(key).unwrap();
+            if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+                return self.proxy_own_property_descriptor(p, target, key);
             }
-            let trap_atom = self.intern_atom("getOwnPropertyDescriptor");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let key =
-                    self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                let result = self.call_value(p, trap, handler, &[target, key])?;
-                if result.is_undefined() {
-                    let target_descriptor =
-                        self.object_get_own_property_descriptor(p, &[target, key])?;
-                    self.validate_proxy_get_own_property_descriptor(
-                        p,
-                        target,
-                        target_descriptor,
-                        None,
-                    )?;
+            if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+                let Some(value) = self.symbol_property(target, key) else {
                     return Ok(Value::UNDEFINED);
-                }
-                if self.object_data(result).is_none() {
-                    return Err(self.type_error(
-                        p,
-                        "proxy getOwnPropertyDescriptor trap must return an object or undefined"
-                            .into(),
-                    ));
-                }
-                let result_root = self.heap.root(result);
-                let normalized = (|| {
-                    let result = self.heap.root_value(result_root).unwrap_or(result);
-                    let record = self.to_property_descriptor(p, result)?;
-                    let normalized = self.complete_property_descriptor(record)?;
-                    let normalized_root = self.heap.root(normalized);
-                    let target_descriptor =
-                        match self.object_get_own_property_descriptor(p, &[target, key]) {
-                            Ok(target_descriptor) => target_descriptor,
-                            Err(error) => {
-                                self.heap.release_root(normalized_root);
-                                return Err(error);
-                            }
-                        };
-                    let target_descriptor_root = self.heap.root(target_descriptor);
-                    let normalized = self.heap.root_value(normalized_root).unwrap_or(normalized);
-                    let target_descriptor = self
-                        .heap
-                        .root_value(target_descriptor_root)
-                        .unwrap_or(target_descriptor);
-                    let validation = self.validate_proxy_get_own_property_descriptor(
-                        p,
-                        target,
-                        target_descriptor,
-                        Some(normalized),
-                    );
-                    self.heap.release_root(target_descriptor_root);
-                    self.heap.release_root(normalized_root);
-                    validation?;
-                    Ok(normalized)
-                })();
-                self.heap.release_root(result_root);
-                return normalized;
+                };
+                let attributes = self
+                    .property_attributes(target, PropertyKey::symbol(key))
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                return self.property_descriptor_object(value, attributes);
             }
-            if trap.is_undefined() || trap.is_null() {
-                return self.object_get_own_property_descriptor(
-                    p,
-                    &[target, args.get(1).copied().unwrap_or(Value::UNDEFINED)],
+            let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+                unreachable!("ToPropertyKey returns a string or symbol")
+            };
+            let atom = self.intern_js_atom(&key);
+            self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+            let target = self.heap.root_value(source).unwrap();
+            if key.host_string() == "length"
+                && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
+                && !self
+                    .object_data(target)
+                    .is_some_and(Object::is_arguments_object)
+            {
+                let length = self.heap.sparse_length(target).unwrap_or(elements.len());
+                let length_attributes = self
+                    .descriptors
+                    .get(&(target, PropertyKey::string(self.length_atom)))
+                    .copied()
+                    .unwrap_or(PropertyAttributes {
+                        writable: true,
+                        enumerable: false,
+                        configurable: false,
+                        accessor: false,
+                        getter: None,
+                        setter: None,
+                    });
+                return self.property_descriptor_object(
+                    Value::number(length as f64),
+                    PropertyAttributes {
+                        enumerable: false,
+                        ..length_attributes
+                    },
                 );
             }
-            return Err(self.type_error(
-                p,
-                "proxy getOwnPropertyDescriptor trap is not callable".into(),
-            ));
-        }
-        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let target = self.box_object(target)?;
-        let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let key = self.to_property_key(p, key_value)?;
-        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            let Some(value) = self.symbol_property(target, key) else {
+            if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+                match Self::typed_array_index_key(key.host_string()) {
+                    TypedArrayIndexKey::Index(index)
+                        if self
+                            .typed_array_length(target)
+                            .is_some_and(|length| index < length) =>
+                    {
+                        let value = self
+                            .typed_array_get(target, index)
+                            .unwrap_or(Value::UNDEFINED);
+                        return self.own_data_descriptor(value, true, true, true);
+                    }
+                    TypedArrayIndexKey::Invalid | TypedArrayIndexKey::Index(_) => {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    TypedArrayIndexKey::NotCanonical => {}
+                }
+            }
+            if let Some(index) =
+                super::object_static::array_index(key.host_string()).map(|index| index as usize)
+            {
+                let atom = self.intern_js_atom(&key);
+                let attributes = self
+                    .property_attributes(target, PropertyKey::string(atom))
+                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+                if attributes.accessor {
+                    return self.property_descriptor_object(Value::UNDEFINED, attributes);
+                }
+                let value = match self.heap.get(target) {
+                    Some(Cell::Array { elements, .. }) => elements
+                        .get(index)
+                        .copied()
+                        .filter(|value| !value.is_deleted()),
+                    _ => None,
+                }
+                .or_else(|| {
+                    self.heap
+                        .sparse_get(target, index)
+                        .filter(|value| !value.is_deleted())
+                });
+                if let Some(value) = value {
+                    return self.property_descriptor_object(value, attributes);
+                }
+            }
+            let value = if self
+                .object_data(target)
+                .is_some_and(Object::is_module_namespace)
+            {
+                self.module_namespace_value(p, target, atom)?
+            } else {
+                self.own_property(target, atom)
+            };
+            let Some(value) = value else {
                 return Ok(Value::UNDEFINED);
             };
             let attributes = self
-                .property_attributes(target, PropertyKey::symbol(key))
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            return self.property_descriptor_object(value, attributes);
-        }
-        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
-            unreachable!("ToPropertyKey returns a string or symbol")
-        };
-        let atom = self.intern_js_atom(&key);
-        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
-        if key.host_string() == "length"
-            && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
-            && !self
-                .object_data(target)
-                .is_some_and(Object::is_arguments_object)
-        {
-            let length = self.heap.sparse_length(target).unwrap_or(elements.len());
-            let length_attributes = self
-                .descriptors
-                .get(&(target, PropertyKey::string(self.length_atom)))
-                .copied()
-                .unwrap_or(PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                });
-            return self.property_descriptor_object(
-                Value::number(length as f64),
-                PropertyAttributes {
-                    enumerable: false,
-                    ..length_attributes
-                },
-            );
-        }
-        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
-            match Self::typed_array_index_key(key.host_string()) {
-                TypedArrayIndexKey::Index(index)
-                    if self
-                        .typed_array_length(target)
-                        .is_some_and(|length| index < length) =>
-                {
-                    let value = self
-                        .typed_array_get(target, index)
-                        .unwrap_or(Value::UNDEFINED);
-                    return self.own_data_descriptor(value, true, true, true);
-                }
-                TypedArrayIndexKey::Invalid | TypedArrayIndexKey::Index(_) => {
-                    return Ok(Value::UNDEFINED);
-                }
-                TypedArrayIndexKey::NotCanonical => {}
-            }
-        }
-        if let Some(index) =
-            super::object_static::array_index(key.host_string()).map(|index| index as usize)
-        {
-            let atom = self.intern_js_atom(&key);
-            let attributes = self
                 .property_attributes(target, PropertyKey::string(atom))
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            if attributes.accessor {
-                return self.property_descriptor_object(Value::UNDEFINED, attributes);
-            }
-            let value = match self.heap.get(target) {
-                Some(Cell::Array { elements, .. }) => elements
-                    .get(index)
-                    .copied()
-                    .filter(|value| !value.is_deleted()),
-                _ => None,
-            }
-            .or_else(|| {
-                self.heap
-                    .sparse_get(target, index)
-                    .filter(|value| !value.is_deleted())
-            });
-            if let Some(value) = value {
-                return self.property_descriptor_object(value, attributes);
-            }
+            let writable = self
+                .object_data(target)
+                .is_some_and(Object::is_module_namespace)
+                || attributes.writable;
+            self.property_descriptor_object(
+                value,
+                PropertyAttributes {
+                    writable,
+                    ..attributes
+                },
+            )
+        })();
+        for root in [Some(source), Some(input), key_root].into_iter().flatten() {
+            self.heap.release_root(root);
         }
-        let value = if self.object_data(target).is_some_and(Object::is_module_namespace) {
-            self.module_namespace_value(p, target, atom)?
-        } else {
-            self.own_property(target, atom)
-        };
-        let Some(value) = value else {
-            return Ok(Value::UNDEFINED);
-        };
-        let attributes = self
-            .property_attributes(target, PropertyKey::string(atom))
-            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-        let writable = self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
-            || attributes.writable;
-        self.property_descriptor_object(
-            value,
-            PropertyAttributes {
-                writable,
-                ..attributes
-            },
-        )
+        outcome
     }
 
-    fn validate_proxy_get_own_property_descriptor(
+    fn proxy_own_property_descriptor(
         &mut self,
         p: &ResidualProgram,
-        target: Value,
-        target_descriptor: Value,
-        result: Option<Value>,
-    ) -> Result<(), JsError> {
-        let extensible = self.object_is_extensible(p, &[target])?;
-        let extensible = self.truthy(extensible);
-        let Some(result) = result else {
-            if !target_descriptor.is_undefined()
-                && (!extensible || !self.descriptor_flag(target_descriptor, "configurable"))
+        proxy: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
+        let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get(proxy).cloned()
+        else {
+            unreachable!("Proxy descriptor dispatch")
+        };
+        if handler.is_null() {
+            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
+        }
+        let proxy = self.heap.root(proxy);
+        let target = self.heap.root(target);
+        let handler = self.heap.root(handler);
+        let key = self.heap.root(key);
+        let mut result_root = None;
+        let mut target_descriptor_root = None;
+        let outcome = (|| {
+            let atom = self.intern_atom("getOwnPropertyDescriptor");
+            let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+            if trap.is_null() || trap.is_undefined() {
+                return self.object_get_own_property_descriptor(
+                    p,
+                    &[
+                        self.heap.root_value(target).unwrap(),
+                        self.heap.root_value(key).unwrap(),
+                    ],
+                );
+            }
+            if !self.is_function(trap) {
+                return Err(self.type_error(
+                    p,
+                    "proxy getOwnPropertyDescriptor trap is not callable".into(),
+                ));
+            }
+            let result = self.call_value(
+                p,
+                trap,
+                self.heap.root_value(handler).unwrap(),
+                &[
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                ],
+            )?;
+            if !result.is_undefined() && !self.is_object_like(result) {
+                return Err(self.type_error(
+                    p,
+                    "proxy getOwnPropertyDescriptor trap must return an object or undefined".into(),
+                ));
+            }
+            let result = self.heap.root(result);
+            result_root = Some(result);
+            let current = self.object_get_own_property_descriptor(
+                p,
+                &[
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                ],
+            )?;
+            let current = self.heap.root(current);
+            target_descriptor_root = Some(current);
+            if self.heap.root_value(result).unwrap().is_undefined() {
+                let current = self.heap.root_value(current).unwrap();
+                if current.is_undefined() {
+                    return Ok(Value::UNDEFINED);
+                }
+                if !self.descriptor_flag(current, "configurable") {
+                    return Err(self.type_error(
+                        p,
+                        "proxy getOwnPropertyDescriptor trap cannot hide a target property".into(),
+                    ));
+                }
+                let extensible =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+                if !self.truthy(extensible) {
+                    return Err(self.type_error(
+                        p,
+                        "proxy getOwnPropertyDescriptor trap cannot hide a target property".into(),
+                    ));
+                }
+                return Ok(Value::UNDEFINED);
+            }
+            let extensible = self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+            let extensible = self.truthy(extensible);
+            let record = self.to_property_descriptor(p, self.heap.root_value(result).unwrap())?;
+            let normalized = self.complete_property_descriptor(record)?;
+            let record = self.own_descriptor_record(normalized);
+            let current = self.heap.root_value(current).unwrap();
+            let current = (!current.is_undefined()).then(|| self.own_descriptor_record(current));
+            if !record.compatible_with(current, extensible, |left, right| {
+                self.same_value(left, right)
+            }) || (record.configurable == Some(false)
+                && current.is_none_or(|current| {
+                    current.configurable == Some(true)
+                        || (record.writable == Some(false) && current.writable == Some(true))
+                }))
             {
                 return Err(self.type_error(
                     p,
-                    "proxy getOwnPropertyDescriptor trap cannot hide a target property".into(),
+                    "proxy getOwnPropertyDescriptor trap returned an incompatible descriptor".into(),
                 ));
             }
-            return Ok(());
-        };
-        let result_configurable = self.descriptor_field(p, result, "configurable")?;
-        if target_descriptor.is_undefined() {
-            if !extensible || result_configurable.is_some_and(|value| !self.truthy(value)) {
-                return Err(self.type_error(
-                    p,
-                    "proxy getOwnPropertyDescriptor trap added an incompatible property".into(),
-                ));
-            }
-            return Ok(());
+            Ok(normalized)
+        })();
+        for root in [
+            Some(proxy),
+            Some(target),
+            Some(handler),
+            Some(key),
+            result_root,
+            target_descriptor_root,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.heap.release_root(root);
         }
-        let target_configurable = self.descriptor_flag(target_descriptor, "configurable");
-        if result_configurable.is_some_and(|value| !self.truthy(value)) && target_configurable {
-            return Err(self.type_error(
-                p,
-                "proxy getOwnPropertyDescriptor trap made a property non-configurable".into(),
-            ));
-        }
-        if !target_configurable {
-            if result_configurable.is_some_and(|value| self.truthy(value)) {
-                return Err(self.type_error(
-                    p,
-                    "proxy getOwnPropertyDescriptor trap changed configurability".into(),
-                ));
-            }
-            for field in ["value", "writable", "get", "set", "enumerable"] {
-                let Some(expected) = self.descriptor_field(p, target_descriptor, field)? else {
-                    continue;
-                };
-                if let Some(actual) = self.descriptor_field(p, result, field)?
-                    && !self.same_value(expected, actual)
-                {
-                    return Err(self.type_error(
-                        p,
-                        "proxy getOwnPropertyDescriptor trap changed a non-configurable property"
-                            .into(),
-                    ));
-                }
-            }
-        }
-        Ok(())
+        outcome
     }
 
     pub(super) fn descriptor_flag(&mut self, descriptor: Value, name: &str) -> bool {
