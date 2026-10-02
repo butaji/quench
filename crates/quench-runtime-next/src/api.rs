@@ -2086,6 +2086,75 @@ mod tests {
     }
 
     #[test]
+    fn regression_string_match_all_custom_dispatch_preserves_identity_and_flags_order() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[],input={[Symbol.toPrimitive](){throw 'coerced';}},record={};
+            var pattern={get [Symbol.match](){$262.gc();log.push('is-regexp');return true;},get flags(){$262.gc();log.push('flags');return {[Symbol.toPrimitive](hint){$262.gc();log.push('flags:'+hint);return 'g';}};},get [Symbol.matchAll](){$262.gc();log.push('method');return function(arg){$262.gc();log.push('call');print(this===pattern);print(arg===input);return record;};}};
+            print(String.prototype.matchAll.call(input,pattern)===record);print(log.join(','));
+            for(var flags of [null,undefined,'i',Symbol()]){
+                var reads=0,pattern={[Symbol.match]:true,flags:flags,get [Symbol.matchAll](){reads++;return function(){};}};
+                try{String.prototype.matchAll.call(input,pattern);}catch(error){print(error instanceof TypeError);}print(reads);
+            }
+            var reads=0,pattern={get [Symbol.match](){reads++;return true;}};
+            try{String.prototype.matchAll.call(null,pattern);}catch(error){print(error instanceof TypeError);}print(reads);
+            var bad={[Symbol.match]:false,[Symbol.matchAll]:42};try{String.prototype.matchAll.call(input,bad);}catch(error){print(error instanceof TypeError);}
+            var marker={},throwing={[Symbol.match]:false,[Symbol.matchAll](){throw marker;}};
+            try{String.prototype.matchAll.call(input,throwing);}catch(error){print(error===marker);}
+        "#,
+            &[
+                "true",
+                "true",
+                "true",
+                "is-regexp,flags,flags:string,method,call",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_string_match_all_fallback_uses_intrinsic_creation_and_input_first() {
+        assert_output_in_execution_modes(
+            r#"
+            var original=RegExp,globalDescriptor=Object.getOwnPropertyDescriptor(globalThis,'RegExp'),globalReads=0,descriptor=Object.getOwnPropertyDescriptor(original.prototype,Symbol.matchAll);
+            Object.defineProperty(globalThis,'RegExp',{configurable:true,get(){globalReads++;throw 'global';}});
+            for(var kind of ['object','primitive']){
+                var log=[];
+                Object.defineProperty(original.prototype,Symbol.matchAll,{configurable:true,get(){$262.gc();log.push('invoke:get');return function(input){$262.gc();log.push('invoke:'+input.charCodeAt(0));return Object.getPrototypeOf(this)===original.prototype&&this.source==='a'&&this.flags==='g';};}});
+                var input={[Symbol.toPrimitive](hint){$262.gc();log.push('input:'+hint);return String.fromCharCode(55296,97);}};
+                var pattern=kind==='primitive'?'a':{get [Symbol.match](){log.push('is-regexp');return false;},get [Symbol.matchAll](){log.push('method');return null;},[Symbol.toPrimitive](hint){$262.gc();log.push('pattern:'+hint);return 'a';}};
+                print(String.prototype.matchAll.call(input,pattern));print(log.join(','));
+            }
+            print(globalReads);Object.defineProperty(globalThis,'RegExp',globalDescriptor);Object.defineProperty(original.prototype,Symbol.matchAll,descriptor);
+            var pattern=/a/g;pattern[Symbol.matchAll]=null;var iterator=String.prototype.matchAll.call('/a/g',pattern);print(iterator.next().value[0]);
+            var hooks=0;Object.defineProperty(String.prototype,Symbol.matchAll,{configurable:true,get(){hooks++;throw 'hook';}});
+            var iterator=String.prototype.matchAll.call('a','a');print(iterator.next().value[0]);print(hooks);delete String.prototype[Symbol.matchAll];
+        "#,
+            &[
+                "true",
+                "is-regexp,method,input:string,pattern:string,invoke:get,invoke:55296",
+                "true",
+                "input:string,invoke:get,invoke:55296",
+                "0",
+                "/a/g",
+                "a",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_string_match_search_pass_original_receiver_to_custom_methods() {
         assert_output_in_execution_modes(
             r#"
