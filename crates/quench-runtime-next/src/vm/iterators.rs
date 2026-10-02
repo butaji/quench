@@ -2913,29 +2913,40 @@ impl<H: Host> Vm<H> {
                     },
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
-                let result = vm.regexp_exec(p, source, input.host_string())?;
+                let input_value = vm.heap.alloc(Cell::String(input.clone()));
+                let result = vm.regexp_exec_value(p, source, input_value)?;
                 if result.is_null() {
                     if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(this) {
                         *done = true;
                     }
                     return vm.iterator_result(Value::UNDEFINED, true);
                 }
-                if global {
-                    let matched_atom = vm.intern_atom("0");
-                    let matched = vm.get_property(p, result, matched_atom)?;
-                    if vm.to_string(p, matched)?.is_empty() {
-                        let last_index_atom = vm.intern_atom("lastIndex");
-                        let last_index = vm.get_property(p, source, last_index_atom)?;
-                        let index = vm.to_number(p, last_index)?;
-                        let index = super::regexp::regexp_to_length(index);
-                        let next =
-                            super::regexp::advance_string_index_units(input.units(), index, unicode);
-                        vm.set_property(source, last_index_atom, Value::number(next as f64))?;
+                return vm.with_call_roots([source, result], |vm| {
+                    if global {
+                        let matched_atom = vm.intern_atom("0");
+                        let matched = vm.get_property(p, result, matched_atom)?;
+                        if vm.regexp_input_string(p, matched)?.units().is_empty() {
+                            let last_index_atom = vm.intern_atom("lastIndex");
+                            let last_index = vm.get_property(p, source, last_index_atom)?;
+                            let index = vm.regexp_to_length_value(p, last_index)?;
+                            let next = super::regexp::advance_string_index_units(
+                                input.units(),
+                                index,
+                                unicode,
+                            );
+                            vm.set_property_with_program_mode(
+                                p,
+                                source,
+                                last_index_atom,
+                                Value::number(next as f64),
+                                true,
+                            )?;
+                        }
+                    } else if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(this) {
+                        *done = true;
                     }
-                } else if let Some(Cell::Iterator { done, .. }) = vm.heap.get_mut(this) {
-                    *done = true;
-                }
-                return vm.iterator_result(result, false);
+                    vm.iterator_result(result, false)
+                });
             }
             if matches!(
                 kind,

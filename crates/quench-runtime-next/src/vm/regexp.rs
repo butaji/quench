@@ -722,22 +722,22 @@ impl<H: Host> Vm<H> {
                 "RegExp.prototype[@@split] receiver is not an object".into(),
             ));
         }
-        let input = self.regexp_input_string(
-            p,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
-        let constructor = self.regexp_split_species_constructor(p, receiver)?;
-        let flags_atom = self.intern_atom("flags");
-        let flags_value = self.get_property(p, receiver, flags_atom)?;
-        let flags = self.to_string(p, flags_value)?;
-        let unicode = flags.contains('u') || flags.contains('v');
-        let splitter_flags = if flags.contains('y') {
-            flags
-        } else {
-            format!("{flags}y")
-        };
-        let splitter_flags = self.heap.alloc(Cell::String(splitter_flags.into()));
-        let splitter = self.construct_value(p, constructor, &[receiver, splitter_flags])?;
+        let input = self.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let constructor = self.regexp_species_constructor(p, receiver)?;
+        let (unicode, splitter) = self.with_call_roots([constructor], |vm| {
+            let flags_atom = vm.intern_atom("flags");
+            let flags_value = vm.get_property(p, receiver, flags_atom)?;
+            let flags = vm.to_string(p, flags_value)?;
+            let unicode = flags.contains('u') || flags.contains('v');
+            let splitter_flags = if flags.contains('y') {
+                flags
+            } else {
+                format!("{flags}y")
+            };
+            let splitter_flags = vm.heap.alloc(Cell::String(splitter_flags.into()));
+            let splitter = vm.construct_value(p, constructor, &[receiver, splitter_flags])?;
+            Ok::<_, JsError>((unicode, splitter))
+        })?;
         let limit = self.regexp_split_limit(p, args.get(1).copied())?;
         if limit == 0 {
             return Ok(self.heap.alloc(Cell::Array {
@@ -815,32 +815,36 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    fn regexp_split_species_constructor(
+    fn regexp_species_constructor(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let constructor_atom = self.intern_atom("constructor");
-        let constructor = self.get_property(p, receiver, constructor_atom)?;
-        let species = if constructor.is_undefined() {
-            Value::UNDEFINED
-        } else {
-            if !self.is_object_like(constructor) {
-                return Err(self.type_error(p, "RegExp constructor is not an object".into()));
+        self.with_call_roots([receiver], |vm| {
+            let constructor_atom = vm.intern_atom("constructor");
+            let constructor = vm.get_property(p, receiver, constructor_atom)?;
+            if constructor.is_undefined() {
+                return Ok(vm.regexp_intrinsic_constructor());
             }
-            let species_symbol = self
-                .well_known_symbols
-                .get("species")
-                .copied()
-                .ok_or_else(|| self.type_error(p, "RegExp species symbol is unavailable".into()))?;
-            self.get_index(p, constructor, species_symbol)?
-        };
-        let intrinsic = if species.is_undefined() || species.is_null() {
-            self.regexp_intrinsic_constructor()
-        } else {
-            species
-        };
-        Ok(intrinsic)
+            if !vm.is_object_like(constructor) {
+                return Err(vm.type_error(p, "RegExp constructor is not an object".into()));
+            }
+            vm.with_call_roots([constructor], |vm| {
+                let symbol = vm
+                    .well_known_symbols
+                    .get("species")
+                    .copied()
+                    .ok_or_else(|| vm.type_error(p, "RegExp species symbol is unavailable".into()))?;
+                let species = vm.get_index(p, constructor, symbol)?;
+                if species.is_undefined() || species.is_null() {
+                    return Ok(vm.regexp_intrinsic_constructor());
+                }
+                if !vm.is_constructable(p, species) {
+                    return Err(vm.type_error(p, "RegExp species is not a constructor".into()));
+                }
+                Ok(species)
+            })
+        })
     }
 
     pub(super) fn regexp_split_limit(
@@ -865,70 +869,68 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(
-                p,
-                "RegExp.prototype[@@matchAll] receiver is not an object".into(),
-            ));
-        }
-        let input = self.regexp_input_string(
-            p,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
-        let flags_atom = self.intern_atom("flags");
-        let flags_value = self.get_property(p, receiver, flags_atom)?;
-        let flags = self.to_string(p, flags_value)?;
-        let matcher = self.regexp_match_all_species(p, receiver, &flags)?;
-        let last_index_atom = self.intern_atom("lastIndex");
-        let last_index = self.get_property(p, receiver, last_index_atom)?;
-        let last_index =
-            regexp_to_length(self.to_number(p, last_index)?).min(MAX_SAFE_INTEGER as usize);
-        self.set_property(matcher, last_index_atom, Value::number(last_index as f64))?;
-        Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.regexp_string_iterator_proto),
-            source: matcher,
-            next_method: None,
-            helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
-                input,
-                global: flags.contains('g'),
-                unicode: flags.contains('u') || flags.contains('v'),
-            })),
-            helper_running: false,
-            helper_started: false,
-            kind: IteratorKind::RegExpStringMatchAll,
-            index: 0,
-            done: false,
-            generator: None,
-        }))
+        self.with_call_roots(
+            std::iter::once(receiver).chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_object_like(receiver) {
+                    return Err(vm.type_error(
+                        p,
+                        "RegExp.prototype[@@matchAll] receiver is not an object".into(),
+                    ));
+                }
+                let input =
+                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let constructor = vm.regexp_species_constructor(p, receiver)?;
+                let (flags, matcher) = vm.with_call_roots([constructor], |vm| {
+                    let atom = vm.intern_atom("flags");
+                    let value = vm.get_property(p, receiver, atom)?;
+                    let flags = vm.regexp_input_string(p, value)?;
+                    let value = vm.heap.alloc(Cell::String(flags.clone()));
+                    let matcher = vm.construct_value(p, constructor, &[receiver, value])?;
+                    Ok::<_, JsError>((flags, matcher))
+                })?;
+                vm.with_call_roots([matcher], |vm| {
+                    let atom = vm.intern_atom("lastIndex");
+                    let value = vm.get_property(p, receiver, atom)?;
+                    let index = vm.regexp_to_length_value(p, value)?;
+                    vm.set_property_with_program_mode(
+                        p,
+                        matcher,
+                        atom,
+                        Value::number(index as f64),
+                        true,
+                    )?;
+                    let flags = flags.host_string();
+                    Ok(vm.heap.alloc(Cell::Iterator {
+                        object: Self::empty_object(vm.regexp_string_iterator_proto),
+                        source: matcher,
+                        next_method: None,
+                        helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
+                            input,
+                            global: flags.contains('g'),
+                            unicode: flags.contains('u') || flags.contains('v'),
+                        })),
+                        helper_running: false,
+                        helper_started: false,
+                        kind: IteratorKind::RegExpStringMatchAll,
+                        index: 0,
+                        done: false,
+                        generator: None,
+                    }))
+                })
+            },
+        )
     }
 
-    fn regexp_match_all_species(
+    pub(super) fn regexp_to_length_value(
         &mut self,
         p: &ResidualProgram,
-        receiver: Value,
-        flags: &str,
-    ) -> Result<Value, JsError> {
-        let constructor_atom = self.intern_atom("constructor");
-        let constructor = self.get_property(p, receiver, constructor_atom)?;
-        let species = if !constructor.is_undefined() {
-            if !self.is_object_like(constructor) {
-                return Err(self.type_error(p, "RegExp constructor is not an object".into()));
-            }
-            let species_symbol = self
-                .well_known_symbols
-                .get("species")
-                .copied()
-                .ok_or_else(|| self.type_error(p, "RegExp species symbol is unavailable".into()))?;
-            self.get_index(p, constructor, species_symbol)?
-        } else {
-            Value::UNDEFINED
-        };
-        let intrinsic = self.regexp_intrinsic_constructor();
-        let flags_value = self.heap.alloc(Cell::String(flags.into()));
-        if species.is_undefined() || species.is_null() {
-            return self.construct_value(p, intrinsic, &[receiver, flags_value]);
-        }
-        self.construct_value(p, species, &[receiver, flags_value])
+        value: Value,
+    ) -> Result<usize, JsError> {
+        self.with_call_roots([value], |vm| {
+            let value = vm.to_primitive(p, value, "number")?;
+            Ok(regexp_to_length(vm.to_number(p, value)?))
+        })
     }
 
     pub(super) fn regexp_is_regexp(
@@ -1037,26 +1039,28 @@ impl<H: Host> Vm<H> {
         self.regexp_exec_value(p, receiver, input)
     }
 
-    fn regexp_exec_value(
+    pub(super) fn regexp_exec_value(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
         input: Value,
     ) -> Result<Value, JsError> {
-        let exec = self.intern_atom("exec");
-        let method = self.get_property(p, receiver, exec)?;
-        if self.is_function(method) {
-            let result = self.call_value(p, method, receiver, &[input])?;
-            return if result.is_null() || self.is_object_like(result) {
-                Ok(result)
-            } else {
-                Err(self.type_error(p, "RegExp exec result is not an object".into()))
-            };
-        }
-        if matches!(self.heap.get(receiver), Some(Cell::RegExp { .. })) {
-            return self.regexp_builtin_exec(p, receiver, &[input]);
-        }
-        Err(self.type_error(p, "RegExp exec is not callable".into()))
+        self.with_call_roots([receiver, input], |vm| {
+            let exec = vm.intern_atom("exec");
+            let method = vm.get_property(p, receiver, exec)?;
+            if vm.is_function(method) {
+                let result = vm.call_value(p, method, receiver, &[input])?;
+                return if result.is_null() || vm.is_object_like(result) {
+                    Ok(result)
+                } else {
+                    Err(vm.type_error(p, "RegExp exec result is not an object".into()))
+                };
+            }
+            if matches!(vm.heap.get(receiver), Some(Cell::RegExp { .. })) {
+                return vm.regexp_builtin_exec(p, receiver, &[input]);
+            }
+            Err(vm.type_error(p, "RegExp exec is not callable".into()))
+        })
     }
 
     pub(super) fn regexp_slot_native(
