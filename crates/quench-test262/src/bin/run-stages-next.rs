@@ -15,6 +15,7 @@ use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, RuntimeNextHost, Test262Runner, TestOutcome,
 };
 use wait_timeout::ChildExt;
+use quench_test262::ratchet::{relative_test_path, DEFAULT_RATCHET, PassSet};
 
 const MAX_CASES_PER_BATCH: usize = 100;
 const MAX_FAILURE_EXAMPLES_PER_FAMILY: usize = 3;
@@ -72,6 +73,16 @@ fn run() -> Result<(), String> {
     let timeout = Duration::from_millis(required_timeout_ms()?);
     let executable = env::current_exe()
         .map_err(|error| format!("next stage executable lookup failed: {error}"))?;
+    let ratchet_path = env::var_os("TEST262_RATCHET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
+    // An explicitly selected baseline must exist; the historical default is optional.
+    let baseline = if ratchet_path.exists() || env::var_os("TEST262_RATCHET").is_some() {
+        Some(PassSet::read(&ratchet_path)?)
+    } else {
+        None
+    };
+    let mut total_selected = 0;
     for stage in stages
         .iter()
         .filter(|stage| stage.id >= from && stage.id <= to)
@@ -88,6 +99,8 @@ fn run() -> Result<(), String> {
         } else {
             files
         };
+        total_selected += files.len();
+        let mut current_passes = std::collections::HashSet::new();
         let mut passed = 0;
         let mut failed = 0;
         let mut failures = Vec::new();
@@ -101,6 +114,7 @@ fn run() -> Result<(), String> {
                     Ok(()) => {
                         passed += 1;
                         batch_passed += 1;
+                        current_passes.insert(relative_test_path(path, &root.join("test")));
                     }
                     Err(reason) => {
                         failed += 1;
@@ -127,10 +141,34 @@ fn run() -> Result<(), String> {
             failed,
             passed + failed
         );
+        if let Some(baseline) = &baseline {
+            let regressions = baseline.regressions(&current_passes, |relative| {
+                let path = root.join("test").join(relative);
+                stage.owns_file(&path, &stages)
+                    && filter
+                        .as_ref()
+                        .is_none_or(|needle| path.to_string_lossy().contains(needle))
+            });
+            println!(
+                "next stage {} ratchet regressions={}",
+                stage.id,
+                regressions.len()
+            );
+            if !regressions.is_empty() {
+                for path in regressions {
+                    eprintln!("  regression: {path}");
+                }
+                print_failure_families(&failures);
+                return Err(format!("next stage {} regressed", stage.id));
+            }
+        }
         if failed != 0 {
             print_failure_families(&failures);
             return Err(format!("next stage {} failed", stage.id));
         }
+    }
+    if total_selected == 0 {
+        return Err("stage selection discovered no tests".into());
     }
     Ok(())
 }

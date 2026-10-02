@@ -16,10 +16,12 @@ use quench_test262::{
     HarnessCache, ResolvedStage, RuntimeNextHost, StageReport, Test262Runner, TestOutcome,
     discover_js_files, resolve_stages,
 };
+use quench_test262::ratchet::{
+    relative_test_path as report_path, PassSet, DEFAULT_RATCHET, RATCHET_ENGINE, RATCHET_SCHEMA_VERSION,
+};
 use wait_timeout::ChildExt;
 
 const DEFAULT_REPORT: &str = "target/test262-next-report.json";
-const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -55,6 +57,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> ExitCode {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    let freeze_expected = match args.as_slice() {
+        [] => false,
+        [option] if option == "--freeze-expected-pass-set" => true,
+        _ => return fail("usage: run-all-next [--freeze-expected-pass-set]".into()),
+    };
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
@@ -62,6 +70,12 @@ fn run() -> ExitCode {
         Ok(files) => files,
         Err(error) => return fail(error),
     };
+    if freeze_expected {
+        return match freeze_expected_pass_set(&root, &all_files) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => fail(error),
+        };
+    }
     let discovered = all_files.len();
     let files = match select_batch(all_files) {
         Ok(files) => files,
@@ -412,13 +426,6 @@ fn write_report(
     write_json(path, &value)
 }
 
-fn report_path(path: &Path, test_root: &Path) -> String {
-    path.strip_prefix(test_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
 fn metadata_test_basename(path: &Path) -> Option<String> {
     let basename = path.file_name()?.to_str()?;
     METADATA_TEST_BASENAMES
@@ -476,6 +483,44 @@ fn normalize_failure(reason: &str) -> String {
     normalized
 }
 
+// Explicit planning assumption: no case processes or observed outcomes are created.
+fn freeze_expected_pass_set(root: &Path, files: &[PathBuf]) -> Result<(), String> {
+    let path = env::var_os("TEST262_RATCHET")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
+    if path.exists() || files.is_empty() {
+        return Err(
+            "expected pass set requires a nonempty inventory and a new ratchet path".into(),
+        );
+    }
+    let (revision, source_dirty) = source_provenance();
+    let suite_revision = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(|error| format!("suite revision: {error}"))?;
+    if !suite_revision.status.success() {
+        return Err("cannot identify the expected inventory's suite revision".into());
+    }
+    let baseline = serde_json::json!({
+        "schema":RATCHET_SCHEMA_VERSION, "engine":RATCHET_ENGINE, "basis":"user_assumption",
+        "provenance":{
+            "source_revision":revision, "source_dirty":source_dirty,
+            "suite_revision":String::from_utf8_lossy(&suite_revision.stdout).trim(),
+        },
+        "discovered":files.len(),
+        "passes":files.iter().map(|path| report_path(path, &root.join("test"))).collect::<Vec<_>>(),
+    });
+    write_json(path.clone(), &baseline)?;
+    println!(
+        "next expected pass set={} basis=user_assumption path={}",
+        files.len(),
+        path.display()
+    );
+    Ok(())
+}
+
 fn update_ratchet(
     root: &Path,
     files: &[PathBuf],
@@ -512,21 +557,9 @@ fn update_ratchet_at(
         .collect::<HashSet<_>>();
     let mut regressions = Vec::new();
     if path.exists() {
-        let contents = fs::read_to_string(&path)
-            .map_err(|error| format!("read Test262 ratchet {}: {error}", path.display()))?;
-        let baseline: serde_json::Value = serde_json::from_str(&contents)
-            .map_err(|error| format!("parse Test262 ratchet {}: {error}", path.display()))?;
-        if baseline["schema"] != 1 || baseline["engine"] != "next" {
-            return Err(format!(
-                "Test262 ratchet {} has an unsupported schema or engine",
-                path.display()
-            ));
-        }
-        let passes = baseline["passes"]
-            .as_array()
-            .ok_or_else(|| format!("Test262 ratchet {} has no pass set", path.display()))?;
+        let baseline = PassSet::read(path)?;
         if outcomes.len() == files.len() && !files.is_empty() {
-            regressions = newly_failing(passes, &current_passes)?;
+            regressions = baseline.regressions(&current_passes, |_| true);
         }
     }
     let clean =
@@ -538,8 +571,9 @@ fn update_ratchet_at(
         let binary = env::current_exe()
             .map_err(|error| format!("runner executable lookup failed: {error}"))?;
         let baseline = serde_json::json!({
-            "schema": 1,
-            "engine": "next",
+            "schema": RATCHET_SCHEMA_VERSION,
+            "engine": RATCHET_ENGINE,
+            "basis": "observed",
             "provenance": {
                 "source_revision": revision,
                 "source_dirty": source_dirty,
@@ -586,25 +620,6 @@ fn source_provenance() -> (String, bool) {
     (revision, dirty)
 }
 
-fn newly_failing(
-    baseline: &[serde_json::Value],
-    current_passes: &HashSet<String>,
-) -> Result<Vec<String>, String> {
-    let mut regressions = baseline
-        .iter()
-        .map(|path| {
-            path.as_str()
-                .ok_or_else(|| "Test262 ratchet pass set contains a non-string path".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .filter(|path| !current_passes.contains(*path))
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    regressions.sort();
-    Ok(regressions)
-}
-
 fn write_json(path: PathBuf, value: &serde_json::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -630,17 +645,6 @@ fn fail(error: String) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pass_set_ratchet_finds_only_lost_passes() {
-        let baseline = ["a.js", "b.js", "c.js"]
-            .into_iter()
-            .map(|path| serde_json::Value::String(path.into()))
-            .collect::<Vec<_>>();
-        let current = HashSet::from(["a.js".to_string(), "c.js".to_string(), "new.js".to_string()]);
-
-        assert_eq!(newly_failing(&baseline, &current).unwrap(), ["b.js"]);
-    }
 
     #[test]
     fn failure_families_normalize_values_and_numbers() {

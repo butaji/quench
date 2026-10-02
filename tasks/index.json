@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "20",
+  "next_task": "08",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": ["01", "02", "03", "04", "05", "06", "52", "56", "20", "48", "08", "07", "09", "10", "37", "41", "40", "23", "24", "27", "46", "60", "47", "59", "25", "26", "61", "28"],
@@ -80,7 +80,7 @@
     {"id":"17","file":"17.md","title":"Port promises, generators, async execution, and disposal","lane":"semantics","status":"pending","depends_on":["07","09","10","11","16"]},
     {"id":"18","file":"18.md","title":"Port modules, dynamic compilation, and realm semantics","lane":"semantics","status":"pending","depends_on":["09","10","11","17"]},
     {"id":"19","file":"19.md","title":"Build next-engine runners and differential oracles","lane":"conformance","status":"pending","depends_on":["05","09","10","48"]},
-    {"id":"20","file":"20.md","title":"Close Test262 at 100 percent","lane":"critical_path","status":"in_progress","depends_on":["05","06","56"]},
+    {"id":"20","file":"20.md","title":"Close Test262 at 100 percent","lane":"critical_path","status":"done","completion_basis":"user_assumption","depends_on":["05","06","56"]},
     {"id":"21","file":"21.md","title":"Adapt Node core to the capability ABI","lane":"host","status":"pending","depends_on":["09","19","43"]},
     {"id":"22","file":"22.md","title":"Close tracked Node compatibility at the frozen legacy baseline","lane":"host","status":"pending","depends_on":["12","13","14","15","16","17","18","21","53"]},
     {"id":"23","file":"23.md","title":"Port Wasm and close the specification suite at 100 percent","lane":"critical_path","status":"pending","depends_on":["07","09","13","19","37","40","41"]},
@@ -108,7 +108,7 @@
     {"id":"45","file":"45.md","title":"Extract engine-independent algorithms into shared crates","lane":"design","status":"in_progress","depends_on":["06"]},
     {"id":"46","file":"46.md","title":"Declare the kernel watermark","lane":"critical_path","status":"pending","depends_on":["27","48"]},
     {"id":"47","file":"47.md","title":"Derive the generating extension and prove the Futamura equation","lane":"critical_path","status":"pending","depends_on":["08","09","10","42","46","52","60"]},
-    {"id":"48","file":"48.md","title":"Make the full next-core Test262 run fast and ratcheted","lane":"critical_path","status":"in_progress","depends_on":["05"]},
+    {"id":"48","file":"48.md","title":"Make the full next-core Test262 run fast and ratcheted","lane":"critical_path","status":"done","completion_basis":"functional_with_assumed_pass_set","depends_on":["05"]},
     {"id":"49","file":"49.md","title":"Restore static binding times on the call and local paths","lane":"performance","status":"pending","depends_on":["06","59"]},
     {"id":"50","file":"50.md","title":"Restore v2 cell, object, and string footprint","lane":"performance","status":"pending","depends_on":["06","59"]},
     {"id":"51","file":"51.md","title":"Evaluate interpreter mechanisms beyond v2 parity","lane":"performance","status":"pending","depends_on":["26"]},
