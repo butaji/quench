@@ -7595,3 +7595,108 @@ fn intl_constructor_views_survive_prototype_and_option_callbacks() {
         }
     }
 }
+
+#[test]
+fn intl_locale_roots_boxed_options_and_fresh_prototype_views() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in ["boxed", "object"] {
+            for phase in [
+                "language-string",
+                "prototype",
+                "tag",
+                "language",
+                "region",
+                "calendar",
+                "calendar-string",
+            ] {
+                for abrupt in [false, true] {
+                    let source = format!(
+                        r#"
+                    var trace=[];
+                    function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function language(){{return {{toString(){{hit('language-string');return 'fr';}}}};}}
+                    function calendar(){{return {{toString(){{hit('calendar-string');return 'gregory';}}}};}}
+                    Object.defineProperty(Number.prototype,'language',{{configurable:true,get(){{hit('language');return language();}}}});
+                    Object.defineProperty(Number.prototype,'region',{{configurable:true,get(){{hit('region');return 'US';}}}});
+                    Object.defineProperty(Number.prototype,'calendar',{{configurable:true,get(){{hit('calendar');return calendar();}}}});
+                    function tag(){{return {{toString(){{hit('tag');return 'en';}}}};}}
+                    function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
+                    function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
+                    function inspect(value){{return Object.getPrototypeOf(value).marker+'|'+Intl.Locale.prototype.toString.call(value);}}
+                    function traceLog(){{return trace.join(',');}}
+                    "#
+                    );
+                    let program = compile(&source, "intl-locale-views.js").unwrap();
+                    let mut vm = Vm::new(Test262Host);
+                    vm.execute(&program).unwrap();
+                    let mut args = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["tag", "options", "target"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        args.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = vm.intl_namespace_construct(
+                        &program,
+                        Native::IntlLocale,
+                        &args[..2],
+                        args[2],
+                    );
+                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(instance) => {
+                            let weak = vm.heap.weak_handle(instance).unwrap();
+                            let owner = vm.heap.root(instance);
+                            vm.collect_now(&program);
+                            let atom = vm.intern_atom("inspect");
+                            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let output = vm
+                                .call_value(&program, function, Value::UNDEFINED, &[instance])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, output).unwrap(),
+                                "expected|fr-US-u-ca-gregory",
+                                "{kind}/{phase}"
+                            );
+                            let atom = vm.intern_atom("traceLog");
+                            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let output = vm
+                                .call_value(&program, function, Value::UNDEFINED, &[])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, output).unwrap(),
+                                "prototype,tag,language,language-string,region,calendar,calendar-string",
+                                "{kind}/{phase}"
+                            );
+                            vm.heap.release_root(owner);
+                            vm.collect_now(&program);
+                            assert!(vm.heap.weak_value(weak).is_none());
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    vm.collect_now(&program);
+                }
+            }
+        }
+    }
+}
