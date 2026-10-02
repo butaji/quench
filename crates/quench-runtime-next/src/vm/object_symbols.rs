@@ -1,3 +1,4 @@
+use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -66,87 +67,95 @@ impl<H: Host> Vm<H> {
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
-        let trap_atom = self.intern_atom("ownKeys");
-        let trap = self.get_property(p, handler, trap_atom)?;
-        if trap.is_undefined() || trap.is_null() {
-            return Ok(None);
-        }
-        if !self.is_function(trap) {
-            return Err(self.type_error(p, "proxy ownKeys trap is not callable".into()));
-        }
-        let result = self.call_value(p, trap, handler, &[target])?;
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "proxy ownKeys trap must return an object".into()));
-        }
-        let listed_keys = self.call_argument_list(p, result, false)?;
-        let mut keys = Vec::with_capacity(listed_keys.len());
-        for key in listed_keys {
-            if !matches!(self.heap.get(key), Some(Cell::String(_) | Cell::Symbol(_))) {
-                return Err(
-                    self.type_error(p, "proxy ownKeys result contains an invalid key".into())
-                );
+        let proxy = self.heap.root(proxy);
+        let target = self.heap.root(target);
+        let handler = self.heap.root(handler);
+        let mut keys = Vec::new();
+        let mut target_keys = Vec::new();
+        let outcome = (|| {
+            let trap_atom = self.intern_atom("ownKeys");
+            let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), trap_atom)?;
+            if trap.is_undefined() || trap.is_null() {
+                return Ok(None);
             }
-            if keys
-                .iter()
-                .copied()
-                .any(|previous| self.same_property_key(previous, key))
-            {
-                return Err(
-                    self.type_error(p, "proxy ownKeys result contains duplicate keys".into())
-                );
+            if !self.is_function(trap) {
+                return Err(self.type_error(p, "proxy ownKeys trap is not callable".into()));
             }
-            keys.push(key);
-        }
-        let target_keys = self.object_own_key_values(p, target)?;
-        for target_key in target_keys.iter().copied() {
-            let required = self
-                .object_data(target)
-                .is_some_and(|object| !object.is_extensible())
-                || match self.heap.get(target_key).cloned() {
-                    Some(Cell::Symbol(_)) => self
-                        .property_attributes(target, PropertyKey::symbol(target_key))
-                        .is_some_and(|attributes| !attributes.configurable),
-                    Some(Cell::String(name)) => {
-                        let atom = self.intern_js_atom(&name);
-                        self.own_property(target, atom).is_some_and(|_| {
-                            !self
-                                .property_attributes(target, PropertyKey::string(atom))
-                                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
-                                .configurable
-                        })
-                    }
-                    _ => false,
-                };
-            if required
-                && !keys
-                    .iter()
-                    .copied()
-                    .any(|key| self.same_property_key(key, target_key))
-            {
-                return Err(self.type_error(p, "proxy ownKeys trap omitted a required key".into()));
-            }
-        }
-        if self
-            .object_data(target)
-            .is_some_and(|object| !object.is_extensible())
-            && (keys.iter().copied().any(|key| {
-                !target_keys
-                    .iter()
-                    .copied()
-                    .any(|target_key| self.same_property_key(key, target_key))
-            }) || target_keys.iter().copied().any(|key| {
-                !keys
-                    .iter()
-                    .copied()
-                    .any(|target_key| self.same_property_key(key, target_key))
-            }))
-        {
-            return Err(self.type_error(
+            let result = self.call_value(
                 p,
-                "proxy ownKeys trap changed the keys of a sealed target".into(),
-            ));
+                trap,
+                self.heap.root_value(handler).unwrap(),
+                &[self.heap.root_value(target).unwrap()],
+            )?;
+            keys = self
+                .create_list_from_array_like(p, result, ArrayLikeElementKind::PropertyKey)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for (index, key) in keys.iter().enumerate() {
+                if keys[..index].iter().any(|previous| {
+                    self.same_property_key(
+                        self.heap.root_value(*previous).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    )
+                }) {
+                    return Err(
+                        self.type_error(p, "proxy ownKeys result contains duplicate keys".into())
+                    );
+                }
+            }
+            let extensible = self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+            let extensible = self.truthy(extensible);
+            target_keys = self
+                .object_own_key_values(p, self.heap.root_value(target).unwrap())?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            let mut required = Vec::new();
+            for key in &target_keys {
+                let descriptor = self.object_get_own_property_descriptor(
+                    p,
+                    &[
+                        self.heap.root_value(target).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    ],
+                )?;
+                if !extensible
+                    || (!descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable"))
+                {
+                    required.push(*key);
+                }
+            }
+            for key in required {
+                if !keys.iter().any(|listed| {
+                    self.same_property_key(
+                        self.heap.root_value(*listed).unwrap(),
+                        self.heap.root_value(key).unwrap(),
+                    )
+                }) {
+                    return Err(self.type_error(p, "proxy ownKeys trap omitted a required key".into()));
+                }
+            }
+            if !extensible && keys.len() != target_keys.len() {
+                return Err(self.type_error(
+                    p,
+                    "proxy ownKeys trap changed the keys of a sealed target".into(),
+                ));
+            }
+            Ok(Some(
+                keys.iter()
+                    .map(|key| self.heap.root_value(*key).unwrap())
+                    .collect(),
+            ))
+        })();
+        for root in keys
+            .into_iter()
+            .chain(target_keys)
+            .chain([proxy, target, handler])
+        {
+            self.heap.release_root(root);
         }
-        Ok(Some(keys))
+        outcome
     }
 
     pub(super) fn object_own_key_values(

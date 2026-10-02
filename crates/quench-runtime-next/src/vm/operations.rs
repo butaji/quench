@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) enum ArrayLikeElementKind {
+    Any,
+    PropertyKey,
+}
+
 const EXPONENTIATION_ZERO: f64 = 0.0;
 const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
@@ -1301,28 +1306,63 @@ impl<H: Host> Vm<H> {
         if allow_nullish && (list.is_null() || list.is_undefined()) {
             return Ok(Vec::new());
         }
-        if !self.is_object_like(list) {
-            return Err(self.type_error(p, "argument list must be an object".into()));
-        }
-        let object = self.box_object(list)?;
-        let length_atom = self.intern_atom("length");
-        let length_value = self.get_property(p, object, length_atom)?;
-        let length_number = self.to_number(p, length_value)?;
-        let length = if length_number.is_nan() || length_number <= 0.0 {
-            0
-        } else {
-            length_number.floor().min(MAX_SAFE_INTEGER) as usize
-        };
-        let mut arguments = Vec::new();
-        arguments
-            .try_reserve(length)
-            .map_err(|_| self.type_error(p, "argument list is too large".into()))?;
-        for index in 0..length {
-            let atom = self.intern_atom(&index.to_string());
-            arguments.push(self.get_property(p, object, atom)?);
-        }
-        Ok(arguments)
+        self.create_list_from_array_like(p, list, ArrayLikeElementKind::Any)
     }
+
+    pub(super) fn create_list_from_array_like(
+        &mut self,
+        p: &ResidualProgram,
+        list: Value,
+        element_kind: ArrayLikeElementKind,
+    ) -> Result<Vec<Value>, JsError> {
+        if !self.is_object_like(list) {
+            return Err(self.type_error(p, "array-like list must be an object".into()));
+        }
+        let object = self.heap.root(list);
+        let mut elements = Vec::new();
+        let outcome = (|| {
+            let length_atom = self.intern_atom("length");
+            let length_value =
+                self.get_property(p, self.heap.root_value(object).unwrap(), length_atom)?;
+            let length_value = self.heap.root(length_value);
+            let length_number = self.to_number(p, self.heap.root_value(length_value).unwrap());
+            self.heap.release_root(length_value);
+            let length_number = length_number?;
+            let length = if length_number.is_nan() || length_number <= 0.0 {
+                0
+            } else {
+                length_number.floor().min(MAX_SAFE_INTEGER) as usize
+            };
+            elements
+                .try_reserve(length)
+                .map_err(|_| self.type_error(p, "array-like list is too large".into()))?;
+            for index in 0..length {
+                let atom = self.intern_atom(&index.to_string());
+                let element = self.get_property(p, self.heap.root_value(object).unwrap(), atom)?;
+                if matches!(element_kind, ArrayLikeElementKind::PropertyKey)
+                    && !matches!(
+                        self.heap.get(element),
+                        Some(Cell::String(_) | Cell::Symbol(_))
+                    )
+                {
+                    return Err(
+                        self.type_error(p, "array-like list contains an invalid property key".into())
+                    );
+                }
+                elements.push(self.heap.root(element));
+            }
+            Ok(elements
+                .iter()
+                .map(|root| self.heap.root_value(*root).unwrap())
+                .collect())
+        })();
+        for root in elements {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object);
+        outcome
+    }
+
 }
 
 fn exponentiate(base: f64, exponent: f64) -> f64 {
