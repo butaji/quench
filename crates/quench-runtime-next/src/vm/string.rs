@@ -351,7 +351,7 @@ impl<H: Host> Vm<H> {
                     Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
                 ) {
                     let locale = self
-                        .collator_locale_list(p, args.first().copied())?
+                        .canonical_locale_list(p, args.first().copied())?
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
@@ -365,7 +365,6 @@ impl<H: Host> Vm<H> {
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                self.collator_locale_list(p, args.get(1).copied())?;
                 let collator_args = [
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),

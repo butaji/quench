@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
         let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let instance_root = self.heap.root(instance);
         let initialized = (|| {
-            let locales = self.collator_locale_list(p, args.first().copied())?;
+            let locales = self.canonical_locale_list(p, args.first().copied())?;
             let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
             let options =
                 self.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
@@ -480,7 +480,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
         let elements = locales
             .into_iter()
             .filter(|locale| super::intl_number::is_supported_locale(locale))

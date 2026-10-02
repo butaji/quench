@@ -88,50 +88,57 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let requested_locale = self.collator_locale(p, args.first().copied())?;
-        let (usage, sensitivity, ignore_punctuation, numeric, case_first, collation, overrides) =
-            self.collator_options(p, args.get(1).copied())?;
-        let (locale, collation, numeric, case_first, ignore_punctuation) =
-            normalize_collator_locale(
-                &requested_locale,
-                collation,
-                numeric,
-                case_first,
-                ignore_punctuation,
-                overrides,
-            );
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
-        let realm = self.function_realm(p, new_target)?;
-        let prototype = if self.is_object_like(prototype) {
-            prototype
-        } else {
-            self.realm.intrinsics.intl_collator_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let collator = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
-        self.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
-        self.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
-        self.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
-        self.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
-        self.set_collator_value(
-            collator,
-            COLLATOR_IGNORE_PUNCTUATION_SLOT,
-            if ignore_punctuation {
-                Value::TRUE
+        self.with_call_roots(args.iter().copied().chain([new_target]), |self_| {
+            let requested_locale = self_.collator_locale(p, args.first().copied())?;
+            let (usage, sensitivity, ignore_punctuation, numeric, case_first, collation, overrides) =
+                self_.collator_options(p, args.get(1).copied())?;
+            let (locale, collation, numeric, case_first, ignore_punctuation) =
+                normalize_collator_locale(
+                    &requested_locale,
+                    collation,
+                    numeric,
+                    case_first,
+                    ignore_punctuation,
+                    overrides,
+                );
+            let prototype_atom = self_.intern_atom("prototype");
+            let prototype = self_.get_property(p, new_target, prototype_atom)?;
+            let realm = self_.function_realm(p, new_target)?;
+            let prototype = if self_.is_object_like(prototype) {
+                prototype
             } else {
-                Value::FALSE
-            },
-        )?;
-        self.set_collator_value(
-            collator,
-            COLLATOR_NUMERIC_SLOT,
-            if numeric { Value::TRUE } else { Value::FALSE },
-        )?;
-        Ok(collator)
+                self_
+                    .realm
+                    .intrinsics
+                    .intl_collator_prototypes
+                    .get(&realm)
+                    .copied()
+                    .unwrap_or(self_.object_proto)
+            };
+            let collator = self_
+                .heap
+                .alloc(Cell::Object(Self::empty_object(prototype)));
+            self_.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
+            self_.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
+            self_.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
+            self_.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
+            self_.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
+            self_.set_collator_value(
+                collator,
+                COLLATOR_IGNORE_PUNCTUATION_SLOT,
+                if ignore_punctuation {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            )?;
+            self_.set_collator_value(
+                collator,
+                COLLATOR_NUMERIC_SLOT,
+                if numeric { Value::TRUE } else { Value::FALSE },
+            )?;
+            Ok(collator)
+        })
     }
 
     pub(super) fn collator_locale(
@@ -139,34 +146,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         locales: Option<Value>,
     ) -> Result<String, JsError> {
-        let Some(locales) = locales.filter(|locale| !locale.is_undefined()) else {
-            return Ok(DEFAULT_COLLATOR_LOCALE.into());
-        };
-        if locales.is_null() {
-            return Err(self.type_error(p, "invalid locales".into()));
-        }
-        if matches!(self.heap.get(locales), Some(Cell::Array { .. })) {
-            let length = self.array_like_length(p, locales)?;
-            for index in 0..length {
-                let locale = self.get_index(p, locales, Value::number(index as f64))?;
-                if !matches!(self.heap.get(locale), Some(Cell::String(_)))
-                    && !self.is_object_like(locale)
-                {
-                    return Err(self.type_error(p, "locale list elements must be strings".into()));
-                }
-                let locale = self.to_string(p, locale)?;
-                if !super::intl_number::valid_locale_identifier(&locale) {
-                    return Err(self.range_error(p, "invalid locale identifier".into()));
-                }
-                return Ok(locale);
-            }
-            return Ok(DEFAULT_COLLATOR_LOCALE.into());
-        }
-        let locale = self.to_string(p, locales)?;
-        if !super::intl_number::valid_locale_identifier(&locale) {
-            return Err(self.range_error(p, "invalid locale identifier".into()));
-        }
-        Ok(locale)
+        Ok(self
+            .canonical_locale_list(p, locales)?
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| DEFAULT_COLLATOR_LOCALE.into()))
     }
 
     fn collator_options(
@@ -209,71 +193,73 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "options must not be null".into()));
         }
         let options = self.box_object(options)?;
-        for key in [
-            "usage",
-            "localeMatcher",
-            "collation",
-            "numeric",
-            "caseFirst",
-            "sensitivity",
-            "ignorePunctuation",
-        ] {
-            let atom = self.intern_atom(key);
-            let value = self.get_property(p, options, atom)?;
-            if value.is_undefined() {
-                continue;
+        self.with_call_roots([options], |self_| {
+            for key in [
+                "usage",
+                "localeMatcher",
+                "collation",
+                "numeric",
+                "caseFirst",
+                "sensitivity",
+                "ignorePunctuation",
+            ] {
+                let atom = self_.intern_atom(key);
+                let value = self_.get_property(p, options, atom)?;
+                if value.is_undefined() {
+                    continue;
+                }
+                match key {
+                    "usage" => {
+                        usage = self_.to_string(p, value)?;
+                        validate_collator_option(p, self_, &usage, &["sort", "search"], key)?;
+                    }
+                    "localeMatcher" => {
+                        let matcher = self_.to_string(p, value)?;
+                        validate_collator_option(p, self_, &matcher, &["lookup", "best fit"], key)?;
+                    }
+                    "collation" => collation = Some(self_.to_string(p, value)?),
+                    "numeric" => {
+                        numeric = self_.truthy(value);
+                        overrides.numeric = true;
+                    }
+                    "caseFirst" => {
+                        case_first = self_.to_string(p, value)?;
+                        overrides.case_first = true;
+                        validate_collator_option(
+                            p,
+                            self_,
+                            &case_first,
+                            &["upper", "lower", "false"],
+                            key,
+                        )?;
+                    }
+                    "sensitivity" => {
+                        sensitivity = self_.to_string(p, value)?;
+                        validate_collator_option(
+                            p,
+                            self_,
+                            &sensitivity,
+                            &["base", "accent", "case", "variant"],
+                            key,
+                        )?;
+                    }
+                    "ignorePunctuation" => {
+                        ignore_punctuation = self_.truthy(value);
+                        overrides.ignore_punctuation = true;
+                    }
+                    _ => unreachable!(),
+                }
             }
-            match key {
-                "usage" => {
-                    usage = self.to_string(p, value)?;
-                    validate_collator_option(p, self, &usage, &["sort", "search"], key)?;
-                }
-                "localeMatcher" => {
-                    let matcher = self.to_string(p, value)?;
-                    validate_collator_option(p, self, &matcher, &["lookup", "best fit"], key)?;
-                }
-                "collation" => collation = Some(self.to_string(p, value)?),
-                "numeric" => {
-                    numeric = self.truthy(value);
-                    overrides.numeric = true;
-                }
-                "caseFirst" => {
-                    case_first = self.to_string(p, value)?;
-                    overrides.case_first = true;
-                    validate_collator_option(
-                        p,
-                        self,
-                        &case_first,
-                        &["upper", "lower", "false"],
-                        key,
-                    )?;
-                }
-                "sensitivity" => {
-                    sensitivity = self.to_string(p, value)?;
-                    validate_collator_option(
-                        p,
-                        self,
-                        &sensitivity,
-                        &["base", "accent", "case", "variant"],
-                        key,
-                    )?;
-                }
-                "ignorePunctuation" => {
-                    ignore_punctuation = self.truthy(value);
-                    overrides.ignore_punctuation = true;
-                }
-                _ => unreachable!(),
-            }
-        }
-        Ok((
-            usage,
-            sensitivity,
-            ignore_punctuation,
-            numeric,
-            case_first,
-            collation,
-            overrides,
-        ))
+            Ok((
+                usage,
+                sensitivity,
+                ignore_punctuation,
+                numeric,
+                case_first,
+                collation,
+                overrides,
+            ))
+        })
     }
 
     pub(super) fn intl_collator_native(
@@ -299,50 +285,51 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn collator_compare_getter(
-        &mut self,
-        p: &ResidualProgram,
-        this: Value,
-    ) -> Result<Value, JsError> {
-        if self.collator_locale_slot(this).is_none() {
-            return Err(self.type_error(p, "not an Intl object".into()));
-        }
-        if let Some(bound) = self.collator_value_slot(this, COLLATOR_BOUND_COMPARE_SLOT) {
-            return Ok(bound);
-        }
-        let compare =
-            self.native_with_realm(Native::IntlCollatorCompare, Value::NULL, self.realm.globals);
-        self.set_builtin_function_name(compare, "compare")?;
-        let bound = self.bind_function(p, compare, &[this])?;
-        let name = self.heap.alloc(Cell::String("".into()));
-        let name_atom = self.intern_atom("name");
-        self.set_property_attributes(
-            bound,
-            PropertyKey::string(name_atom),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        self.set_property(bound, name_atom, name)?;
-        self.set_property_attributes(
-            bound,
-            PropertyKey::string(name_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        self.set_collator_value(this, COLLATOR_BOUND_COMPARE_SLOT, bound)?;
-        Ok(bound)
+    fn collator_compare_getter(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
+        self.with_call_roots([this], |self_| {
+            if self_.collator_locale_slot(this).is_none() {
+                return Err(self_.type_error(p, "not an Intl object".into()));
+            }
+            if let Some(bound) = self_.collator_value_slot(this, COLLATOR_BOUND_COMPARE_SLOT) {
+                return Ok(bound);
+            }
+            let compare = self_.native_with_realm(
+                Native::IntlCollatorCompare,
+                Value::NULL,
+                self_.realm.globals,
+            );
+            self_.set_builtin_function_name(compare, "compare")?;
+            let bound = self_.bind_function(p, compare, &[this])?;
+            let name = self_.heap.alloc(Cell::String("".into()));
+            let name_atom = self_.intern_atom("name");
+            self_.set_property_attributes(
+                bound,
+                PropertyKey::string(name_atom),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            self_.set_property(bound, name_atom, name)?;
+            self_.set_property_attributes(
+                bound,
+                PropertyKey::string(name_atom),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            self_.set_collator_value(this, COLLATOR_BOUND_COMPARE_SLOT, bound)?;
+            Ok(bound)
+        })
     }
 
     fn collator_compare(
@@ -351,27 +338,29 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let locale = self
-            .collator_locale_slot(this)
-            .ok_or_else(|| self.type_error(p, "not an Intl object".into()))?;
-        let left = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let right = self.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-        let options = quench_intl::CollatorOptions {
-            ignore_punctuation: self.collator_bool_slot(this, COLLATOR_IGNORE_PUNCTUATION_SLOT),
-            sensitivity: &self
-                .collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
-                .unwrap_or_else(|| "variant".into()),
-            usage: &self
-                .collator_string_slot(this, COLLATOR_USAGE_SLOT)
-                .unwrap_or_else(|| "sort".into()),
-            numeric: self.collator_bool_slot(this, COLLATOR_NUMERIC_SLOT),
-            case_first: &self
-                .collator_string_slot(this, COLLATOR_CASE_FIRST_SLOT)
-                .unwrap_or_else(|| "false".into()),
-        };
-        Ok(Value::number(quench_intl::compare_collator(
-            &left, &right, &locale, &options,
-        )))
+        self.with_call_roots(args.iter().copied().chain([this]), |self_| {
+            let locale = self_
+                .collator_locale_slot(this)
+                .ok_or_else(|| self_.type_error(p, "not an Intl object".into()))?;
+            let left = self_.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let right = self_.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+            let options = quench_intl::CollatorOptions {
+                ignore_punctuation: self_.collator_bool_slot(this, COLLATOR_IGNORE_PUNCTUATION_SLOT),
+                sensitivity: &self_
+                    .collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
+                    .unwrap_or_else(|| "variant".into()),
+                usage: &self_
+                    .collator_string_slot(this, COLLATOR_USAGE_SLOT)
+                    .unwrap_or_else(|| "sort".into()),
+                numeric: self_.collator_bool_slot(this, COLLATOR_NUMERIC_SLOT),
+                case_first: &self_
+                    .collator_string_slot(this, COLLATOR_CASE_FIRST_SLOT)
+                    .unwrap_or_else(|| "false".into()),
+            };
+            Ok(Value::number(quench_intl::compare_collator(
+                &left, &right, &locale, &options,
+            )))
+        })
     }
 
     fn collator_resolved_options(
@@ -445,7 +434,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let locales = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .filter(|locale| super::intl_number::is_supported_locale(locale))
             .collect::<Vec<_>>();
@@ -459,54 +448,9 @@ impl<H: Host> Vm<H> {
         }))
     }
 
-    pub(super) fn collator_locale_list(
-        &mut self,
-        p: &ResidualProgram,
-        locales: Option<Value>,
-    ) -> Result<Vec<String>, JsError> {
-        let Some(locales) = locales.filter(|value| !value.is_undefined()) else {
-            return Ok(Vec::new());
-        };
-        if locales.is_null() {
-            return Err(self.type_error(p, "invalid locales".into()));
-        }
-        if matches!(self.heap.get(locales), Some(Cell::String(_))) {
-            let Some(Cell::String(locale)) = self.heap.get(locales) else {
-                unreachable!("string locale checked above")
-            };
-            let locale = locale.to_string();
-            let locale = self.canonical_locale_tag(p, locale)?;
-            return Ok(vec![locale]);
-        }
-        let locales = self.box_object(locales)?;
-        let length = self.array_like_length(p, locales)?;
-        let mut output = Vec::new();
-        for index in 0..length {
-            let value = self.get_index(p, locales, Value::number(index as f64))?;
-            if !matches!(self.heap.get(value), Some(Cell::String(_))) && !self.is_object_like(value)
-            {
-                return Err(self.type_error(p, "locale list elements must be strings".into()));
-            }
-            let locale = self.to_string(p, value)?;
-            let locale = self.canonical_locale_tag(p, locale)?;
-            if !output
-                .iter()
-                .any(|existing: &String| existing.eq_ignore_ascii_case(&locale))
-            {
-                output.push(locale);
-            }
-        }
-        Ok(output)
-    }
 
-    fn canonical_locale_tag(
-        &mut self,
-        p: &ResidualProgram,
-        locale: String,
-    ) -> Result<String, JsError> {
-        quench_intl::canonical_locale_identifier(&locale)
-            .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))
-    }
+
+
 
     fn set_collator_string(
         &mut self,
