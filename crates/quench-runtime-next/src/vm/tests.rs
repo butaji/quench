@@ -4089,3 +4089,140 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
         }
     }
 }
+
+#[test]
+fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for reflect in [false, true] {
+            for prototype in [false, true] {
+                for phase in [
+                    "success",
+                    "getter",
+                    "trap",
+                    "extensible",
+                    "prototype",
+                    "reject",
+                    "invalid-trap",
+                    "fallback",
+                    "invariant",
+                    "revoked",
+                ] {
+                    if !prototype && phase == "prototype" {
+                        continue;
+                    }
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        function operand() {{
+                            var raw={{}};
+                            if ({prototype} && ('{phase}'==='prototype' || '{phase}'==='invariant')) Object.preventExtensions(raw);
+                            var target=new Proxy(raw,{{
+                                isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}},
+                                getPrototypeOf(object) {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};return Reflect.getPrototypeOf(object);}},
+                                setPrototypeOf(object,proto) {{$262.gc();return Reflect.setPrototypeOf(object,proto);}},
+                                preventExtensions(object) {{$262.gc();return Reflect.preventExtensions(object);}}
+                            }});
+                            function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                                if ('{phase}'==='invalid-trap') return 1;
+                                if ('{phase}'==='fallback') return null;
+                                return function(object,proto) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                    if ('{phase}'==='reject') return false;
+                                    if ('{phase}'==='invariant' || '{phase}'==='prototype' || '{phase}'==='extensible') return true;
+                                    return {prototype} ? Reflect.setPrototypeOf(object,proto) : Reflect.preventExtensions(object);
+                                }};
+                            }}
+                            if ('{phase}'==='revoked') {{var revocable=Proxy.revocable(target,{{}});revocable.revoke();return revocable.proxy;}}
+                            return new Proxy(target,{{get setPrototypeOf() {{return method();}},get preventExtensions() {{return method();}}}});
+                        }}
+                    "#
+                    );
+                    let program = compile(&source, "proxy-mutation-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operand");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let target = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let target_handle = vm.heap.weak_handle(target).unwrap();
+                    let proto = vm.object();
+                    vm.set_named(&program, proto, "rank", Value::number(42.0))
+                        .unwrap();
+                    let proto_handle = vm.heap.weak_handle(proto).unwrap();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let native = match (reflect, prototype) {
+                        (false, false) => Native::ObjectPreventExtensions,
+                        (false, true) => Native::ObjectSetPrototypeOf,
+                        (true, false) => Native::ReflectPreventExtensions,
+                        (true, true) => Native::ReflectSetPrototypeOf,
+                    };
+                    let args = if prototype {
+                        vec![target, proto]
+                    } else {
+                        vec![target]
+                    };
+                    let result = if reflect {
+                        vm.call_reflect_native(&program, native, &args)
+                    } else {
+                        vm.call_object_native(&program, native, &args)
+                    };
+                    let success = phase == "success" || phase == "fallback";
+                    assert_eq!(
+                        result.is_ok(),
+                        success || (reflect && phase == "reject"),
+                        "reflect={reflect} prototype={prototype} {phase}"
+                    );
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(result) => {
+                            assert_eq!(
+                                result,
+                                if reflect {
+                                    Vm::<Test262Host>::integrity_bool(success)
+                                } else {
+                                    target
+                                }
+                            );
+                            assert_eq!(
+                                vm.heap.weak_value(target_handle),
+                                Some(target),
+                                "reflect={reflect} prototype={prototype} {phase}"
+                            );
+                            if prototype {
+                                assert_eq!(vm.heap.weak_value(proto_handle), Some(proto));
+                                let rank = vm.intern_atom("rank");
+                                assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
+                                if success {
+                                    let raw = vm.proxy_target(target);
+                                    assert_eq!(vm.object_data(raw).unwrap().proto, proto);
+                                }
+                            } else if success {
+                                let raw = vm.proxy_target(target);
+                                assert!(!vm.object_data(raw).unwrap().is_extensible());
+                            }
+                        }
+                        Err(error) => {
+                            if matches!(phase, "reject" | "invalid-trap" | "invariant" | "revoked")
+                            {
+                                assert!(vm.format_error(&program, &error).contains("TypeError"));
+                            } else {
+                                let atom = vm.intern_atom("kind");
+                                let kind = vm
+                                    .own_property(error.thrown_value().unwrap(), atom)
+                                    .unwrap();
+                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                            }
+                        }
+                    }
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(target_handle).is_none());
+                    assert!(vm.heap.weak_value(proto_handle).is_none());
+                }
+            }
+        }
+    }
+}
