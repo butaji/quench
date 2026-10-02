@@ -66,6 +66,10 @@ struct Args {
 }
 
 fn main() -> ExitCode {
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    if arguments.first().is_some_and(|argument| argument == "--reports") {
+        return compare_saved_reports(&arguments[1..]);
+    }
     if let Err(error) = required_timeout() {
         return fail(error);
     }
@@ -479,4 +483,22 @@ fn to_map(pairs: &[(PathBuf, TestOutcome)]) -> HashMap<PathBuf, TestOutcome> {
 fn fail<T: AsRef<str>>(message: T) -> ExitCode {
     eprintln!("FAIL: {}", message.as_ref());
     ExitCode::from(1)
+}
+
+fn compare_saved_reports(arguments: &[String]) -> ExitCode {
+    let [before, after] = arguments else { return fail("usage: compare-runs --reports BEFORE AFTER"); };
+    let read = |path: &str| -> Result<serde_json::Value, String> {
+        let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
+        serde_json::from_slice(&bytes).map_err(|error| format!("parse {path}: {error}"))
+    };
+    let verdict = read(before).and_then(|before| read(after).and_then(|after|
+        quench_test262::reporting::compare_reports(&before, &after)));
+    match verdict {
+        Ok(regressions) => {
+            println!("regressions={}", regressions.len());
+            for path in &regressions { eprintln!("regression: {path}"); }
+            if regressions.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) }
+        }
+        Err(error) => fail(error),
+    }
 }

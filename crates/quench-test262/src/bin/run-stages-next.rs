@@ -19,7 +19,6 @@ use quench_test262::ratchet::{relative_test_path, DEFAULT_RATCHET, PassSet};
 
 const MAX_CASES_PER_BATCH: usize = 100;
 const MAX_FAILURE_EXAMPLES_PER_FAMILY: usize = 3;
-const MAX_FAILURE_FAMILY_CHARS: usize = 240;
 
 fn main() -> ExitCode {
     if let Err(error) = required_timeout_ms() {
@@ -82,7 +81,9 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let provenance = run_provenance(&executable, timeout)?;
     let mut total_selected = 0;
+    let mut report_outcomes = Vec::new();
     for stage in stages
         .iter()
         .filter(|stage| stage.id >= from && stage.id <= to)
@@ -110,6 +111,9 @@ fn run() -> Result<(), String> {
             let mut batch_failed = 0;
             let outcomes = run_batch(&executable, &root, batch, timeout)?;
             for (path, outcome) in batch.iter().zip(outcomes) {
+                report_outcomes.push(quench_test262::reporting::case_outcome(
+                    relative_test_path(path, &root.join("test")), stage.id.to_string(), &outcome,
+                ));
                 match outcome {
                     Ok(()) => {
                         passed += 1;
@@ -141,6 +145,7 @@ fn run() -> Result<(), String> {
             failed,
             passed + failed
         );
+        write_outcome_report(&report_outcomes, &provenance)?;
         if let Some(baseline) = &baseline {
             let regressions = baseline.regressions(&current_passes, |relative| {
                 let path = root.join("test").join(relative);
@@ -176,7 +181,7 @@ fn run() -> Result<(), String> {
 fn print_failure_families(failures: &[(&PathBuf, String)]) {
     let mut families = std::collections::HashMap::<String, (usize, Vec<String>)>::new();
     for (path, reason) in failures {
-        let family = failure_family(reason);
+        let family = quench_test262::reporting::normalize_failure(reason);
         let entry = families.entry(family).or_default();
         entry.0 += 1;
         if entry.1.len() < MAX_FAILURE_EXAMPLES_PER_FAMILY {
@@ -204,23 +209,24 @@ fn print_failure_families(failures: &[(&PathBuf, String)]) {
     }
 }
 
-fn failure_family(reason: &str) -> String {
-    let family = reason
-        .split_once("text: \"")
-        .and_then(|(_, rest)| rest.split_once("\", thrown:").map(|(message, _)| message))
-        .map(str::to_owned)
-        .or_else(|| {
-            reason
-                .split_once("message: \"")
-                .and_then(|(_, rest)| rest.split_once('\"').map(|(message, _)| message))
-                .map(|message| format!("compiler diagnostic: {message}"))
-        })
-        .or_else(|| reason.lines().next().map(str::to_owned))
-        .unwrap_or_else(|| "unknown failure".into());
-    let Some((end, _)) = family.char_indices().nth(MAX_FAILURE_FAMILY_CHARS) else {
-        return family;
-    };
-    format!("{}…", &family[..end])
+fn run_provenance(binary: &Path, timeout: Duration) -> Result<serde_json::Value, String> {
+    let revision = Command::new("git").args(["rev-parse", "HEAD"]).output().map_err(|error| error.to_string())?;
+    let dirty = Command::new("git").args(["status", "--porcelain"]).output().map_err(|error| error.to_string())?;
+    if !revision.status.success() || !dirty.status.success() { return Err("cannot record source provenance".into()); }
+    Ok(serde_json::json!({
+        "source_revision":String::from_utf8_lossy(&revision.stdout).trim(),
+        "source_dirty":!dirty.stdout.is_empty(),"binary":binary,
+        "host":format!("{}-{}",env::consts::OS,env::consts::ARCH),
+        "timeout_ms":timeout.as_millis(),"jobs":worker_jobs(),
+    }))
+}
+
+fn write_outcome_report(outcomes: &[serde_json::Value], provenance: &serde_json::Value) -> Result<(), String> {
+    let report = quench_test262::reporting::outcome_report(outcomes, provenance.clone());
+    let path = env::var_os("TEST262_REPORT").map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("target/iteration/test262-stages-report.json"));
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    std::fs::write(path,serde_json::to_vec_pretty(&report).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 fn required_timeout_ms() -> Result<u64, String> {

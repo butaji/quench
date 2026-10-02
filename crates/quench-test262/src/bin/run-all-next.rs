@@ -1,3 +1,4 @@
+use quench_test262::reporting::{normalize_failure, classify_outcome};
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
@@ -438,49 +439,6 @@ fn stage_for(path: &Path, stages: &[ResolvedStage]) -> String {
         .iter()
         .find(|stage| stage.owns_file(path, stages))
         .map_or_else(|| "unassigned".into(), |stage| stage.id.to_string())
-}
-
-fn classify_outcome(reason: &str) -> &'static str {
-    if reason.starts_with("timed_out") {
-        "timed_out"
-    } else if reason.contains("process exited")
-        || reason.contains("signal:")
-        || reason.contains("panicked at")
-    {
-        "crashed"
-    } else {
-        "failed"
-    }
-}
-
-fn normalize_failure(reason: &str) -> String {
-    let mut normalized = String::with_capacity(reason.len());
-    let mut chars = reason.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character.is_ascii_digit() {
-            if !normalized.ends_with('#') {
-                normalized.push('#');
-            }
-            while chars.peek().is_some_and(char::is_ascii_digit) {
-                chars.next();
-            }
-        } else if let Some((close, replacement)) = match character {
-            '\'' => Some(('\'', "'…'")),
-            '"' => Some(('"', "\"…\"")),
-            '«' => Some(('»', "«…»")),
-            _ => None,
-        } {
-            normalized.push_str(replacement);
-            for next in chars.by_ref() {
-                if next == close {
-                    break;
-                }
-            }
-        } else {
-            normalized.push(character);
-        }
-    }
-    normalized
 }
 
 // Explicit planning assumption: no case processes or observed outcomes are created.
