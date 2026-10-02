@@ -6607,3 +6607,90 @@ fn string_replace_fallback_roots_conversions_and_repeated_callback_input() {
         }
     }
 }
+
+#[test]
+fn string_split_roots_protocol_and_conversion_inputs() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (custom, phases) in [
+            (true, &["method", "call"][..]),
+            (false, &["method", "input", "limit", "separator"][..]),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function receiver(){{return {{tag:42,[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a-a';}}}};}}
+                    function limit(){{return {{tag:44,[Symbol.toPrimitive](hint){{hit('limit');if(hint!=='number')throw {{kind:'limit-hint'}};return 2;}}}};}}
+                    function separator(){{return {{tag:43,get [Symbol.split](){{hit('method');if(!{custom})return null;return function(input,limit){{hit('call');if(this.tag!==43||input.tag!==42||limit.tag!==44)throw {{kind:'identity'}};return {{input:input,separator:this,limit:limit}};}};}},[Symbol.toPrimitive](hint){{hit('separator');if(hint!=='string')throw {{kind:'separator-hint'}};return '-';}}}};}}
+                "#
+                    );
+                    let program = compile(&source, "string-split-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["receiver", "separator", "limit"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|v| vm.heap.weak_handle(*v).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = vm.string_split_native(&program, values[0], &values[1..]);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{custom}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(*value));
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            if custom {
+                                for (key, expected) in
+                                    ["input", "separator", "limit"].iter().zip(&values)
+                                {
+                                    let atom = vm.intern_atom(key);
+                                    assert_eq!(vm.own_property(value, atom), Some(*expected));
+                                }
+                            } else {
+                                let atom = vm.intern_atom("join");
+                                let join = vm.get_property(&program, value, atom).unwrap();
+                                let joined = vm.call_value(&program, join, value, &[]).unwrap();
+                                assert_eq!(vm.to_string(&program, joined).unwrap(), "a,a");
+                            }
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}

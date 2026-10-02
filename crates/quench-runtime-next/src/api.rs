@@ -2120,6 +2120,48 @@ mod tests {
     }
 
     #[test]
+    fn regression_string_split_conversion_order_and_utf16() {
+        assert_output_in_execution_modes(
+            r#"
+            for(var n of [0,2,4294967296,4294967298]){
+                var log=[],input={[Symbol.toPrimitive](hint){log.push('input:'+hint);$262.gc();return 'a-a-a';}},limit={[Symbol.toPrimitive](hint){log.push('limit:'+hint);$262.gc();return n;}},separator={get [Symbol.split](){log.push('method');return null;},[Symbol.toPrimitive](hint){log.push('separator:'+hint);$262.gc();return '-';}};
+                print(String.prototype.split.call(input,separator,limit).join('|'));print(log.join(','));
+            }
+            var marker={},separator={[Symbol.split]:null,[Symbol.toPrimitive](){throw marker;}};
+            try{'abc'.split(separator,0);}catch(error){print(error===marker);}
+            var reads=0,separator={get [Symbol.split](){reads++;return function(){};}};
+            try{String.prototype.split.call(null,separator);}catch(error){print(error instanceof TypeError);}print(reads);
+            var input={},limit={},separator={[Symbol.split]:new Proxy(function(){},{apply(target,receiver,args){$262.gc();print(receiver===separator&&args[0]===input&&args[1]===limit);return marker;}})};
+            print(String.prototype.split.call(input,separator,limit)===marker);
+            function units(parts){return parts.map(function(part){var result=[];for(var i=0;i<part.length;i++)result.push(part.charCodeAt(i));return result.join(',');}).join('|');}
+            print(units(('\ud800a\ud801').split('a')));print(units(('\ud800a').split('\ufffd')));
+            print(units(('\ud83d\ude00x').split('',2)));print(''.split('').length);print(''.split('x').length);print('abc'.split(undefined,0).length);
+        "#,
+            &[
+                "",
+                "method,input:string,limit:number,separator:string",
+                "a|a",
+                "method,input:string,limit:number,separator:string",
+                "",
+                "method,input:string,limit:number,separator:string",
+                "a|a",
+                "method,input:string,limit:number,separator:string",
+                "true",
+                "true",
+                "0",
+                "true",
+                "true",
+                "55296|55297",
+                "55296,97",
+                "55357|56832",
+                "0",
+                "1",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_string_replace_protocol_identity_and_conversion_order() {
         assert_output_in_execution_modes(
             r#"
