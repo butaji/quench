@@ -1,4 +1,5 @@
 use super::object_descriptors::PropertyDescriptorRecord;
+use super::object_keys::EnumerableOwnPropertyKind;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -445,9 +446,6 @@ impl<H: Host> Vm<H> {
                     self.box_object(value)
                 }
             }
-            Native::ObjectKeys => {
-                self.object_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
             Native::ForInKeys => {
                 self.object_for_in_keys(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -476,11 +474,18 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectDefineProperty => self.object_define_property(p, args),
             Native::ObjectDefineProperties => self.object_define_properties(p, args),
-            Native::ObjectValues => {
-                self.object_values(p, args.first().copied().unwrap_or(Value::UNDEFINED))
-            }
-            Native::ObjectEntries => {
-                self.object_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
+            Native::ObjectKeys | Native::ObjectValues | Native::ObjectEntries => {
+                let kind = match native {
+                    Native::ObjectKeys => EnumerableOwnPropertyKind::Key,
+                    Native::ObjectValues => EnumerableOwnPropertyKind::Value,
+                    Native::ObjectEntries => EnumerableOwnPropertyKind::KeyValue,
+                    _ => unreachable!("enumeration native selected by dispatch"),
+                };
+                self.enumerable_own_properties(
+                    p,
+                    args.first().copied().unwrap_or(Value::UNDEFINED),
+                    kind,
+                )
             }
             Native::ObjectFromEntries => {
                 self.object_from_entries(p, args.first().copied().unwrap_or(Value::UNDEFINED))
