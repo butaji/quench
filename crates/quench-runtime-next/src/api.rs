@@ -2120,6 +2120,36 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_construction_preserves_order_identity_and_descriptors() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[],pattern={get [Symbol.match](){log.push('is-regexp');return true;},get constructor(){log.push('constructor');return RegExp;},get source(){throw 'source';}};
+            print(RegExp(pattern)===pattern);print(log.join(','));
+            var log=[],prototype={},pattern={get [Symbol.match](){log.push('is-regexp');return true;},get source(){log.push('source');return {[Symbol.toPrimitive](hint){$262.gc();log.push('source:'+hint);return '\ud800';}};},get flags(){log.push('flags');return {[Symbol.toPrimitive](hint){$262.gc();log.push('flags:'+hint);return 'i';}};}},target=new Proxy(function(){},{get(object,key,receiver){if(key==='prototype'){$262.gc();log.push('prototype');return prototype;}return Reflect.get(object,key,receiver);}});
+            var result=Reflect.construct(RegExp,[pattern],target);print(Object.getPrototypeOf(result)===prototype);print(log.join(','));
+            print(Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get.call(result).charCodeAt(0));
+            var descriptor=Object.getOwnPropertyDescriptor(result,'lastIndex');print([descriptor.value,descriptor.writable,descriptor.enumerable,descriptor.configurable].join(','));
+            var pattern=/a/g;Object.defineProperty(pattern,Symbol.match,{get(){return false;}});Object.defineProperty(pattern,'source',{get(){throw 'source';}});Object.defineProperty(pattern,'flags',{get(){throw 'flags';}});
+            var result=new RegExp(pattern,'i');print(result.source);print(result.flags);
+            var log=[],pattern={[Symbol.match]:true,get constructor(){log.push('constructor');return null;},get source(){log.push('source');return 'a';},get flags(){log.push('flags');return 'i';}};
+            var result=RegExp(pattern);print(result.source);print(log.join(','));
+        "#,
+            &[
+                "true",
+                "is-regexp,constructor",
+                "true",
+                "is-regexp,source,flags,prototype,source:string,flags:string",
+                "55296",
+                "0,true,false,false",
+                "a",
+                "i",
+                "a",
+                "constructor,source,flags",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_regexp_replace_observes_each_result_before_next_callback() {
         assert_output_in_execution_modes(
             r#"

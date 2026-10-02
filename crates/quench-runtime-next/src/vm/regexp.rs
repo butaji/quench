@@ -1084,53 +1084,52 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Option<Value>,
     ) -> Result<Value, JsError> {
-        let pattern_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let flags_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let pattern_is_regexp = self.regexp_is_regexp(p, pattern_value)?;
-        let flags_omitted = flags_value.is_undefined();
-        if new_target.is_none() && flags_omitted && pattern_is_regexp {
-            let constructor_atom = self.intern_atom("constructor");
-            let constructor = self.get_property(p, pattern_value, constructor_atom)?;
-            let intrinsic = self.regexp_intrinsic_constructor();
-            if self.same_value(constructor, intrinsic) {
-                return Ok(pattern_value);
+        self.with_call_roots(args.iter().copied().chain(new_target), |vm| {
+            let pattern_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let flags_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+            let pattern_is_regexp = vm.regexp_is_regexp(p, pattern_value)?;
+            let flags_omitted = flags_value.is_undefined();
+            if new_target.is_none() && flags_omitted && pattern_is_regexp {
+                let constructor_atom = vm.intern_atom("constructor");
+                let constructor = vm.get_property(p, pattern_value, constructor_atom)?;
+                let intrinsic = vm.regexp_intrinsic_constructor();
+                if vm.same_value(constructor, intrinsic) {
+                    return Ok(pattern_value);
+                }
             }
-        }
-        let roots_start = self.active_call_roots.len();
-        let result = (|| {
-            let input = if let Some(Cell::RegExp { source, flags, .. }) = self.heap.get(pattern_value) {
+            let input = if let Some(Cell::RegExp { source, flags, .. }) = vm.heap.get(pattern_value) {
                 RegExpConstructorInput::Internal {
                     source: source.clone(),
                     original_flags: flags_omitted.then(|| flags.clone()),
                 }
             } else {
                 let source = if pattern_is_regexp {
-                    let source_atom = self.intern_atom("source");
-                    self.get_property(p, pattern_value, source_atom)?
+                    let source_atom = vm.intern_atom("source");
+                    vm.get_property(p, pattern_value, source_atom)?
                 } else {
                     pattern_value
                 };
-                self.active_call_roots.push(source);
+                vm.active_call_roots.push(source);
                 let flags = if flags_omitted && pattern_is_regexp {
-                    let flags_atom = self.intern_atom("flags");
-                    self.get_property(p, pattern_value, flags_atom)?
+                    let flags_atom = vm.intern_atom("flags");
+                    vm.get_property(p, pattern_value, flags_atom)?
                 } else {
                     flags_value
                 };
-                self.active_call_roots.push(flags);
+                vm.active_call_roots.push(flags);
                 RegExpConstructorInput::Observable { source, flags }
             };
             let prototype = if let Some(new_target) = new_target {
-                self.regexp_prototype_from_new_target(p, new_target)?
+                vm.regexp_prototype_from_new_target(p, new_target)?
             } else {
-                self.realm
+                vm.realm
                     .intrinsics
                     .regexp_intrinsics
-                    .get(&self.realm.globals)
+                    .get(&vm.realm.globals)
                     .expect("RegExp intrinsics are installed for the active realm")
                     .prototype
             };
-            self.active_call_roots.push(prototype);
+            vm.active_call_roots.push(prototype);
             let (pattern, flags) = match input {
                 RegExpConstructorInput::Internal {
                     source,
@@ -1139,18 +1138,16 @@ impl<H: Host> Vm<H> {
                     let flags = if let Some(flags) = original_flags {
                         flags
                     } else {
-                        self.to_string(p, flags_value)?
+                        vm.to_string(p, flags_value)?
                     };
                     (source, flags)
                 }
                 RegExpConstructorInput::Observable { source, flags } => {
-                    self.regexp_initialization_strings(p, source, flags)?
+                    vm.regexp_initialization_strings(p, source, flags)?
                 }
             };
-            self.regexp_from_source(prototype, pattern, flags)
-        })();
-        self.active_call_roots.truncate(roots_start);
-        result
+            vm.regexp_from_source(prototype, pattern, flags)
+        })
     }
 
     pub(super) fn regexp_create(
