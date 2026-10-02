@@ -7799,3 +7799,83 @@ fn intl_supported_locales_roots_callback_views_and_releases_results() {
         }
     }
 }
+
+#[test]
+fn list_format_roots_fresh_iterators_across_step_getters() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for method in ["format", "formatToParts"] {
+            for phase in ["done", "value", "iterator", "factory", "get-next", "next"] {
+                for abrupt in [false, true] {
+                    let source = format!(
+                        r#"
+                    var trace=[];
+                    function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function step(index){{return {{get done(){{hit('done');return index===2;}},get value(){{hit('value');return index===0?'A':'B';}}}};}}
+                    function next(){{hit('next');return step(this.index++);}}
+                    function source(){{return {{get [Symbol.iterator](){{hit('iterator');return function(){{hit('factory');return {{index:0,get next(){{hit('get-next');return next;}},return(){{throw 'closed step failure';}}}};}};}}}};}}
+                    function formatter(){{return new Intl.ListFormat('en');}}
+                    function invoke(formatter,source){{return formatter['{method}'](source);}}
+                    function inspect(value){{return (typeof value==='string'?value:value.map(part=>part.value).join(''))+'|'+trace.join(',');}}
+                    "#
+                    );
+                    let program = compile(&source, "list-format-iterator-views.js").unwrap();
+                    let mut vm = Vm::new(Test262Host);
+                    vm.execute(&program).unwrap();
+                    let mut inputs = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["formatter", "source"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        inputs.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let atom = vm.intern_atom("invoke");
+                    let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let result = vm.call_value(&program, function, Value::UNDEFINED, &inputs);
+                    assert_eq!(result.is_ok(), !abrupt, "{method}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(value) => {
+                            let weak = vm.heap.weak_handle(value).unwrap();
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            let atom = vm.intern_atom("inspect");
+                            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let output = vm
+                                .call_value(&program, function, Value::UNDEFINED, &[value])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, output).unwrap(),
+                                "A and B|iterator,factory,get-next,next,done,value,next,done,value,next,done",
+                                "{method}/{phase}"
+                            );
+                            vm.heap.release_root(owner);
+                            vm.collect_now(&program);
+                            assert!(vm.heap.weak_value(weak).is_none());
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    vm.collect_now(&program);
+                }
+            }
+        }
+    }
+}

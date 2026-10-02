@@ -591,23 +591,27 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let object = self.box_object_or_type_error(p, this)?;
-        let length = self.array_like_length(p, object)?;
-        let separator = match args.first().copied() {
-            None | Some(Value::UNDEFINED) => ",".to_owned(),
-            Some(value) => self.to_string(p, value)?,
-        };
-        let mut output = String::new();
-        for index in 0..length {
-            if index != 0 {
-                output.push_str(&separator);
-            }
-            let value = self.get_index(p, object, Value::number(index as f64))?;
-            if value.is_null() || value.is_undefined() {
-                continue;
-            }
-            output.push_str(&self.to_string(p, value)?);
-        }
-        Ok(self.heap.alloc(Cell::String(output.into())))
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let object = vm.box_object_or_type_error(p, this)?;
+            vm.with_call_roots([object], |vm| {
+                let length = vm.array_like_length(p, object)?;
+                let separator = match args.first().copied() {
+                    None | Some(Value::UNDEFINED) => JsString::from_str(","),
+                    Some(value) => vm.coerce_js_string(p, value)?,
+                };
+                let mut output = Vec::new();
+                for index in 0..length {
+                    if index != 0 {
+                        output.extend_from_slice(separator.units());
+                    }
+                    let value = vm.get_index(p, object, Value::number(index as f64))?;
+                    if value.is_null() || value.is_undefined() {
+                        continue;
+                    }
+                    output.extend_from_slice(vm.coerce_js_string(p, value)?.units());
+                }
+                Ok(vm.heap.alloc(Cell::String(JsString::from_units(&output))))
+            })
+        })
     }
 }
