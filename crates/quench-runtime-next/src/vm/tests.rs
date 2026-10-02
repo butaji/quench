@@ -7700,3 +7700,102 @@ fn intl_locale_roots_boxed_options_and_fresh_prototype_views() {
         }
     }
 }
+
+#[test]
+fn intl_supported_locales_roots_callback_views_and_releases_results() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for service in [
+            "RelativeTimeFormat",
+            "Segmenter",
+            "Collator",
+            "NumberFormat",
+            "DateTimeFormat",
+            "PluralRules",
+            "DurationFormat",
+            "ListFormat",
+            "DisplayNames",
+        ] {
+            for kind in ["boxed", "object"] {
+                for phase in [
+                    "length",
+                    "has",
+                    "index",
+                    "locale",
+                    "matcher",
+                    "matcher-string",
+                ] {
+                    for abrupt in [false, true] {
+                        let source = format!(
+                            r#"
+                        var trace=[];
+                        function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                        function locale(){{return {{toString(){{hit('locale');return 'en';}}}};}}
+                        function matcher(){{return {{toString(){{hit('matcher-string');return 'lookup';}}}};}}
+                        Object.defineProperty(Number.prototype,'localeMatcher',{{configurable:true,get(){{hit('matcher');return matcher();}}}});
+                        function locales(){{return new Proxy({{length:1}},{{get(value,key){{if(key==='length'){{hit('length');return 1;}}hit('index');return locale();}},has(){{hit('has');return true;}}}});}}
+                        function options(){{return '{kind}'==='boxed'?7:Object.create(Number.prototype);}}
+                        function query(){{return Intl['{service}'].supportedLocalesOf;}}
+                        function inspect(value){{return value.join(',')+'|'+trace.join(',');}}
+                        "#
+                        );
+                        let program = compile(&source, "intl-supported-locales-views.js").unwrap();
+                        let mut vm = Vm::new(Test262Host);
+                        vm.execute(&program).unwrap();
+                        let mut inputs = Vec::new();
+                        let mut owners = Vec::new();
+                        for name in ["query", "locales", "options"] {
+                            let atom = vm.intern_atom(name);
+                            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let value = vm
+                                .call_value(&program, factory, Value::UNDEFINED, &[])
+                                .unwrap();
+                            inputs.push(value);
+                            owners.push(vm.heap.root(value));
+                        }
+                        let roots = vm.heap.root_count_for_test();
+                        let calls = vm.active_call_roots.len();
+                        let result =
+                            vm.call_value(&program, inputs[0], Value::UNDEFINED, &inputs[1..]);
+                        assert_eq!(result.is_ok(), !abrupt, "{service}/{kind}/{phase}/{abrupt}");
+                        assert_eq!(vm.heap.root_count_for_test(), roots);
+                        assert_eq!(vm.active_call_roots.len(), calls);
+                        match result {
+                            Ok(value) => {
+                                let weak = vm.heap.weak_handle(value).unwrap();
+                                let owner = vm.heap.root(value);
+                                vm.collect_now(&program);
+                                let atom = vm.intern_atom("inspect");
+                                let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                                let output = vm
+                                    .call_value(&program, function, Value::UNDEFINED, &[value])
+                                    .unwrap();
+                                assert_eq!(
+                                    vm.to_string(&program, output).unwrap(),
+                                    "en|length,has,index,locale,matcher,matcher-string",
+                                    "{service}/{kind}/{phase}"
+                                );
+                                vm.heap.release_root(owner);
+                                vm.collect_now(&program);
+                                assert!(vm.heap.weak_value(weak).is_none());
+                            }
+                            Err(error) => {
+                                let atom = vm.intern_atom("kind");
+                                let value = vm
+                                    .own_property(error.thrown_value().unwrap(), atom)
+                                    .unwrap();
+                                assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                            }
+                        }
+                        for owner in owners {
+                            vm.heap.release_root(owner);
+                        }
+                        vm.collect_now(&program);
+                    }
+                }
+            }
+        }
+    }
+}

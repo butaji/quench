@@ -270,7 +270,9 @@ impl<H: Host> Vm<H> {
             Native::IntlCollatorCompareGetter => self.collator_compare_getter(p, this),
             Native::IntlCollatorCompare => self.collator_compare(p, this, args),
             Native::IntlCollatorResolvedOptions => self.collator_resolved_options(p, this),
-            Native::IntlCollatorSupportedLocalesOf => self.collator_supported_locales_of(p, args),
+            Native::IntlCollatorSupportedLocalesOf => {
+                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
+            }
             _ => Err(JsError("invalid Intl.Collator method".into())),
         }
     }
@@ -417,28 +419,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(result)
     }
-
-    fn collator_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let locales = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .filter(|locale| super::intl_number::is_supported_locale(locale))
-            .collect::<Vec<_>>();
-        let elements = locales
-            .into_iter()
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(elements),
-        }))
-    }
-
-
 
     fn set_collator_string(
         &mut self,

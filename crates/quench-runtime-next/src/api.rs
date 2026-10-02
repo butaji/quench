@@ -2120,6 +2120,58 @@ mod tests {
     }
 
     #[test]
+    fn regression_intl_supported_locales_share_order_validation_and_realms() {
+        assert_output_in_execution_modes(
+            r#"
+            var kinds=['RelativeTimeFormat','Segmenter','Collator','NumberFormat','DateTimeFormat','PluralRules','DurationFormat','ListFormat','DisplayNames'];
+            var foreign=$262.createRealm().global;
+            for(var kind of kinds){
+                var method=Intl[kind].supportedLocalesOf;
+                var descriptor=Object.getOwnPropertyDescriptor(Intl[kind],'supportedLocalesOf');
+                var trace=[];
+                var list=new Proxy({0:{toString(){trace.push('locale');$262.gc();return 'EN';}},1:'en',2:'fr',length:3},{
+                    get(value,key){trace.push(key==='length'?'length':'index:'+key);$262.gc();return Reflect.get(value,key);},
+                    has(value,key){trace.push('has:'+key);$262.gc();return Reflect.has(value,key);}
+                });
+                var options={get localeMatcher(){trace.push('matcher');$262.gc();return {toString(){trace.push('matcher-string');$262.gc();return 'lookup';}};}};
+                var result=method.call(null,list,options);
+                print(result.join(',')==='en,fr' && trace.join(',')==='length,has:0,index:0,locale,has:1,index:1,has:2,index:2,matcher,matcher-string');
+                print(method.name==='supportedLocalesOf' && method.length===1 && descriptor.writable && descriptor.configurable && !descriptor.enumerable);
+                var element=Object.getOwnPropertyDescriptor(result,'0');
+                var length=Object.getOwnPropertyDescriptor(result,'length');
+                print(element.writable && element.enumerable && element.configurable && length.writable && !length.enumerable && !length.configurable && method(['en'])!==method(['en']));
+                var touched=false;
+                try{method(['bad_locale'],{get localeMatcher(){touched=true;}});print(false);}catch(e){print(e instanceof RangeError && !touched);}
+                try{method([7],null);print(false);}catch(e){print(e instanceof TypeError);}
+                try{method([],null);print(false);}catch(e){print(e instanceof TypeError);}
+                try{method([],{localeMatcher:'invalid'});print(false);}catch(e){print(e instanceof RangeError);}
+                try{method([],{localeMatcher:Symbol()});print(false);}catch(e){print(e instanceof TypeError);}
+                touched=false;
+                Object.defineProperty(Number.prototype,'localeMatcher',{configurable:true,get(){touched=true;$262.gc();return 'best fit';}});
+                print(method([],7).length===0 && touched);
+                delete Number.prototype.localeMatcher;
+                var thrown={};
+                try{method({get length(){throw thrown;}},null);print(false);}catch(e){print(e===thrown);}
+                print(Object.getPrototypeOf(foreign.Intl[kind].supportedLocalesOf(['en']))===foreign.Array.prototype);
+            }
+            print(Object.getPrototypeOf(foreign.Intl.getCanonicalLocales(['en']))===foreign.Array.prototype);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_intl_locale_clones_slots_and_orders_constructor_effects() {
         assert_output_in_execution_modes(
             r#"
