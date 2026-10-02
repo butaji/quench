@@ -6911,6 +6911,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                                 object,
                                 source,
                                 flags,
+                                ..
                             }) = vm.heap.get(value)
                             else {
                                 panic!("constructor returns RegExp");

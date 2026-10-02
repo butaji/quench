@@ -525,7 +525,14 @@ impl Heap {
                 work.extend(elements.iter().copied());
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
-            Cell::RegExp { object: value, .. } => object(value),
+            Cell::RegExp {
+                object: value,
+                legacy_constructor,
+                ..
+            } => {
+                object(value);
+                work.push(*legacy_constructor);
+            }
             Cell::DataView {
                 object: value,
                 buffer,
