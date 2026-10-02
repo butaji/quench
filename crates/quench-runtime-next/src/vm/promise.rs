@@ -4247,15 +4247,16 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
+        if !self.realm.promise.records.contains_key(&promise) {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
-        };
+        }
         let constructor = self.promise_species_constructor(p, promise)?;
         let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
-        self.realm.promise
+        self.realm
+            .promise
             .reaction_capabilities
             .insert(next, (resolve, reject));
-        self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
         Ok(next)
     }
 
@@ -4266,15 +4267,16 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        let Some(record) = self.realm.promise.records.get(&promise).cloned() else {
+        if !self.realm.promise.records.contains_key(&promise) {
             return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
-        };
+        }
         let next = self.promise_object();
         let (resolve, reject) = self.promise_resolving_functions(next);
-        self.realm.promise
+        self.realm
+            .promise
             .reaction_capabilities
             .insert(next, (resolve, reject));
-        self.perform_promise_then(p, promise, record, on_fulfilled, on_rejected, next)?;
+        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
         Ok(next)
     }
 
@@ -4282,11 +4284,10 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         promise: Value,
-        record: PromiseRecord,
         on_fulfilled: Value,
         on_rejected: Value,
         next: Value,
-    ) -> Result<(), JsError> {
+    ) {
         let reaction = PromiseReaction {
             on_fulfilled: if self.is_function(on_fulfilled) {
                 on_fulfilled
@@ -4300,17 +4301,15 @@ impl<H: Host> Vm<H> {
             },
             next,
         };
+        // Species selection and capability construction may settle the source.
+        // Read its authoritative state only when installing this reaction.
+        let record = self.realm.promise.records.get_mut(&promise).unwrap();
         if record.state == PromiseState::Pending {
-            self.realm.promise
-                .records
-                .get_mut(&promise)
-                .unwrap()
-                .reactions
-                .push(reaction);
+            record.reactions.push(reaction);
         } else {
-            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
+            let (state, result) = (record.state, record.result);
+            self.enqueue_promise_reaction(p, reaction, state, result);
         }
-        Ok(())
     }
 
     fn intrinsic_promise_constructor(&self) -> Value {

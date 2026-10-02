@@ -1006,6 +1006,66 @@ mod tests {
     }
 
     #[test]
+    fn regression_promise_then_observes_state_after_species_and_capability_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            var ordinal = 0;
+            for (var phase of ['constructor', 'species', 'capability']) {
+                for (var rejected of [false, true]) {
+                    (function(phase, rejected, index) {
+                        var settle;
+                        var source = new Promise(function(resolve, reject) {settle = rejected ? reject : resolve;});
+                        var value = {rank: index};
+                        function effect() {
+                            print('effect:' + index); $262.gc(); settle(value);
+                            Object.defineProperty(source, 'constructor', {value:Promise, writable:true, configurable:true});
+                            source.then(function(actual) {print('inner:' + index + ':' + (actual === value));},
+                                function(actual) {print('inner:' + index + ':' + (actual === value));});
+                        }
+                        if (phase === 'constructor') {
+                            Object.defineProperty(source, 'constructor', {get() {effect(); return Promise;}, configurable:true});
+                        } else if (phase === 'species') {
+                            source.constructor = {get [Symbol.species]() {effect(); return Promise;}};
+                        } else {
+                            source.constructor = {[Symbol.species]: function(executor) {effect(); return new Promise(executor);}};
+                        }
+                        source.then(function(actual) {print('outer:' + index + ':' + (actual === value)); return index;},
+                            function(actual) {print('outer:' + index + ':' + (actual === value)); return index;})
+                            .then(function(actual) {print('next:' + actual);});
+                    })(phase, rejected, ordinal++);
+                }
+            }
+            "#,
+            &[
+                "effect:0",
+                "effect:1",
+                "effect:2",
+                "effect:3",
+                "effect:4",
+                "effect:5",
+                "inner:0:true",
+                "outer:0:true",
+                "inner:1:true",
+                "outer:1:true",
+                "inner:2:true",
+                "outer:2:true",
+                "inner:3:true",
+                "outer:3:true",
+                "inner:4:true",
+                "outer:4:true",
+                "inner:5:true",
+                "outer:5:true",
+                "next:0",
+                "next:1",
+                "next:2",
+                "next:3",
+                "next:4",
+                "next:5",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_promise_default_species_uses_method_realm_intrinsics() {
         assert_output_in_execution_modes(
             r#"
