@@ -270,33 +270,62 @@ impl<H: Host> Vm<H> {
             }));
         }
         let mut current = self.box_object(source)?;
-        let mut visited_objects = std::collections::HashSet::new();
+        let mut visited_objects = std::collections::HashMap::new();
         let mut visited_names = std::collections::HashSet::new();
         let mut keys = Vec::new();
-        while !current.is_null() && visited_objects.insert(current) {
-            for key in self.object_own_key_values(p, current)? {
-                let Some(Cell::String(name)) = self.heap.get(key) else {
-                    continue;
-                };
-                let name = name.clone();
-                if visited_names.contains(&name) {
-                    continue;
+        let mut own_keys = Vec::new();
+        let outcome = (|| {
+            while !current.is_null() && !visited_objects.contains_key(&current) {
+                let current_root = self.heap.root(current);
+                visited_objects.insert(current, current_root);
+                own_keys = self
+                    .object_own_key_values(p, self.heap.root_value(current_root).unwrap())?
+                    .into_iter()
+                    .map(|key| self.heap.root(key))
+                    .collect();
+                for key in &own_keys {
+                    let Some(Cell::String(name)) = self.heap.get(self.heap.root_value(*key).unwrap())
+                    else {
+                        continue;
+                    };
+                    let name = name.clone();
+                    if visited_names.contains(&name) {
+                        continue;
+                    }
+                    let descriptor = self.object_get_own_property_descriptor(
+                        p,
+                        &[
+                            self.heap.root_value(current_root).unwrap(),
+                            self.heap.root_value(*key).unwrap(),
+                        ],
+                    )?;
+                    if descriptor.is_undefined() {
+                        continue;
+                    }
+                    visited_names.insert(name);
+                    if self.descriptor_flag(descriptor, "enumerable") {
+                        keys.push(self.heap.root(self.heap.root_value(*key).unwrap()));
+                    }
                 }
-                let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
-                if descriptor.is_undefined() {
-                    continue;
+                for root in own_keys.drain(..) {
+                    self.heap.release_root(root);
                 }
-                visited_names.insert(name);
-                if self.descriptor_flag(descriptor, "enumerable") {
-                    keys.push(key);
-                }
+                current =
+                    self.object_get_prototype_of(p, self.heap.root_value(current_root).unwrap())?;
             }
-            current = self.object_get_prototype_of(p, current)?;
+            let elements = keys
+                .iter()
+                .map(|key| self.heap.root_value(*key).unwrap())
+                .collect();
+            Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(elements),
+            }))
+        })();
+        for root in visited_objects.into_values().chain(own_keys).chain(keys) {
+            self.heap.release_root(root);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(keys),
-        }))
+        outcome
     }
 
     pub(super) fn object_for_in_key_is_enumerable(
@@ -309,15 +338,31 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         let mut current = self.box_object(source)?;
-        let mut visited_objects = std::collections::HashSet::new();
-        while !current.is_null() && visited_objects.insert(current) {
-            let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
-            if !descriptor.is_undefined() {
-                return Ok(self.descriptor_flag(descriptor, "enumerable"));
+        let key = self.heap.root(key);
+        let mut visited_objects = std::collections::HashMap::new();
+        let outcome = (|| {
+            while !current.is_null() && !visited_objects.contains_key(&current) {
+                let current_root = self.heap.root(current);
+                visited_objects.insert(current, current_root);
+                let descriptor = self.object_get_own_property_descriptor(
+                    p,
+                    &[
+                        self.heap.root_value(current_root).unwrap(),
+                        self.heap.root_value(key).unwrap(),
+                    ],
+                )?;
+                if !descriptor.is_undefined() {
+                    return Ok(self.descriptor_flag(descriptor, "enumerable"));
+                }
+                current =
+                    self.object_get_prototype_of(p, self.heap.root_value(current_root).unwrap())?;
             }
-            current = self.object_get_prototype_of(p, current)?;
+            Ok(false)
+        })();
+        for root in visited_objects.into_values().chain([key]) {
+            self.heap.release_root(root);
         }
-        Ok(false)
+        outcome
     }
 
     pub(super) fn install_object_extra(
