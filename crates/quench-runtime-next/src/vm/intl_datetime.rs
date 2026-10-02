@@ -729,7 +729,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::IntlDateTimeFormatSupportedLocalesOf {
-            return self.date_time_supported_locales_of(p, args);
+            return self.intl_supported_locales_of(
+                p,
+                args,
+                super::intl_number::is_supported_locale,
+            );
         }
         let receiver = self.unwrap_date_time_format_receiver(p, this)?;
         match native {
@@ -1421,23 +1425,6 @@ impl<H: Host> Vm<H> {
         }
         let number = self.to_number(p, value)?;
         Ok((Value::number(number), None))
-    }
-
-    fn date_time_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let locales = self.canonical_locale_list(p, args.first().copied())?;
-        let values = locales
-            .into_iter()
-            .filter(|locale| super::intl_number::is_supported_locale(locale))
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
     }
 
     fn date_time_parts_array(&mut self, parts: Vec<(String, String)>) -> Result<Value, JsError> {

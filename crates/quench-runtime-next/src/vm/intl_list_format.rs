@@ -113,17 +113,11 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::IntlListFormatSupportedLocalesOf {
-            let locales = self.canonical_locale_list(p, args.first().copied())?;
-            self.list_format_locale_matcher(p, args.get(1).copied())?;
-            let values = locales
-                .into_iter()
-                .filter(|locale| super::intl_number::is_supported_locale(locale))
-                .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-                .collect::<Vec<_>>();
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(values),
-            }));
+            return self.intl_supported_locales_of(
+                p,
+                args,
+                super::intl_number::is_supported_locale,
+            );
         }
         if native == Native::IntlListFormatResolvedOptions {
             let locale = self.list_format_slot(p, this, LIST_FORMAT_LOCALE_SLOT)?;
@@ -214,30 +208,6 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "not a ListFormat object".into()))
     }
 
-    fn list_format_locale_matcher(
-        &mut self,
-        p: &ResidualProgram,
-        options: Option<Value>,
-    ) -> Result<(), JsError> {
-        let Some(options) = options.filter(|value| !value.is_undefined()) else {
-            return Ok(());
-        };
-        if options.is_null() {
-            return Err(self.type_error(p, "options must be an object".into()));
-        }
-        let options = self.box_object(options)?;
-        let atom = self.intern_atom("localeMatcher");
-        let value = self.get_property(p, options, atom)?;
-        if value.is_undefined() {
-            return Ok(());
-        }
-        let value = self.to_string(p, value)?;
-        if matches!(value.as_str(), "lookup" | "best fit") {
-            Ok(())
-        } else {
-            Err(self.range_error(p, "invalid localeMatcher".into()))
-        }
-    }
 }
 
 fn list_format_immutable_attributes() -> PropertyAttributes {

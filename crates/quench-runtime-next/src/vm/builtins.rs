@@ -499,7 +499,7 @@ const NATIVES: &[Native] = &[
     Native::IntlDateTimeFormatFormat, Native::IntlDateTimeFormatFormatToParts,
     Native::IntlDateTimeFormatFormatRange, Native::IntlDateTimeFormatFormatRangeToParts,
     Native::IntlDateTimeFormatSupportedLocalesOf, Native::IntlDateTimeFormatResolvedOptions,
-    Native::IntlDisplayNames, Native::IntlDisplayNamesOf,
+    Native::IntlDisplayNames, Native::IntlDisplayNamesSupportedLocalesOf, Native::IntlDisplayNamesOf,
     Native::IntlDisplayNamesResolvedOptions,
     Native::IntlDurationFormat, Native::IntlDurationFormatFormatGetter,
     Native::IntlDurationFormatFormat, Native::IntlDurationFormatFormatToParts,

@@ -383,7 +383,7 @@ pub(crate) enum Native {
     IntlDateTimeFormatFormatToParts, IntlDateTimeFormatFormatRange,
     IntlDateTimeFormatFormatRangeToParts, IntlDateTimeFormatSupportedLocalesOf,
     IntlDateTimeFormatResolvedOptions,
-    IntlDisplayNames, IntlDisplayNamesOf, IntlDisplayNamesResolvedOptions,
+    IntlDisplayNames, IntlDisplayNamesOf, IntlDisplayNamesResolvedOptions, IntlDisplayNamesSupportedLocalesOf,
     IntlDurationFormat, IntlDurationFormatFormatGetter, IntlDurationFormatFormat,
     IntlDurationFormatFormatToParts, IntlDurationFormatResolvedOptions,
     IntlDurationFormatSupportedLocalesOf,

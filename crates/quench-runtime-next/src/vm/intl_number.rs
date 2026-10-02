@@ -417,23 +417,6 @@ impl<H: Host> Vm<H> {
         Ok(bound)
     }
 
-    pub(super) fn intl_number_format_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let locales = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .filter(|locale| is_supported_locale(locale))
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(locales),
-        }))
-    }
-
     fn number_format_locale(
         &mut self,
         p: &ResidualProgram,
