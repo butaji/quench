@@ -53,14 +53,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         iterator: Value,
     ) -> Result<Option<Value>, JsError> {
-        let step = self.iterator_next(p, iterator)?;
-        let done_atom = self.intern_atom("done");
-        let done = self.get_property(p, step, done_atom)?;
-        if self.truthy(done) {
-            return Ok(None);
-        }
-        let value_atom = self.intern_atom("value");
-        self.get_property(p, step, value_atom).map(Some)
+        self.with_call_roots([iterator], |vm| {
+            let step = vm.iterator_next(p, iterator)?;
+            vm.iterator_result_value(p, step)
+        })
     }
 
     pub(super) fn iterator_close(

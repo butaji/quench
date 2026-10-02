@@ -626,15 +626,7 @@ impl Heap {
                     }
                 }
                 if let Some(record) = generator {
-                    if let Some(continuation) = record.continuation.as_ref() {
-                        work.extend(continuation.roots());
-                    }
-                    work.extend(
-                        record
-                            .requests
-                            .iter()
-                            .flat_map(|request| [request.promise, request.value]),
-                    );
+                    work.extend(record.roots());
                 }
             }
             Cell::ArrayFromAsyncState(state) => {

@@ -60,22 +60,25 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.root_value(iterator).unwrap();
         let method = self.heap.root_value(next).unwrap();
         let step = self.call_value(p, method, receiver, &[])?;
+        self.iterator_result_value(p, step)
+    }
+
+    pub(super) fn iterator_result_value(
+        &mut self,
+        p: &ResidualProgram,
+        step: Value,
+    ) -> Result<Option<Value>, JsError> {
         if !self.is_object_like(step) {
             return Err(self.type_error(p, "iterator next result is not an object".into()));
         }
-        let step = self.heap.root(step);
-        let outcome = (|| {
-            let done_atom = self.intern_atom("done");
-            let object = self.heap.root_value(step).unwrap();
-            let done = self.get_property(p, object, done_atom)?;
-            if self.truthy(done) {
+        self.with_call_roots([step], |vm| {
+            let done_atom = vm.intern_atom("done");
+            let done = vm.get_property(p, step, done_atom)?;
+            if vm.truthy(done) {
                 return Ok(None);
             }
-            let value_atom = self.intern_atom("value");
-            let object = self.heap.root_value(step).unwrap();
-            self.get_property(p, object, value_atom).map(Some)
-        })();
-        self.heap.release_root(step);
-        outcome
+            let value_atom = vm.intern_atom("value");
+            vm.get_property(p, step, value_atom).map(Some)
+        })
     }
 }

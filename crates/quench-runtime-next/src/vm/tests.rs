@@ -5078,3 +5078,244 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
         }
     }
 }
+
+#[test]
+fn iterator_step_roots_receiver_through_result_accessors() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for cached in [false, true] {
+            for wrapped in [false, true] {
+                for phase in ["value", "done", "done-throw", "value-throw", "invalid"] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function step() {{if ('{phase}'==='invalid') return 42; return {{
+                            get done() {{$262.gc(); if ('{phase}'==='done-throw') throw {{kind:'done-throw'}}; return '{phase}'==='done';}},
+                            get value() {{$262.gc(); if ('{phase}'==='value-throw') throw {{kind:'value-throw'}}; return {{tag:42}};}}
+                        }};}}
+                    function operand() {{var iterator={{next() {{$262.gc();return step();}}}};return {wrapped}?Iterator.from(iterator):iterator;}}
+                "#
+                    );
+                    let program = compile(&source, "iterator-step-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operand");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let iterator = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let handle = vm.heap.weak_handle(iterator).unwrap();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = if cached {
+                        let iterator_root = vm.heap.root(iterator);
+                        let atom = vm.intern_atom("next");
+                        let method = vm.get_property(&program, iterator, atom).unwrap();
+                        let method_root = vm.heap.root(method);
+                        let result =
+                            vm.rooted_iterator_step_value(&program, iterator_root, method_root);
+                        vm.heap.release_root(method_root);
+                        vm.heap.release_root(iterator_root);
+                        result
+                    } else {
+                        vm.iterator_step_value(&program, iterator)
+                    };
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    assert_eq!(
+                        vm.heap.weak_value(handle),
+                        Some(iterator),
+                        "cached={cached} {phase}"
+                    );
+                    let value_handle = match result {
+                        Ok(Some(value)) => {
+                            assert_eq!(phase, "value");
+                            let atom = vm.intern_atom("tag");
+                            assert_eq!(
+                                vm.own_property(value, atom).unwrap().as_number(),
+                                Some(42.0)
+                            );
+                            Some(vm.heap.weak_handle(value).unwrap())
+                        }
+                        Ok(None) => {
+                            assert_eq!(phase, "done");
+                            None
+                        }
+                        Err(error) => {
+                            if phase == "invalid" {
+                                assert!(error.to_string().contains("not an object"));
+                            } else {
+                                assert!(phase.ends_with("throw"));
+                                let atom = vm.intern_atom("kind");
+                                let kind = vm
+                                    .own_property(error.thrown_value().unwrap(), atom)
+                                    .unwrap();
+                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                            }
+                            None
+                        }
+                    };
+                    vm.collect_now(&program);
+                    for handle in std::iter::once(handle).chain(value_handle) {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn suspended_owners_trace_complete_frame_and_request_state() {
+    use super::activation::{AsyncGeneratorOperation, AsyncGeneratorRequest, GeneratorRecord};
+    for completion in [
+        Completion::Return,
+        Completion::Throw,
+        Completion::Yield,
+        Completion::Await,
+    ] {
+        for generator in [false, true] {
+            let mut vm = Vm::new(SilentHost);
+            let program = Engine::specialize("", "suspended-owner-roots.js").unwrap();
+            vm.initialize(&program).unwrap();
+            let env = vm.object();
+            let receiver = vm.object();
+            let local = vm.object();
+            let binding = vm.object();
+            let register = vm.object();
+            let iterator = vm.object();
+            let completion_value = vm.object();
+            let promise = vm.object();
+            let realm = vm.object();
+            let request_promise = vm.object();
+            let request_value = vm.object();
+            let frame_values = [
+                env,
+                receiver,
+                local,
+                binding,
+                register,
+                iterator,
+                completion_value,
+                promise,
+            ];
+            let owned = if generator {
+                frame_values
+                    .into_iter()
+                    .chain([realm, request_promise, request_value])
+                    .collect::<Vec<_>>()
+            } else {
+                frame_values.to_vec()
+            };
+            let handles = owned
+                .iter()
+                .map(|v| vm.heap.weak_handle(*v).unwrap())
+                .collect::<Vec<_>>();
+            let atom = vm.intern_atom("binding");
+            let mut frame = super::Frame {
+                program: super::program_store::ProgramId::MAIN,
+                function: 0,
+                pc: 0,
+                env,
+                this: receiver,
+                locals: vec![local],
+                dynamic_bindings: vec![(atom, binding)],
+                captured: true,
+                registers: vec![register, iterator, Value::FALSE],
+                active_iterators: vec![super::ActiveIterator {
+                    iterator: 1,
+                    done: 2,
+                }],
+                with_base: 0,
+            };
+            let continuation = Continuation::from_frame(
+                &mut frame,
+                completion(completion_value),
+                Some(0),
+                promise,
+            );
+            assert!(
+                frame.locals.is_empty()
+                    && frame.dynamic_bindings.is_empty()
+                    && frame.registers.is_empty()
+                    && frame.active_iterators.is_empty()
+            );
+            let roots = vm.heap.root_count_for_test();
+            let mut owner = None;
+            let mut token = None;
+            if generator {
+                let value = vm.heap.alloc(super::Cell::Iterator {
+                    object: Vm::<SilentHost>::empty_object(Value::NULL),
+                    source: Value::NULL,
+                    next_method: None,
+                    helper: None,
+                    helper_running: false,
+                    helper_started: false,
+                    kind: super::IteratorKind::AsyncGenerator,
+                    index: 0,
+                    done: false,
+                    generator: Some(Box::new(GeneratorRecord {
+                        continuation: Some(continuation),
+                        realm,
+                        done: false,
+                        running: false,
+                        requests: [AsyncGeneratorRequest {
+                            operation: AsyncGeneratorOperation::Next,
+                            promise: request_promise,
+                            value: request_value,
+                        }]
+                        .into(),
+                    })),
+                });
+                owner = Some(vm.heap.root(value));
+            } else {
+                token = Some(vm.suspend_continuation(continuation));
+            }
+            vm.collect_now(&program);
+            for (handle, value) in handles.iter().zip(&owned) {
+                assert_eq!(
+                    vm.heap.weak_value(*handle),
+                    Some(*value),
+                    "generator={generator} completion={:?}",
+                    completion(completion_value)
+                );
+            }
+            let resumed = if let Some(token) = token {
+                let continuation = vm.resume_continuation(token).unwrap();
+                assert!(vm.resume_continuation(token).is_none());
+                continuation
+            } else {
+                let value = vm.heap.root_value(owner.unwrap()).unwrap();
+                match vm.heap.get_mut(value) {
+                    Some(super::Cell::Iterator {
+                        generator: Some(record),
+                        ..
+                    }) => record.continuation.take().unwrap(),
+                    _ => panic!("generator owner"),
+                }
+            };
+            assert_eq!(resumed.completion, completion(completion_value));
+            assert_eq!(resumed.promise, promise);
+            let resumed = resumed.into_frame(0);
+            assert_eq!(resumed.locals, [local]);
+            assert_eq!(resumed.dynamic_bindings, [(atom, binding)]);
+            assert_eq!(resumed.registers, [register, iterator, Value::FALSE]);
+            assert_eq!(
+                resumed.active_iterators,
+                [super::ActiveIterator {
+                    iterator: 1,
+                    done: 2
+                }]
+            );
+            if let Some(owner) = owner {
+                vm.heap.release_root(owner);
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            vm.collect_now(&program);
+            for handle in handles {
+                assert!(vm.heap.weak_value(handle).is_none());
+            }
+        }
+    }
+}
