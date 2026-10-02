@@ -51,8 +51,8 @@ TEST262_TEST_TIMEOUT_MS=30000 \
 
 The existing `run-stages`/`run-all` binaries retain the legacy host for
 reference comparisons and are not evidence for the next-runtime gate.
-Every Test262 runner/tool (`run-test`, both stage/all variants, `triage`, and
-`compare-runs`) refuses to start without a positive `TEST262_TEST_TIMEOUT_MS`;
+Every Test262 execution runner/tool (`run-test`, both stage/all variants, `triage`,
+and execution modes of `compare-runs`) requires a positive `TEST262_TEST_TIMEOUT_MS`;
 the batch wrapper has the same requirement. `run-all-next` and
 `run-stages-next` run case processes concurrently (configurable with
 `TEST262_JOBS`, defaulting to available parallelism), preserve discovery-order
@@ -86,6 +86,22 @@ from discovery. Focused runs never update the baseline. `TEST262_RATCHET`
 selects the same baseline in both runners; an explicitly selected missing or
 invalid baseline is an error. A stage selection discovering no cases is an
 error.
+
+`run-stages-next` writes discovery-order case outcomes, stage counts, normalized
+failure messages, and source/binary/host provenance to
+`target/iteration/test262-stages-report.json` (override with `TEST262_REPORT`).
+The report is written before a failed-stage verdict, so failures remain available
+for triage. Compare saved reports without executing tests:
+
+```sh
+cargo run --profile iteration -p quench-test262 --bin compare-runs -- \
+  --reports target/iteration/before.json target/iteration/after.json
+```
+
+A lost pass, including a missing formerly passing case, exits nonzero.
+Malformed, duplicate, empty, or truncated outcome inventories are errors.
+Compare reports with the same selection; a narrower current selection reports
+missing baseline passes as regressions.
 
 For long runs, advance one stage at a time with `run-stages-next`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
