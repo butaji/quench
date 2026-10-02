@@ -5544,3 +5544,135 @@ fn completed_typed_array_iterators_release_source_and_backing() {
         }
     }
 }
+
+#[test]
+fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for wrapper in ["raw", "protocol", "async-from-sync"] {
+            for phase in [
+                "success",
+                "getter",
+                "call",
+                "primitive",
+                "method",
+                "absent",
+                "null",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var log=[];function readLog() {{return log.join(',');}}
+                    function close() {{log.push('call:'+this.tag);$262.gc();if ('{phase}'==='call') throw {{kind:'call'}};
+                        return '{phase}'==='primitive'?42:{{tag:this.tag}};
+                    }}
+                    function source() {{return {{tag:42,next() {{return {{done:true}};}},get return() {{
+                        log.push('get:'+this.tag);$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                        return '{phase}'==='absent'?undefined:'{phase}'==='null'?null:'{phase}'==='method'?42:close;
+                    }}}};}}
+                "#
+                );
+                let program = compile(&source, "iterator-close-ownership.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("source");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let source = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let iterator = match wrapper {
+                    "raw" => source,
+                    "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
+                    _ => vm.heap.alloc(super::Cell::Iterator {
+                        object: Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto),
+                        source,
+                        next_method: None,
+                        helper: None,
+                        helper_running: false,
+                        helper_started: false,
+                        kind: super::IteratorKind::AsyncFromSync,
+                        index: 0,
+                        done: false,
+                        generator: None,
+                    }),
+                };
+                let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.iterator_close(&program, iterator);
+
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(phase, "success" | "absent" | "null")
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip([source, iterator]) {
+                    assert_eq!(
+                        vm.heap.weak_value(*handle),
+                        Some(value),
+                        "{wrapper} {phase}"
+                    );
+                }
+                let log = vm.with_call_roots(
+                    result
+                        .iter()
+                        .copied()
+                        .chain(result.as_ref().err().and_then(|error| error.thrown_value())),
+                    |vm| {
+                        let atom = vm.intern_atom("readLog");
+                        let reader = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let log = vm
+                            .call_value(&program, reader, Value::UNDEFINED, &[])
+                            .unwrap();
+                        vm.to_string(&program, log).unwrap()
+                    },
+                );
+                assert_eq!(
+                    log,
+                    if matches!(phase, "success" | "call" | "primitive") {
+                        "get:42,call:42"
+                    } else {
+                        "get:42"
+                    },
+                    "{wrapper} {phase}"
+                );
+                let result_handle = match result {
+                    Ok(result) if phase == "success" => {
+                        let atom = vm.intern_atom("tag");
+                        assert_eq!(
+                            vm.own_property(result, atom).unwrap().as_number(),
+                            Some(42.0)
+                        );
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Ok(result) => {
+                        assert!(result.is_undefined());
+                        None
+                    }
+                    Err(error) if matches!(phase, "getter" | "call") => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        None
+                    }
+                    Err(error) => {
+                        assert!(error.to_string().contains(if phase == "method" {
+                            "not callable"
+                        } else {
+                            "not an object"
+                        }));
+                        None
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in handles.into_iter().chain(result_handle) {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
