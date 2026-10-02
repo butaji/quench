@@ -421,7 +421,17 @@ impl<H: Host> Vm<H> {
             return Ok(prototype);
         }
         let realm = self.function_realm(p, new_target)?;
-        let prototypes = match constructor {
+        let prototypes = self
+            .intl_constructor_prototypes(constructor)
+            .ok_or_else(|| JsError("invalid Intl constructor prototype request".into()))?;
+        Ok(prototypes.get(&realm).copied().unwrap_or(self.object_proto))
+    }
+
+    pub(super) fn intl_constructor_prototypes(
+        &self,
+        constructor: Native,
+    ) -> Option<&FxHashMap<Value, Value>> {
+        Some(match constructor {
             Native::IntlCollator => &self.realm.intrinsics.intl_collator_prototypes,
             Native::IntlNumberFormat => &self.realm.intrinsics.intl_number_format_prototypes,
             Native::IntlDateTimeFormat => &self.realm.intrinsics.intl_datetime_format_prototypes,
@@ -433,9 +443,8 @@ impl<H: Host> Vm<H> {
                 &self.realm.intrinsics.intl_relative_time_format_prototypes
             }
             Native::IntlDurationFormat => &self.realm.intrinsics.intl_duration_format_prototypes,
-            _ => return Err(JsError("invalid Intl constructor prototype request".into())),
-        };
-        Ok(prototypes.get(&realm).copied().unwrap_or(self.object_proto))
+            _ => return None,
+        })
     }
 
     pub(super) fn get_options_object(
