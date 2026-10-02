@@ -29,19 +29,14 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
+        let array_prototype = self.array_prototype_for_realm(self.realm.globals);
         let errors = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: Self::empty_object(array_prototype),
             elements: std::rc::Rc::new(errors),
         });
         let errors = self.heap.root(errors);
-        let prototype_atom = self.intern_atom("prototype");
-        let constructor_atom = self.intern_atom("AggregateError");
-        let constructor = self
-            .own_property(self.realm.globals, constructor_atom)
-            .unwrap_or_else(|| self.native_value(Native::AggregateError));
-        let prototype = self
-            .own_property(constructor, prototype_atom)
-            .unwrap_or(self.object_proto);
+        let prototype =
+            self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::AggregateError)];
         let error = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let error = self.heap.root(error);
         let result = (|| {

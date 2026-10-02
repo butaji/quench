@@ -193,7 +193,6 @@ impl<H: Host> Vm<H> {
                     self.weak_set_proto,
                     self.weak_ref_proto,
                     self.finalization_registry_proto,
-                    self.realm.promise.proto,
                     self.iterator_proto,
                     self.string_iterator_proto,
                     self.regexp_string_iterator_proto,

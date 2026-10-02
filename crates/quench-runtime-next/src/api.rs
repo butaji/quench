@@ -1006,6 +1006,124 @@ mod tests {
     }
 
     #[test]
+    fn regression_foreign_promise_installs_distinct_methods_and_descriptors() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm().global;
+            var constructor = foreign.Promise;
+            print(constructor !== Promise);
+            var prototype = Object.getOwnPropertyDescriptor(constructor, 'prototype');
+            print(prototype.writable + ',' + prototype.enumerable + ',' + prototype.configurable);
+            var owners = [[constructor, 'resolve', 1], [constructor, 'reject', 1],
+                [constructor, 'all', 1], [constructor, 'race', 1], [constructor, 'allSettled', 1],
+                [constructor, 'any', 1], [constructor, 'try', 1], [constructor, 'withResolvers', 0],
+                [constructor.prototype, 'then', 2], [constructor.prototype, 'catch', 1],
+                [constructor.prototype, 'finally', 1]];
+            for (var entry of owners) {
+                var owner = entry[0], name = entry[1];
+                var d = Object.getOwnPropertyDescriptor(owner, name);
+                var local = owner === constructor ? Promise : Promise.prototype;
+                print(d.value.name === name && d.value.length === entry[2] && d.value !== local[name]
+                    && d.writable && !d.enumerable && d.configurable);
+            }
+            var getter = Object.getOwnPropertyDescriptor(constructor, Symbol.species).get;
+            print(getter.call(constructor) === constructor);
+            print(constructor.prototype.constructor === constructor);
+            print(Object.prototype.toString.call(constructor.prototype));
+            try {constructor.any.call({}, []);} catch (error) {print(error instanceof foreign.TypeError);}
+            try {constructor.prototype.then.call({});} catch (error) {print(error instanceof foreign.TypeError);}
+            $262.gc();
+            print(constructor.prototype.then !== Promise.prototype.then);
+            "#,
+            &[
+                "true",
+                "false,false,false",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "[object Promise]",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_promise_any_uses_intrinsics_after_global_replacement() {
+        assert_output_in_execution_modes(
+            r#"
+            var home = AggregateError.prototype, arrayHome = Array.prototype;
+            globalThis.AggregateError = {prototype: {poison: true}};
+            var reason = {rank: 42};
+            class Immediate extends Promise {
+                static resolve(value) {return {then(resolve, reject) {reject(value);}};}
+            }
+            function inspect(error) {
+                $262.gc();
+                var d = Object.getOwnPropertyDescriptor(error, 'errors');
+                return [Error.isError(error), Object.getPrototypeOf(error) === home,
+                    Object.getPrototypeOf(error.errors) === arrayHome,
+                    d.writable, d.enumerable, d.configurable,
+                    error.errors.length, error.errors.length === 0 || error.errors[0] === reason].join(',');
+            }
+            Promise.all([
+                Promise.any([]).catch(inspect),
+                Promise.any([Promise.reject(reason)]).catch(inspect),
+                Promise.any.call(Immediate, [reason]).catch(inspect)
+            ]).then(function(results) {for (var result of results) print(result);});
+            "#,
+            &[
+                "true,true,true,true,false,true,0,true",
+                "true,true,true,true,false,true,1,true",
+                "true,true,true,true,false,true,1,true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_promise_any_borrowing_preserves_error_and_array_realms() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm().global;
+            var localError = AggregateError.prototype, localArray = Array.prototype;
+            var foreignError = foreign.AggregateError.prototype, foreignArray = foreign.Array.prototype;
+            foreign.AggregateError = {prototype: {poison: true}};
+            globalThis.AggregateError = {prototype: {poison: true}};
+            function inspect(error, errorHome, arrayHome) {
+                $262.gc();
+                return [Error.isError(error), Object.getPrototypeOf(error) === errorHome,
+                    Object.getPrototypeOf(error.errors) === arrayHome, error.errors.join(',')].join(':');
+            }
+            function foreignCheck(error) {return inspect(error, foreignError, foreignArray);}
+            function localCheck(error) {return inspect(error, localError, localArray);}
+            Promise.all([
+                foreign.Promise.any.call(Promise, []).catch(foreignCheck),
+                foreign.Promise.any.call(Promise, [Promise.reject(1), Promise.reject(2)]).catch(foreignCheck),
+                Promise.any.call(foreign.Promise, []).catch(localCheck),
+                Promise.any.call(foreign.Promise, [foreign.Promise.reject(3)]).catch(localCheck)
+            ]).then(function(results) {for (var result of results) print(result);});
+            "#,
+            &[
+                "true:true:true:",
+                "true:true:true:1,2",
+                "true:true:true:",
+                "true:true:true:3",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_error_brand_is_not_a_guest_property() {
         assert_output_in_execution_modes(
             r#"
