@@ -7987,3 +7987,74 @@ fn segmenter_cursors_own_source_and_release_derived_records() {
         }
     }
 }
+
+#[test]
+fn number_format_legacy_views_release_after_bound_or_options_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in ["getter", "options"] {
+            let source = format!(
+                r#"
+            var base=Object.create(Intl.NumberFormat.prototype);Intl.NumberFormat.call(base);
+            var symbol=Object.getOwnPropertySymbols(base)[0];var last;
+            function fresh(){{var value=new Intl.NumberFormat('en',{{style:'percent'}});Object.defineProperty(value,symbol,{{get(){{throw 'read actual fallback';}}}});return value;}}
+            function wrapper(){{var object=Object.create(Intl.NumberFormat.prototype);Object.defineProperty(object,symbol,{{get(){{$262.gc();last=fresh();return last;}}}});return object;}}
+            function method(){{return '{kind}'==='getter'?Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype,'format').get:Intl.NumberFormat.prototype.resolvedOptions;}}
+            function input(){{return {{valueOf(){{$262.gc();return 1;}}}};}}
+            "#
+            );
+            let program = compile(&source, "number-format-legacy-views.js").unwrap();
+            let mut vm = Vm::new(Test262Host);
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("wrapper");
+            let function = vm.own_property(vm.realm.globals, atom).unwrap();
+            let wrapper = vm
+                .call_value(&program, function, Value::UNDEFINED, &[])
+                .unwrap();
+            let wrapper_owner = vm.heap.root(wrapper);
+            let atom = vm.intern_atom("method");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let method = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.call_value(&program, method, wrapper, &[]).unwrap();
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            let result_weak = vm.heap.weak_handle(result).unwrap();
+            let owner = vm.heap.root(result);
+            let atom = vm.intern_atom("last");
+            let formatter = vm.own_property(vm.realm.globals, atom).unwrap();
+            let weak = vm.heap.weak_handle(formatter).unwrap();
+            vm.set_property(vm.realm.globals, atom, Value::UNDEFINED)
+                .unwrap();
+            vm.collect_now(&program);
+            assert_eq!(vm.heap.weak_value(weak).is_some(), kind == "getter");
+            if kind == "getter" {
+                let atom = vm.intern_atom("input");
+                let function = vm.own_property(vm.realm.globals, atom).unwrap();
+                let input = vm
+                    .call_value(&program, function, Value::UNDEFINED, &[])
+                    .unwrap();
+                let output = vm
+                    .call_value(&program, result, Value::UNDEFINED, &[input])
+                    .unwrap();
+                assert_eq!(vm.to_string(&program, output).unwrap(), "100%");
+            } else {
+                let atom = vm.intern_atom("style");
+                let value = vm.own_property(result, atom).unwrap();
+                assert_eq!(vm.to_string(&program, value).unwrap(), "percent");
+            }
+            vm.heap.release_root(owner);
+            vm.heap.release_root(wrapper_owner);
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak).is_none());
+            assert!(vm.heap.weak_value(result_weak).is_none());
+            assert_eq!(vm.active_call_roots.len(), calls);
+            assert_eq!(vm.heap.root_count_for_test(), roots - 1);
+        }
+    }
+}

@@ -2120,6 +2120,75 @@ mod tests {
     }
 
     #[test]
+    fn regression_number_format_legacy_views_obey_brand_and_method_realm() {
+        assert_output_in_execution_modes(
+            r#"
+            var wrapper=Object.create(Intl.NumberFormat.prototype);Intl.NumberFormat.call(wrapper);
+            var symbol=Object.getOwnPropertySymbols(wrapper)[0];
+            var formatter=new Intl.NumberFormat('en',{style:'percent'});
+            var bound=formatter.format;
+            print(Intl.NumberFormat.call(formatter,'fr')===formatter && formatter.format===bound && formatter.format(1)==='100%');
+            formatter=new Intl.NumberFormat('en',{style:'percent'});
+            Object.defineProperty(formatter,symbol,{get(){throw 'read actual formatter fallback';}});
+            print(formatter.format(1)==='100%' && formatter.resolvedOptions().style==='percent');
+            var reads=0;
+            var fresh=Object.create(Intl.NumberFormat.prototype);
+            Object.defineProperty(fresh,symbol,{get(){reads++;$262.gc();return new Intl.NumberFormat('en',{style:'percent'});}});
+            var getter=Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype,'format').get;
+            print(getter.call(fresh)(1)==='100%' && reads===1);
+            print(Intl.NumberFormat.prototype.resolvedOptions.call(fresh).style==='percent' && reads===2);
+            for(var name of ['formatToParts','formatRange','formatRangeToParts']){
+                var touched=false;
+                try{Intl.NumberFormat.prototype[name].call(fresh,{valueOf(){touched=true;return 1;}},2);print(false);}catch(e){print(e instanceof TypeError && !touched && reads===2);}
+            }
+            var plain={};Object.defineProperty(plain,symbol,{get(){throw 'read non-instance fallback';}});
+            try{getter.call(plain);print(false);}catch(e){print(e instanceof TypeError);}
+            var foreign=$262.createRealm().global;
+            var foreignWrapper=Object.create(foreign.Intl.NumberFormat.prototype);foreign.Intl.NumberFormat.call(foreignWrapper);
+            print(Intl.NumberFormat.call(foreignWrapper)!==foreignWrapper);
+            try{getter.call(foreignWrapper);print(false);}catch(e){print(e instanceof TypeError);}
+            var other=new foreign.Intl.NumberFormat('en');
+            print(getter.call(other)(1)==='1');
+            print(Object.getPrototypeOf(foreign.Intl.NumberFormat.prototype.resolvedOptions.call(formatter))===foreign.Object.prototype);
+            for(var name of ['formatToParts','formatRangeToParts']){
+                var parts=foreign.Intl.NumberFormat.prototype[name].call(formatter,1,2);
+                print(Object.getPrototypeOf(parts)===foreign.Array.prototype && parts.every(part=>Object.getPrototypeOf(part)===foreign.Object.prototype));
+            }
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_number_format_coerces_mathematical_inputs_once() {
+        assert_output_in_execution_modes(
+            r#"
+            var formatter=new Intl.NumberFormat('en');
+            for(var method of ['formatRange','formatRangeToParts']){
+                var trace=[];var startCalls=0,endCalls=0;
+                var start={[Symbol.toPrimitive](hint){trace.push('start:'+hint);$262.gc();if(startCalls++)throw 'coerced start twice';return '9007199254740993';}};
+                var end={[Symbol.toPrimitive](hint){trace.push('end:'+hint);$262.gc();if(endCalls++)throw 'coerced end twice';return '9007199254740994';}};
+                var result=formatter[method](start,end);
+                print(trace.join(',')==='start:number,end:number');
+                print(method==='formatRange'?result==='9,007,199,254,740,993–9,007,199,254,740,994':result.filter(part=>part.source==='startRange'&&part.type==='integer').map(part=>part.value).join('')==='9007199254740993' && result.filter(part=>part.source==='endRange'&&part.type==='integer').map(part=>part.value).join('')==='9007199254740994');
+                var touched=false;
+                try{formatter[method](Symbol(),{valueOf(){touched=true;return 2;}});print(false);}catch(e){print(e instanceof TypeError && !touched);}
+                var thrown={};
+                try{formatter[method](NaN,{valueOf(){$262.gc();throw thrown;}});print(false);}catch(e){print(e===thrown);}
+            }
+            print(formatter.format({[Symbol.toPrimitive](hint){$262.gc();return '9007199254740993';}})==='9,007,199,254,740,993');
+            print(formatter.format({valueOf(){$262.gc();return 9007199254740993n;}})==='9,007,199,254,740,993');
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_segmenter_derives_fresh_records_from_owned_input() {
         assert_output_in_execution_modes(
             r#"
