@@ -1,3 +1,4 @@
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
@@ -192,59 +193,45 @@ impl<H: Host> Vm<H> {
         if !matches!(self.heap.get(value), Some(Cell::String(_))) {
             return Err(self.type_error(program, "Error stack must be a string".into()));
         }
-        let error_atom = self.intern_atom("Error");
-        let error_constructor = self.get_property(program, self.realm.globals, error_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let error_prototype = self.get_property(program, error_constructor, prototype_atom)?;
-        if receiver == error_prototype {
-            return Err(self.type_error(program, "cannot set Error.prototype.stack".into()));
-        }
-        let key = self.heap.alloc(Cell::String("stack".into()));
-        let descriptor = self.object_get_own_property_descriptor(program, &[receiver, key])?;
-        if !descriptor.is_undefined() {
-            if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+        let receiver = self.heap.root(receiver);
+        let value_root = self.heap.root(value);
+        let mut key_root = None;
+        let result = (|| {
+            let target = self.heap.root_value(receiver).unwrap();
+            let home = self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::Error)];
+            if target == home {
+                return Err(self.type_error(program, "cannot set Error.prototype.stack".into()));
+            }
+            let key = self.heap.alloc(Cell::String("stack".into()));
+            let key = self.heap.root(key);
+            key_root = Some(key);
+            let property = self.heap.root_value(key).unwrap();
+            let target = self.heap.root_value(receiver).unwrap();
+            let descriptor = self.object_get_own_property_descriptor(program, &[target, property])?;
+            let target = self.heap.root_value(receiver).unwrap();
+            let value = self.heap.root_value(value_root).unwrap();
+            if descriptor.is_undefined() {
+                let key = self.heap.root_value(key).unwrap();
+                self.define_property_or_throw(
+                    program,
+                    target,
+                    key,
+                    PropertyDescriptorRecord::data(value),
+                )?;
+            } else {
                 let atom = self.intern_atom("stack");
-                if !self.set_property_with_receiver(program, receiver, atom, value, receiver)? {
+                if !self.set_property_with_receiver(program, target, atom, value, target)? {
                     return Err(self.type_error(program, "cannot set Error stack property".into()));
                 }
-                return Ok(Value::UNDEFINED);
             }
-            let get = self.intern_atom("get");
-            let set = self.intern_atom("set");
-            let descriptor_getter = self.get_property(program, descriptor, get)?;
-            let descriptor_setter = self.get_property(program, descriptor, set)?;
-            if !descriptor_getter.is_undefined() || !descriptor_setter.is_undefined() {
-                if descriptor_setter.is_undefined() {
-                    return Err(self.type_error(program, "cannot set Error stack property".into()));
-                }
-                self.call_value(program, descriptor_setter, receiver, &[value])?;
-                return Ok(Value::UNDEFINED);
-            }
-            let writable = self.intern_atom("writable");
-            let writable = self.get_property(program, descriptor, writable)?;
-            if !self.truthy(writable) {
-                return Err(self.type_error(program, "cannot set Error stack property".into()));
-            }
-            let atom = self.intern_atom("stack");
-            if !self.set_property_with_receiver(program, receiver, atom, value, receiver)? {
-                return Err(self.type_error(program, "cannot set Error stack property".into()));
-            }
-            return Ok(Value::UNDEFINED);
+            Ok(Value::UNDEFINED)
+        })();
+        if let Some(root) = key_root {
+            self.heap.release_root(root);
         }
-        let descriptor = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        for (name, field_value) in [
-            ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, field_value)?;
-        }
-        self.object_define_property(program, &[receiver, key, descriptor])?;
-        Ok(Value::UNDEFINED)
+        self.heap.release_root(value_root);
+        self.heap.release_root(receiver);
+        result
     }
 
     pub(super) fn error_to_string(
@@ -1324,6 +1311,8 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
         self.set_named(program, global, "ArrayBuffer", array_buffer)?;
         let realm_error_prototype = self.object();
+        self.realm.intrinsics.builtin_prototypes
+            .insert((global, Native::Error), realm_error_prototype);
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
         self.set_builtin_value_named(realm_error_constructor, "prototype", realm_error_prototype)?;
         self.set_builtin_value_named(
