@@ -670,6 +670,219 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn array_like_list_roots_release_after_callback_completion() {
+    use super::operations::ArrayLikeElementKind;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for property_keys in [false, true] {
+            for phase in [
+                "accept",
+                "length-throw",
+                "coercion-throw",
+                "element-throw",
+                "invalid",
+                "reserve",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var marker = {{kind:'{phase}'}}, reads = 0;
+                    function makeList() {{return {{get length() {{
+                        $262.gc(); if ('{phase}' === 'length-throw') throw marker;
+                        return {{valueOf() {{
+                            $262.gc(); if ('{phase}' === 'coercion-throw') throw marker;
+                            return '{phase}' === 'reserve' ? Infinity : 2;
+                        }}}};
+                    }}, get 0() {{
+                        $262.gc(); reads++;
+                        if ('{phase}' === 'invalid') return undefined;
+                        return {property_keys} ? Symbol('first') : {{rank:42}};
+                    }}, get 1() {{
+                        $262.gc(); reads++;
+                        if ('{phase}' === 'element-throw') throw marker;
+                        return {property_keys} ? 'later' : {{rank:43}};
+                    }}}};}}
+                "#
+                );
+                let program = compile(&source, "array-like-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let make = vm.intern_atom("makeList");
+                let make = vm.own_property(vm.realm.globals, make).unwrap();
+                let list = vm
+                    .call_value(&program, make, Value::UNDEFINED, &[])
+                    .unwrap();
+                let weak = vm.heap.weak_handle(list).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let kind = if property_keys {
+                    ArrayLikeElementKind::PropertyKey
+                } else {
+                    ArrayLikeElementKind::Any
+                };
+                let result = vm.create_list_from_array_like(&program, list, kind);
+                if phase == "accept" || (phase == "invalid" && !property_keys) {
+                    let values = result.unwrap();
+                    assert_eq!(values.len(), 2);
+                    if phase == "invalid" {
+                        assert!(values[0].is_undefined());
+                    } else if property_keys {
+                        assert!(matches!(
+                            vm.heap.get(values[0]),
+                            Some(super::Cell::Symbol(_))
+                        ));
+                    } else {
+                        let rank = vm.intern_atom("rank");
+                        assert_eq!(vm.own_property(values[0], rank), Some(Value::number(42.0)));
+                    }
+                    if property_keys {
+                        assert_eq!(vm.to_string(&program, values[1]).unwrap(), "later");
+                    } else {
+                        let rank = vm.intern_atom("rank");
+                        assert_eq!(vm.own_property(values[1], rank), Some(Value::number(43.0)));
+                    }
+                } else if phase == "reserve" || phase == "invalid" {
+                    assert!(
+                        vm.format_error(&program, &result.unwrap_err())
+                            .contains("TypeError")
+                    );
+                } else {
+                    let marker = vm.intern_atom("marker");
+                    assert_eq!(
+                        result.unwrap_err().thrown_value(),
+                        vm.own_property(vm.realm.globals, marker)
+                    );
+                }
+                let reads = vm.intern_atom("reads");
+                let expected = if phase == "invalid" && property_keys {
+                    1.0
+                } else if matches!(phase, "accept" | "invalid" | "element-throw") {
+                    2.0
+                } else {
+                    0.0
+                };
+                assert_eq!(
+                    vm.own_property(vm.realm.globals, reads),
+                    Some(Value::number(expected))
+                );
+                assert_eq!(
+                    vm.heap.root_count_for_test(),
+                    roots,
+                    "{phase}/{property_keys}"
+                );
+                assert_eq!(vm.active_call_roots.len(), calls, "{phase}/{property_keys}");
+                vm.collect_now(&program);
+                assert!(
+                    vm.heap.weak_value(weak).is_none(),
+                    "{phase}/{property_keys}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn proxy_own_key_roots_release_after_invariant_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "accept",
+            "lookup-throw",
+            "trap-throw",
+            "result-throw",
+            "extensible-throw",
+            "target-keys-throw",
+            "descriptor-throw",
+            "omit",
+            "duplicate",
+            "invalid-type",
+            "extra",
+            "revoked",
+            "fallback",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var marker = {{kind:'{phase}'}};
+                function makeProxy() {{
+                    var target = {{first:42, later:43}};
+                    Object.defineProperty(target,'first',{{configurable:false}});
+                    Object.preventExtensions(target);
+                    target = new Proxy(target, {{isExtensible(object) {{
+                        $262.gc(); if ('{phase}' === 'extensible-throw') throw marker;
+                        return Reflect.isExtensible(object);
+                    }}, ownKeys(object) {{
+                        $262.gc(); if ('{phase}' === 'target-keys-throw') throw marker;
+                        return Reflect.ownKeys(object);
+                    }}, getOwnPropertyDescriptor(object,key) {{
+                        $262.gc(); if ('{phase}' === 'descriptor-throw' && key === 'later') throw marker;
+                        return Reflect.getOwnPropertyDescriptor(object,key);
+                    }}}});
+                    var handler = {{get ownKeys() {{
+                        $262.gc(); if ('{phase}' === 'lookup-throw') throw marker;
+                        if ('{phase}' === 'fallback') return null;
+                        return function() {{
+                            $262.gc(); if ('{phase}' === 'trap-throw') throw marker;
+                            if ('{phase}' === 'omit') return ['later'];
+                            if ('{phase}' === 'duplicate') return ['first','first'];
+                            if ('{phase}' === 'extra') return ['first','later','extra'];
+                            if ('{phase}' === 'invalid-type') return [undefined];
+                            return {{length:2, get 0() {{return 'first';}}, get 1() {{
+                                $262.gc(); if ('{phase}' === 'result-throw') throw marker; return 'later';
+                            }}}};
+                        }};
+                    }}}};
+                    if ('{phase}' === 'revoked') {{var revoked=Proxy.revocable(target,handler);revoked.revoke();return revoked.proxy;}}
+                    return new Proxy(target,handler);
+                }}
+            "#
+            );
+            let program = compile(&source, "proxy-own-key-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let make = vm.intern_atom("makeProxy");
+            let make = vm.own_property(vm.realm.globals, make).unwrap();
+            let proxy = vm
+                .call_value(&program, make, Value::UNDEFINED, &[])
+                .unwrap();
+            let weak = vm.heap.weak_handle(proxy).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.proxy_own_keys(&program, proxy);
+            match phase {
+                "accept" => {
+                    let keys = result.unwrap().unwrap();
+                    assert_eq!(
+                        keys.iter()
+                            .map(|key| vm.to_string(&program, *key).unwrap())
+                            .collect::<Vec<_>>(),
+                        ["first", "later"]
+                    );
+                }
+                "fallback" => assert!(result.unwrap().is_none()),
+                "omit" | "duplicate" | "extra" | "invalid-type" | "revoked" => assert!(
+                    vm.format_error(&program, &result.unwrap_err())
+                        .contains("TypeError")
+                ),
+                _ => {
+                    let marker = vm.intern_atom("marker");
+                    assert_eq!(
+                        result.unwrap_err().thrown_value(),
+                        vm.own_property(vm.realm.globals, marker)
+                    );
+                }
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak).is_none(), "{phase}");
+        }
+    }
+}
+
+#[test]
 fn own_enumeration_roots_release_after_callback_completion() {
     use super::object_keys::EnumerableOwnPropertyKind;
     for compile in [
