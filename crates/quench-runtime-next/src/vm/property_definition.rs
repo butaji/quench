@@ -168,7 +168,7 @@ impl<H: Host> Vm<H> {
                     .object_data(object)
                     .is_some_and(Object::is_module_namespace)
                 {
-                    let Some(current) = self.own_property(object, atom) else {
+                    let Some(current) = self.module_namespace_value(p, object, atom)? else {
                         return Ok(false);
                     };
                     let record = descriptor.resolve(&self.heap);

@@ -1,3 +1,4 @@
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
@@ -445,6 +446,99 @@ impl<H: Host> Vm<H> {
         Ok(Self::integrity_bool(object.is_extensible()))
     }
 
+    fn set_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let object = self.heap.root(object);
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            let target = self.heap.root_value(object).unwrap();
+            self.object_prevent_extensions(p, &[target])?;
+            let target = self.heap.root_value(object).unwrap();
+            keys = self
+                .object_own_key_values(p, target)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for &key in &keys {
+                let is_data = if freeze {
+                    let target = self.heap.root_value(object).unwrap();
+                    let property = self.heap.root_value(key).unwrap();
+                    let current = self.object_get_own_property_descriptor(p, &[target, property])?;
+                    if current.is_undefined() {
+                        continue;
+                    }
+                    self.own_descriptor_record(current).has_data_fields()
+                } else {
+                    false
+                };
+                let record = PropertyDescriptorRecord {
+                    value: None,
+                    writable: is_data.then_some(false),
+                    enumerable: None,
+                    configurable: Some(false),
+                    getter: None,
+                    setter: None,
+                };
+                let target = self.heap.root_value(object).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                self.define_property_or_throw(p, target, property, record)?;
+            }
+            Ok(self.heap.root_value(object).unwrap())
+        })();
+        for root in keys {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object);
+        outcome
+    }
+
+    fn test_integrity_level(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        freeze: bool,
+    ) -> Result<Value, JsError> {
+        let object = self.heap.root(object);
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            let target = self.heap.root_value(object).unwrap();
+            let extensible = self.object_is_extensible(p, &[target])?;
+            if self.truthy(extensible) {
+                return Ok(Value::FALSE);
+            }
+            let target = self.heap.root_value(object).unwrap();
+            keys = self
+                .object_own_key_values(p, target)?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for &key in &keys {
+                let target = self.heap.root_value(object).unwrap();
+                let property = self.heap.root_value(key).unwrap();
+                let current = self.object_get_own_property_descriptor(p, &[target, property])?;
+                if current.is_undefined() {
+                    continue;
+                }
+                let record = self.own_descriptor_record(current);
+                if record.configurable == Some(true)
+                    || (freeze && record.has_data_fields() && record.writable == Some(true))
+                {
+                    return Ok(Value::FALSE);
+                }
+            }
+            Ok(Value::TRUE)
+        })();
+        for root in keys {
+            self.heap.release_root(root);
+        }
+        self.heap.release_root(object);
+        outcome
+    }
+
     pub(super) fn object_set_integrity(
         &mut self,
         p: &ResidualProgram,
@@ -471,54 +565,12 @@ impl<H: Host> Vm<H> {
                 ));
             }
         }
-        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
-            self.object_prevent_extensions(p, args)?;
-            let configurable_atom = self.intern_atom("configurable");
-            let writable_atom = self.intern_atom("writable");
-            for key in self.object_own_key_values(p, source)? {
-                let current = self.object_get_own_property_descriptor(p, &[source, key])?;
-                if current.is_undefined() {
-                    continue;
-                }
-                let value_atom = self.intern_atom("value");
-                let is_data = self.own_property(current, value_atom).is_some()
-                    || self.own_property(current, writable_atom).is_some();
-                let descriptor = self.object();
-                self.set_property(descriptor, configurable_atom, Value::FALSE)?;
-                if freeze && is_data {
-                    self.set_property(descriptor, writable_atom, Value::FALSE)?;
-                }
-                self.object_define_property(p, &[source, key, descriptor])?;
-            }
-            if freeze {
-                let target = self.proxy_target(source);
-                if let Some(object) = self.object_data_mut(target) {
-                    object.set_frozen(true);
-                }
-            }
-            return Ok(source);
-        }
-        let target = self.proxy_target(source);
-        if self
-            .object_data(target)
-            .is_some_and(Object::is_module_namespace)
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. }))
+            || self.object_data(source).is_some_and(Object::is_module_namespace)
         {
-            self.object_prevent_extensions(p, &[target])?;
-            let configurable_atom = self.intern_atom("configurable");
-            let writable_atom = self.intern_atom("writable");
-            for key in self.object_own_key_values(p, target)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-                if descriptor.is_undefined() {
-                    continue;
-                }
-                self.set_property(descriptor, configurable_atom, Value::FALSE)?;
-                if freeze {
-                    self.set_property(descriptor, writable_atom, Value::FALSE)?;
-                }
-                self.object_define_property(p, &[target, key, descriptor])?;
-            }
-            return Ok(target);
+            return self.set_integrity_level(p, source, freeze);
         }
+        let target = source;
         if !freeze && matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
             self.object_prevent_extensions(p, &[target])?;
             if self.typed_array_length(target).is_some_and(|length| length > 0) {
@@ -586,25 +638,10 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
-            let extensible = self.object_is_extensible(p, &[source])?;
-            if self.truthy(extensible) {
-                return Ok(Value::FALSE);
-            }
-            for key in self.object_own_key_values(p, source)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
-                if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
-                    return Ok(Value::FALSE);
-                }
-                let value_atom = self.intern_atom("value");
-                let writable_atom = self.intern_atom("writable");
-                let is_data = self.own_property(descriptor, value_atom).is_some()
-                    || self.own_property(descriptor, writable_atom).is_some();
-                if freeze && is_data && self.descriptor_flag(descriptor, "writable") {
-                    return Ok(Value::FALSE);
-                }
-            }
-            return Ok(Value::TRUE);
+        if matches!(self.heap.get(source), Some(Cell::Proxy { .. }))
+            || self.object_data(source).is_some_and(Object::is_module_namespace)
+        {
+            return self.test_integrity_level(p, source, freeze);
         }
         let target = source;
         let Some(data) = self.object_data(target) else {
@@ -612,18 +649,6 @@ impl<H: Host> Vm<H> {
         };
         if data.is_extensible() {
             return Ok(Value::FALSE);
-        }
-        if data.is_module_namespace() {
-            for key in self.object_own_key_values(p, target)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-                if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
-                    return Ok(Value::FALSE);
-                }
-                if freeze && self.descriptor_flag(descriptor, "writable") {
-                    return Ok(Value::FALSE);
-                }
-            }
-            return Ok(Value::TRUE);
         }
         let named_ok = self
             .ordered_shape(data)
