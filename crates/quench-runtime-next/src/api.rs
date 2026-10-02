@@ -2086,6 +2086,40 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_reads_keep_fresh_results_through_descriptor_validation() {
+        assert_output_in_execution_modes(
+            r#"
+            var symbol=Symbol('entry'),events=[];
+            var target=new Proxy({}, {getOwnPropertyDescriptor(object,key) {events.push('descriptor');$262.gc();return undefined;}});
+            var source=new Proxy(target, {get get() {events.push('lookup');$262.gc();return function(object,key,receiver) {
+                events.push('trap');return {rank:42,key:key,receiver:receiver};
+            };}});
+            print(source.entry.rank);print(events.join(','));events=[];
+            var receiver={rank:43};var result=Reflect.get(source,symbol,receiver);
+            print(result.rank);print(result.key===symbol);print(result.receiver===receiver);print(events.join(','));
+            var revocable=Proxy.revocable({get entry() {$262.gc();return this.rank;}}, {get get() {revocable.revoke();$262.gc();return null;}});
+            print(Reflect.get(revocable.proxy,'entry',{rank:44}));
+            try {revocable.proxy.entry;}catch(error) {print(error instanceof TypeError);}
+            revocable=Proxy.revocable({[symbol]:45},{get get() {revocable.revoke();$262.gc();return undefined;}});
+            print(revocable.proxy[symbol]);
+            try {revocable.proxy[symbol];}catch(error) {print(error instanceof TypeError);}
+            "#,
+            &[
+                "42",
+                "lookup,trap,descriptor",
+                "42",
+                "true",
+                "true",
+                "lookup,trap,descriptor",
+                "44",
+                "true",
+                "45",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_proxy_prototype_results_survive_validation_and_revocation() {
         assert_output_in_execution_modes(
             r#"
