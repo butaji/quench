@@ -2120,6 +2120,56 @@ mod tests {
     }
 
     #[test]
+    fn regression_string_raw_preserves_utf16_and_conversion_order() {
+        assert_output_in_execution_modes(
+            r#"
+            function units(text){var result=[];for(var i=0;i<text.length;i++)result.push(text.charCodeAt(i));return result.join(',');}
+            var log=[];function text(name,value){return {[Symbol.toPrimitive](hint){$262.gc();log.push(name+':'+hint);return value;}};}
+            var template={get raw(){$262.gc();log.push('raw');return {get length(){$262.gc();log.push('length');return {[Symbol.toPrimitive](hint){$262.gc();log.push('length:'+hint);return 3.9;}};},get 0(){$262.gc();log.push('0');return text('0','\ud800');},get 1(){$262.gc();log.push('1');return text('1','a');},get 2(){$262.gc();log.push('2');return text('2','\udc00');}};}};
+            print(units(String.raw(template,text('sub0','\ud801'),text('sub1','\udc01'))));print(log.join(','));
+            var calls=0,extra={[Symbol.toPrimitive](){calls++;throw 'unused';}};
+            print(String.raw({raw:{length:1,0:'a'}},extra));print(calls);
+            print(String.raw({raw:{length:-1,get 0(){throw 'segment';}}},extra));print(calls);
+            print(String.raw({raw:['a','b','c']}));print(String.raw({raw:['a','b']},undefined));
+            print(String.raw({raw:'abc'},text('boxed0','X'),text('boxed1','Y')));
+            for(var length of [1n,Symbol()]){try{String.raw({raw:{length:length,get 0(){throw 'segment';}}},extra);}catch(error){print(error instanceof TypeError);}}
+        "#,
+            &[
+                "55296,55297,97,56321,56320",
+                "raw,length,length:number,0,0:string,sub0:string,1,1:string,sub1:string,2,2:string",
+                "a",
+                "0",
+                "",
+                "0",
+                "abc",
+                "aundefinedb",
+                "aXbYc",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_shared_string_coercion_preserves_utf16_object_results() {
+        assert_output_in_execution_modes(
+            r#"
+            function units(text){var result=[];for(var i=0;i<text.length;i++)result.push(text.charCodeAt(i));return result.join(',');}
+            var text={[Symbol.toPrimitive](hint){$262.gc();if(hint!=='string')throw 'hint';return '\ud800';}};
+            print(units(''.concat(text)));print(('\ud800a').indexOf(text));
+            print(units('x'.anchor(text)));
+            var json={[Symbol.toPrimitive](hint){$262.gc();return '"\ud800"';}};print(units(JSON.parse(json)));
+        "#,
+            &[
+                "55296",
+                "0",
+                "60,97,32,110,97,109,101,61,34,55296,34,62,120,60,47,97,62",
+                "55296",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_native_string_receiver_conversion_preserves_utf16_and_order() {
         assert_output_in_execution_modes(
             r#"
