@@ -43,61 +43,123 @@ impl<H: Host> Vm<H> {
         self.get_property(p, handler, atom)
     }
 
+    fn proxy_key_value(
+        &mut self,
+        p: &ResidualProgram,
+        property: PropertyKey,
+    ) -> Result<Value, JsError> {
+        match property {
+            PropertyKey::String(atom) if !self.is_private_name(atom) => {
+                Ok(self.heap.alloc(Cell::String(self.atom_value(atom))))
+            }
+            PropertyKey::Symbol(key) => Ok(key),
+            PropertyKey::String(_) | PropertyKey::Private(_) => {
+                Err(self.type_error(p, "private member is not present on this object".into()))
+            }
+        }
+    }
+
     pub(super) fn proxy_get(
         &mut self,
         p: &ResidualProgram,
         target: Value,
         handler: Value,
         receiver: Value,
-        atom: Atom,
+        property: PropertyKey,
     ) -> Result<Value, JsError> {
+        let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
+            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
-        let trap = self.proxy_trap(p, handler, "get")?;
-        if self.is_function(trap) {
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-            let result = self.call_value(p, trap, handler, &[target, key, receiver])?;
+        let target = self.heap.root(target);
+        let handler = self.heap.root(handler);
+        let receiver = self.heap.root(receiver);
+        let key = self.heap.root(key);
+        let mut result_root = None;
+        let outcome = (|| {
+            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "get")?;
+            if trap.is_null() || trap.is_undefined() {
+                let target = self.heap.root_value(target).unwrap();
+                let receiver = self.heap.root_value(receiver).unwrap();
+                return match property {
+                    PropertyKey::String(atom) => {
+                        self.get_property_with_receiver(p, target, atom, receiver)
+                    }
+                    PropertyKey::Symbol(_) => self.get_symbol_property_with_receiver(
+                        p,
+                        target,
+                        self.heap.root_value(key).unwrap(),
+                        receiver,
+                    ),
+                    PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Get"),
+                };
+            }
+            if !self.is_function(trap) {
+                return Err(self.type_error(p, "proxy get trap is not callable".into()));
+            }
+            let result = self.call_value(
+                p,
+                trap,
+                self.heap.root_value(handler).unwrap(),
+                &[
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                    self.heap.root_value(receiver).unwrap(),
+                ],
+            )?;
+            let result = self.heap.root(result);
+            result_root = Some(result);
             self.validate_proxy_get(p, target, key, result)?;
-            return Ok(result);
+            Ok(self.heap.root_value(result).unwrap())
+        })();
+        for root in [
+            Some(target),
+            Some(handler),
+            Some(receiver),
+            Some(key),
+            result_root,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.heap.release_root(root);
         }
-        if trap.is_null() || trap.is_undefined() {
-            return self.get_property_with_receiver(p, target, atom, receiver);
-        }
-        Err(self.type_error(p, "proxy get trap is not callable".into()))
+        outcome
     }
 
     fn validate_proxy_get(
         &mut self,
         p: &ResidualProgram,
-        target: Value,
-        key: Value,
-        result: Value,
+        target: RootId,
+        key: RootId,
+        result: RootId,
     ) -> Result<(), JsError> {
-        let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-        if descriptor.is_undefined() || self.descriptor_flag(descriptor, "configurable") {
+        let descriptor = self.object_get_own_property_descriptor(
+            p,
+            &[
+                self.heap.root_value(target).unwrap(),
+                self.heap.root_value(key).unwrap(),
+            ],
+        )?;
+        if descriptor.is_undefined() {
             return Ok(());
         }
-        let value = self.intern_atom("value");
-        let writable = self.intern_atom("writable");
-        let getter = self.intern_atom("get");
-        let is_data = self.own_property(descriptor, value).is_some()
-            || self.own_property(descriptor, writable).is_some();
-        if is_data
-            && !self.descriptor_flag(descriptor, "writable")
-            && self
-                .own_property(descriptor, value)
-                .is_some_and(|value| !self.same_value(value, result))
+        let descriptor = self.own_descriptor_record(descriptor);
+        if descriptor.configurable == Some(true) {
+            return Ok(());
+        }
+        let result = self.heap.root_value(result).unwrap();
+        if descriptor.has_data_fields()
+            && descriptor.writable == Some(false)
+            && !self.same_value(descriptor.value.unwrap_or(Value::UNDEFINED), result)
         {
             return Err(self.type_error(
                 p,
                 "proxy get trap returned a different value for a frozen property".into(),
             ));
         }
-        if !is_data
-            && self
-                .own_property(descriptor, getter)
-                .is_none_or(Value::is_undefined)
+        if descriptor.has_accessor_fields()
+            && descriptor.getter.is_none_or(Value::is_undefined)
             && !result.is_undefined()
         {
             return Err(self.type_error(
@@ -117,15 +179,7 @@ impl<H: Host> Vm<H> {
         property: PropertyKey,
         value: Value,
     ) -> Result<bool, JsError> {
-        let key = match property {
-            PropertyKey::String(atom) if !self.is_private_name(atom) => {
-                self.heap.alloc(Cell::String(self.atom_value(atom)))
-            }
-            PropertyKey::Symbol(key) => key,
-            PropertyKey::String(_) | PropertyKey::Private(_) => {
-                return Err(self.type_error(p, "private member is not present on this object".into()));
-            }
-        };
+        let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
@@ -215,29 +269,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn proxy_get_symbol(
-        &mut self,
-        p: &ResidualProgram,
-        target: Value,
-        handler: Value,
-        receiver: Value,
-        key: Value,
-    ) -> Result<Value, JsError> {
-        if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
-        }
-        let trap = self.proxy_trap(p, handler, "get")?;
-        if self.is_function(trap) {
-            let result = self.call_value(p, trap, handler, &[target, key, receiver])?;
-            self.validate_proxy_get(p, target, key, result)?;
-            return Ok(result);
-        }
-        if trap.is_null() || trap.is_undefined() {
-            return self.get_symbol_property_with_receiver(p, target, key, receiver);
-        }
-        Err(self.type_error(p, "proxy get trap is not callable".into()))
-    }
-
     pub(super) fn get_symbol_property_with_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -251,7 +282,7 @@ impl<H: Host> Vm<H> {
                 target, handler, ..
             }) = self.heap.get(owner).cloned()
             {
-                return self.proxy_get_symbol(p, target, handler, receiver, key);
+                return self.proxy_get(p, target, handler, receiver, PropertyKey::symbol(key));
             }
             if let Some(value) = self.symbol_property(owner, key) {
                 let attributes = self
@@ -385,7 +416,7 @@ impl<H: Host> Vm<H> {
                         self.type_error(p, "private member is not present on this object".into())
                     );
                 }
-                return self.proxy_get(p, target, handler, receiver, atom);
+                return self.proxy_get(p, target, handler, receiver, PropertyKey::string(atom));
             }
             if let Some(attributes) = self.property_attributes(object, PropertyKey::string(atom))
                 && attributes.accessor
