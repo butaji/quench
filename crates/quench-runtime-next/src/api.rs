@@ -1006,6 +1006,161 @@ mod tests {
     }
 
     #[test]
+    fn regression_promise_keyed_combinators_resolve_each_property_before_reading_the_next() {
+        assert_output_in_execution_modes(
+            r#"
+            function verify(name) {
+                var events = [];
+                var source = {get first() {events.push('get:first'); return 42;},
+                    get later() {events.push('get:later'); return 43;}};
+                class Constructor extends Promise {static resolve(value) {
+                    events.push('resolve'); delete source.later; $262.gc();
+                    return {then(resolve) {events.push('then'); resolve(value);}};
+                }}
+                Promise[name].call(Constructor, source).then(function(result) {
+                    print(events.join(',')); print(Object.keys(result).join(','));
+                    print(name === 'allKeyed' ? result.first : result.first.value);
+                });
+            }
+            Object.defineProperty(Array.prototype, Symbol.iterator, {get() {throw 'synthetic iterator';}, configurable:true});
+            verify('allKeyed'); verify('allSettledKeyed');
+            "#,
+            &[
+                "get:first,resolve,then",
+                "first",
+                "42",
+                "get:first,resolve,then",
+                "first",
+                "42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_promise_combinators_keep_original_error_through_iterator_close() {
+        assert_output_in_execution_modes(
+            r#"
+            class Constructor extends Promise {static resolve() {throw {rank:42};}}
+            for (var name of ['all', 'allSettled', 'any', 'race']) {
+                var iterable = {[Symbol.iterator]() {return {
+                    next() {return {done:false, value:1};},
+                    return() {$262.gc(); throw {rank:99};}
+                };}};
+                (function(name) {Promise[name].call(Constructor, iterable).catch(function(error) {print(name + ':' + error.rank);});})(name);
+            }
+            "#,
+            &["all:42", "allSettled:42", "any:42", "race:42"],
+        );
+    }
+
+    #[test]
+    fn regression_promise_keyed_combinators_root_earlier_values_during_later_getters() {
+        assert_output_in_execution_modes(
+            r#"
+            var symbol = Symbol('entry');
+            for (var name of ['allKeyed', 'allSettledKeyed']) {
+                var source = {
+                    get first() {return {rank:42};},
+                    get [symbol]() {$262.gc(); return {rank:43};},
+                    get last() {$262.gc(); return {rank:44};}
+                };
+                (function(name) {Promise[name](source).then(function(result) {
+                    print(name === 'allKeyed' ? result.first.rank : result.first.value.rank);
+                    print(name === 'allKeyed' ? result[symbol].rank : result[symbol].value.rank);
+                    print(name === 'allKeyed' ? result.last.rank : result.last.value.rank);
+                });})(name);
+            }
+            "#,
+            &["42", "43", "44", "42", "43", "44"],
+        );
+    }
+
+    #[test]
+    fn regression_promise_combinators_cache_and_root_iterator_next() {
+        assert_output_in_execution_modes(
+            r#"
+            function source() {
+                return {[Symbol.iterator]() {
+                    var reads = 0, complete = false;
+                    return {get next() {
+                        print('next:' + ++reads);
+                        return function() {
+                            $262.gc();
+                            Object.defineProperty(this, 'next', {value:function() {throw 'replacement';}});
+                            if (complete) return {done:true};
+                            complete = true;
+                            return {done:false, value:42};
+                        };
+                    }};
+                }};
+            }
+            for (var name of ['all', 'allSettled', 'any', 'race']) {
+                (function(name) {Promise[name](source()).then(function(result) {
+                    print(name + ':' + JSON.stringify(result));
+                }, function(error) {print('rejected:' + error);});})(name);
+            }
+            "#,
+            &[
+                "next:1",
+                "next:1",
+                "next:1",
+                "next:1",
+                "all:[42]",
+                "allSettled:[{\"status\":\"fulfilled\",\"value\":42}]",
+                "any:42",
+                "race:42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_promise_combinators_root_fresh_resolve_methods() {
+        assert_output_in_execution_modes(
+            r#"
+            class Constructor extends Promise {
+                static get resolve() {return function(value) {print(this === Constructor); return Promise.resolve(value);};}
+            }
+            function iterable() {
+                return {get [Symbol.iterator]() {$262.gc(); return function() {
+                    var complete = false;
+                    return {next() {$262.gc(); if (complete) return {done:true}; complete = true; return {done:false, value:42};}};
+                };}};
+            }
+            for (var name of ['all', 'allSettled', 'any', 'race']) {
+                (function(name) {Promise[name].call(Constructor, iterable()).then(function(value) {
+                    print(name + ':' + JSON.stringify(value));
+                }, function(error) {print(name + ':rejected:' + error.name);});})(name);
+            }
+            "#,
+            &[
+                "true",
+                "true",
+                "true",
+                "true",
+                "all:[42]",
+                "allSettled:[{\"status\":\"fulfilled\",\"value\":42}]",
+                "any:42",
+                "race:42",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_promise_combinators_root_custom_capabilities_before_resolve_lookup() {
+        assert_output_in_execution_modes(
+            r#"
+            function Constructor(executor) {
+                executor(function(value) {$262.gc(); print(value.length);}, function(error) {print(error.name);});
+                return {rank:42};
+            }
+            Object.defineProperty(Constructor, 'resolve', {get() {$262.gc(); return function(value) {return value;};}});
+            print(Promise.all.call(Constructor, []).rank);
+            "#,
+            &["0", "42"],
+        );
+    }
+
+    #[test]
     fn regression_promise_then_observes_state_after_species_and_capability_effects() {
         assert_output_in_execution_modes(
             r#"
