@@ -13,6 +13,7 @@ const REGEXP_CARRIAGE_RETURN: u16 = b'\r' as u16;
 const REGEXP_LINE_SEPARATOR: u16 = 0x2028;
 const REGEXP_PARAGRAPH_SEPARATOR: u16 = 0x2029;
 const REGEXP_LEGACY_CAPTURE_COUNT: usize = 9;
+const REPLACEMENT_CAPTURE_RADIX: usize = 10;
 const REGEXP_SEARCH_NOT_FOUND_INDEX: f64 = -1.0;
 const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
     (&["input", "$_"], true),
@@ -549,7 +550,7 @@ impl<H: Host> Vm<H> {
                         self.call_value(p, replacement, Value::UNDEFINED, &callback_args)?;
                     self.regexp_input_string(p, value)?
                 } else {
-                    self.regexp_expand_replace_template(
+                    self.replacement_substitution(
                         p,
                         replacement_string
                             .as_ref()
@@ -579,7 +580,7 @@ impl<H: Host> Vm<H> {
         output_result
     }
 
-    fn regexp_expand_replace_template(
+    pub(super) fn replacement_substitution(
         &mut self,
         p: &ResidualProgram,
         template: &JsString,
@@ -621,11 +622,11 @@ impl<H: Host> Vm<H> {
                     let second = units
                         .get(cursor + 2)
                         .filter(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(unit))
-                        .map(|unit| first * 10 + usize::from(*unit - u16::from(b'0')));
+                        .map(|unit| {
+                            first * REPLACEMENT_CAPTURE_RADIX + usize::from(*unit - u16::from(b'0'))
+                        });
                     let selected = match (first, second) {
-                        (0, Some(index)) if index > 0 && index <= captures.len() => {
-                            Some((index, 2))
-                        }
+                        (0, Some(index)) if index > 0 && index <= captures.len() => Some((index, 2)),
                         (0, _) => None,
                         (_, Some(index)) if index <= captures.len() => Some((index, 2)),
                         (_, _) if first <= captures.len() => Some((first, 1)),
