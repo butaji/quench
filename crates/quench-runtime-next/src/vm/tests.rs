@@ -2794,3 +2794,89 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
         assert_eq!(vm.heap.root_count_for_test(), roots);
     }
 }
+
+#[test]
+fn aggregate_native_roots_restore_after_reject_callbacks_throw() {
+    use super::promise::AggregateMode;
+    let cases = [
+        (
+            AggregateMode::All,
+            "get resolve() {$262.gc(); throw 'resolve';}",
+            "[]",
+        ),
+        (
+            AggregateMode::All,
+            "get resolve() {return value => value;}",
+            "({get [Symbol.iterator]() {$262.gc(); throw 'iterator';}})",
+        ),
+        (
+            AggregateMode::All,
+            "get resolve() {return value => value;}",
+            "({[Symbol.iterator]() {return {next() {$262.gc(); throw 'next';}};}})",
+        ),
+        (
+            AggregateMode::All,
+            "get resolve() {return value => value;}",
+            "({[Symbol.iterator]() {return {next() {return {get done() {$262.gc(); throw 'done';}};}};}})",
+        ),
+        (
+            AggregateMode::All,
+            "get resolve() {return value => value;}",
+            "({[Symbol.iterator]() {return {next() {return {done:false, get value() {$262.gc(); throw 'value';}};}};}})",
+        ),
+        (
+            AggregateMode::All,
+            "get resolve() {return function() {$262.gc(); throw {rank:42};};}",
+            "({[Symbol.iterator]() {return {next() {return {done:false,value:1};}, return() {$262.gc(); throw 'close';}};}})",
+        ),
+        (
+            AggregateMode::AllSettled,
+            "get resolve() {return function() {return {get then() {$262.gc(); throw {rank:42};}};};}",
+            "[1]",
+        ),
+        (
+            AggregateMode::Any,
+            "get resolve() {return function() {return {then() {$262.gc(); throw {rank:42};}};};}",
+            "[1]",
+        ),
+        (
+            AggregateMode::AllKeyed,
+            "get resolve() {return value => value;}",
+            "new Proxy({}, {ownKeys() {return ['entry'];}, getOwnPropertyDescriptor() {$262.gc(); throw 'descriptor';}})",
+        ),
+        (
+            AggregateMode::AllSettledKeyed,
+            "get resolve() {return value => value;}",
+            "({get first() {return {rank:42};}, get last() {$262.gc(); throw 'read';}})",
+        ),
+    ];
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (mode, resolve, input) in cases {
+            let mut vm = Vm::new(Test262Host);
+            let setup = format!(
+                "function Constructor(executor) {{executor(function() {{}}, function() {{$262.gc(); throw 'reject';}}); return {{}};}} Object.defineProperty(Constructor, 'resolve', Object.getOwnPropertyDescriptor({{{resolve}}}, 'resolve')); function create() {{return {input};}}"
+            );
+            let program = compile(&setup, "aggregate-root-errors.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("Constructor");
+            let constructor = vm.own_property(vm.realm.globals, atom).unwrap();
+            let atom = vm.intern_atom("create");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let input = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let incoming = vm.active_call_roots.len();
+            assert!(
+                vm.promise_aggregate(&program, constructor, &[input], mode)
+                    .is_err(),
+                "{setup}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{setup}");
+            assert_eq!(vm.active_call_roots.len(), incoming, "{setup}");
+        }
+    }
+}
