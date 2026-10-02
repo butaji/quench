@@ -2086,6 +2086,58 @@ mod tests {
     }
 
     #[test]
+    fn regression_own_enumeration_survives_collecting_callbacks() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var kind of ['values', 'entries']) {
+                var events = [];
+                var object = {get first() {events.push('first'); return {rank:42};},
+                    get second() {$262.gc(); events.push('second'); return 43;}};
+                var result = Object[kind](object);
+                print(kind === 'values' ? result[0].rank : result[0][1].rank);
+                print(kind === 'values' ? result[1] : result[1][1]);
+                print(events.join(','));
+            }
+            for (var kind of ['keys', 'values', 'entries']) {
+                var events = [], reads = 0;
+                var object = new Proxy({}, {
+                    ownKeys() {return ['first','later',Symbol('ignored')];},
+                    getOwnPropertyDescriptor(object,key) {
+                        events.push('descriptor:' + key); $262.gc();
+                        return {value:undefined, enumerable:true, configurable:true, writable:true};
+                    },
+                    get(object,key) {reads++; events.push('get:' + key); $262.gc(); return {rank:42};}
+                });
+                var result = Object[kind](object);
+                print(result.length);
+                print(kind === 'keys' ? result.join(',') : kind === 'values' ? result[0].rank + ',' + result[1].rank : result[0][0] + ':' + result[0][1].rank + ',' + result[1][0] + ':' + result[1][1].rank);
+                print(reads); print(events.join(','));
+            }
+            "#,
+            &[
+                "42",
+                "43",
+                "first,second",
+                "42",
+                "43",
+                "first,second",
+                "2",
+                "first,later",
+                "0",
+                "descriptor:first,descriptor:later",
+                "2",
+                "42,42",
+                "2",
+                "descriptor:first,get:first,descriptor:later,get:later",
+                "2",
+                "first:42,later:42",
+                "2",
+                "descriptor:first,get:first,descriptor:later,get:later",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_object_create_preserves_collected_descriptor_records() {
         assert_output_in_execution_modes(
             r#"
