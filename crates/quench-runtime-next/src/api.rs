@@ -2120,6 +2120,48 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_replace_observes_each_result_before_next_callback() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[],calls=0,second={0:'a',length:2,index:2,1:'old',groups:undefined};
+            var first={0:'a',length:2,index:0,get 1(){log.push('capture:first');return {[Symbol.toPrimitive](hint){$262.gc();log.push('convert:'+hint);return 'C';}};},groups:undefined};
+            var pattern={flags:'g',exec(){log.push('exec');return calls++===0?first:calls===2?second:null;}};
+            print(RegExp.prototype[Symbol.replace].call(pattern,'a-a',function(matched,capture,index,input){$262.gc();log.push('call:'+index+':'+capture);second[1]='new';return 'X';}));print(log.join(','));
+            for(var callable of [false,true]){
+                var calls=0,log=[],pattern={flags:'g',exec(){if(calls++===0)return {0:'aa',length:1,index:0};if(calls===2)return {0:'a',length:1,index:1,get groups(){log.push('groups');return {get x(){log.push('named');return 'X';}};}};return null;}};
+                print(RegExp.prototype[Symbol.replace].call(pattern,'aaa',callable?function(matched,index){log.push('call:'+index);return 'X';}:'$<x>'));print(log.join(','));
+            }
+            var log=[],pattern={flags:'',exec(){return {0:'a',length:2,index:0,1:{[Symbol.toPrimitive](hint){log.push('capture:'+hint);return 'C';}},groups:null};}};
+            print(RegExp.prototype[Symbol.replace].call(pattern,'a',new Proxy(function(){},{apply(target,receiver,args){$262.gc();print(receiver===undefined&&args[1]==='C'&&args[4]===null);return 'X';}})));print(log.join(','));
+            try{RegExp.prototype[Symbol.replace].call(pattern,'a','X');}catch(error){print(error instanceof TypeError);}
+            var pattern={flags:'gu',lastIndex:0,exec(){if(this.lastIndex>2)return null;return {0:'',length:1,index:this.lastIndex};}};
+            print(RegExp.prototype[Symbol.replace].call(pattern,'\ud83d\ude00','X'));
+            var key='\ud800',groups={};groups[key]='Y';var pattern={flags:'',exec(){return {0:'a',length:1,index:0,groups:groups};}};
+            print(RegExp.prototype[Symbol.replace].call(pattern,'a','$<'+key+'>'));
+            Object.defineProperty(Boolean.prototype,'x',{configurable:true,get:function(){'use strict';$262.gc();print(typeof this);return 'B';}});
+            var pattern={flags:'',exec(){return {0:'a',length:1,index:0,groups:true};}};
+            print(RegExp.prototype[Symbol.replace].call(pattern,'a','$<x>'));delete Boolean.prototype.x;
+        "#,
+            &[
+                "X-X",
+                "exec,exec,exec,capture:first,convert:string,call:0:C,call:2:new",
+                "$<x>a",
+                "groups,named",
+                "Xa",
+                "call:0,groups,call:1",
+                "true",
+                "X",
+                "capture:string",
+                "true",
+                "X😀X",
+                "Y",
+                "object",
+                "B",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_string_split_conversion_order_and_utf16() {
         assert_output_in_execution_modes(
             r#"
