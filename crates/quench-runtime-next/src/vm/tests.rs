@@ -3898,3 +3898,194 @@ fn proxy_introspection_roots_release_after_nested_validation() {
         }
     }
 }
+
+#[test]
+fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for symbol in [false, true] {
+            for phase in [
+                "success",
+                "getter",
+                "trap",
+                "descriptor",
+                "field",
+                "fallback",
+                "invalid-trap",
+                "revoked",
+                "frozen-same",
+                "frozen-different",
+                "no-getter-undefined",
+                "no-getter-value",
+                "result-symbol",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        var target=new Proxy({{}},{{getOwnPropertyDescriptor(object,key) {{$262.gc();
+                            if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
+                            if ('{phase}'==='field') return {{get value() {{$262.gc();throw {{kind:'field'}};}},writable:true,enumerable:true,configurable:true}};
+                            return Reflect.getOwnPropertyDescriptor(object,key);
+                        }}}});
+                        var handler={{get get() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                            if ('{phase}'==='invalid-trap') return 1;
+                            if ('{phase}'==='fallback') return null;
+                            return function(object,key,receiver) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                if ('{phase}'==='result-symbol') return Symbol('answer');
+                                if ('{phase}'==='frozen-same') return 42;
+                                if ('{phase}'==='frozen-different') return 43;
+                                if ('{phase}'==='no-getter-undefined') return undefined;
+                                if ('{phase}'==='no-getter-value') return 42;
+                                return {{rank:47,key:key,receiver:receiver}};
+                            }};
+                        }}}};
+                        return [target,handler,{{rank:46}}];
+                    }}
+                "#
+                );
+                let program = compile(&source, "proxy-read-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let operands = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let args = match vm.heap.get(operands) {
+                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    _ => panic!("operands"),
+                };
+                let handles = args
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let atom = vm.intern_atom("entry");
+                let property = if symbol {
+                    super::property_key::PropertyKey::symbol(
+                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into()))),
+                    )
+                } else {
+                    super::property_key::PropertyKey::string(atom)
+                };
+                let key = if symbol {
+                    property.symbol_value().unwrap()
+                } else {
+                    vm.heap.alloc(super::Cell::String("entry".into()))
+                };
+                let key_handle = vm.heap.weak_handle(key).unwrap();
+                if phase.starts_with("frozen-")
+                    || phase.starts_with("no-getter-")
+                    || phase == "fallback"
+                {
+                    let record = if phase.starts_with("no-getter-") {
+                        super::object_descriptors::PropertyDescriptorRecord {
+                            value: None,
+                            writable: None,
+                            getter: Some(Value::UNDEFINED),
+                            setter: Some(Value::UNDEFINED),
+                            enumerable: Some(true),
+                            configurable: Some(false),
+                        }
+                    } else {
+                        super::object_descriptors::PropertyDescriptorRecord {
+                            writable: Some(false),
+                            configurable: Some(false),
+                            ..super::object_descriptors::PropertyDescriptorRecord::data(
+                                Value::number(42.0),
+                            )
+                        }
+                    };
+                    vm.define_property_or_throw(&program, args[0], key, record)
+                        .unwrap();
+                }
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let handler = if phase == "revoked" {
+                    Value::NULL
+                } else {
+                    args[1]
+                };
+                let result = vm.proxy_get(&program, args[0], handler, args[2], property);
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(
+                        phase,
+                        "success"
+                            | "fallback"
+                            | "frozen-same"
+                            | "no-getter-undefined"
+                            | "result-symbol"
+                    ),
+                    "symbol={symbol} {phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(result) if phase == "success" => {
+                        let rank = vm.intern_atom("rank");
+                        let receiver = vm.intern_atom("receiver");
+                        let key_atom = vm.intern_atom("key");
+                        assert_eq!(vm.own_property(result, rank), Some(Value::number(47.0)));
+                        assert_eq!(vm.own_property(result, receiver), Some(args[2]));
+                        assert_eq!(vm.own_property(args[2], rank), Some(Value::number(46.0)));
+                        let returned_key = vm.own_property(result, key_atom).unwrap();
+                        if symbol {
+                            assert_eq!(returned_key, key);
+                            assert!(
+                                matches!(vm.heap.get(returned_key), Some(super::Cell::Symbol(Some(name))) if name == "entry")
+                            );
+                        } else {
+                            assert_eq!(vm.to_string(&program, returned_key).unwrap(), "entry");
+                        }
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Ok(result) if phase == "result-symbol" => {
+                        assert!(
+                            matches!(vm.heap.get(result),Some(super::Cell::Symbol(Some(name))) if name=="answer")
+                        );
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Ok(result) => {
+                        assert_eq!(
+                            result,
+                            if phase == "no-getter-undefined" {
+                                Value::UNDEFINED
+                            } else {
+                                Value::number(42.0)
+                            }
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        if matches!(
+                            phase,
+                            "invalid-trap" | "revoked" | "frozen-different" | "no-getter-value"
+                        ) {
+                            assert!(vm.format_error(&program, &error).contains("TypeError"));
+                        } else {
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        }
+                        None
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
+                        "symbol={symbol} {phase}"
+                    );
+                }
+                assert!(vm.heap.weak_value(key_handle).is_none());
+                if let Some(handle) = result_handle {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
