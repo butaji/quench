@@ -931,6 +931,149 @@ mod tests {
     }
 
     #[test]
+    fn regression_definition_modes_execute_after_residual_round_trip() {
+        let source = r#"
+            var calls = 0, savedDefine = Object.defineProperty;
+            Object.defineProperty = function() {calls++; throw 'guest define';};
+            var instance, literal;
+            try {
+                class Encoded {
+                    #privateMethod() {return 41;}
+                    method() {return this.#privateMethod() + 1;}
+                    get value() {return this.stored;}
+                    set value(next) {this.stored = next;}
+                }
+                instance = new Encoded(); instance.value = 43;
+                literal = {get value() {return this.stored;}, set value(next) {this.stored = next;}};
+                literal.value = 44;
+            } finally {Object.defineProperty = savedDefine;}
+            print(calls); print(instance.method()); print(instance.value); print(literal.value);
+            var prototype = Object.getPrototypeOf(instance);
+            var method = Object.getOwnPropertyDescriptor(prototype,'method');
+            var accessor = Object.getOwnPropertyDescriptor(prototype,'value');
+            var own = Object.getOwnPropertyDescriptor(literal,'value');
+            print(method.writable); print(method.enumerable); print(method.configurable);
+            print(typeof accessor.get); print(typeof accessor.set); print(accessor.enumerable);
+            print(typeof own.get); print(typeof own.set); print(own.enumerable);
+        "#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "definition-modes.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-definition-modes-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path);
+            std::fs::remove_file(path).unwrap();
+            let decoded = decoded.unwrap();
+            let host = Capture::default();
+            let output = host.clone();
+            let mut runtime = Runtime::new(host);
+            runtime.execute(&decoded).unwrap();
+            assert_eq!(
+                output.0.borrow().as_slice(),
+                &[
+                    "0", "42", "43", "44", "true", "false", "true", "function", "function", "false",
+                    "function", "function", "true"
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn regression_callable_validation_uses_proxy_target_kind() {
+        assert_output_in_execution_modes(
+            r#"
+            var live = new Proxy(function() {return 42;}, {}), target = {};
+            Object.prototype.__defineGetter__.call(target,'live',live); print(target.live);
+            var revoked = Proxy.revocable(function() {}, {}); revoked.revoke();
+            Object.prototype.__defineGetter__.call(target,'revoked',revoked.proxy);
+            print(Object.getOwnPropertyDescriptor(target,'revoked').get === revoked.proxy);
+            try {target.revoked; print(false);} catch (error) {print(error instanceof TypeError);}
+            print([].map(revoked.proxy).length);
+            try {JSON.parse('1',revoked.proxy); print(false);} catch (error) {print(error instanceof TypeError);}
+            new Map([['entry',1]]).forEach(new Proxy(function(value) {$262.gc(); print(value);}, {}));
+            new Set([2]).forEach(new Proxy(function(value) {$262.gc(); print(value);}, {}));
+            print(new WeakMap().getOrInsertComputed({},new Proxy(function() {$262.gc(); return {rank:3};},{})).rank);
+            var nested = function() {};
+            for (var index = 0; index < 5000; index++) nested = new Proxy(nested, {});
+            $262.gc(); Object.prototype.__defineSetter__.call(target,'nested',nested);
+            print(Object.getOwnPropertyDescriptor(target,'nested').set === nested);
+            "#,
+            &["42", "true", "true", "0", "true", "1", "2", "3", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_legacy_accessor_records_preserve_order_and_roots() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads = 0;
+            for (var method of [Object.prototype.__defineGetter__, Object.prototype.__defineSetter__]) {
+                try {method.call({}, {toString() {reads++; return 'entry';}}, undefined); print(false);}
+                catch (error) {print(error instanceof TypeError);}
+                print(method.call(1, {toString() {$262.gc(); return 'entry';}}, function() {}) === undefined);
+            }
+            print(reads);
+            var getter = Object.prototype.__defineGetter__, setter = Object.prototype.__defineSetter__;
+            var target = {}, value, keys = [];
+            var proxy = new Proxy(target, {defineProperty(object,key,descriptor) {
+                keys.push(Object.keys(descriptor).join(',')); $262.gc();
+                Object.setPrototypeOf(descriptor,null); return Reflect.defineProperty(object,key,descriptor);
+            }});
+            Object.defineProperty(Object.prototype, 'value', {configurable:true, get() {$262.gc(); throw 'inherited value';}});
+            try {
+                getter.call(proxy,'entry',function() {return 42;});
+                setter.call(proxy,'entry',function(next) {value = next;});
+                print(proxy.entry); proxy.entry = 43; print(value);
+            } finally {delete Object.prototype.value;}
+            print(keys.join(';'));
+            "#,
+            &[
+                "true",
+                "true",
+                "true",
+                "true",
+                "0",
+                "42",
+                "43",
+                "get,enumerable,configurable;set,enumerable,configurable",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_internal_data_records_bypass_inherited_descriptor_fields() {
+        assert_output_in_execution_modes(
+            r#"
+            var constructorSetter = Object.getOwnPropertyDescriptor(Iterator.prototype,'constructor').set;
+            var tagSetter = Object.getOwnPropertyDescriptor(Iterator.prototype,Symbol.toStringTag).set;
+            var symbol = Symbol('field'), ordinary, derived, iterator = {}, binding;
+            Object.defineProperty(Object.prototype,'get',{configurable:true,get() {$262.gc(); throw 'inherited get';}});
+            try {
+                class Ordinary {[symbol] = {rank:42}; plain = 43;}
+                ordinary = new Ordinary();
+                class Base {constructor() {return new Proxy({}, {defineProperty(object,key,descriptor) {
+                    $262.gc(); object[key] = descriptor.value; return true;
+                }});}}
+                class Derived extends Base {entry = {rank:44};}
+                derived = new Derived();
+                constructorSetter.call(iterator,{rank:45}); tagSetter.call(iterator,'custom');
+                (0,eval)('var internalRecordBinding = 46;'); binding = internalRecordBinding;
+            } finally {delete Object.prototype.get; delete globalThis.internalRecordBinding;}
+            print(ordinary[symbol].rank); print(ordinary.plain); print(derived.entry.rank);
+            print(iterator.constructor.rank); print(iterator[Symbol.toStringTag]); print(binding);
+            var descriptor = Object.getOwnPropertyDescriptor(iterator,'constructor');
+            print(descriptor.writable); print(descriptor.enumerable); print(descriptor.configurable);
+            "#,
+            &[
+                "42", "43", "44", "45", "custom", "46", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_raw_json_brand_is_not_a_guest_property() {
         assert_output_in_execution_modes(
             r#"

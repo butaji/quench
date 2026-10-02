@@ -85,7 +85,11 @@ impl FunctionCompiler<'_, '_> {
                         item,
                         key,
                         0,
-                        if accessor == "get" { 1 } else { 2 },
+                        if accessor == "get" {
+                            crate::bytecode::FUNCTION_NAME_PREFIX_GETTER
+                        } else {
+                            crate::bytecode::FUNCTION_NAME_PREFIX_SETTER
+                        },
                     );
                 } else if let Some(name) = Self::static_key(&property.key) {
                     let name = self.owner.atom(&format!("{accessor} {name}"));
@@ -96,7 +100,11 @@ impl FunctionCompiler<'_, '_> {
                         item,
                         key,
                         0,
-                        if accessor == "get" { 1 } else { 2 },
+                        if accessor == "get" {
+                            crate::bytecode::FUNCTION_NAME_PREFIX_GETTER
+                        } else {
+                            crate::bytecode::FUNCTION_NAME_PREFIX_SETTER
+                        },
                     );
                 }
                 self.define_accessor(dst, key, item, accessor);
@@ -258,46 +266,12 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn define_accessor(&mut self, target: Register, key: Register, function: Register, kind: &str) {
-        let descriptor = self.reg();
-        self.emit(Op::MakeObject, descriptor, 0, 0, 0);
-        let field = self.owner.atom(kind);
-        let cache = self.owner.cache_site();
-        self.emit(Op::SetField, function, descriptor, cache, field);
-        for (field, value) in [
-            ("enumerable", Constant::Boolean(true)),
-            ("configurable", Constant::Boolean(true)),
-        ] {
-            let atom = self.owner.atom(field);
-            let value = self.literal(value);
-            let cache = self.owner.cache_site();
-            self.emit(Op::SetField, value, descriptor, cache, atom);
-        }
-        let object = self.load_name("Object");
-        let define = self.reg();
-        let define_atom = self.owner.atom("defineProperty");
-        let define_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            define,
-            FieldBase::register(object).0,
-            define_cache,
-            define_atom,
-        );
-        let base = self.next_reg;
-        let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
-        let key_arg = self.reg();
-        self.emit(Op::Move, key_arg, key, 0, 0);
-        let descriptor_arg = self.reg();
-        self.emit(Op::Move, descriptor_arg, descriptor, 0, 0);
-        let result = self.reg();
-        self.emit(
-            Op::Call,
-            result,
-            define,
-            object,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 3, false, false),
-        );
+        let mode = match kind {
+            "get" => crate::bytecode::PropertyDefinitionMode::EnumerableGetter,
+            "set" => crate::bytecode::PropertyDefinitionMode::EnumerableSetter,
+            _ => unreachable!("object accessor kind"),
+        };
+        self.emit(Op::DefinePropertyRecord, function, target, key, mode.word());
     }
 
     fn object_spread(&mut self, target: Register, source: &Expression<'_>) {

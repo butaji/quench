@@ -15,7 +15,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("array group receiver is not array".into())),
         };
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(callback), Some(Cell::Function { .. })) {
+        if !self.is_function(callback) {
             return Err(JsError("array group callback is not callable".into()));
         }
         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);

@@ -733,6 +733,18 @@ impl<H: Host> Vm<H> {
                         || i.op() == Op::SetFieldStrict,
                 )?;
             }
+            Op::DefinePropertyRecord => {
+                let mode = i
+                    .property_definition_mode()
+                    .ok_or_else(|| JsError::validation("invalid property definition mode".into()))?;
+                let target = self.read(f, i.register_b());
+                let key = self.read(f, i.register_c());
+                let descriptor = super::object_descriptors::PropertyDescriptorRecord::for_definition(
+                    mode,
+                    self.read(f, i.register_a()),
+                );
+                self.define_property_or_throw(p, target, key, descriptor)?;
+            }
             Op::DefineField => {
                 let object = self.read(f, i.register_b());
                 let value = self.read(f, i.register_a());

@@ -126,3 +126,59 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     std::fs::remove_file(path).unwrap();
     assert_eq!(result.unwrap_err(), "residual runtime ABI mismatch");
 }
+
+
+#[test]
+fn decoder_rejects_unknown_property_definition_modes() {
+    for wide in [false, true] {
+        let mut program = crate::Engine::specialize(
+            "class Check {method() {return 42;}}",
+            "invalid-definition-mode.js",
+        )
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "quench-invalid-definition-mode-{}-{wide}",
+            std::process::id()
+        ));
+        program.write_binary(&path).unwrap();
+        ResidualProgram::read_binary(&path).unwrap();
+        let function = program
+            .functions
+            .iter_mut()
+            .find(|f| f.code.iter().any(|i| i.op() == Op::DefinePropertyRecord))
+            .unwrap();
+        let instruction = function
+            .code
+            .iter_mut()
+            .find(|i| i.op() == Op::DefinePropertyRecord)
+            .unwrap();
+        let invalid = u32::try_from(PropertyDefinitionMode::ALL.len()).unwrap();
+        if wide {
+            let index = function.wide.len();
+            function.wide.push(WideInstruction::new(
+                Op::DefinePropertyRecord,
+                instruction.a(),
+                instruction.b(),
+                instruction.c(),
+                invalid,
+            ));
+            *instruction = Instr::wide(index).unwrap();
+        } else {
+            *instruction = Instr::new(
+                Op::DefinePropertyRecord,
+                instruction.a(),
+                instruction.b(),
+                instruction.c(),
+                invalid,
+            );
+        }
+        program.write_binary(&path).unwrap();
+        let result = ResidualProgram::read_binary(&path);
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .contains("DefinePropertyRecord has an out-of-domain operand")
+        );
+    }
+}
