@@ -114,24 +114,70 @@ impl<H: Host> Vm<H> {
         target: Value,
         handler: Value,
         receiver: Value,
-        atom: Atom,
+        property: PropertyKey,
         value: Value,
     ) -> Result<bool, JsError> {
-        if self.is_private_name(atom) {
-            return Err(self.type_error(p, "private member is not present on this object".into()));
-        }
+        let key = match property {
+            PropertyKey::String(atom) if !self.is_private_name(atom) => {
+                self.heap.alloc(Cell::String(self.atom_value(atom)))
+            }
+            PropertyKey::Symbol(key) => key,
+            PropertyKey::String(_) | PropertyKey::Private(_) => {
+                return Err(self.type_error(p, "private member is not present on this object".into()));
+            }
+        };
         if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
+            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
-        let trap = self.proxy_trap(p, handler, "set")?;
-
-        if self.is_function(trap) {
-            let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
-            let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
+        let target = self.heap.root(target);
+        let handler = self.heap.root(handler);
+        let receiver = self.heap.root(receiver);
+        let key = self.heap.root(key);
+        let value = self.heap.root(value);
+        let outcome = (|| {
+            let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "set")?;
+            if trap.is_null() || trap.is_undefined() {
+                let target = self.heap.root_value(target).unwrap();
+                let receiver = self.heap.root_value(receiver).unwrap();
+                let value = self.heap.root_value(value).unwrap();
+                return match property {
+                    PropertyKey::String(atom) => {
+                        self.set_property_with_receiver(p, target, atom, value, receiver)
+                    }
+                    PropertyKey::Symbol(_) => self.set_symbol_property_with_receiver(
+                        p,
+                        target,
+                        self.heap.root_value(key).unwrap(),
+                        value,
+                        receiver,
+                    ),
+                    PropertyKey::Private(_) => unreachable!("private keys cannot reach Proxy Set"),
+                };
+            }
+            if !self.is_function(trap) {
+                return Err(self.type_error(p, "proxy set trap is not callable".into()));
+            }
+            let result = self.call_value(
+                p,
+                trap,
+                self.heap.root_value(handler).unwrap(),
+                &[
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                    self.heap.root_value(value).unwrap(),
+                    self.heap.root_value(receiver).unwrap(),
+                ],
+            )?;
             if !self.truthy(result) {
                 return Ok(false);
             }
-            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+            let descriptor = self.object_get_own_property_descriptor(
+                p,
+                &[
+                    self.heap.root_value(target).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                ],
+            )?;
             if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
                 let value_atom = self.intern_atom("value");
                 let writable_atom = self.intern_atom("writable");
@@ -142,10 +188,13 @@ impl<H: Host> Vm<H> {
                     && !self.descriptor_flag(descriptor, "writable")
                     && self
                         .own_property(descriptor, value_atom)
-                        .is_some_and(|target_value| !self.same_value(value, target_value))
+                        .is_some_and(|target_value| {
+                            !self.same_value(self.heap.root_value(value).unwrap(), target_value)
+                        })
                 {
-                    return Err(self
-                        .type_error(p, "proxy set trap changed a frozen target property".into()));
+                    return Err(
+                        self.type_error(p, "proxy set trap changed a frozen target property".into())
+                    );
                 }
                 if !is_data
                     && self
@@ -158,12 +207,12 @@ impl<H: Host> Vm<H> {
                     ));
                 }
             }
-            return Ok(true);
+            Ok(true)
+        })();
+        for root in [target, handler, receiver, key, value] {
+            self.heap.release_root(root);
         }
-        if trap.is_null() || trap.is_undefined() {
-            return self.set_property_with_receiver(p, target, atom, value, receiver);
-        }
-        Err(self.type_error(p, "proxy set trap is not callable".into()))
+        outcome
     }
 
     pub(super) fn proxy_get_symbol(
@@ -226,29 +275,6 @@ impl<H: Host> Vm<H> {
                 return Ok(Value::UNDEFINED);
             }
         }
-    }
-
-    pub(super) fn proxy_set_symbol(
-        &mut self,
-        p: &ResidualProgram,
-        target: Value,
-        handler: Value,
-        receiver: Value,
-        key: Value,
-        value: Value,
-    ) -> Result<(), JsError> {
-        if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
-        }
-        let trap = self.proxy_trap(p, handler, "set")?;
-        if self.is_function(trap) {
-            let result = self.call_value(p, trap, handler, &[target, key, value, receiver])?;
-            if !self.truthy(result) {
-                return Err(JsError("proxy set trap returned false".into()));
-            }
-            return Ok(());
-        }
-        self.set_symbol_property(target, key, value)
     }
 
     pub(super) fn get_property(

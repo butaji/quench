@@ -1006,6 +1006,89 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_set_shares_string_and_symbol_semantics() {
+        assert_output_in_execution_modes(
+            r#"
+            function outcome(action) {
+                try {return String(action());} catch (error) {return error instanceof TypeError ? 'TypeError' : 'other error';}
+            }
+            for (var key of ['entry', Symbol('entry')]) {
+                var denied = new Proxy({}, {set() {return false;}});
+                print(outcome(function() {return Reflect.set(denied, key, 42);}));
+                print(outcome(function() {denied[key] = 42; return 'sloppy';}));
+                print(outcome(function() {'use strict'; denied[key] = 42;}));
+                print(outcome(function() {return Reflect.set(new Proxy({}, {set: 1}), key, 42);}));
+                for (var pair of [[42, 43], [NaN, NaN], [0, -0]]) {
+                    var target = {}; Object.defineProperty(target, key, {value:pair[0]});
+                    print(outcome(function() {return Reflect.set(new Proxy(target, {set() {return true;}}), key, pair[1]);}));
+                }
+                var accessor = {}; Object.defineProperty(accessor, key, {get() {return 99;}});
+                print(outcome(function() {return Reflect.set(new Proxy(accessor, {set() {return true;}}), key, 42);}));
+                var receiver = {rank:43}, events = [];
+                var target = {}; Object.defineProperty(target, key, {set(value) {
+                    $262.gc(); events.push(this === receiver); events.push(value.rank);
+                }});
+                print(Reflect.set(new Proxy(target, {set:null}), key, {rank:42}, receiver));
+                print(events.join(','));
+                var writes = 0, target = {};
+                var forwarded = new Proxy(target, {defineProperty(object, observed, descriptor) {
+                    $262.gc(); writes++; print(observed === key); print(Object.keys(descriptor).join(','));
+                    return Reflect.defineProperty(object, observed, descriptor);
+                }});
+                print(Reflect.set(forwarded, key, 44)); print(target[key]); print(writes);
+                print(Reflect.set(forwarded, key, 45)); print(target[key]); print(writes);
+                var revoked = Proxy.revocable({}, {}); revoked.revoke();
+                print(outcome(function() {return Reflect.set(revoked.proxy, key, 42);}));
+            }
+            "#,
+            &[
+                "false",
+                "sloppy",
+                "TypeError",
+                "TypeError",
+                "TypeError",
+                "true",
+                "TypeError",
+                "TypeError",
+                "true",
+                "true,42",
+                "true",
+                "value,writable,enumerable,configurable",
+                "true",
+                "44",
+                "1",
+                "true",
+                "value",
+                "true",
+                "45",
+                "2",
+                "TypeError",
+                "false",
+                "sloppy",
+                "TypeError",
+                "TypeError",
+                "TypeError",
+                "true",
+                "TypeError",
+                "TypeError",
+                "true",
+                "true,42",
+                "true",
+                "value,writable,enumerable,configurable",
+                "true",
+                "44",
+                "1",
+                "true",
+                "value",
+                "true",
+                "45",
+                "2",
+                "TypeError",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_static_property_reads_respect_exotic_index_storage() {
         assert_output_in_execution_modes(
             r#"
