@@ -2086,6 +2086,58 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_mutation_fallback_keeps_captured_targets_alive() {
+        assert_output_in_execution_modes(
+            r#"
+            var revocable=Proxy.revocable({}, {get setPrototypeOf() {revocable.revoke();$262.gc();return null;}});
+            print(Reflect.setPrototypeOf(revocable.proxy,{rank:42}));
+            revocable=Proxy.revocable({}, {get preventExtensions() {revocable.revoke();$262.gc();return undefined;}});
+            print(Reflect.preventExtensions(revocable.proxy));
+            try {Object.preventExtensions(revocable.proxy);}catch(error) {print(error instanceof TypeError);}
+            revocable=Proxy.revocable({},{});revocable.revoke();
+            var object={};print(Object.setPrototypeOf(object,revocable.proxy)===object);print(Object.getPrototypeOf(object)===revocable.proxy);
+            print(Object.setPrototypeOf(1,null));print(Object.preventExtensions(null));
+            "#,
+            &["true", "true", "true", "true", "true", "1", "null"],
+        );
+    }
+
+    #[test]
+    fn regression_object_and_reflect_share_boolean_mutation_semantics() {
+        assert_output_in_execution_modes(
+            r#"
+            var target={},prototype={rank:43},events=[];
+            var source=new Proxy(target,{setPrototypeOf(object,proto) {events.push('set');$262.gc();return false;},preventExtensions() {events.push('prevent');$262.gc();return false;}});
+            print(Reflect.setPrototypeOf(source,prototype));try {Object.setPrototypeOf(source,prototype);}catch(error) {print(error instanceof TypeError);}
+            print(Reflect.preventExtensions(source));try {Object.preventExtensions(source);}catch(error) {print(error instanceof TypeError);}
+            print(events.join(','));
+            Object.preventExtensions(target);print(Reflect.setPrototypeOf(target,Object.getPrototypeOf(target)));print(Reflect.setPrototypeOf(target,prototype));
+            try {Object.setPrototypeOf(target,prototype);}catch(error) {print(error instanceof TypeError);}
+            print(Object.setPrototypeOf(Object.prototype,null)===Object.prototype);print(Reflect.setPrototypeOf(Object.prototype,prototype));
+            var plain={},other=Object.create(plain);print(Reflect.setPrototypeOf(plain,other));
+            var reads=0;var exotic=new Proxy({}, {getPrototypeOf() {reads++;throw new Error('cycle walk');}});
+            print(Reflect.setPrototypeOf(plain,exotic));print(Object.getPrototypeOf(plain)===exotic);print(reads);
+            "#,
+            &[
+                "false",
+                "true",
+                "false",
+                "true",
+                "set,set,prevent,prevent",
+                "true",
+                "false",
+                "true",
+                "true",
+                "false",
+                "false",
+                "true",
+                "true",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_proxy_reads_keep_fresh_results_through_descriptor_validation() {
         assert_output_in_execution_modes(
             r#"

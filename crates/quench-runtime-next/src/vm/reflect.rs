@@ -67,7 +67,10 @@ impl<H: Host> Vm<H> {
             }
             Native::ReflectDefineProperty => self.reflect_define_property(p, args),
             Native::ReflectDeleteProperty => self.object_delete_property(p, args),
-            Native::ReflectPreventExtensions => self.reflect_prevent_extensions(p, target),
+            Native::ReflectPreventExtensions => {
+                let accepted = self.prevent_extensions(p, target)?;
+                Ok(Self::integrity_bool(accepted))
+            }
             Native::ReflectIsExtensible => self.object_is_extensible(p, args),
             Native::ReflectSet | Native::SuperSet => {
                 let key = self.to_property_key(
@@ -108,7 +111,7 @@ impl<H: Host> Vm<H> {
             }
             Native::ObjectLiteralPrototype => {
                 let proto = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                if proto.is_null() || self.object_data(proto).is_some() {
+                if proto.is_null() || self.is_object_like(proto) {
                     self.object_set_prototype_of(p, target, proto)?;
                 }
                 Ok(Value::UNDEFINED)
@@ -148,109 +151,10 @@ impl<H: Host> Vm<H> {
         target: Value,
         prototype: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(target) {
-            return Err(self.type_error(p, "Reflect target is not an object".into()));
-        }
         if !prototype.is_null() && !self.is_object_like(prototype) {
             return Err(self.type_error(p, "Reflect prototype is not an object".into()));
         }
-        if let Some(Cell::Proxy {
-            target: underlying,
-            handler,
-            ..
-        }) = self.heap.get(target).cloned()
-        {
-            if handler.is_null() {
-                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
-            }
-            let trap_atom = self.intern_atom("setPrototypeOf");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if trap.is_null() || trap.is_undefined() {
-                return self.reflect_set_prototype_of(p, underlying, prototype);
-            }
-            if !self.is_function(trap) {
-                return Err(self.type_error(p, "proxy setPrototypeOf trap is not callable".into()));
-            }
-            let result = self.call_value(p, trap, handler, &[underlying, prototype])?;
-            if !self.truthy(result) {
-                return Ok(Value::FALSE);
-            }
-            let extensible = self.object_is_extensible(p, &[underlying])?;
-            if !self.truthy(extensible) {
-                let target_prototype = self.object_get_prototype_of(p, underlying)?;
-                if !self.same_value(target_prototype, prototype) {
-                    return Err(self.type_error(
-                        p,
-                        "proxy setPrototypeOf trap changed a non-extensible target".into(),
-                    ));
-                }
-            }
-            return Ok(Value::TRUE);
-        }
-        let current = self.object_get_prototype_of(p, target)?;
-        if self.same_value(current, prototype) {
-            return Ok(Value::TRUE);
-        }
-        if target == self.object_proto {
-            return Ok(Value::FALSE);
-        }
-        let extensible = self.object_is_extensible(p, &[target])?;
-        if !self.truthy(extensible) {
-            return Ok(Value::FALSE);
-        }
-        let mut cursor = prototype;
-        while !cursor.is_null() {
-            if self.same_value(cursor, target) {
-                return Ok(Value::FALSE);
-            }
-            if matches!(self.heap.get(cursor), Some(Cell::Proxy { .. })) {
-                break;
-            }
-            cursor = self.object_get_prototype_of(p, cursor)?;
-        }
-        self.object_set_prototype_of(p, target, prototype)?;
-        Ok(Value::TRUE)
-    }
-
-    fn reflect_prevent_extensions(
-        &mut self,
-        p: &ResidualProgram,
-        target: Value,
-    ) -> Result<Value, JsError> {
-        let Some(Cell::Proxy {
-            target: underlying,
-            handler,
-            ..
-        }) = self.heap.get(target).cloned()
-        else {
-            if self.typed_array_length_is_variable(target) {
-                return Ok(Value::FALSE);
-            }
-            self.object_prevent_extensions(p, &[target])?;
-            return Ok(Value::TRUE);
-        };
-        if handler.is_null() {
-            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
-        }
-        let trap_atom = self.intern_atom("preventExtensions");
-        let trap = self.get_property(p, handler, trap_atom)?;
-        if trap.is_null() || trap.is_undefined() {
-            return self.reflect_prevent_extensions(p, underlying);
-        }
-        if !self.is_function(trap) {
-            return Err(self.type_error(p, "proxy preventExtensions trap is not callable".into()));
-        }
-        let result = self.call_value(p, trap, handler, &[underlying])?;
-        if !self.truthy(result) {
-            return Ok(Value::FALSE);
-        }
-        let extensible = self.object_is_extensible(p, &[underlying])?;
-        if self.truthy(extensible) {
-            return Err(self.type_error(
-                p,
-                "proxy preventExtensions trap did not make target non-extensible".into(),
-            ));
-        }
-        Ok(Value::TRUE)
+        let accepted = self.set_prototype_of(p, target, prototype)?;
+        Ok(Self::integrity_bool(accepted))
     }
 }
