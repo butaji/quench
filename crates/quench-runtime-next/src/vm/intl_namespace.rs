@@ -409,6 +409,49 @@ impl<H: Host> Vm<H> {
         Ok(self.string_array(locales))
     }
 
+    pub(super) fn intl_instance_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+        constructor: Native,
+    ) -> Result<Value, JsError> {
+        let atom = self.intern_atom("prototype");
+        let prototype = self.get_property(p, new_target, atom)?;
+        if self.is_object_like(prototype) {
+            return Ok(prototype);
+        }
+        let realm = self.function_realm(p, new_target)?;
+        let prototypes = match constructor {
+            Native::IntlCollator => &self.realm.intrinsics.intl_collator_prototypes,
+            Native::IntlNumberFormat => &self.realm.intrinsics.intl_number_format_prototypes,
+            Native::IntlDateTimeFormat => &self.realm.intrinsics.intl_datetime_format_prototypes,
+            Native::IntlListFormat => &self.realm.intrinsics.intl_list_format_prototypes,
+            Native::IntlSegmenter => &self.realm.intrinsics.intl_segmenter_prototypes,
+            Native::IntlDisplayNames => &self.realm.intrinsics.intl_display_names_prototypes,
+            Native::IntlPluralRules => &self.realm.intrinsics.intl_plural_rules_prototypes,
+            Native::IntlRelativeTimeFormat => {
+                &self.realm.intrinsics.intl_relative_time_format_prototypes
+            }
+            Native::IntlDurationFormat => &self.realm.intrinsics.intl_duration_format_prototypes,
+            _ => return Err(JsError("invalid Intl constructor prototype request".into())),
+        };
+        Ok(prototypes.get(&realm).copied().unwrap_or(self.object_proto))
+    }
+
+    pub(super) fn get_options_object(
+        &mut self,
+        p: &ResidualProgram,
+        options: Option<Value>,
+    ) -> Result<Value, JsError> {
+        match options.filter(|value| !value.is_undefined()) {
+            None => Ok(self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(Value::NULL)))),
+            Some(value) if self.is_object_like(value) => Ok(value),
+            Some(_) => Err(self.type_error(p, "options must be an object".into())),
+        }
+    }
+
     pub(super) fn canonical_locale_list(
         &mut self,
         p: &ResidualProgram,

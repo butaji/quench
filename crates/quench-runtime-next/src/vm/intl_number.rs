@@ -167,110 +167,137 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let mut locale = self.number_format_locale(p, args.first().copied())?;
-        let options = self.number_format_options(p, args.get(1).copied())?;
-        let prototype = self.number_format_instance_prototype(p, new_target)?;
-        let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let locale_numbering_system = locale_unicode_keyword(&locale, "nu")
-            .filter(|value| quench_intl::valid_numbering_system(value));
-        let option_numbering_system = options
-            .numbering_system
-            .clone()
-            .filter(|value| quench_intl::valid_numbering_system(value));
-        if option_numbering_system
-            .as_ref()
-            .is_some_and(|option| locale_numbering_system.as_ref() != Some(option))
-        {
-            locale = locale.split_once("-u-").map_or(locale.clone(), |(base, _)| base.to_owned());
-        }
-        let numbering_system = option_numbering_system
-            .or(locale_numbering_system)
-            .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-        self.set_hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT, &locale)?;
-        self.set_hidden_string(formatter, NUMBER_FORMAT_STYLE_SLOT, &options.style)?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_CURRENCY_SLOT,
-            options.currency.as_deref().unwrap_or(""),
-        )?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT,
-            &numbering_system,
-        )?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_MIN_FRACTION_SLOT,
-            Value::number(options.minimum_fraction_digits as f64),
-        )?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_UNIT_SLOT,
-            options.unit.as_deref().unwrap_or(""),
-        )?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_UNIT_DISPLAY_SLOT,
-            &options.unit_display,
-        )?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_SIGN_DISPLAY_SLOT,
-            &options.sign_display,
-        )?;
-        self.set_hidden_string(
-            formatter,
-            NUMBER_FORMAT_ROUNDING_MODE_SLOT,
-            &options.rounding_mode,
-        )?;
-        for (slot, value) in [
-            (NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT, options.currency_display.as_str()),
-            (NUMBER_FORMAT_CURRENCY_SIGN_SLOT, options.currency_sign.as_str()),
-            (NUMBER_FORMAT_NOTATION_SLOT, options.notation.as_str()),
-            (NUMBER_FORMAT_COMPACT_DISPLAY_SLOT, options.compact_display.as_str()),
-            (NUMBER_FORMAT_GROUPING_MODE_SLOT, options.grouping_mode.as_str()),
-            (NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT, options.rounding_priority.as_str()),
-            (NUMBER_FORMAT_TRAILING_ZERO_SLOT, options.trailing_zero_display.as_str()),
-        ] {
-            self.set_hidden_string(formatter, slot, value)?;
-        }
-        let grouping_value = options.grouping_boolean.map_or_else(
-            || self.heap.alloc(Cell::String(options.grouping_mode.clone().into())),
-            |enabled| if enabled { Value::TRUE } else { Value::FALSE },
-        );
-        self.set_hidden_value(formatter, NUMBER_FORMAT_GROUPING_SLOT, grouping_value)?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_MIN_INTEGER_SLOT,
-            Value::number(options.minimum_integer_digits as f64),
-        )?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT,
-            options
-                .maximum_significant_digits
-                .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
-        )?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT,
-            options
-                .minimum_significant_digits
-                .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
-        )?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT,
-            Value::number(options.rounding_increment as f64),
-        )?;
-        self.set_hidden_value(
-            formatter,
-            NUMBER_FORMAT_MAX_FRACTION_SLOT,
-            options
-                .maximum_fraction_digits
-                .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
-        )?;
-        Ok(formatter)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlNumberFormat)?;
+            vm.with_call_roots([prototype], |vm| {
+                let mut locale = vm.number_format_locale(p, args.first().copied())?;
+                let options = vm.number_format_options(p, args.get(1).copied())?;
+                let formatter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let locale_numbering_system = locale_unicode_keyword(&locale, "nu")
+                    .filter(|value| quench_intl::valid_numbering_system(value));
+                let option_numbering_system = options
+                    .numbering_system
+                    .clone()
+                    .filter(|value| quench_intl::valid_numbering_system(value));
+                if option_numbering_system
+                    .as_ref()
+                    .is_some_and(|option| locale_numbering_system.as_ref() != Some(option))
+                {
+                    locale = locale
+                        .split_once("-u-")
+                        .map_or(locale.clone(), |(base, _)| base.to_owned());
+                }
+                let numbering_system = option_numbering_system
+                    .or(locale_numbering_system)
+                    .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
+                vm.set_hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT, &locale)?;
+                vm.set_hidden_string(formatter, NUMBER_FORMAT_STYLE_SLOT, &options.style)?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_CURRENCY_SLOT,
+                    options.currency.as_deref().unwrap_or(""),
+                )?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT,
+                    &numbering_system,
+                )?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_MIN_FRACTION_SLOT,
+                    Value::number(options.minimum_fraction_digits as f64),
+                )?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_UNIT_SLOT,
+                    options.unit.as_deref().unwrap_or(""),
+                )?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_UNIT_DISPLAY_SLOT,
+                    &options.unit_display,
+                )?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_SIGN_DISPLAY_SLOT,
+                    &options.sign_display,
+                )?;
+                vm.set_hidden_string(
+                    formatter,
+                    NUMBER_FORMAT_ROUNDING_MODE_SLOT,
+                    &options.rounding_mode,
+                )?;
+                for (slot, value) in [
+                    (
+                        NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT,
+                        options.currency_display.as_str(),
+                    ),
+                    (
+                        NUMBER_FORMAT_CURRENCY_SIGN_SLOT,
+                        options.currency_sign.as_str(),
+                    ),
+                    (NUMBER_FORMAT_NOTATION_SLOT, options.notation.as_str()),
+                    (
+                        NUMBER_FORMAT_COMPACT_DISPLAY_SLOT,
+                        options.compact_display.as_str(),
+                    ),
+                    (
+                        NUMBER_FORMAT_GROUPING_MODE_SLOT,
+                        options.grouping_mode.as_str(),
+                    ),
+                    (
+                        NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT,
+                        options.rounding_priority.as_str(),
+                    ),
+                    (
+                        NUMBER_FORMAT_TRAILING_ZERO_SLOT,
+                        options.trailing_zero_display.as_str(),
+                    ),
+                ] {
+                    vm.set_hidden_string(formatter, slot, value)?;
+                }
+                let grouping_value = options.grouping_boolean.map_or_else(
+                    || {
+                        vm.heap
+                            .alloc(Cell::String(options.grouping_mode.clone().into()))
+                    },
+                    |enabled| if enabled { Value::TRUE } else { Value::FALSE },
+                );
+                vm.set_hidden_value(formatter, NUMBER_FORMAT_GROUPING_SLOT, grouping_value)?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_MIN_INTEGER_SLOT,
+                    Value::number(options.minimum_integer_digits as f64),
+                )?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT,
+                    options
+                        .maximum_significant_digits
+                        .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
+                )?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT,
+                    options
+                        .minimum_significant_digits
+                        .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
+                )?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT,
+                    Value::number(options.rounding_increment as f64),
+                )?;
+                vm.set_hidden_value(
+                    formatter,
+                    NUMBER_FORMAT_MAX_FRACTION_SLOT,
+                    options
+                        .maximum_fraction_digits
+                        .map_or(Value::UNDEFINED, |digits| Value::number(digits as f64)),
+                )?;
+                Ok(formatter)
+            })
+        })
     }
 
     pub(super) fn intl_number_format_call(
@@ -279,46 +306,48 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.number_format_legacy_receiver(p, this)? {
-            return self.intl_number_format_construct(
-                p,
-                args,
-                self.native_value(Native::IntlNumberFormat),
+        self.with_call_roots(args.iter().copied().chain([this]), |vm| {
+            if !vm.number_format_legacy_receiver(p, this)? {
+                return vm.intl_number_format_construct(
+                    p,
+                    args,
+                    vm.native_value(Native::IntlNumberFormat),
+                );
+            }
+            let Some(symbol) = vm
+                .realm
+                .intrinsics
+                .intl_number_format_fallback_symbols
+                .get(&vm.realm.globals)
+                .copied()
+            else {
+                return vm.intl_number_format_construct(
+                    p,
+                    args,
+                    vm.native_value(Native::IntlNumberFormat),
+                );
+            };
+            let fallback = vm.get_symbol_property_with_receiver(p, this, symbol, this)?;
+            if !fallback.is_undefined() {
+                return Ok(this);
+            }
+            let formatter =
+                vm.intl_number_format_construct(p, args, vm.native_value(Native::IntlNumberFormat))?;
+            vm.set_symbol_property(this, symbol, formatter)?;
+            vm.set_property_attributes(
+                this,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
             );
-        }
-        let Some(symbol) = self.realm.intrinsics.intl_number_format_fallback_symbols
-            .get(&self.realm.globals)
-            .copied()
-        else {
-            return self.intl_number_format_construct(
-                p,
-                args,
-                self.native_value(Native::IntlNumberFormat),
-            );
-        };
-        let fallback = self.get_symbol_property_with_receiver(p, this, symbol, this)?;
-        if !fallback.is_undefined() {
-            return Ok(this);
-        }
-        let formatter = self.intl_number_format_construct(
-            p,
-            args,
-            self.native_value(Native::IntlNumberFormat),
-        )?;
-        self.set_symbol_property(this, symbol, formatter)?;
-        self.set_property_attributes(
-            this,
-            PropertyKey::symbol(symbol),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        Ok(this)
+            Ok(this)
+        })
     }
 
     fn number_format_legacy_receiver(
@@ -363,23 +392,6 @@ impl<H: Host> Vm<H> {
         } else {
             fallback
         })
-    }
-
-    fn number_format_instance_prototype(
-        &mut self,
-        p: &ResidualProgram,
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype_key = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_key)?;
-        if self.is_object_like(prototype) {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.realm.intrinsics.intl_number_format_prototypes
-            .get(&realm)
-            .copied()
-            .unwrap_or(self.object_proto))
     }
 
     pub(super) fn intl_number_format_format_getter(
@@ -427,47 +439,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         locales: Option<Value>,
     ) -> Result<String, JsError> {
-        let Some(locales) = locales.filter(|value| !value.is_undefined()) else {
-            return Ok(DEFAULT_NUMBER_FORMAT_LOCALE.into());
-        };
-        if locales.is_null() {
-            return Err(self.type_error(p, "locales must not be null".into()));
-        }
-        if matches!(self.heap.get(locales), Some(Cell::String(_))) {
-            let locale = self.to_string(p, locales)?;
-            let locale = quench_intl::canonical_locale_identifier(&locale)
-                .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))?;
-            return Ok(sanitize_number_format_locale(&locale));
-        }
-        let locales = self.box_object(locales)?;
-        self.number_format_locale_list(p, locales)
-    }
-
-    fn number_format_locale_list(
-        &mut self,
-        p: &ResidualProgram,
-        locales: Value,
-    ) -> Result<String, JsError> {
-        let length = self.array_like_length(p, locales)?;
-        let mut first = None;
-        for index in 0..length {
-            let key = Value::number(index as f64);
-            if !self.has_property(p, locales, key)? {
-                continue;
-            }
-            let locale = self.get_index(p, locales, key)?;
-            if !matches!(self.heap.get(locale), Some(Cell::String(_)))
-                && !self.is_object_like(locale)
-            {
-                return Err(self.type_error(p, "locale list elements must be strings".into()));
-            }
-            let locale = self.to_string(p, locale)?;
-            let locale = quench_intl::canonical_locale_identifier(&locale)
-                .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))?;
-            let locale = sanitize_number_format_locale(&locale);
-            first.get_or_insert(locale);
-        }
-        Ok(first.unwrap_or_else(|| DEFAULT_NUMBER_FORMAT_LOCALE.into()))
+        Ok(self
+            .canonical_locale_list(p, locales)?
+            .into_iter()
+            .next()
+            .map(|locale| sanitize_number_format_locale(&locale))
+            .unwrap_or_else(|| DEFAULT_NUMBER_FORMAT_LOCALE.into()))
     }
 
     fn number_format_options(
@@ -504,305 +481,344 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "options must not be null".into()));
         }
         let options = self.box_object(options)?;
-        let mut style = "decimal".to_owned();
-        let mut currency = None;
-        let mut numbering_system = None;
-        let mut unit = None;
-        let mut unit_display = "short".to_owned();
-        let mut grouping_mode = "auto".to_owned();
-        let mut grouping_boolean = None;
-        let mut grouping_explicit = false;
-        let mut minimum_integer_digits = 1;
-        let mut minimum_fraction_digits = 0;
-        let mut minimum_fraction_set = false;
-        let mut maximum_fraction_digits = None;
-        let mut sign_display = "auto".to_owned();
-        let mut rounding_mode = "halfExpand".to_owned();
-        let mut maximum_significant_digits = None;
-        let mut minimum_significant_digits = None;
-        let mut currency_display = "symbol".to_owned();
-        let mut currency_sign = "standard".to_owned();
-        let mut notation = "standard".to_owned();
-        let mut compact_display = "short".to_owned();
-        let mut rounding_increment = 1;
-        let mut rounding_priority = "auto".to_owned();
-        let mut trailing_zero_display = "auto".to_owned();
-        for key in quench_intl::NUMBER_FORMAT_OPTION_KEYS {
-            let atom = self.intern_atom(key);
-            let value = self.get_property(p, options, atom)?;
-            if value.is_undefined() {
-                continue;
-            }
-            match *key {
-                "localeMatcher" => {
-                    let value = self.to_string(p, value)?;
-                    if !matches!(value.as_str(), "lookup" | "best fit") {
-                        return Err(self.range_error(p, "invalid localeMatcher".into()));
-                    }
+        self.with_call_roots([options], |vm| {
+            let mut style = "decimal".to_owned();
+            let mut currency = None;
+            let mut numbering_system = None;
+            let mut unit = None;
+            let mut unit_display = "short".to_owned();
+            let mut grouping_mode = "auto".to_owned();
+            let mut grouping_boolean = None;
+            let mut grouping_explicit = false;
+            let mut minimum_integer_digits = 1;
+            let mut minimum_fraction_digits = 0;
+            let mut minimum_fraction_set = false;
+            let mut maximum_fraction_digits = None;
+            let mut sign_display = "auto".to_owned();
+            let mut rounding_mode = "halfExpand".to_owned();
+            let mut maximum_significant_digits = None;
+            let mut minimum_significant_digits = None;
+            let mut currency_display = "symbol".to_owned();
+            let mut currency_sign = "standard".to_owned();
+            let mut notation = "standard".to_owned();
+            let mut compact_display = "short".to_owned();
+            let mut rounding_increment = 1;
+            let mut rounding_priority = "auto".to_owned();
+            let mut trailing_zero_display = "auto".to_owned();
+            for key in quench_intl::NUMBER_FORMAT_OPTION_KEYS {
+                let atom = vm.intern_atom(key);
+                let value = vm.get_property(p, options, atom)?;
+                if value.is_undefined() {
+                    continue;
                 }
-                "style" => {
-                    style = self.to_string(p, value)?;
-                    if !matches!(style.as_str(), "decimal" | "percent" | "currency" | "unit") {
-                        return Err(self.range_error(p, "invalid style".into()));
-                    }
-                }
-                "currency" => {
-                    let value = self.to_string(p, value)?.to_ascii_uppercase();
-                    if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-                        return Err(self.range_error(p, "invalid currency".into()));
-                    }
-                    currency = Some(value);
-                }
-                "currencyDisplay" => {
-                    currency_display = self.to_string(p, value)?;
-                    if !matches!(currency_display.as_str(), "code" | "symbol" | "narrowSymbol" | "name") {
-                        return Err(self.range_error(p, "invalid currencyDisplay".into()));
-                    }
-                }
-                "currencySign" => {
-                    currency_sign = self.to_string(p, value)?;
-                    if !matches!(currency_sign.as_str(), "standard" | "accounting") {
-                        return Err(self.range_error(p, "invalid currencySign".into()));
-                    }
-                }
-                "notation" => {
-                    notation = self.to_string(p, value)?;
-                    if !matches!(notation.as_str(), "standard" | "scientific" | "engineering" | "compact") {
-                        return Err(self.range_error(p, "invalid notation".into()));
-                    }
-                }
-                "compactDisplay" => {
-                    compact_display = self.to_string(p, value)?;
-                    if !matches!(compact_display.as_str(), "short" | "long") {
-                        return Err(self.range_error(p, "invalid compactDisplay".into()));
-                    }
-                }
-                "numberingSystem" => {
-                    let value = self.to_string(p, value)?.to_ascii_lowercase();
-                    if !quench_intl::valid_unicode_type(&value) {
-                        return Err(self.range_error(p, "invalid numberingSystem".into()));
-                    }
-                    numbering_system = quench_intl::NUMBERING_SYSTEMS
-                        .contains(&value.as_str())
-                        .then_some(value);
-                }
-                "unit" => {
-                    let value = self.to_string(p, value)?;
-                    if value.is_empty()
-                        || !value
-                            .bytes()
-                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-                    {
-                        return Err(self.range_error(p, "invalid unit".into()));
-                    }
-                    unit = Some(value);
-                }
-                "unitDisplay" => {
-                    unit_display = self.to_string(p, value)?;
-                    if !matches!(unit_display.as_str(), "long" | "short" | "narrow") {
-                        return Err(self.range_error(p, "invalid unitDisplay".into()));
-                    }
-                }
-                "signDisplay" => {
-                    sign_display = self.to_string(p, value)?;
-                    if !matches!(
-                        sign_display.as_str(),
-                        "auto" | "never" | "always" | "exceptZero" | "negative"
-                    ) {
-                        return Err(self.range_error(p, "invalid signDisplay".into()));
-                    }
-                }
-                "useGrouping" => {
-                    grouping_mode = if value.is_undefined() {
-                        "auto".into()
-                    } else if let Some(boolean) = value.as_bool() {
-                        grouping_explicit = true;
-                        grouping_boolean = (!boolean).then_some(false);
-                        if boolean { "always" } else { "false" }.into()
-                    } else if value.is_null() || value.as_number() == Some(0.0) {
-                        grouping_explicit = true;
-                        grouping_boolean = Some(false);
-                        "false".into()
-                    } else {
-                        let text = self.to_string(p, value)?;
-                        match text.as_str() {
-                            "true" | "false" => {
-                                grouping_explicit = true;
-                                "auto".into()
-                            }
-                            "" => {
-                                grouping_explicit = true;
-                                grouping_boolean = Some(false);
-                                "false".into()
-                            }
-                            "auto" | "min2" | "always" => {
-                                grouping_explicit = true;
-                                text
-                            }
-                            _ => return Err(self.range_error(p, "invalid useGrouping".into())),
+                match *key {
+                    "localeMatcher" => {
+                        let value = vm.to_string(p, value)?;
+                        if !matches!(value.as_str(), "lookup" | "best fit") {
+                            return Err(vm.range_error(p, "invalid localeMatcher".into()));
                         }
-                    };
-                    if !matches!(grouping_mode.as_str(), "auto" | "min2" | "always" | "false") {
-                        return Err(self.range_error(p, "invalid useGrouping".into()));
                     }
-                }
-                "minimumIntegerDigits" => {
-                    minimum_integer_digits = self.number_format_option_integer(
-                        p,
-                        value,
-                        1.0,
-                        21.0,
-                        "minimumIntegerDigits",
-                    )? as usize;
-                }
-                "minimumFractionDigits" => {
-                    minimum_fraction_set = true;
-                    minimum_fraction_digits = self.number_format_option_integer(
-                        p,
-                        value,
-                        0.0,
-                        NUMBER_FORMAT_MAX_FRACTION_DIGITS,
-                        "minimumFractionDigits",
-                    )? as usize;
-                }
-                "maximumFractionDigits" => {
-                    maximum_fraction_digits = Some(self.number_format_option_integer(
-                        p,
-                        value,
-                        0.0,
-                        NUMBER_FORMAT_MAX_FRACTION_DIGITS,
-                        "maximumFractionDigits",
-                    )? as usize);
-                }
-                "minimumSignificantDigits" => {
-                    minimum_significant_digits = Some(self.number_format_option_integer(
-                        p, value, 1.0, NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS,
-                        "minimumSignificantDigits",
-                    )? as usize);
-                }
-                "roundingMode" => {
-                    rounding_mode = self.to_string(p, value)?;
-                    if !matches!(
-                        rounding_mode.as_str(),
-                        "ceil"
-                            | "floor"
-                            | "expand"
-                            | "trunc"
-                            | "halfCeil"
-                            | "halfFloor"
-                            | "halfExpand"
-                            | "halfTrunc"
-                            | "halfEven"
-                    ) {
-                        return Err(self.range_error(p, "invalid roundingMode".into()));
+                    "style" => {
+                        style = vm.to_string(p, value)?;
+                        if !matches!(style.as_str(), "decimal" | "percent" | "currency" | "unit") {
+                            return Err(vm.range_error(p, "invalid style".into()));
+                        }
                     }
-                }
-                "roundingIncrement" => {
-                    rounding_increment = self.number_format_option_integer(
-                        p, value, 1.0, 5000.0, "roundingIncrement",
-                    )? as usize;
-                    if ![1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000]
+                    "currency" => {
+                        let value = vm.to_string(p, value)?.to_ascii_uppercase();
+                        if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                            return Err(vm.range_error(p, "invalid currency".into()));
+                        }
+                        currency = Some(value);
+                    }
+                    "currencyDisplay" => {
+                        currency_display = vm.to_string(p, value)?;
+                        if !matches!(
+                            currency_display.as_str(),
+                            "code" | "symbol" | "narrowSymbol" | "name"
+                        ) {
+                            return Err(vm.range_error(p, "invalid currencyDisplay".into()));
+                        }
+                    }
+                    "currencySign" => {
+                        currency_sign = vm.to_string(p, value)?;
+                        if !matches!(currency_sign.as_str(), "standard" | "accounting") {
+                            return Err(vm.range_error(p, "invalid currencySign".into()));
+                        }
+                    }
+                    "notation" => {
+                        notation = vm.to_string(p, value)?;
+                        if !matches!(
+                            notation.as_str(),
+                            "standard" | "scientific" | "engineering" | "compact"
+                        ) {
+                            return Err(vm.range_error(p, "invalid notation".into()));
+                        }
+                    }
+                    "compactDisplay" => {
+                        compact_display = vm.to_string(p, value)?;
+                        if !matches!(compact_display.as_str(), "short" | "long") {
+                            return Err(vm.range_error(p, "invalid compactDisplay".into()));
+                        }
+                    }
+                    "numberingSystem" => {
+                        let value = vm.to_string(p, value)?.to_ascii_lowercase();
+                        if !quench_intl::valid_unicode_type(&value) {
+                            return Err(vm.range_error(p, "invalid numberingSystem".into()));
+                        }
+                        numbering_system = quench_intl::NUMBERING_SYSTEMS
+                            .contains(&value.as_str())
+                            .then_some(value);
+                    }
+                    "unit" => {
+                        let value = vm.to_string(p, value)?;
+                        if value.is_empty()
+                            || !value
+                                .bytes()
+                                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                        {
+                            return Err(vm.range_error(p, "invalid unit".into()));
+                        }
+                        unit = Some(value);
+                    }
+                    "unitDisplay" => {
+                        unit_display = vm.to_string(p, value)?;
+                        if !matches!(unit_display.as_str(), "long" | "short" | "narrow") {
+                            return Err(vm.range_error(p, "invalid unitDisplay".into()));
+                        }
+                    }
+                    "signDisplay" => {
+                        sign_display = vm.to_string(p, value)?;
+                        if !matches!(
+                            sign_display.as_str(),
+                            "auto" | "never" | "always" | "exceptZero" | "negative"
+                        ) {
+                            return Err(vm.range_error(p, "invalid signDisplay".into()));
+                        }
+                    }
+                    "useGrouping" => {
+                        grouping_mode = if value.is_undefined() {
+                            "auto".into()
+                        } else if let Some(boolean) = value.as_bool() {
+                            grouping_explicit = true;
+                            grouping_boolean = (!boolean).then_some(false);
+                            if boolean { "always" } else { "false" }.into()
+                        } else if value.is_null() || value.as_number() == Some(0.0) {
+                            grouping_explicit = true;
+                            grouping_boolean = Some(false);
+                            "false".into()
+                        } else {
+                            let text = vm.to_string(p, value)?;
+                            match text.as_str() {
+                                "true" | "false" => {
+                                    grouping_explicit = true;
+                                    "auto".into()
+                                }
+                                "" => {
+                                    grouping_explicit = true;
+                                    grouping_boolean = Some(false);
+                                    "false".into()
+                                }
+                                "auto" | "min2" | "always" => {
+                                    grouping_explicit = true;
+                                    text
+                                }
+                                _ => return Err(vm.range_error(p, "invalid useGrouping".into())),
+                            }
+                        };
+                        if !matches!(grouping_mode.as_str(), "auto" | "min2" | "always" | "false") {
+                            return Err(vm.range_error(p, "invalid useGrouping".into()));
+                        }
+                    }
+                    "minimumIntegerDigits" => {
+                        minimum_integer_digits = vm.number_format_option_integer(
+                            p,
+                            value,
+                            1.0,
+                            21.0,
+                            "minimumIntegerDigits",
+                        )? as usize;
+                    }
+                    "minimumFractionDigits" => {
+                        minimum_fraction_set = true;
+                        minimum_fraction_digits = vm.number_format_option_integer(
+                            p,
+                            value,
+                            0.0,
+                            NUMBER_FORMAT_MAX_FRACTION_DIGITS,
+                            "minimumFractionDigits",
+                        )? as usize;
+                    }
+                    "maximumFractionDigits" => {
+                        maximum_fraction_digits = Some(vm.number_format_option_integer(
+                            p,
+                            value,
+                            0.0,
+                            NUMBER_FORMAT_MAX_FRACTION_DIGITS,
+                            "maximumFractionDigits",
+                        )? as usize);
+                    }
+                    "minimumSignificantDigits" => {
+                        minimum_significant_digits = Some(vm.number_format_option_integer(
+                            p,
+                            value,
+                            1.0,
+                            NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS,
+                            "minimumSignificantDigits",
+                        )? as usize);
+                    }
+                    "roundingMode" => {
+                        rounding_mode = vm.to_string(p, value)?;
+                        if !matches!(
+                            rounding_mode.as_str(),
+                            "ceil"
+                                | "floor"
+                                | "expand"
+                                | "trunc"
+                                | "halfCeil"
+                                | "halfFloor"
+                                | "halfExpand"
+                                | "halfTrunc"
+                                | "halfEven"
+                        ) {
+                            return Err(vm.range_error(p, "invalid roundingMode".into()));
+                        }
+                    }
+                    "roundingIncrement" => {
+                        rounding_increment = vm.number_format_option_integer(
+                            p,
+                            value,
+                            1.0,
+                            5000.0,
+                            "roundingIncrement",
+                        )? as usize;
+                        if ![
+                            1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
+                        ]
                         .contains(&rounding_increment)
-                    {
-                        return Err(self.range_error(p, "invalid roundingIncrement".into()));
+                        {
+                            return Err(vm.range_error(p, "invalid roundingIncrement".into()));
+                        }
                     }
-                }
-                "roundingPriority" => {
-                    rounding_priority = self.to_string(p, value)?;
-                    if !matches!(rounding_priority.as_str(), "auto" | "morePrecision" | "lessPrecision") {
-                        return Err(self.range_error(p, "invalid roundingPriority".into()));
+                    "roundingPriority" => {
+                        rounding_priority = vm.to_string(p, value)?;
+                        if !matches!(
+                            rounding_priority.as_str(),
+                            "auto" | "morePrecision" | "lessPrecision"
+                        ) {
+                            return Err(vm.range_error(p, "invalid roundingPriority".into()));
+                        }
                     }
-                }
-                "trailingZeroDisplay" => {
-                    trailing_zero_display = self.to_string(p, value)?;
-                    if !matches!(trailing_zero_display.as_str(), "auto" | "stripIfInteger") {
-                        return Err(self.range_error(p, "invalid trailingZeroDisplay".into()));
+                    "trailingZeroDisplay" => {
+                        trailing_zero_display = vm.to_string(p, value)?;
+                        if !matches!(trailing_zero_display.as_str(), "auto" | "stripIfInteger") {
+                            return Err(vm.range_error(p, "invalid trailingZeroDisplay".into()));
+                        }
                     }
+                    "maximumSignificantDigits" => {
+                        maximum_significant_digits = Some(vm.number_format_option_integer(
+                            p,
+                            value,
+                            1.0,
+                            NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS,
+                            "maximumSignificantDigits",
+                        )? as usize);
+                    }
+                    _ => {}
                 }
-                "maximumSignificantDigits" => {
-                    maximum_significant_digits = Some(self.number_format_option_integer(
+            }
+            if style == "currency" && currency.is_none() {
+                return Err(vm.type_error(p, "currency is required".into()));
+            }
+            if style == "unit" && unit.is_none() {
+                return Err(vm.type_error(p, "unit is required".into()));
+            }
+            if minimum_significant_digits
+                .zip(maximum_significant_digits)
+                .is_some_and(|(minimum, maximum)| minimum > maximum)
+            {
+                return Err(vm.range_error(
+                    p,
+                    "minimumSignificantDigits exceeds maximumSignificantDigits".into(),
+                ));
+            }
+            if style == "unit" && unit.as_deref().is_some_and(|unit| !valid_number_unit(unit)) {
+                return Err(vm.range_error(p, "invalid unit".into()));
+            }
+            if style != "unit" && unit.as_deref().is_some_and(|unit| !valid_number_unit(unit)) {
+                return Err(vm.range_error(p, "invalid unit".into()));
+            }
+            if rounding_increment != 1
+                && (rounding_priority != "auto"
+                    || maximum_significant_digits.is_some()
+                    || minimum_significant_digits.is_some())
+            {
+                return Err(vm.type_error(
+                    p,
+                    "roundingIncrement conflicts with precision options".into(),
+                ));
+            }
+            if notation == "compact" && !grouping_explicit && grouping_mode == "auto" {
+                grouping_mode = "min2".into();
+            }
+            if style == "currency" || style == "percent" {
+                let minimum_default = if style == "currency" && notation == "standard" {
+                    quench_intl::currency_fraction_digits(currency.as_deref().unwrap_or("USD"))
+                } else {
+                    0
+                };
+                let maximum_default = if notation == "compact" || style == "percent" {
+                    0
+                } else if style == "currency" && notation != "standard" {
+                    3
+                } else {
+                    minimum_default
+                };
+                if !minimum_fraction_set {
+                    minimum_fraction_digits = maximum_fraction_digits
+                        .map_or(minimum_default, |maximum| minimum_default.min(maximum));
+                }
+                if maximum_fraction_digits.is_none() {
+                    maximum_fraction_digits = Some(maximum_default.max(minimum_fraction_digits));
+                }
+                if maximum_fraction_digits.is_some_and(|maximum| maximum < minimum_fraction_digits) {
+                    return Err(vm.range_error(
                         p,
-                        value,
-                        1.0,
-                        NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS,
-                        "maximumSignificantDigits",
-                    )? as usize);
+                        "maximumFractionDigits is less than minimumFractionDigits".into(),
+                    ));
                 }
-                _ => {}
             }
-        }
-        if style == "currency" && currency.is_none() {
-            return Err(self.type_error(p, "currency is required".into()));
-        }
-        if style == "unit" && unit.is_none() {
-            return Err(self.type_error(p, "unit is required".into()));
-        }
-        if minimum_significant_digits.zip(maximum_significant_digits).is_some_and(|(minimum, maximum)| minimum > maximum) {
-            return Err(self.range_error(p, "minimumSignificantDigits exceeds maximumSignificantDigits".into()));
-        }
-        if style == "unit" && unit.as_deref().is_some_and(|unit| !valid_number_unit(unit)) {
-            return Err(self.range_error(p, "invalid unit".into()));
-        }
-        if style != "unit" && unit.as_deref().is_some_and(|unit| !valid_number_unit(unit)) {
-            return Err(self.range_error(p, "invalid unit".into()));
-        }
-        if rounding_increment != 1 && (rounding_priority != "auto" || maximum_significant_digits.is_some() || minimum_significant_digits.is_some()) {
-            return Err(self.type_error(p, "roundingIncrement conflicts with precision options".into()));
-        }
-        if notation == "compact" && !grouping_explicit && grouping_mode == "auto" {
-            grouping_mode = "min2".into();
-        }
-        if style == "currency" || style == "percent" {
-            let minimum_default = if style == "currency" && notation == "standard" {
-                quench_intl::currency_fraction_digits(currency.as_deref().unwrap_or("USD"))
-            } else {
-                0
-            };
-            let maximum_default = if notation == "compact" || style == "percent" {
-                0
-            } else if style == "currency" && notation != "standard" {
-                3
-            } else {
-                minimum_default
-            };
-            if !minimum_fraction_set {
-                minimum_fraction_digits = maximum_fraction_digits
-                    .map_or(minimum_default, |maximum| minimum_default.min(maximum));
+            if rounding_increment != 1
+                && maximum_fraction_digits.is_some_and(|maximum| maximum != minimum_fraction_digits)
+            {
+                return Err(vm.range_error(
+                    p,
+                    "roundingIncrement requires equal fraction digit bounds".into(),
+                ));
             }
-            if maximum_fraction_digits.is_none() {
-                maximum_fraction_digits = Some(maximum_default.max(minimum_fraction_digits));
-            }
-            if maximum_fraction_digits.is_some_and(|maximum| maximum < minimum_fraction_digits) {
-                return Err(self.range_error(p, "maximumFractionDigits is less than minimumFractionDigits".into()));
-            }
-        }
-        if rounding_increment != 1
-            && maximum_fraction_digits.is_some_and(|maximum| maximum != minimum_fraction_digits)
-        {
-            return Err(self.range_error(p, "roundingIncrement requires equal fraction digit bounds".into()));
-        }
-        Ok(NumberFormatOptions {
-            style,
-            currency,
-            numbering_system,
-            minimum_fraction_digits,
-            maximum_fraction_digits,
-            minimum_significant_digits,
-            maximum_significant_digits,
-            unit,
-            unit_display,
-            grouping_mode,
-            grouping_boolean,
-            minimum_integer_digits,
-            sign_display,
-            currency_display,
-            currency_sign,
-            notation,
-            compact_display,
-            rounding_mode,
-            rounding_increment,
-            rounding_priority,
-            trailing_zero_display,
+            Ok(NumberFormatOptions {
+                style,
+                currency,
+                numbering_system,
+                minimum_fraction_digits,
+                maximum_fraction_digits,
+                minimum_significant_digits,
+                maximum_significant_digits,
+                unit,
+                unit_display,
+                grouping_mode,
+                grouping_boolean,
+                minimum_integer_digits,
+                sign_display,
+                currency_display,
+                currency_sign,
+                notation,
+                compact_display,
+                rounding_mode,
+                rounding_increment,
+                rounding_priority,
+                trailing_zero_display,
+            })
         })
     }
 

@@ -89,9 +89,11 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots(args.iter().copied().chain([new_target]), |self_| {
-            let requested_locale = self_.collator_locale(p, args.first().copied())?;
+            let prototype = self_.intl_instance_prototype(p, new_target, Native::IntlCollator)?;
+            self_.with_call_roots([prototype], |vm| {
+            let requested_locale = vm.collator_locale(p, args.first().copied())?;
             let (usage, sensitivity, ignore_punctuation, numeric, case_first, collation, overrides) =
-                self_.collator_options(p, args.get(1).copied())?;
+                vm.collator_options(p, args.get(1).copied())?;
             let (locale, collation, numeric, case_first, ignore_punctuation) =
                 normalize_collator_locale(
                     &requested_locale,
@@ -101,29 +103,16 @@ impl<H: Host> Vm<H> {
                     ignore_punctuation,
                     overrides,
                 );
-            let prototype_atom = self_.intern_atom("prototype");
-            let prototype = self_.get_property(p, new_target, prototype_atom)?;
-            let realm = self_.function_realm(p, new_target)?;
-            let prototype = if self_.is_object_like(prototype) {
-                prototype
-            } else {
-                self_
-                    .realm
-                    .intrinsics
-                    .intl_collator_prototypes
-                    .get(&realm)
-                    .copied()
-                    .unwrap_or(self_.object_proto)
-            };
-            let collator = self_
+
+            let collator = vm
                 .heap
                 .alloc(Cell::Object(Self::empty_object(prototype)));
-            self_.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
-            self_.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
-            self_.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
-            self_.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
-            self_.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
-            self_.set_collator_value(
+            vm.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
+            vm.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
+            vm.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
+            vm.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
+            vm.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
+            vm.set_collator_value(
                 collator,
                 COLLATOR_IGNORE_PUNCTUATION_SLOT,
                 if ignore_punctuation {
@@ -132,12 +121,13 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             )?;
-            self_.set_collator_value(
+            vm.set_collator_value(
                 collator,
                 COLLATOR_NUMERIC_SLOT,
                 if numeric { Value::TRUE } else { Value::FALSE },
             )?;
             Ok(collator)
+            })
         })
     }
 
@@ -447,8 +437,6 @@ impl<H: Host> Vm<H> {
             elements: Rc::new(elements),
         }))
     }
-
-
 
 
 

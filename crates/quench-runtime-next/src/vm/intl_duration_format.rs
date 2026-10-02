@@ -110,43 +110,17 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype = self.duration_format_instance_prototype(p, new_target)?;
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let instance_root = self.heap.root(instance);
-        let initialized = (|| {
-            let locales = self.canonical_locale_list(p, args.first().copied())?;
-            let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
-            let options =
-                self.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
-            let instance = self.heap.root_value(instance_root).unwrap_or(instance);
-            self.write_duration_format_slots(instance, &options)?;
-            let realm = self.function_realm(p, new_target)?;
-            let format = self.native_with_realm(Native::IntlDurationFormatFormat, realm, realm);
-            self.set_builtin_function_name(format, "format")?;
-            let instance = self.heap.root_value(instance_root).unwrap_or(instance);
-            self.set_builtin_value_named(instance, "format", format)
-        })();
-        let instance = self.heap.root_value(instance_root).unwrap_or(instance);
-        self.heap.release_root(instance_root);
-        initialized?;
-        Ok(instance)
-    }
-
-    fn duration_format_instance_prototype(
-        &mut self,
-        p: &ResidualProgram,
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
-        if self.is_object_like(prototype) {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.realm.intrinsics.intl_duration_format_prototypes
-            .get(&realm)
-            .copied()
-            .unwrap_or(self.object_proto))
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlDurationFormat)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locales = vm.canonical_locale_list(p, args.first().copied())?;
+                let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
+                let options = vm.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
+                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                vm.write_duration_format_slots(instance, &options)?;
+                Ok(instance)
+            })
+        })
     }
 
     fn duration_format_options(
@@ -155,15 +129,7 @@ impl<H: Host> Vm<H> {
         value: Option<Value>,
         locale: &str,
     ) -> Result<DurationFormatOptions, JsError> {
-        let options = match value.filter(|value| !value.is_undefined()) {
-            Some(value) if value.is_null() => {
-                return Err(self.type_error(p, "DurationFormat options must be an object".into()));
-            }
-            Some(value) => self.box_object(value)?,
-            None => self
-                .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL))),
-        };
+        let options = self.get_options_object(p, value)?;
         let mut raw = FxHashMap::default();
         for name in DURATION_OPTION_ORDER {
             let atom = self.intern_atom(name);

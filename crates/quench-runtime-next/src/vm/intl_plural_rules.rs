@@ -81,80 +81,75 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locale = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| DEFAULT_PLURAL_RULES_LOCALE.into());
-        let options = self.plural_rules_options(p, args.get(1).copied())?;
-        let realm = self.function_realm(p, new_target)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let candidate = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if self.is_object_like(candidate) {
-            candidate
-        } else {
-            self.realm.intrinsics.intl_plural_rules_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_hidden_string(instance, PLURAL_RULES_LOCALE_SLOT, &locale)?;
-        self.set_hidden_string(instance, PLURAL_RULES_TYPE_SLOT, &options.rule_type)?;
-        self.set_hidden_string(instance, PLURAL_RULES_NOTATION_SLOT, &options.notation)?;
-        self.set_hidden_string(
-            instance,
-            PLURAL_RULES_COMPACT_DISPLAY_SLOT,
-            &options.compact_display,
-        )?;
-        for (slot, value) in [
-            (
-                PLURAL_RULES_MIN_INTEGER_SLOT,
-                options.minimum_integer_digits,
-            ),
-            (
-                PLURAL_RULES_MIN_FRACTION_SLOT,
-                options.minimum_fraction_digits,
-            ),
-            (
-                PLURAL_RULES_MAX_FRACTION_SLOT,
-                options.maximum_fraction_digits,
-            ),
-            (
-                PLURAL_RULES_ROUNDING_INCREMENT_SLOT,
-                options.rounding_increment,
-            ),
-        ] {
-            self.set_hidden_value(instance, slot, Value::number(value as f64))?;
-        }
-        for (slot, value) in [
-            (
-                PLURAL_RULES_MIN_SIGNIFICANT_SLOT,
-                options.minimum_significant_digits,
-            ),
-            (
-                PLURAL_RULES_MAX_SIGNIFICANT_SLOT,
-                options.maximum_significant_digits,
-            ),
-        ] {
-            if let Some(value) = value {
-                self.set_hidden_value(instance, slot, Value::number(value as f64))?;
-            }
-        }
-        for (slot, value) in [
-            (PLURAL_RULES_ROUNDING_MODE_SLOT, options.rounding_mode),
-            (
-                PLURAL_RULES_ROUNDING_PRIORITY_SLOT,
-                options.rounding_priority,
-            ),
-            (
-                PLURAL_RULES_TRAILING_ZERO_SLOT,
-                options.trailing_zero_display,
-            ),
-        ] {
-            self.set_hidden_string(instance, slot, &value)?;
-        }
-        Ok(instance)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlPluralRules)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locale = vm
+                    .canonical_locale_list(p, args.first().copied())?
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| DEFAULT_PLURAL_RULES_LOCALE.into());
+                let options = vm.plural_rules_options(p, args.get(1).copied())?;
+
+                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                vm.set_hidden_string(instance, PLURAL_RULES_LOCALE_SLOT, &locale)?;
+                vm.set_hidden_string(instance, PLURAL_RULES_TYPE_SLOT, &options.rule_type)?;
+                vm.set_hidden_string(instance, PLURAL_RULES_NOTATION_SLOT, &options.notation)?;
+                vm.set_hidden_string(
+                    instance,
+                    PLURAL_RULES_COMPACT_DISPLAY_SLOT,
+                    &options.compact_display,
+                )?;
+                for (slot, value) in [
+                    (
+                        PLURAL_RULES_MIN_INTEGER_SLOT,
+                        options.minimum_integer_digits,
+                    ),
+                    (
+                        PLURAL_RULES_MIN_FRACTION_SLOT,
+                        options.minimum_fraction_digits,
+                    ),
+                    (
+                        PLURAL_RULES_MAX_FRACTION_SLOT,
+                        options.maximum_fraction_digits,
+                    ),
+                    (
+                        PLURAL_RULES_ROUNDING_INCREMENT_SLOT,
+                        options.rounding_increment,
+                    ),
+                ] {
+                    vm.set_hidden_value(instance, slot, Value::number(value as f64))?;
+                }
+                for (slot, value) in [
+                    (
+                        PLURAL_RULES_MIN_SIGNIFICANT_SLOT,
+                        options.minimum_significant_digits,
+                    ),
+                    (
+                        PLURAL_RULES_MAX_SIGNIFICANT_SLOT,
+                        options.maximum_significant_digits,
+                    ),
+                ] {
+                    if let Some(value) = value {
+                        vm.set_hidden_value(instance, slot, Value::number(value as f64))?;
+                    }
+                }
+                for (slot, value) in [
+                    (PLURAL_RULES_ROUNDING_MODE_SLOT, options.rounding_mode),
+                    (
+                        PLURAL_RULES_ROUNDING_PRIORITY_SLOT,
+                        options.rounding_priority,
+                    ),
+                    (
+                        PLURAL_RULES_TRAILING_ZERO_SLOT,
+                        options.trailing_zero_display,
+                    ),
+                ] {
+                    vm.set_hidden_string(instance, slot, &value)?;
+                }
+                Ok(instance)
+            })
+        })
     }
 
     fn plural_rules_options(
@@ -171,151 +166,152 @@ impl<H: Host> Vm<H> {
             }
             Some(value) => self.box_object(value)?,
         };
-        let locale_matcher = self.plural_option_string(p, options, "localeMatcher", "best fit")?;
-        validate_plural_option(p, &locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
-        let rule_type = self.plural_option_string(p, options, "type", "cardinal")?;
-        validate_plural_option(p, &rule_type, &["cardinal", "ordinal"], "type")?;
-        let notation = self.plural_option_string(p, options, "notation", "standard")?;
-        validate_plural_option(
-            p,
-            &notation,
-            &["standard", "compact", "scientific", "engineering"],
-            "notation",
-        )?;
-        let compact_display = self.plural_option_string(p, options, "compactDisplay", "short")?;
-        validate_plural_option(p, &compact_display, &["short", "long"], "compactDisplay")?;
+        self.with_call_roots([options], |vm| {
+            let locale_matcher = vm.plural_option_string(p, options, "localeMatcher", "best fit")?;
+            validate_plural_option(p, &locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
+            let rule_type = vm.plural_option_string(p, options, "type", "cardinal")?;
+            validate_plural_option(p, &rule_type, &["cardinal", "ordinal"], "type")?;
+            let notation = vm.plural_option_string(p, options, "notation", "standard")?;
+            validate_plural_option(
+                p,
+                &notation,
+                &["standard", "compact", "scientific", "engineering"],
+                "notation",
+            )?;
+            let compact_display = vm.plural_option_string(p, options, "compactDisplay", "short")?;
+            validate_plural_option(p, &compact_display, &["short", "long"], "compactDisplay")?;
 
-        let minimum_integer_digits = self.plural_option_integer(
-            p,
-            options,
-            "minimumIntegerDigits",
-            DEFAULT_MINIMUM_INTEGER_DIGITS,
-            DEFAULT_MINIMUM_INTEGER_DIGITS,
-            MAXIMUM_INTEGER_DIGITS,
-        )?;
-        let minimum_fraction = self.plural_option_optional_integer(
-            p,
-            options,
-            "minimumFractionDigits",
-            DEFAULT_MINIMUM_FRACTION_DIGITS,
-            MAXIMUM_FRACTION_DIGITS,
-        )?;
-        let maximum_fraction = self.plural_option_optional_integer(
-            p,
-            options,
-            "maximumFractionDigits",
-            DEFAULT_MINIMUM_FRACTION_DIGITS,
-            MAXIMUM_FRACTION_DIGITS,
-        )?;
-        let minimum_significant = self.plural_option_optional_integer(
-            p,
-            options,
-            "minimumSignificantDigits",
-            MINIMUM_SIGNIFICANT_DIGITS,
-            MAXIMUM_SIGNIFICANT_DIGITS,
-        )?;
-        let maximum_significant = self.plural_option_optional_integer(
-            p,
-            options,
-            "maximumSignificantDigits",
-            MINIMUM_SIGNIFICANT_DIGITS,
-            MAXIMUM_SIGNIFICANT_DIGITS,
-        )?;
-        let rounding_increment = self
-            .plural_option_optional_integer(
+            let minimum_integer_digits = vm.plural_option_integer(
                 p,
                 options,
-                "roundingIncrement",
-                DEFAULT_ROUNDING_INCREMENT,
-                MAXIMUM_ROUNDING_INCREMENT,
-            )?
-            .unwrap_or(DEFAULT_ROUNDING_INCREMENT);
-        let rounding_mode = self.plural_option_string(p, options, "roundingMode", "halfExpand")?;
-        validate_plural_option(
-            p,
-            &rounding_mode,
-            &[
-                "ceil",
-                "floor",
-                "expand",
-                "trunc",
-                "halfCeil",
-                "halfFloor",
-                "halfExpand",
-                "halfTrunc",
-                "halfEven",
-            ],
-            "roundingMode",
-        )?;
-        let rounding_priority =
-            self.plural_option_string(p, options, "roundingPriority", "auto")?;
-        validate_plural_option(
-            p,
-            &rounding_priority,
-            &["auto", "morePrecision", "lessPrecision"],
-            "roundingPriority",
-        )?;
-        let trailing_zero_display =
-            self.plural_option_string(p, options, "trailingZeroDisplay", "auto")?;
-        validate_plural_option(
-            p,
-            &trailing_zero_display,
-            &["auto", "stripIfInteger"],
-            "trailingZeroDisplay",
-        )?;
+                "minimumIntegerDigits",
+                DEFAULT_MINIMUM_INTEGER_DIGITS,
+                DEFAULT_MINIMUM_INTEGER_DIGITS,
+                MAXIMUM_INTEGER_DIGITS,
+            )?;
+            let minimum_fraction = vm.plural_option_optional_integer(
+                p,
+                options,
+                "minimumFractionDigits",
+                DEFAULT_MINIMUM_FRACTION_DIGITS,
+                MAXIMUM_FRACTION_DIGITS,
+            )?;
+            let maximum_fraction = vm.plural_option_optional_integer(
+                p,
+                options,
+                "maximumFractionDigits",
+                DEFAULT_MINIMUM_FRACTION_DIGITS,
+                MAXIMUM_FRACTION_DIGITS,
+            )?;
+            let minimum_significant = vm.plural_option_optional_integer(
+                p,
+                options,
+                "minimumSignificantDigits",
+                MINIMUM_SIGNIFICANT_DIGITS,
+                MAXIMUM_SIGNIFICANT_DIGITS,
+            )?;
+            let maximum_significant = vm.plural_option_optional_integer(
+                p,
+                options,
+                "maximumSignificantDigits",
+                MINIMUM_SIGNIFICANT_DIGITS,
+                MAXIMUM_SIGNIFICANT_DIGITS,
+            )?;
+            let rounding_increment = vm
+                .plural_option_optional_integer(
+                    p,
+                    options,
+                    "roundingIncrement",
+                    DEFAULT_ROUNDING_INCREMENT,
+                    MAXIMUM_ROUNDING_INCREMENT,
+                )?
+                .unwrap_or(DEFAULT_ROUNDING_INCREMENT);
+            let rounding_mode = vm.plural_option_string(p, options, "roundingMode", "halfExpand")?;
+            validate_plural_option(
+                p,
+                &rounding_mode,
+                &[
+                    "ceil",
+                    "floor",
+                    "expand",
+                    "trunc",
+                    "halfCeil",
+                    "halfFloor",
+                    "halfExpand",
+                    "halfTrunc",
+                    "halfEven",
+                ],
+                "roundingMode",
+            )?;
+            let rounding_priority = vm.plural_option_string(p, options, "roundingPriority", "auto")?;
+            validate_plural_option(
+                p,
+                &rounding_priority,
+                &["auto", "morePrecision", "lessPrecision"],
+                "roundingPriority",
+            )?;
+            let trailing_zero_display =
+                vm.plural_option_string(p, options, "trailingZeroDisplay", "auto")?;
+            validate_plural_option(
+                p,
+                &trailing_zero_display,
+                &["auto", "stripIfInteger"],
+                "trailingZeroDisplay",
+            )?;
 
-        let minimum_fraction = minimum_fraction.unwrap_or(DEFAULT_MINIMUM_FRACTION_DIGITS);
-        let maximum_fraction =
-            maximum_fraction.unwrap_or(DEFAULT_MAXIMUM_FRACTION_DIGITS.max(minimum_fraction));
-        if maximum_fraction < minimum_fraction {
-            return Err(self.range_error(
-                p,
-                "maximumFractionDigits is less than minimumFractionDigits".into(),
-            ));
-        }
-        if minimum_significant
-            .zip(maximum_significant)
-            .is_some_and(|(min, max)| max < min)
-        {
-            return Err(self.range_error(
-                p,
-                "maximumSignificantDigits is less than minimumSignificantDigits".into(),
-            ));
-        }
-        let (minimum_significant, maximum_significant) =
-            if minimum_significant.is_some() || maximum_significant.is_some() {
-                (
-                    Some(minimum_significant.unwrap_or(MINIMUM_SIGNIFICANT_DIGITS)),
-                    Some(maximum_significant.unwrap_or(MAXIMUM_SIGNIFICANT_DIGITS)),
-                )
+            let minimum_fraction = minimum_fraction.unwrap_or(DEFAULT_MINIMUM_FRACTION_DIGITS);
+            let maximum_fraction =
+                maximum_fraction.unwrap_or(DEFAULT_MAXIMUM_FRACTION_DIGITS.max(minimum_fraction));
+            if maximum_fraction < minimum_fraction {
+                return Err(vm.range_error(
+                    p,
+                    "maximumFractionDigits is less than minimumFractionDigits".into(),
+                ));
+            }
+            if minimum_significant
+                .zip(maximum_significant)
+                .is_some_and(|(min, max)| max < min)
+            {
+                return Err(vm.range_error(
+                    p,
+                    "maximumSignificantDigits is less than minimumSignificantDigits".into(),
+                ));
+            }
+            let (minimum_significant, maximum_significant) =
+                if minimum_significant.is_some() || maximum_significant.is_some() {
+                    (
+                        Some(minimum_significant.unwrap_or(MINIMUM_SIGNIFICANT_DIGITS)),
+                        Some(maximum_significant.unwrap_or(MAXIMUM_SIGNIFICANT_DIGITS)),
+                    )
+                } else {
+                    (None, None)
+                };
+            const VALID_ROUNDING_INCREMENTS: &[usize] = &[
+                1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
+            ];
+            if !VALID_ROUNDING_INCREMENTS.contains(&rounding_increment) {
+                return Err(vm.range_error(p, "invalid roundingIncrement".into()));
+            }
+            let compact_display = if notation == "compact" {
+                compact_display
             } else {
-                (None, None)
+                String::new()
             };
-        const VALID_ROUNDING_INCREMENTS: &[usize] = &[
-            1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
-        ];
-        if !VALID_ROUNDING_INCREMENTS.contains(&rounding_increment) {
-            return Err(self.range_error(p, "invalid roundingIncrement".into()));
-        }
-        let compact_display = if notation == "compact" {
-            compact_display
-        } else {
-            String::new()
-        };
-        let _ = locale_matcher;
-        Ok(PluralRulesOptions {
-            rule_type,
-            notation,
-            compact_display,
-            minimum_integer_digits,
-            minimum_fraction_digits: minimum_fraction,
-            maximum_fraction_digits: maximum_fraction,
-            minimum_significant_digits: minimum_significant,
-            maximum_significant_digits: maximum_significant,
-            rounding_increment,
-            rounding_mode,
-            rounding_priority,
-            trailing_zero_display,
+            let _ = locale_matcher;
+            Ok(PluralRulesOptions {
+                rule_type,
+                notation,
+                compact_display,
+                minimum_integer_digits,
+                minimum_fraction_digits: minimum_fraction,
+                maximum_fraction_digits: maximum_fraction,
+                minimum_significant_digits: minimum_significant,
+                maximum_significant_digits: maximum_significant,
+                rounding_increment,
+                rounding_mode,
+                rounding_priority,
+                trailing_zero_display,
+            })
         })
     }
 

@@ -176,74 +176,71 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locales = self.canonical_locale_list(p, args.first().copied())?;
-        let mut locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
-        let options = match args.get(1).copied().filter(|value| !value.is_undefined()) {
-            Some(value) if value.is_null() => {
-                return Err(self.type_error(p, "options must not be null".into()));
-            }
-            Some(value) => self.box_object(value)?,
-            None => self
-                .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL))),
-        };
-        let locale_matcher = self.string_option(
-            p,
-            options,
-            "localeMatcher",
-            "best fit",
-            &["lookup", "best fit"],
-        )?;
-        let numbering_system_atom = self.intern_atom("numberingSystem");
-        let numbering_system = self.get_property(p, options, numbering_system_atom)?;
-        let locale_numbering_system = locale_unicode_numbering_system(&locale);
-        let option_numbering_system = if numbering_system.is_undefined() {
-            None
-        } else {
-            let requested = self.to_string(p, numbering_system)?.to_ascii_lowercase();
-            if !quench_intl::valid_unicode_type(&requested) {
-                return Err(self.range_error(p, "invalid numberingSystem".into()));
-            }
-            Some(requested)
-        };
-        let numbering_system = option_numbering_system
-            .as_ref()
-            .filter(|value| quench_intl::NUMBERING_SYSTEMS.contains(&value.as_str()))
-            .or_else(|| {
-                locale_numbering_system
-                    .as_ref()
-                    .filter(|value| quench_intl::NUMBERING_SYSTEMS.contains(&value.as_str()))
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype =
+                vm.intl_instance_prototype(p, new_target, Native::IntlRelativeTimeFormat)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locales = vm.canonical_locale_list(p, args.first().copied())?;
+                let mut locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
+                let options = match args.get(1).copied().filter(|value| !value.is_undefined()) {
+                    Some(value) if value.is_null() => {
+                        return Err(vm.type_error(p, "options must not be null".into()));
+                    }
+                    Some(value) => vm.box_object(value)?,
+                    None => vm.heap.alloc(Cell::Object(Self::empty_object(Value::NULL))),
+                };
+                vm.with_call_roots([options], |vm| {
+                    let locale_matcher = vm.string_option(
+                        p,
+                        options,
+                        "localeMatcher",
+                        "best fit",
+                        &["lookup", "best fit"],
+                    )?;
+                    let numbering_system_atom = vm.intern_atom("numberingSystem");
+                    let numbering_system = vm.get_property(p, options, numbering_system_atom)?;
+                    let locale_numbering_system = locale_unicode_numbering_system(&locale);
+                    let option_numbering_system = if numbering_system.is_undefined() {
+                        None
+                    } else {
+                        let requested = vm.to_string(p, numbering_system)?.to_ascii_lowercase();
+                        if !quench_intl::valid_unicode_type(&requested) {
+                            return Err(vm.range_error(p, "invalid numberingSystem".into()));
+                        }
+                        Some(requested)
+                    };
+                    let numbering_system = option_numbering_system
+                        .as_ref()
+                        .filter(|value| quench_intl::NUMBERING_SYSTEMS.contains(&value.as_str()))
+                        .or_else(|| {
+                            locale_numbering_system.as_ref().filter(|value| {
+                                quench_intl::NUMBERING_SYSTEMS.contains(&value.as_str())
+                            })
+                        })
+                        .cloned()
+                        .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
+                    if locale_numbering_system.as_ref() != Some(&numbering_system)
+                        && option_numbering_system.as_ref().is_some()
+                    {
+                        locale = locale
+                            .split_once("-u-")
+                            .map_or(locale.clone(), |(base, _)| base.into());
+                    }
+                    let style =
+                        vm.string_option(p, options, "style", "long", &["long", "short", "narrow"])?;
+                    let numeric =
+                        vm.string_option(p, options, "numeric", "always", &["always", "auto"])?;
+
+                    let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                    vm.set_hidden_string(instance, RELATIVE_LOCALE_SLOT, &locale)?;
+                    vm.set_hidden_string(instance, RELATIVE_STYLE_SLOT, &style)?;
+                    vm.set_hidden_string(instance, RELATIVE_NUMERIC_SLOT, &numeric)?;
+                    vm.set_hidden_string(instance, RELATIVE_NUMBERING_SYSTEM_SLOT, &numbering_system)?;
+                    let _ = locale_matcher;
+                    Ok(instance)
+                })
             })
-            .cloned()
-            .unwrap_or_else(|| quench_intl::default_numbering_system(&locale).into());
-        if locale_numbering_system.as_ref() != Some(&numbering_system)
-            && option_numbering_system.as_ref().is_some()
-        {
-            locale = locale
-                .split_once("-u-")
-                .map_or(locale.clone(), |(base, _)| base.into());
-        }
-        let style =
-            self.string_option(p, options, "style", "long", &["long", "short", "narrow"])?;
-        let numeric = self.string_option(p, options, "numeric", "always", &["always", "auto"])?;
-        let prototype_atom = self.intern_atom("prototype");
-        let candidate = self.get_property(p, new_target, prototype_atom)?;
-        let realm = self.function_realm(p, new_target)?;
-        let prototype = if self.is_object_like(candidate) {
-            candidate
-        } else {
-            self.realm.intrinsics.intl_relative_time_format_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_hidden_string(instance, RELATIVE_LOCALE_SLOT, &locale)?;
-        self.set_hidden_string(instance, RELATIVE_STYLE_SLOT, &style)?;
-        self.set_hidden_string(instance, RELATIVE_NUMERIC_SLOT, &numeric)?;
-        self.set_hidden_string(instance, RELATIVE_NUMBERING_SYSTEM_SLOT, &numbering_system)?;
-        let _ = locale_matcher;
-        Ok(instance)
+        })
     }
 
     pub(super) fn intl_relative_time_format_resolved_options(

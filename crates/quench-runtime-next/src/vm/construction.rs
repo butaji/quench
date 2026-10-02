@@ -533,6 +533,15 @@ impl<H: Host> Vm<H> {
                             | Native::SharedArrayBuffer
                             | Native::RegExp
                             | Native::AggregateError
+                            | Native::IntlCollator
+                            | Native::IntlNumberFormat
+                            | Native::IntlDateTimeFormat
+                            | Native::IntlPluralRules
+                            | Native::IntlRelativeTimeFormat
+                            | Native::IntlListFormat
+                            | Native::IntlSegmenter
+                            | Native::IntlDisplayNames
+                            | Native::IntlDurationFormat
                     ) && !(native == Native::Object
                         && new_target == vm.native_value(Native::Object)
                         && args

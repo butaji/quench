@@ -185,12 +185,17 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
-            .get(&self.realm.globals)
-            .copied()
-            .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
-        let formatter = self.intl_date_time_format_construct(p, args, constructor)?;
-        self.chain_date_time_format(p, this, formatter)
+        self.with_call_roots(args.iter().copied().chain([this]), |vm| {
+            let constructor = vm
+                .realm
+                .intrinsics
+                .intl_datetime_format_constructors
+                .get(&vm.realm.globals)
+                .copied()
+                .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
+            let formatter = vm.intl_date_time_format_construct(p, args, constructor)?;
+            vm.chain_date_time_format(p, this, formatter)
+        })
     }
 
     pub(super) fn intl_date_time_format_construct(
@@ -199,39 +204,36 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locale = self.collator_locale(p, args.first().copied())?;
-        let options =
-            self.date_time_options(p, args.get(1).copied(), DateTimeDefaults::Format, &locale)?;
-        let locale = self
-            .date_time_option(options.2, "\0locale")
-            .and_then(|value| self.string_value(value))
-            .unwrap_or(locale);
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
-        let realm = self.function_realm(p, new_target)?;
-        let prototype = if self.is_object_like(prototype) {
-            prototype
-        } else {
-            self.realm.intrinsics.intl_datetime_format_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let locale_value = self.heap.alloc(Cell::String(locale.into()));
-        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
-        self.set_date_time_slot(
-            formatter,
-            DATE_TIME_FORMAT_DATE_SLOT,
-            if options.0 { Value::TRUE } else { Value::FALSE },
-        )?;
-        self.set_date_time_slot(
-            formatter,
-            DATE_TIME_FORMAT_TIME_SLOT,
-            if options.1 { Value::TRUE } else { Value::FALSE },
-        )?;
-        self.set_date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT, options.2)?;
-        Ok(formatter)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlDateTimeFormat)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locale = vm.collator_locale(p, args.first().copied())?;
+                let options =
+                    vm.date_time_options(p, args.get(1).copied(), DateTimeDefaults::Format, &locale)?;
+                vm.with_call_roots([options.2], |vm| {
+                    let locale = vm
+                        .date_time_option(options.2, "\0locale")
+                        .and_then(|value| vm.string_value(value))
+                        .unwrap_or(locale);
+
+                    let formatter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                    let locale_value = vm.heap.alloc(Cell::String(locale.into()));
+                    vm.set_date_time_slot(formatter, DATE_TIME_FORMAT_OPTIONS_SLOT, locale_value)?;
+                    vm.set_date_time_slot(
+                        formatter,
+                        DATE_TIME_FORMAT_DATE_SLOT,
+                        if options.0 { Value::TRUE } else { Value::FALSE },
+                    )?;
+                    vm.set_date_time_slot(
+                        formatter,
+                        DATE_TIME_FORMAT_TIME_SLOT,
+                        if options.1 { Value::TRUE } else { Value::FALSE },
+                    )?;
+                    vm.set_date_time_slot(formatter, DATE_TIME_FORMAT_RESOLVED_SLOT, options.2)?;
+                    Ok(formatter)
+                })
+            })
+        })
     }
 
     fn date_time_options(
@@ -254,10 +256,9 @@ impl<H: Host> Vm<H> {
         let resolved = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-        self.active_call_roots.extend([options, resolved]);
-        let result = self.date_time_options_from(p, options, defaults, &locale, resolved);
-        self.active_call_roots.truncate(self.active_call_roots.len() - 2);
-        result
+        self.with_call_roots([options, resolved], |vm| {
+            vm.date_time_options_from(p, options, defaults, &locale, resolved)
+        })
     }
 
     fn date_time_options_from(
@@ -754,42 +755,44 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         formatter: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Ok(formatter);
-        }
-        let Some(realm) = self.intl_datetime_format_receiver_realm(p, receiver)? else {
-            return Ok(formatter);
-        };
-        let fallback = if self.date_time_locale(receiver).is_some() {
-            receiver
-        } else {
-            for slot in [
-                DATE_TIME_FORMAT_OPTIONS_SLOT,
-                DATE_TIME_FORMAT_DATE_SLOT,
-                DATE_TIME_FORMAT_TIME_SLOT,
-                DATE_TIME_FORMAT_RESOLVED_SLOT,
-            ] {
-                if let Some(value) = self.date_time_slot(formatter, slot) {
-                    self.set_date_time_slot(receiver, slot, value)?;
-                }
+        self.with_call_roots([receiver, formatter], |vm| {
+            if !vm.is_object_like(receiver) {
+                return Ok(formatter);
             }
-            formatter
-        };
-        let symbol = self.realm.intrinsics.intl_datetime_format_fallback_symbols[&realm];
-        self.set_symbol_property(receiver, symbol, fallback)?;
-        self.set_property_attributes(
-            receiver,
-            PropertyKey::symbol(symbol),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        Ok(receiver)
+            let Some(realm) = vm.intl_datetime_format_receiver_realm(p, receiver)? else {
+                return Ok(formatter);
+            };
+            let fallback = if vm.date_time_locale(receiver).is_some() {
+                receiver
+            } else {
+                for slot in [
+                    DATE_TIME_FORMAT_OPTIONS_SLOT,
+                    DATE_TIME_FORMAT_DATE_SLOT,
+                    DATE_TIME_FORMAT_TIME_SLOT,
+                    DATE_TIME_FORMAT_RESOLVED_SLOT,
+                ] {
+                    if let Some(value) = vm.date_time_slot(formatter, slot) {
+                        vm.set_date_time_slot(receiver, slot, value)?;
+                    }
+                }
+                formatter
+            };
+            let symbol = vm.realm.intrinsics.intl_datetime_format_fallback_symbols[&realm];
+            vm.set_symbol_property(receiver, symbol, fallback)?;
+            vm.set_property_attributes(
+                receiver,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: false,
+                    enumerable: false,
+                    configurable: false,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+            Ok(receiver)
+        })
     }
 
     fn unwrap_date_time_format_receiver(
