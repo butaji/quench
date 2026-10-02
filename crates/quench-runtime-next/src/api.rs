@@ -2086,6 +2086,85 @@ mod tests {
     }
 
     #[test]
+    fn regression_binary_operand_coercion_preserves_order_and_hints() {
+        assert_output_in_execution_modes(
+            r#"
+            var events=[];
+            var left={[Symbol.toPrimitive](hint) {events.push('left:'+hint);return 41;}};
+            var right={[Symbol.toPrimitive](hint) {events.push('right:'+hint);$262.gc();return 1;}};
+            print(left+right);print(events.join(','));events=[];
+            print(left-right);print(events.join(','));events=[];
+            print(left<right);print(events.join(','));
+            "#,
+            &[
+                "42",
+                "left:default,right:default",
+                "40",
+                "left:number,right:number",
+                "false",
+                "left:number,right:number",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_binary_coercion_keeps_fresh_first_primitive() {
+        assert_output_in_execution_modes(
+            r#"
+            function pair(bigint) {return [
+                {[Symbol.toPrimitive](hint) {return bigint?BigInt(42):String.fromCharCode(97,98);}},
+                {[Symbol.toPrimitive](hint) {$262.gc();return bigint?BigInt(7):String.fromCharCode(99);}}
+            ];}
+            for (var bigint of [false,true]) {
+                var values=pair(bigint);print(values[0]<values[1]);
+                values=pair(bigint);print(values[0]<=values[1]);
+                values=pair(bigint);print(values[0]>values[1]);
+                values=pair(bigint);print(values[0]>=values[1]);
+                values=pair(bigint);print(values[0]+values[1]);
+            }
+            function left() {return {[Symbol.toPrimitive]() {return BigInt(42);}};}
+            function right() {return {[Symbol.toPrimitive]() {$262.gc();return BigInt(7);}};}
+            print(left()-right());print(left()*right());print(left()/right());print(left()%right());
+            print(left()|right());print(left()^right());print(left()&right());print(left()<<right());print(left()>>right());
+            print(String.fromCharCode(97,98)=={[Symbol.toPrimitive]() {$262.gc();return String.fromCharCode(97,99);}});
+            print({[Symbol.toPrimitive]() {$262.gc();return BigInt(43);}}==BigInt(42));
+            function symbol() {return {[Symbol.toPrimitive]() {return Symbol('fresh');}};}
+            try {print(symbol()<right());}catch(error) {print(error instanceof TypeError);}
+            try {print(symbol()+right());}catch(error) {print(error instanceof TypeError);}
+            print(left()+{[Symbol.toPrimitive]() {$262.gc();return String.fromCharCode(55);}});
+            print(left()**right());
+            "#,
+            &[
+                "true",
+                "true",
+                "false",
+                "false",
+                "abc",
+                "false",
+                "false",
+                "true",
+                "true",
+                "49",
+                "35",
+                "294",
+                "6",
+                "0",
+                "47",
+                "45",
+                "2",
+                "5376",
+                "0",
+                "false",
+                "false",
+                "true",
+                "true",
+                "427",
+                "230539333248",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_revoked_proxy_keeps_installed_call_and_construct_methods() {
         assert_output_in_execution_modes(
             r#"

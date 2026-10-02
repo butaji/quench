@@ -1,4 +1,5 @@
 use super::*;
+use oxc_ast::ast::BinaryOperator;
 
 pub(super) enum ArrayLikeElementKind {
     Any,
@@ -9,15 +10,15 @@ const EXPONENTIATION_ZERO: f64 = 0.0;
 const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
 const ODD_INTEGER_PARITY: f64 = 1.0;
-const LAST_NUMERIC_BINARY_OPERATOR: u32 = 19;
+const LAST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::BitwiseAnd as u32;
 
 #[derive(Clone, Copy)]
 #[repr(u32)]
 pub(super) enum RelationalOperator {
-    LessThan = 4,
-    LessEqual = 5,
-    GreaterThan = 6,
-    GreaterEqual = 7,
+    LessThan = BinaryOperator::LessThan as u32,
+    LessEqual = BinaryOperator::LessEqualThan as u32,
+    GreaterThan = BinaryOperator::GreaterThan as u32,
+    GreaterEqual = BinaryOperator::GreaterEqualThan as u32,
 }
 
 impl RelationalOperator {
@@ -39,6 +40,12 @@ impl RelationalOperator {
             _ => false,
         }
     }
+}
+
+pub(super) enum OperandCoercion {
+    PrimitiveDefault,
+    PrimitiveNumber,
+    Numeric,
 }
 
 impl<H: Host> Vm<H> {
@@ -956,141 +963,101 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if (9..=19).contains(&op) {
-            let left = self.to_numeric_value(p, left)?;
-            let right = self.to_numeric_value(p, right)?;
-            if matches!(self.heap.get(left), Some(Cell::BigInt(_)))
-                || matches!(self.heap.get(right), Some(Cell::BigInt(_)))
-            {
-                return self.binary_bigint(p, op, left, right);
+        let numeric =
+            (BinaryOperator::Subtraction as u32..=BinaryOperator::BitwiseAnd as u32).contains(&op);
+        if numeric {
+            if left.as_number().is_some() && right.as_number().is_some() {
+                return self.binary_slow(p, op, left, right);
             }
-            return self.binary_slow(p, op, left, right);
+            return self.with_coerced_operands(
+                p,
+                OperandCoercion::Numeric,
+                left,
+                right,
+                |vm, left, right| {
+                    if matches!(vm.heap.get(left), Some(Cell::BigInt(_)))
+                        || matches!(vm.heap.get(right), Some(Cell::BigInt(_)))
+                    {
+                        vm.binary_bigint(p, op, left, right)
+                    } else {
+                        vm.binary_slow(p, op, left, right)
+                    }
+                },
+            );
         }
         if let Some(operator) = RelationalOperator::from_immediate(op) {
-            return Ok(if self.compare_relational(p, operator, left, right)? {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            });
+            let result = self.compare_relational(p, operator, left, right)?;
+            return Ok(Self::integrity_bool(result));
         }
-        let primitive_operands = (8..=19).contains(&op);
-        let left = if primitive_operands && self.is_object_like(left) {
-            self.to_primitive(p, left, "default")?
-        } else {
-            left
-        };
-        let right = if primitive_operands && self.is_object_like(right) {
-            self.to_primitive(p, right, "default")?
-        } else {
-            right
-        };
-        // Addition dispatches to string concatenation before numeric or BigInt
-        // arithmetic whenever either primitive operand is a string.
-        if op == 8 && (self.is_string(left) || self.is_string(right)) {
-            return self.binary_slow(p, op, left, right);
-        }
-        if let Some((a, b)) = Value::int_pair(left, right) {
-            let result = match op {
-                0 | 2 => {
-                    if a == b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                1 | 3 => {
-                    if a != b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                4 => {
-                    if a < b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                5 => {
-                    if a <= b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                6 => {
-                    if a > b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                7 => {
-                    if a >= b {
-                        Some(Value::TRUE)
-                    } else {
-                        Some(Value::FALSE)
-                    }
-                }
-                8 => a
+        if op == BinaryOperator::Addition as u32 {
+            if let Some((a, b)) = Value::int_pair(left, right) {
+                return Ok(a
                     .checked_add(b)
                     .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 + b as f64))
-                    .into(),
-                9 => a
-                    .checked_sub(b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 - b as f64))
-                    .into(),
-                10 => a
-                    .checked_mul(b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 * b as f64))
-                    .into(),
-                11 => Some(Value::number(a as f64 / b as f64)),
-                12 => a
-                    .checked_rem(b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(f64::NAN))
-                    .into(),
-                13 => Some(Value::number(exponentiate(a as f64, b as f64))),
-                14 => Some(Value::integer(a << (b as u32 & 31))),
-                15 => Some(Value::integer(a >> (b as u32 & 31))),
-                16 => Some(Value::number(((a as u32) >> (b as u32 & 31)) as f64)),
-                17 => Some(Value::integer(a | b)),
-                18 => Some(Value::integer(a ^ b)),
-                19 => Some(Value::integer(a & b)),
-                _ => None,
-            };
-            if let Some(result) = result {
-                return Ok(result);
+                    .unwrap_or_else(|| Value::number(a as f64 + b as f64)));
             }
+            return self.with_coerced_operands(
+                p,
+                OperandCoercion::PrimitiveDefault,
+                left,
+                right,
+                |vm, left, right| {
+                    if !vm.is_string(left)
+                        && !vm.is_string(right)
+                        && (matches!(vm.heap.get(left), Some(Cell::BigInt(_)))
+                            || matches!(vm.heap.get(right), Some(Cell::BigInt(_))))
+                    {
+                        vm.binary_bigint(p, op, left, right)
+                    } else {
+                        vm.binary_slow(p, op, left, right)
+                    }
+                },
+            );
         }
-        if (8..=19).contains(&op)
-            && (matches!(self.heap.get(left), Some(Cell::BigInt(_)))
-                || matches!(self.heap.get(right), Some(Cell::BigInt(_))))
+        if op <= BinaryOperator::StrictInequality as u32
+            && let Some((a, b)) = Value::int_pair(left, right)
         {
-            return self.binary_bigint(p, op, left, right);
+            return Ok(Self::integrity_bool(
+                if op == BinaryOperator::Equality as u32 || op == BinaryOperator::StrictEquality as u32
+                {
+                    a == b
+                } else {
+                    a != b
+                },
+            ));
         }
         self.binary_slow(p, op, left, right)
     }
 
-    pub(super) fn to_numeric_value(
+    pub(super) fn with_coerced_operands<R>(
         &mut self,
         p: &ResidualProgram,
-        value: Value,
-    ) -> Result<Value, JsError> {
-        let primitive = if self.is_object_like(value) {
-            self.to_primitive(p, value, "number")?
-        } else {
-            value
-        };
-        if matches!(self.heap.get(primitive), Some(Cell::BigInt(_))) {
-            Ok(primitive)
-        } else {
-            self.to_number(p, primitive).map(Value::number)
-        }
+        coercion: OperandCoercion,
+        left: Value,
+        right: Value,
+        operation: impl FnOnce(&mut Self, Value, Value) -> Result<R, JsError>,
+    ) -> Result<R, JsError> {
+        self.with_call_roots(
+            [left, right].into_iter().filter(|value| value.is_heap()),
+            |vm| {
+                let convert = |vm: &mut Self, value| match coercion {
+                    OperandCoercion::PrimitiveDefault => vm.to_primitive(p, value, "default"),
+                    OperandCoercion::PrimitiveNumber => vm.to_primitive(p, value, "number"),
+                    OperandCoercion::Numeric => vm.to_numeric(p, value),
+                };
+                let left = convert(vm, left)?;
+                vm.with_call_roots(
+                    std::iter::once(left).filter(|value| value.is_heap()),
+                    |vm| {
+                        let right = convert(vm, right)?;
+                        vm.with_call_roots(
+                            std::iter::once(right).filter(|value| value.is_heap()),
+                            |vm| operation(vm, left, right),
+                        )
+                    },
+                )
+            },
+        )
     }
 
     fn binary_bigint(
@@ -1239,15 +1206,15 @@ impl<H: Host> Vm<H> {
             text.push_js_string(&self.coerce_js_string(p, right)?);
             return Ok(self.intern_dynamic_value(text));
         }
+        if let Some(operator) = RelationalOperator::from_immediate(op) {
+            let result = self.compare_relational(p, operator, left, right)?;
+            return Ok(Self::integrity_bool(result));
+        }
         let answer = match op {
             0 => self.equal(p, left, right)?,
             1 => !self.equal(p, left, right)?,
             2 => self.strict_equal(left, right),
             3 => !self.strict_equal(left, right),
-            4 => self.to_number(p, left)? < self.to_number(p, right)?,
-            5 => self.to_number(p, left)? <= self.to_number(p, right)?,
-            6 => self.to_number(p, left)? > self.to_number(p, right)?,
-            7 => self.to_number(p, left)? >= self.to_number(p, right)?,
             20 => self.has_property(p, right, left)?,
             21 => self.instanceof(p, left, right)?,
             _ => return Ok(Value::number(self.numeric(p, op, left, right)?)),

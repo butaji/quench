@@ -4757,3 +4757,180 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
         }
     }
 }
+
+
+#[test]
+fn coerced_binary_operands_restore_roots_after_each_completion() {
+    use oxc_ast::ast::BinaryOperator;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in ["string", "numeric-string", "bigint"] {
+            for (operator, token) in [
+                (BinaryOperator::LessThan, "<"),
+                (BinaryOperator::GreaterEqualThan, ">="),
+                (BinaryOperator::Addition, "+"),
+                (BinaryOperator::Subtraction, "-"),
+            ] {
+                for phase in ["success", "left", "right"] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        function operands() {{return [
+                            {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='left') throw {{kind:'left'}};
+                                return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(42):'{kind}'==='numeric-string'?String.fromCharCode(52,50):String.fromCharCode(97,98);}};
+                            }}}},
+                            {{get [Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='right') throw {{kind:'right'}};
+                                return function(hint) {{$262.gc();return '{kind}'==='bigint'?BigInt(7):'{kind}'==='numeric-string'?String.fromCharCode(55):String.fromCharCode(99);}};
+                            }}}}
+                        ];}}
+                    "#
+                    );
+                    let program = compile(&source, "binary-coercion-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operands");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let values = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let (left, right) = match vm.heap.get(values) {
+                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                        _ => panic!("operands"),
+                    };
+                    let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = vm.binary(&program, operator as u32, left, right);
+                    assert_eq!(result.is_ok(), phase == "success", "{kind} {token} {phase}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    let result_handle = match result {
+                        Ok(value) => {
+                            let expected = match token {
+                                "<" => {
+                                    if kind == "bigint" {
+                                        "false"
+                                    } else {
+                                        "true"
+                                    }
+                                }
+                                ">=" => {
+                                    if kind == "bigint" {
+                                        "true"
+                                    } else {
+                                        "false"
+                                    }
+                                }
+                                "+" => match kind {
+                                    "bigint" => "49",
+                                    "numeric-string" => "427",
+                                    _ => "abc",
+                                },
+                                _ => {
+                                    if kind == "string" {
+                                        "NaN"
+                                    } else {
+                                        "35"
+                                    }
+                                }
+                            };
+                            assert_eq!(
+                                vm.to_string(&program, value).unwrap(),
+                                expected,
+                                "{kind} {token}"
+                            );
+                            for (handle, value) in handles.iter().zip([left, right]) {
+                                assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                            }
+                            value.is_heap().then(|| vm.heap.weak_handle(value).unwrap())
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                            None
+                        }
+                    };
+                    vm.collect_now(&program);
+                    for handle in handles.into_iter().chain(result_handle) {
+                        assert!(
+                            vm.heap.weak_value(handle).is_none(),
+                            "{kind} {token} {phase}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn equality_roots_the_opposite_primitive_during_object_coercion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for bigint in [false, true] {
+            for reversed in [false, true] {
+                for throws in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"function operand() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ({throws}) throw {{kind:'coercion'}};return {bigint}?BigInt(43):String.fromCharCode(97,99);}}}};}}"#
+                    );
+                    let program = compile(&source, "equality-coercion-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operand");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let object = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let primitive = vm.heap.alloc(if bigint {
+                        super::Cell::BigInt("42".into())
+                    } else {
+                        super::Cell::String("ab".into())
+                    });
+                    let handles =
+                        [object, primitive].map(|value| vm.heap.weak_handle(value).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = if reversed {
+                        vm.equal(&program, object, primitive)
+                    } else {
+                        vm.equal(&program, primitive, object)
+                    };
+                    assert_eq!(
+                        result.is_ok(),
+                        !throws,
+                        "bigint={bigint} reversed={reversed} throws={throws}"
+                    );
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(value) => {
+                            assert!(!value);
+                            assert_eq!(
+                                vm.to_string(&program, primitive).unwrap(),
+                                if bigint { "42" } else { "ab" }
+                            );
+                            assert_eq!(vm.heap.weak_value(handles[1]), Some(primitive));
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), "coercion");
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}

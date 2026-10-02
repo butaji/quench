@@ -17,25 +17,31 @@ impl<H: Host> Vm<H> {
         if let (Some(left), Some(right)) = (left.as_number(), right.as_number()) {
             return Ok(!left.is_nan() && !right.is_nan() && compare_numbers(left, right, operator));
         }
-        let left = self.to_primitive(p, left, "number")?;
-        let right = self.to_primitive(p, right, "number")?;
-        if let (Some(Cell::String(left)), Some(Cell::String(right))) =
-            (self.heap.get(left), self.heap.get(right))
-        {
-            return Ok(operator.matches(left.units().cmp(right.units())));
-        }
-        if let Some(ordering) = compare_bigint_string(&self.heap, left, right) {
-            return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));
-        }
-        let left = self.to_numeric_value(p, left)?;
-        let right = self.to_numeric_value(p, right)?;
-        if let Some(ordering) = compare_bigint_values(&self.heap, left, right) {
-            return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));
-        }
-        let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
-            return Ok(false);
-        };
-        Ok(compare_numbers(left, right, operator))
+        self.with_coerced_operands(
+            p,
+            super::operations::OperandCoercion::PrimitiveNumber,
+            left,
+            right,
+            |vm, left, right| {
+                if let (Some(Cell::String(left)), Some(Cell::String(right))) =
+                    (vm.heap.get(left), vm.heap.get(right))
+                {
+                    return Ok(operator.matches(left.units().cmp(right.units())));
+                }
+                if let Some(ordering) = compare_bigint_string(&vm.heap, left, right) {
+                    return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));
+                }
+                let left = vm.to_numeric(p, left)?;
+                let right = vm.to_numeric(p, right)?;
+                if let Some(ordering) = compare_bigint_values(&vm.heap, left, right) {
+                    return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));
+                }
+                let (Some(left), Some(right)) = (left.as_number(), right.as_number()) else {
+                    return Ok(false);
+                };
+                Ok(compare_numbers(left, right, operator))
+            },
+        )
     }
 
     pub(super) fn has_property(
