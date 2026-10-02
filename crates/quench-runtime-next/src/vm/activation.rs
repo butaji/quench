@@ -41,6 +41,18 @@ pub(crate) struct GeneratorRecord {
     pub(crate) requests: VecDeque<AsyncGeneratorRequest>,
 }
 
+impl GeneratorRecord {
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        std::iter::once(self.realm)
+            .chain(self.continuation.iter().flat_map(Continuation::roots))
+            .chain(
+                self.requests
+                    .iter()
+                    .flat_map(|request| [request.promise, request.value]),
+            )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AsyncGeneratorOperation {
     Next,

@@ -2086,6 +2086,22 @@ mod tests {
     }
 
     #[test]
+    fn regression_iterator_step_rejects_primitive_before_done_access() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads = 0;
+            Object.defineProperty(Number.prototype,'done',{get:function() {reads++;return true;}});
+            for (var Consumer of [Map, Set, WeakMap, WeakSet]) {
+                var iterator = Iterator.from({next:function() {$262.gc();return 42;}});
+                try {new Consumer(iterator); print(false);} catch (error) {print(error instanceof TypeError);}
+            }
+            print(reads);
+            "#,
+            &["true", "true", "true", "true", "0"],
+        );
+    }
+
+    #[test]
     fn regression_bound_has_instance_dispatches_the_target_method() {
         assert_output_in_execution_modes(
             r#"
