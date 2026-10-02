@@ -2086,6 +2086,73 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_prototype_results_survive_validation_and_revocation() {
+        assert_output_in_execution_modes(
+            r#"
+            var target=new Proxy({}, {isExtensible(object) {$262.gc();return Reflect.isExtensible(object);}});
+            var source=new Proxy(target, {getPrototypeOf() {return {rank:42};}});
+            print(Object.getPrototypeOf(source).rank);print(Reflect.getPrototypeOf(source).rank);
+            var revocable=Proxy.revocable(Object.create({rank:43}), {get getPrototypeOf() {revocable.revoke();$262.gc();return null;}});
+            print(Object.getPrototypeOf(revocable.proxy).rank);
+            try {Object.getPrototypeOf(revocable.proxy);}catch(error) {print(error instanceof TypeError);}
+            print(Object.getPrototypeOf('ab')===String.prototype);
+            "#,
+            &["42", "42", "43", "true", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_descriptor_coercion_and_validation_order() {
+        assert_output_in_execution_modes(
+            r#"
+            var events=[];
+            var target=new Proxy({}, {
+                getOwnPropertyDescriptor() {events.push('target-desc');$262.gc();return undefined;},
+                isExtensible() {events.push('extensible');$262.gc();return true;}
+            });
+            var source=new Proxy(target, {get getOwnPropertyDescriptor() {events.push('get-trap');$262.gc();return function() {
+                events.push('trap');return {get enumerable() {events.push('enumerable');$262.gc();return true;},configurable:true,
+                    get value() {events.push('value');$262.gc();return {rank:44};},writable:true};
+            };}});
+            var key={toString() {events.push('key');$262.gc();return 'entry';}};
+            var result=Object.getOwnPropertyDescriptor(source,key);print(result.value.rank);print(events.join(','));
+            events=[];result=Reflect.getOwnPropertyDescriptor(source,key);print(result.value.rank);print(events.join(','));
+            events=[];
+            source=new Proxy(target,{getOwnPropertyDescriptor() {events.push('trap');return undefined;}});
+            print(Object.getOwnPropertyDescriptor(source,'missing'));print(events.join(','));
+            "#,
+            &[
+                "44",
+                "key,get-trap,trap,target-desc,extensible,enumerable,value",
+                "44",
+                "key,get-trap,trap,target-desc,extensible,enumerable,value",
+                "undefined",
+                "trap,target-desc",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_descriptor_compatibility_uses_shared_records() {
+        assert_output_in_execution_modes(
+            r#"
+            var target={};Object.defineProperty(target,'entry',{value:1,writable:true,configurable:false});
+            var descriptor={value:2,writable:true,configurable:false};
+            var source=new Proxy(target,{getOwnPropertyDescriptor() {return descriptor;}});
+            print(Object.getOwnPropertyDescriptor(source,'entry').value);
+            descriptor.writable=false;try {Object.getOwnPropertyDescriptor(source,'entry');}catch(error) {print(error instanceof TypeError);}
+            descriptor={get:undefined,configurable:false};try {Object.getOwnPropertyDescriptor(source,'entry');}catch(error) {print(error instanceof TypeError);}
+            var revocable=Proxy.revocable({entry:45},{get getOwnPropertyDescriptor() {revocable.revoke();$262.gc();return undefined;}});
+            print(Object.getOwnPropertyDescriptor(revocable.proxy,'entry').value);
+            try {Object.getOwnPropertyDescriptor(revocable.proxy,'entry');}catch(error) {print(error instanceof TypeError);}
+            var badKey={toString() {throw {kind:'key'};}};
+            try {Object.getOwnPropertyDescriptor(null,badKey);}catch(error) {print(error instanceof TypeError);}
+            "#,
+            &["2", "true", "true", "45", "true", "true"],
+        );
+    }
+
+    #[test]
     fn regression_for_in_preserves_collecting_key_snapshots() {
         assert_output_in_execution_modes(
             r#"

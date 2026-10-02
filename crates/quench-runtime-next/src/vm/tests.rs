@@ -3714,3 +3714,191 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
         }
     }
 }
+
+#[test]
+fn proxy_introspection_roots_release_after_nested_validation() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for operation in ["prototype", "descriptor", "extensible"] {
+            let phases: &[&str] = match operation {
+                "prototype" => &[
+                    "success",
+                    "getter",
+                    "trap",
+                    "extensible",
+                    "target-prototype",
+                    "fallback",
+                    "revoke-fallback",
+                    "invalid-trap",
+                    "invalid-result",
+                    "mismatch",
+                    "revoked",
+                    "sealed",
+                ],
+                "descriptor" => &[
+                    "success",
+                    "key",
+                    "getter",
+                    "trap",
+                    "target-descriptor",
+                    "extensible",
+                    "descriptor-value",
+                    "fallback",
+                    "revoke-fallback",
+                    "invalid-trap",
+                    "invalid-result",
+                    "mismatch",
+                    "revoked",
+                    "hide-absent",
+                    "hide-present",
+                    "hide-frozen",
+                ],
+                _ => &[
+                    "success",
+                    "getter",
+                    "trap",
+                    "extensible",
+                    "fallback",
+                    "revoke-fallback",
+                    "invalid-trap",
+                    "mismatch",
+                    "revoked",
+                ],
+            };
+            for phase in phases {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        var raw=Object.create({{rank:46}});raw.entry={{rank:42}};
+                        if ('{phase}'==='hide-frozen') Object.defineProperty(raw,'entry',{{configurable:false}});
+                        if ('{operation}'==='prototype' && ('{phase}'==='target-prototype' || '{phase}'==='mismatch' || '{phase}'==='sealed')) Object.preventExtensions(raw);
+                        var target=new Proxy(raw,{{
+                            getOwnPropertyDescriptor(object,key) {{$262.gc();if ('{phase}'==='target-descriptor') throw {{kind:'target-descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
+                            get isExtensible() {{$262.gc();return function(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}};}},
+                            getPrototypeOf(object) {{$262.gc();if ('{phase}'==='target-prototype') throw {{kind:'target-prototype'}};return Reflect.getPrototypeOf(object);}}
+                        }});
+                        function method() {{$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                            if ('{phase}'==='invalid-trap') return 1;
+                            if ('{phase}'==='revoke-fallback') {{revocable.revoke();$262.gc();return null;}}
+                            if ('{phase}'==='fallback') return undefined;
+                            return function() {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                if ('{phase}'==='invalid-result') return 1;
+                                if ('{operation}'==='extensible') return '{phase}'!=='mismatch';
+                                if ('{operation}'==='prototype') return '{phase}'==='sealed' ? Reflect.getPrototypeOf(target) : {{rank:44}};
+                                if ('{phase}'.startsWith('hide-')) return undefined;
+                                return {{get value() {{$262.gc();if ('{phase}'==='descriptor-value') throw {{kind:'descriptor-value'}};return {{rank:43}};}},
+                                    writable:true,enumerable:true,configurable:'{phase}'!=='mismatch'}};
+                            }};
+                        }}
+                        var revocable=Proxy.revocable(target,{{get getPrototypeOf() {{return method();}},get getOwnPropertyDescriptor() {{return method();}},get isExtensible() {{return method();}}}});
+                        if ('{phase}'==='revoked') revocable.revoke();
+                        return [revocable.proxy,{{toString() {{$262.gc();if ('{phase}'==='key') throw {{kind:'key'}};return '{phase}'==='hide-absent' ? 'missing' : 'entry';}}}}];
+                    }}
+                "#
+                );
+                let program = compile(&source, "proxy-introspection-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let operands = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let args = match vm.heap.get(operands) {
+                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    _ => panic!("operands"),
+                };
+                let handles = args
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let key_root = (operation != "descriptor").then(|| vm.heap.root(args[1]));
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = match operation {
+                    "prototype" => vm.object_get_prototype_of(&program, args[0]),
+                    "descriptor" => vm.object_get_own_property_descriptor(&program, &args),
+                    _ => vm.object_is_extensible(&program, &args[..1]),
+                };
+                let succeeds = matches!(
+                    *phase,
+                    "success"
+                        | "fallback"
+                        | "revoke-fallback"
+                        | "sealed"
+                        | "hide-absent"
+                        | "hide-present"
+                );
+                assert_eq!(result.is_ok(), succeeds, "{operation} {phase}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(result) if operation == "extensible" => {
+                        assert_eq!(result, Value::TRUE);
+                        None
+                    }
+                    Ok(result) if phase.starts_with("hide-") => {
+                        assert!(result.is_undefined());
+                        None
+                    }
+                    Ok(result) => {
+                        let rank_atom = vm.intern_atom("rank");
+                        let value_atom = vm.intern_atom("value");
+                        let value = if operation == "descriptor" {
+                            vm.own_property(result, value_atom).unwrap()
+                        } else {
+                            result
+                        };
+                        let expected = if operation == "descriptor" {
+                            if phase.ends_with("fallback") {
+                                42.0
+                            } else {
+                                43.0
+                            }
+                        } else if phase.ends_with("fallback") || *phase == "sealed" {
+                            46.0
+                        } else {
+                            44.0
+                        };
+                        assert_eq!(
+                            vm.own_property(value, rank_atom),
+                            Some(Value::number(expected))
+                        );
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Err(error) => {
+                        if matches!(
+                            *phase,
+                            "invalid-trap"
+                                | "invalid-result"
+                                | "mismatch"
+                                | "revoked"
+                                | "hide-frozen"
+                        ) {
+                            assert!(vm.format_error(&program, &error).contains("TypeError"));
+                        } else {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                        None
+                    }
+                };
+                if let Some(root) = key_root {
+                    vm.heap.release_root(root);
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none(), "{operation} {phase}");
+                }
+                if let Some(handle) = result_handle {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}

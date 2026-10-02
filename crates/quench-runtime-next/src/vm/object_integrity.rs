@@ -173,46 +173,62 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(value).cloned()
         {
             if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
-            let trap_atom = self.intern_atom("getPrototypeOf");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let result = self.call_value(p, trap, handler, &[target])?;
-                if !result.is_null() && self.object_data(result).is_none() {
+            let proxy = self.heap.root(value);
+            let target = self.heap.root(target);
+            let handler = self.heap.root(handler);
+            let mut result_root = None;
+            let outcome = (|| {
+                let atom = self.intern_atom("getPrototypeOf");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.object_get_prototype_of(p, self.heap.root_value(target).unwrap());
+                }
+                if !self.is_function(trap) {
+                    return Err(self.type_error(p, "proxy getPrototypeOf trap is not callable".into()));
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[self.heap.root_value(target).unwrap()],
+                )?;
+                if !result.is_null() && !self.is_object_like(result) {
                     return Err(self.type_error(
                         p,
                         "proxy getPrototypeOf trap must return an object or null".into(),
                     ));
                 }
-                let extensible = self.object_is_extensible(p, &[target])?;
+                let result = self.heap.root(result);
+                result_root = Some(result);
+                let extensible =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
                 if !self.truthy(extensible) {
-                    let target_prototype = self.object_get_prototype_of(p, target)?;
-                    if !self.same_value(target_prototype, result) {
+                    let target_prototype =
+                        self.object_get_prototype_of(p, self.heap.root_value(target).unwrap())?;
+                    if !self.same_value(target_prototype, self.heap.root_value(result).unwrap()) {
                         return Err(self.type_error(
                             p,
                             "proxy getPrototypeOf trap changed a non-extensible target".into(),
                         ));
                     }
                 }
-                return Ok(result);
-            } else if !trap.is_null() && !trap.is_undefined() {
-                return Err(self.type_error(p, "proxy getPrototypeOf trap is not callable".into()));
-            } else {
-                return self.object_get_prototype_of(p, target);
+                Ok(self.heap.root_value(result).unwrap())
+            })();
+            for root in [Some(proxy), Some(target), Some(handler), result_root]
+                .into_iter()
+                .flatten()
+            {
+                self.heap.release_root(root);
             }
-        }
-        let value = self.proxy_target(value);
-        if value.is_null() || value.is_undefined() {
-            return Err(self.type_error(
-                p,
-                "Object.getPrototypeOf called on null or undefined".into(),
-            ));
+            return outcome;
         }
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
@@ -413,37 +429,51 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(source).cloned()
         {
             if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
+                return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
-            let trap_atom = self.intern_atom("isExtensible");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let result = self.call_value(p, trap, handler, &[target])?;
-                let value = self.truthy(result);
-                let target_value = self.object_is_extensible(p, &[target])?;
-                if self.truthy(target_value) != value {
+            let proxy = self.heap.root(source);
+            let target = self.heap.root(target);
+            let handler = self.heap.root(handler);
+            let outcome = (|| {
+                let atom = self.intern_atom("isExtensible");
+                let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), atom)?;
+                if trap.is_null() || trap.is_undefined() {
+                    return self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()]);
+                }
+                if !self.is_function(trap) {
+                    return Err(self.type_error(p, "proxy isExtensible trap is not callable".into()));
+                }
+                let result = self.call_value(
+                    p,
+                    trap,
+                    self.heap.root_value(handler).unwrap(),
+                    &[self.heap.root_value(target).unwrap()],
+                )?;
+                let result = self.truthy(result);
+                let target_result =
+                    self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+                if self.truthy(target_result) != result {
                     return Err(
                         self.type_error(p, "proxy isExtensible trap disagreed with target".into())
                     );
                 }
-                return Ok(Self::integrity_bool(value));
-            } else if !trap.is_null() && !trap.is_undefined() {
-                return Err(self.type_error(p, "proxy isExtensible trap is not callable".into()));
-            } else {
-                return self.object_is_extensible(p, &[target]);
+                Ok(Self::integrity_bool(result))
+            })();
+            for root in [proxy, target, handler] {
+                self.heap.release_root(root);
             }
+            return outcome;
         }
-        let target = self.proxy_target(source);
-        let Some(object) = self.object_data(target) else {
-            return Ok(Value::FALSE);
-        };
-        Ok(Self::integrity_bool(object.is_extensible()))
+        Ok(Self::integrity_bool(
+            self.object_data(source).is_some_and(Object::is_extensible),
+        ))
     }
 
     fn set_integrity_level(
