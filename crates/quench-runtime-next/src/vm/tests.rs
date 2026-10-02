@@ -5967,3 +5967,70 @@ fn regexp_split_roots_inputs_matcher_results_and_accumulated_captures() {
         }
     }
 }
+
+#[test]
+fn regexp_search_roots_saved_index_and_fresh_result_across_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "input", "previous", "reset", "exec-get", "exec", "current", "restore", "index",
+        ] {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function previous() {{return {{tag:41,valueOf() {{throw {{kind:'coerced-previous'}};}}}};}}
+                    function result() {{return {{get index() {{hit('index');return 43;}}}};}}
+                    function receiver() {{var reads=0;return {{
+                        get lastIndex() {{if(reads++===0) {{hit('previous');return previous();}}hit('current');return 1;}},
+                        set lastIndex(value) {{if(value===0)hit('reset');else {{hit('restore');if(value.tag!==41)throw {{kind:'previous-value'}};}}}},
+                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};return result();}};}}
+                    }};}}
+                    function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
+                "#
+                );
+                let program = compile(&source, "regexp-search-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let factory = vm.intern_atom("receiver");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let receiver = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let receiver_root = vm.heap.root(receiver);
+                let factory = vm.intern_atom("input");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let input = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                vm.heap.release_root(receiver_root);
+                let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.regexp_symbol_search(&program, receiver, &[input]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip([receiver, input]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+                }
+                match outcome {
+                    Ok(value) => assert_eq!(value.as_number(), Some(43.0), "{phase}"),
+                    Err(error) => {
+                        let kind = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), kind)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+                }
+            }
+        }
+    }
+}
