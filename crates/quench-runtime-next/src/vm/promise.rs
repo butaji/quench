@@ -1052,8 +1052,8 @@ pub(super) struct DynamicImportJob {
     pub(super) promises: Vec<Value>,
 }
 
+#[derive(Default)]
 pub(super) struct PromiseRuntime {
-    pub(super) proto: Value,
     pub(super) records: FxHashMap<Value, PromiseRecord>,
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
@@ -1071,31 +1071,6 @@ pub(super) struct PromiseRuntime {
     pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<Value>,
-}
-
-impl Default for PromiseRuntime {
-    fn default() -> Self {
-        Self {
-            proto: Value::NULL,
-            records: FxHashMap::default(),
-            jobs: FxHashMap::default(),
-            thenable_jobs: FxHashMap::default(),
-            finally_jobs: FxHashMap::default(),
-            finally_continuation_jobs: FxHashMap::default(),
-            finally_handler_callbacks: FxHashMap::default(),
-            finally_continuation_callbacks: FxHashMap::default(),
-            aggregates: FxHashMap::default(),
-            aggregate_jobs: FxHashMap::default(),
-            reaction_capabilities: FxHashMap::default(),
-            async_resume_jobs: FxHashMap::default(),
-            modules: FxHashMap::default(),
-            dynamic_import_jobs: Vec::new(),
-            async_module_order: VecDeque::new(),
-            module_sources: FxHashMap::default(),
-            waiting_static_modules: Vec::new(),
-            active_native: vec![],
-        }
-    }
 }
 
 impl<H: Host> Vm<H> {
@@ -1196,10 +1171,24 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_promise(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.realm.promise.proto = self.object();
-        let promise = self.native_value(Native::Promise);
+        let prototype = self.object();
+        self.install_promise_for_realm(program, self.native_value(Native::Promise), prototype, None)
+    }
+
+    pub(super) fn install_promise_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        promise: Value,
+        prototype: Value,
+        method_realm: Option<Value>,
+    ) -> Result<(), JsError> {
+        let global = method_realm.unwrap_or(self.realm.globals);
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Promise), prototype);
         self.set_builtin_function_name(promise, "Promise")?;
-        self.set_named(program, promise, "prototype", self.realm.promise.proto)?;
+        self.set_builtin_value_named(promise, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             promise,
@@ -1213,62 +1202,32 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(program, self.realm.promise.proto, "constructor", promise)?;
-        let constructor = self.intern_atom("constructor");
-        self.set_property_attributes(
-            self.realm.promise.proto,
-            property_key::PropertyKey::string(constructor),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        self.set_builtin_named(program, self.realm.promise.proto, "then", Native::PromiseThen)?;
-        self.set_builtin_named(program, self.realm.promise.proto, "catch", Native::PromiseCatch)?;
-        self.set_builtin_named(
-            program,
-            self.realm.promise.proto,
-            "finally",
-            Native::PromiseFinally,
-        )?;
-        self.install_builtin_to_string_tag(self.realm.promise.proto, "Promise")?;
-        self.set_builtin_named(program, promise, "resolve", Native::PromiseResolve)?;
-        self.set_builtin_named(program, promise, "reject", Native::PromiseReject)?;
-        let with_resolvers = self.native_value(Native::PromiseWithResolvers);
-        self.set_named(program, promise, "withResolvers", with_resolvers)?;
-        let name_atom = self.intern_atom("name");
-        let name = self.heap.alloc(Cell::String("withResolvers".into()));
-        self.set_named(program, with_resolvers, "name", name)?;
-        self.set_property_attributes(
-            with_resolvers,
-            property_key::PropertyKey::string(name_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
-        self.set_builtin_named(program, promise, "all", Native::PromiseAll)?;
-        self.set_builtin_named(program, promise, "allKeyed", Native::PromiseAllKeyed)?;
-        self.set_builtin_named(program, promise, "race", Native::PromiseRace)?;
-        self.set_builtin_named(program, promise, "allSettled", Native::PromiseAllSettled)?;
-        self.set_builtin_named(
-            program,
-            promise,
-            "allSettledKeyed",
-            Native::PromiseAllSettledKeyed,
-        )?;
-        self.set_builtin_named(program, promise, "any", Native::PromiseAny)?;
-        self.set_builtin_named(program, promise, "try", Native::PromiseTry)?;
+        self.set_builtin_value_named(prototype, "constructor", promise)?;
+        for (name, native) in [
+            ("then", Native::PromiseThen),
+            ("catch", Native::PromiseCatch),
+            ("finally", Native::PromiseFinally),
+        ] {
+            self.set_realm_builtin_named(program, prototype, name, native, method_realm)?;
+        }
+        self.install_builtin_to_string_tag(prototype, "Promise")?;
+        for (name, native) in [
+            ("resolve", Native::PromiseResolve),
+            ("reject", Native::PromiseReject),
+            ("withResolvers", Native::PromiseWithResolvers),
+            ("all", Native::PromiseAll),
+            ("allKeyed", Native::PromiseAllKeyed),
+            ("race", Native::PromiseRace),
+            ("allSettled", Native::PromiseAllSettled),
+            ("allSettledKeyed", Native::PromiseAllSettledKeyed),
+            ("any", Native::PromiseAny),
+            ("try", Native::PromiseTry),
+        ] {
+            self.set_realm_builtin_named(program, promise, name, native, method_realm)?;
+        }
         if let Some(species) = self.well_known_symbols.get("species").copied() {
-            let getter = self.native_value(Native::PromiseSpeciesGetter);
+            let getter =
+                self.realm_native_value(Native::PromiseSpeciesGetter, global, method_realm.is_none());
             self.set_builtin_function_name(getter, "get [Symbol.species]")?;
             self.set_symbol_property(promise, species, Value::UNDEFINED)?;
             self.set_property_attributes(
@@ -1284,13 +1243,18 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.global(program, "Promise", promise)
+        self.set_builtin_value_named(global, "Promise", promise)
     }
 
     pub(super) fn promise_object(&mut self) -> Value {
-        let promise = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(self.realm.promise.proto)));
+        let prototype = self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, Native::Promise))
+            .copied()
+            .unwrap_or(Value::NULL);
+        let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.realm.promise.records.insert(
             promise,
             PromiseRecord {
