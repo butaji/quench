@@ -1175,6 +1175,243 @@ fn descriptor_record_roots_release_after_field_completion() {
 }
 
 #[test]
+fn module_namespace_operations_share_uninitialized_export_errors() {
+    for compile in [
+        Engine::specialize_module as fn(&str, &str) -> _,
+        Engine::specialize_module_unspecialized,
+    ] {
+        for operation in [
+            "get",
+            "descriptor",
+            "define",
+            "seal",
+            "freeze",
+            "is-sealed",
+            "is-frozen",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let program = compile("export let answer;", "uninitialized-module-export.mjs").unwrap();
+            vm.initialize(&program).unwrap();
+            let namespace = vm.object();
+            let atom = vm.intern_atom("answer");
+            vm.set_property(namespace, atom, Value::UNDEFINED).unwrap();
+            let slot = program.functions[0]
+                .local_atoms
+                .iter()
+                .position(|candidate| *candidate == atom)
+                .unwrap();
+            let environment = vm.heap.alloc(crate::heap::Cell::Environment {
+                parent: Value::NULL,
+                program: Some(super::program_store::ProgramId::MAIN.raw()),
+                root_eval_scope: false,
+                function: super::ROOT_FUNCTION_ID,
+                slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
+                    .into_boxed_slice(),
+                dynamic_bindings: vec![],
+                with_objects: vec![],
+            });
+            vm.programs
+                .set_module_environment(super::program_store::ProgramId::MAIN, environment);
+            let attributes = super::PropertyAttributes {
+                configurable: false,
+                ..super::DEFAULT_PROPERTY_ATTRIBUTES
+            };
+            vm.set_property_attributes(
+                namespace,
+                super::property_key::PropertyKey::string(atom),
+                attributes,
+            );
+            let object = vm.object_data_mut(namespace).unwrap();
+            object.proto = Value::NULL;
+            object.set_module_namespace();
+            object.set_module_bindings(vec![(
+                atom,
+                super::program_store::ProgramId::MAIN,
+                u16::try_from(slot).unwrap(),
+            )]);
+            object.set_extensible(false);
+            let key = vm.heap.alloc(crate::heap::Cell::String("answer".into()));
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let outcome = match operation {
+                "get" => vm.get_property(&program, namespace, atom),
+                "descriptor" => vm.object_get_own_property_descriptor(&program, &[namespace, key]),
+                "define" => vm
+                    .define_own_property_record(
+                        &program,
+                        namespace,
+                        key,
+                        super::object_descriptors::PropertyDescriptorRecord::data(Value::number(
+                            42.0,
+                        )),
+                    )
+                    .map(Vm::<Test262Host>::integrity_bool),
+                "seal" | "freeze" => {
+                    vm.object_set_integrity(&program, &[namespace], operation == "freeze")
+                }
+                "is-sealed" | "is-frozen" => {
+                    vm.object_is_integrity_level(&program, &[namespace], operation == "is-frozen")
+                }
+                _ => unreachable!(),
+            };
+            let error = outcome.unwrap_err();
+            assert!(
+                vm.format_error(&program, &error)
+                    .starts_with("ReferenceError:"),
+                "{operation}"
+            );
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+        }
+    }
+}
+
+#[test]
+fn integrity_operation_roots_release_after_each_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for freeze in [false, true] {
+            for test in [false, true] {
+                let phases: &[&str] = if test {
+                    &[
+                        "success",
+                        "extensible",
+                        "extensible-lookup-throw",
+                        "extensible-call-throw",
+                        "keys-lookup-throw",
+                        "keys-call-throw",
+                        "descriptor-lookup-throw",
+                        "descriptor-call-throw",
+                        "configurable",
+                        "writable",
+                        "primitive",
+                        "revoked",
+                    ]
+                } else {
+                    &[
+                        "success",
+                        "prevent-lookup-throw",
+                        "prevent-call-throw",
+                        "prevent-false",
+                        "keys-lookup-throw",
+                        "keys-call-throw",
+                        "descriptor-lookup-throw",
+                        "descriptor-call-throw",
+                        "define-lookup-throw",
+                        "define-call-throw",
+                        "define-false",
+                        "primitive",
+                        "revoked",
+                    ]
+                };
+                for &phase in phases {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        var marker = {{rank:42}};
+                        function factory() {{
+                            if ('{phase}' === 'primitive') return 1;
+                            var target = {{alpha:42, beta:43}};
+                            if ({test} && '{phase}' !== 'extensible') {{
+                                Object.defineProperty(target, 'alpha', {{configurable:'{phase}' === 'configurable', writable:!{freeze} || '{phase}' === 'writable'}});
+                                Object.defineProperty(target, 'beta', {{configurable:false, writable:!{freeze}}});
+                                Object.preventExtensions(target);
+                            }}
+                            var handler = {{
+                                get preventExtensions() {{$262.gc(); if ('{phase}' === 'prevent-lookup-throw') throw marker;
+                                    return function(t) {{$262.gc(); if ('{phase}' === 'prevent-call-throw') throw marker;
+                                        if ('{phase}' === 'prevent-false') return false;
+                                        return Reflect.preventExtensions(t);
+                                    }};
+                                }},
+                                get isExtensible() {{$262.gc(); if ('{phase}' === 'extensible-lookup-throw') throw marker;
+                                    return function(t) {{$262.gc(); if ('{phase}' === 'extensible-call-throw') throw marker; return Reflect.isExtensible(t);}};
+                                }},
+                                get ownKeys() {{$262.gc(); if ('{phase}' === 'keys-lookup-throw') throw marker;
+                                    return function(t) {{$262.gc(); if ('{phase}' === 'keys-call-throw') throw marker; return ['al' + 'pha', 'be' + 'ta'];}};
+                                }},
+                                get getOwnPropertyDescriptor() {{$262.gc(); if ('{phase}' === 'descriptor-lookup-throw') throw marker;
+                                    return function(t,k) {{$262.gc(); if ('{phase}' === 'descriptor-call-throw') throw marker; return Reflect.getOwnPropertyDescriptor(t,k);}};
+                                }},
+                                get defineProperty() {{$262.gc(); if ('{phase}' === 'define-lookup-throw') throw marker;
+                                    return function(t,k,d) {{$262.gc(); if ('{phase}' === 'define-call-throw') throw marker;
+                                        if ('{phase}' === 'define-false') return false;
+                                        return Reflect.defineProperty(t,k,d);
+                                    }};
+                                }}
+                            }};
+                            if ('{phase}' === 'revoked') {{var revocable = Proxy.revocable(target, handler); revocable.revoke(); return revocable.proxy;}}
+                            return new Proxy(target, handler);
+                        }}
+                    "#
+                    );
+                    let program = compile(&source, "integrity-root-lifecycle.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("factory");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let object = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let weak = vm.heap.weak_handle(object);
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = if test {
+                        vm.object_is_integrity_level(&program, &[object], freeze)
+                    } else {
+                        vm.object_set_integrity(&program, &[object], freeze)
+                    };
+                    let descriptor_skipped = !test && !freeze && phase.starts_with("descriptor-");
+                    let fails = phase.ends_with("-throw") && !descriptor_skipped
+                        || phase == "revoked"
+                        || phase == "prevent-false"
+                        || phase == "define-false";
+                    assert_eq!(
+                        outcome.is_err(),
+                        fails,
+                        "test={test} freeze={freeze} phase={phase}"
+                    );
+                    if let Err(error) = outcome {
+                        if phase.ends_with("-throw") {
+                            let atom = vm.intern_atom("marker");
+                            assert_eq!(
+                                error.thrown_value(),
+                                vm.own_property(vm.realm.globals, atom)
+                            );
+                        }
+                    } else if test {
+                        let expected = phase != "extensible"
+                            && phase != "configurable"
+                            && !(freeze && phase == "writable");
+                        assert_eq!(
+                            outcome.unwrap(),
+                            Vm::<Test262Host>::integrity_bool(expected),
+                            "{phase}"
+                        );
+                    } else {
+                        assert_eq!(outcome.unwrap(), object);
+                    }
+                    assert_eq!(
+                        vm.heap.root_count_for_test(),
+                        roots,
+                        "test={test} freeze={freeze} phase={phase}"
+                    );
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    if let Some(weak) = weak {
+                        vm.collect_now(&program);
+                        assert!(
+                            vm.heap.weak_value(weak).is_none(),
+                            "test={test} freeze={freeze} phase={phase}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn reflect_definition_roots_release_after_callback_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

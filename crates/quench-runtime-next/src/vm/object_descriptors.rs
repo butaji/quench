@@ -600,17 +600,12 @@ impl<H: Host> Vm<H> {
                 return self.property_descriptor_object(value, attributes);
             }
         }
-        let module_binding = self.module_binding_value(target, atom);
-        if module_binding.is_some_and(Value::is_deleted) {
-            return Err(self.reference_error(
-                p,
-                format!(
-                    "Cannot access '{}' before initialization",
-                    self.atom_name(atom)
-                ),
-            ));
-        }
-        let Some(value) = module_binding.or_else(|| self.own_property(target, atom)) else {
+        let value = if self.object_data(target).is_some_and(Object::is_module_namespace) {
+            self.module_namespace_value(p, target, atom)?
+        } else {
+            self.own_property(target, atom)
+        };
+        let Some(value) = value else {
             return Ok(Value::UNDEFINED);
         };
         let attributes = self

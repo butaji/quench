@@ -12,6 +12,27 @@ impl<H: Host> Vm<H> {
         slots.get(slot as usize).copied()
     }
 
+    pub(super) fn module_namespace_value(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+    ) -> Result<Option<Value>, JsError> {
+        let value = self
+            .module_binding_value(object, atom)
+            .or_else(|| self.own_property(object, atom));
+        if value.is_some_and(Value::is_deleted) {
+            return Err(self.reference_error(
+                p,
+                format!(
+                    "Cannot access '{}' before initialization",
+                    self.atom_name(atom)
+                ),
+            ));
+        }
+        Ok(value)
+    }
+
     fn proxy_trap(
         &mut self,
         p: &ResidualProgram,
@@ -353,17 +374,10 @@ impl<H: Host> Vm<H> {
                     None => Ok(Value::UNDEFINED),
                 };
             }
-            if let Some(value) = self.module_binding_value(object, atom) {
-                if value.is_deleted() {
-                    return Err(self.reference_error(
-                        p,
-                        format!(
-                            "Cannot access '{}' before initialization",
-                            self.atom_name(atom)
-                        ),
-                    ));
-                }
-                return Ok(value);
+            if self.object_data(object).is_some_and(Object::is_module_namespace) {
+                return Ok(self
+                    .module_namespace_value(p, object, atom)?
+                    .unwrap_or(Value::UNDEFINED));
             }
             if let Some(index) = super::object_static::array_index(self.atom_name(atom))
                 && let Some(Cell::Array { elements, .. }) = self.heap.get(object)

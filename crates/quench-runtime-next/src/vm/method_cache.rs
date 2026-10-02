@@ -208,7 +208,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             let data = self.object_data(owner)?;
-            if self.shape_is_dictionary(data.shape()) {
+            if data.is_module_namespace() || self.shape_is_dictionary(data.shape()) {
                 return None;
             }
             if let Some(slot) = self.shape_slot(data.shape(), atom) {

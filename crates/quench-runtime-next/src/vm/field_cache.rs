@@ -5,6 +5,9 @@ impl<H: Host> Vm<H> {
         let mut owner = object;
         for depth in 0..=cache.depth {
             let current = self.object_data(owner)?;
+            if current.is_module_namespace() {
+                return None;
+            }
             if depth == cache.depth {
                 return (owner == cache.owner && current.shape() == cache.owner_shape)
                     .then_some(owner);

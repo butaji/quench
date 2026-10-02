@@ -1006,6 +1006,207 @@ mod tests {
     }
 
     #[test]
+    fn regression_integrity_records_preserve_proxy_order_and_isolation() {
+        assert_output_in_execution_modes(
+            r#"
+            var trace = [];
+            var target = {answer:42};
+            var sealed = new Proxy(target, {
+                preventExtensions(t) {trace.push('prevent'); return Reflect.preventExtensions(t);},
+                ownKeys(t) {trace.push('keys'); return Reflect.ownKeys(t);},
+                getOwnPropertyDescriptor() {throw 'unexpected descriptor read';},
+                defineProperty(t, k, d) {trace.push('define:' + k + ':' + Object.keys(d)); Object.setPrototypeOf(d, null); return Reflect.defineProperty(t, k, d);}
+            });
+            print(Object.seal(sealed) === sealed);
+            print(trace.join(';'));
+            trace = [];
+            target = {answer:43, get accessor() {return 44;}};
+            var frozen = new Proxy(target, {
+                preventExtensions(t) {trace.push('prevent'); return Reflect.preventExtensions(t);},
+                ownKeys(t) {trace.push('keys'); return Reflect.ownKeys(t);},
+                getOwnPropertyDescriptor(t, k) {trace.push('get:' + k); var d = Reflect.getOwnPropertyDescriptor(t, k); Object.setPrototypeOf(d, null); return d;},
+                defineProperty(t, k, d) {trace.push('define:' + k + ':' + Object.keys(d)); Object.setPrototypeOf(d, null); return Reflect.defineProperty(t, k, d);}
+            });
+            var poisonValue = {get() {throw 'inherited descriptor value';}, configurable:true};
+            var poisonGet = {get() {throw 'inherited descriptor getter';}, configurable:true};
+            Object.setPrototypeOf(poisonGet, null);
+            Object.defineProperty(Object.prototype, 'value', poisonValue);
+            Object.defineProperty(Object.prototype, 'get', poisonGet);
+            print(Object.freeze(frozen) === frozen);
+            delete Object.prototype.value;
+            delete Object.prototype.get;
+            print(trace.join(';'));
+            print(target.answer);
+            print(target.accessor);
+            print(Object.isFrozen(target));
+            "#,
+            &[
+                "true",
+                "prevent;keys;define:answer:configurable",
+                "true",
+                "prevent;keys;get:answer;define:answer:writable,configurable;get:accessor;define:accessor:configurable",
+                "43",
+                "44",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_integrity_key_snapshot_survives_collecting_traps() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var freeze of [false, true]) {
+                var trace = [];
+                var target = {alpha:42, beta:43};
+                var proxy = new Proxy(target, {
+                    preventExtensions(t) {$262.gc(); return Reflect.preventExtensions(t);},
+                    ownKeys() {return ['al' + 'pha', 'be' + 'ta'];},
+                    getOwnPropertyDescriptor(t,k) {$262.gc(); return Reflect.getOwnPropertyDescriptor(t,k);},
+                    defineProperty(t,k,d) {$262.gc(); trace.push(k); return Reflect.defineProperty(t,k,d);}
+                });
+                print((freeze ? Object.freeze(proxy) : Object.seal(proxy)) === proxy);
+                print(trace.join(','));
+                print(freeze ? Object.isFrozen(proxy) : Object.isSealed(proxy));
+                print(target.alpha + target.beta);
+            }
+            "#,
+            &[
+                "true",
+                "alpha,beta",
+                "true",
+                "85",
+                "true",
+                "alpha,beta",
+                "true",
+                "85",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_integrity_observes_disappearing_snapshot_properties() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var freeze of [false, true]) {
+                var target = {alpha:42, beta:43};
+                Object.defineProperty(target, 'alpha', {configurable:false, writable:!freeze});
+                Object.preventExtensions(target);
+                var trace = [];
+                var proxy = new Proxy(target, {
+                    isExtensible(t) {$262.gc(); trace.push('extensible'); return Reflect.isExtensible(t);},
+                    ownKeys(t) {$262.gc(); trace.push('keys'); return Reflect.ownKeys(t);},
+                    getOwnPropertyDescriptor(t,k) {$262.gc(); trace.push(k); delete t.beta; return Reflect.getOwnPropertyDescriptor(t,k);}
+                });
+                print(freeze ? Object.isFrozen(proxy) : Object.isSealed(proxy));
+                print(trace.join(','));
+                target = {alpha:42, beta:43};
+                trace = [];
+                proxy = new Proxy(target, {
+                    defineProperty(t,k,d) {$262.gc(); trace.push(k); delete t.beta; return Reflect.defineProperty(t,k,d);}
+                });
+                try {print((freeze ? Object.freeze(proxy) : Object.seal(proxy)) === proxy);}
+                catch (error) {print(error instanceof TypeError);}
+                print(trace.join(','));
+                print(Object.isExtensible(target));
+                print(Object.getOwnPropertyDescriptor(target, 'alpha').configurable);
+                print('beta' in target);
+            }
+            var extensible = new Proxy({}, {ownKeys() {throw 'unexpected ownKeys';}});
+            print(Object.isFrozen(extensible));
+            print(Object.isSealed(extensible));
+            "#,
+            &[
+                "true",
+                "extensible,keys,alpha,beta",
+                "true",
+                "alpha,beta",
+                "false",
+                "false",
+                "false",
+                "true",
+                "extensible,keys,alpha,beta",
+                "true",
+                "alpha",
+                "false",
+                "false",
+                "false",
+                "false",
+                "false",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_integrity_namespace_records_preserve_live_exports() {
+        const DEPENDENCY: &str = "export let answer = 42; export let method = function() {return answer;}; export function change() {answer = 43; method = function() {return answer + 1;};}";
+        const SOURCE: &str = r#"
+            import * as ns from './integrity-dependency.mjs';
+            var poison = Object.create(null);
+            poison.get = function() {throw 'inherited descriptor getter';};
+            poison.configurable = true;
+            Object.defineProperty(Object.prototype, 'get', poison);
+            print(Object.seal(ns) === ns);
+            print(Object.isSealed(ns));
+            print(Object.isFrozen(ns));
+            try {Object.freeze(ns);}
+            catch (error) {print(error instanceof TypeError);}
+            delete Object.prototype.get;
+            var inherited = Object.create(ns);
+            function read(value) {return value.answer;}
+            function call(value) {return value.method();}
+            for (var index = 0; index < 5; index++) {read(ns); read(inherited); call(ns); call(inherited);}
+            print(ns.answer);
+            ns.change();
+            print(ns.answer);
+            print(read(ns)); print(read(inherited));
+            print(call(ns)); print(call(inherited));
+            print(Object.defineProperty(ns, 'answer', {value:43}) === ns);
+            print(Reflect.defineProperty(ns, 'answer', {value:42}));
+            print(Object.getOwnPropertyDescriptor(ns, 'answer').value);
+            print(Object.getOwnPropertyDescriptor(ns, 'answer').writable);
+            print(Object.getOwnPropertyDescriptor(ns, Symbol.toStringTag).writable);
+        "#;
+        struct ModuleCapture(Capture);
+        impl Host for ModuleCapture {
+            fn write_line(&mut self, text: &str) {
+                self.0.write_line(text);
+            }
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn resolve_dynamic_import(
+                &mut self,
+                _: &str,
+                specifier: &str,
+            ) -> Result<Option<crate::host::ModuleSource>, String> {
+                assert_eq!(specifier, "./integrity-dependency.mjs");
+                Ok(Some(crate::host::ModuleSource {
+                    name: "integrity-dependency.mjs".into(),
+                    source: DEPENDENCY.into(),
+                    bytes: vec![],
+                }))
+            }
+        }
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
+            let view = Capture::default();
+            let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+            let program = compile(SOURCE, "integrity-namespace.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(
+                view.0.borrow().as_slice(),
+                &[
+                    "true", "true", "false", "true", "42", "43", "43", "43", "44", "44", "true",
+                    "false", "43", "true", "false"
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn regression_legacy_accessor_records_preserve_order_and_roots() {
         assert_output_in_execution_modes(
             r#"
