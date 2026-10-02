@@ -1006,6 +1006,44 @@ mod tests {
     }
 
     #[test]
+    fn regression_static_property_reads_respect_exotic_index_storage() {
+        assert_output_in_execution_modes(
+            r#"
+            function first(value) {return value['0'];}
+            print(first([42]));
+            print(first(Object.create([43])));
+            print(first(new Uint8Array([44])));
+            print(first(Object.create(new Uint8Array([45]))));
+            print(first(new String('x')));
+            print(first(Object.create(new String('y'))));
+            var prototype = {'0': 99};
+            var array = []; Object.setPrototypeOf(array, prototype);
+            print(first(array)); print(first(array));
+            array[0] = 46;
+            print(first(array));
+            function invalid(value) {return value['-0'];}
+            var reads = 0;
+            Object.defineProperty(Uint8Array.prototype, '-0', {get() {reads++; return 99;}});
+            print(invalid(new Uint8Array([47])));
+            print(reads);
+            "#,
+            &[
+                "42",
+                "43",
+                "44",
+                "45",
+                "x",
+                "y",
+                "99",
+                "99",
+                "46",
+                "undefined",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_promise_keyed_combinators_resolve_each_property_before_reading_the_next() {
         assert_output_in_execution_modes(
             r#"
