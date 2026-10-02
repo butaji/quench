@@ -7084,3 +7084,113 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
         }
     }
 }
+
+#[test]
+fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (native, kind, phases) in [
+            (
+                Native::StringSubstring,
+                "substring",
+                &["input", "first", "second"][..],
+            ),
+            (
+                Native::StringConcat,
+                "concat",
+                &["input", "first", "second"][..],
+            ),
+            (Native::StringAnchor, "anchor", &["input", "first"][..]),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function receiver(){{return {{[Symbol.toPrimitive](hint){{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'abc';}}}};}}
+                    function first(){{return {{[Symbol.toPrimitive](hint){{hit('first');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'first-hint'}};return '{kind}'==='substring'?1:'X';}}}};}}
+                    function second(){{return {{[Symbol.toPrimitive](hint){{hit('second');if(hint!==('{kind}'==='substring'?'number':'string'))throw {{kind:'second-hint'}};return '{kind}'==='substring'?2:'Y';}}}};}}
+                "#
+                    );
+                    let program = compile(&source, "native-dispatch-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in [
+                        Some("receiver"),
+                        Some("first"),
+                        (kind != "anchor").then_some("second"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    if kind != "substring" {
+                        for owner in &owners {
+                            vm.heap.release_root(*owner);
+                        }
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|value| vm.heap.weak_handle(*value).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = vm.call_native(&program, native, values[0], &values[1..]);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(
+                            vm.heap.weak_value(*handle),
+                            Some(*value),
+                            "{kind}/{phase}/{abrupt}"
+                        );
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            assert_eq!(
+                                vm.to_string(&program, value).unwrap(),
+                                match kind {
+                                    "concat" => "abcXY",
+                                    "anchor" => "<a name=\"X\">abc</a>",
+                                    "substring" => "b",
+                                    _ => unreachable!(),
+                                }
+                            );
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    if kind == "substring" {
+                        for owner in owners {
+                            vm.heap.release_root(owner);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}

@@ -131,8 +131,8 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(receiver), Some(Cell::String(_))) {
             return Ok(receiver);
         }
-        let text = self.to_string(p, receiver)?;
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        let text = self.regexp_input_string(p, receiver)?;
+        Ok(self.heap.alloc(Cell::String(text)))
     }
 
     pub(super) fn install_string(
