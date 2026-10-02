@@ -1,4 +1,3 @@
-use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -69,14 +68,14 @@ impl<H: Host> Vm<H> {
                 if !vm.is_constructable(p, target) {
                     return Err(vm.type_error(p, "proxy target is not a constructor".into()));
                 }
+                if !vm.is_constructable(p, new_target) {
+                    return Err(vm.type_error(p, "newTarget is not a constructor".into()));
+                }
                 let trap_atom = vm.intern_atom("construct");
                 let trap = vm.get_property(p, handler, trap_atom)?;
                 if !trap.is_undefined() && !trap.is_null() {
                     if !vm.is_function(trap) {
                         return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
-                    }
-                    if !vm.is_constructable(p, new_target) {
-                        return Err(vm.type_error(p, "newTarget is not a constructor".into()));
                     }
                     let arguments = vm.heap.alloc(Cell::Array {
                         object: Self::empty_object(vm.array_proto),
@@ -95,6 +94,7 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    #[cfg(test)]
     pub(super) fn proxy_target(&self, mut value: Value) -> Value {
         while let Some(Cell::Proxy { target, .. }) = self.heap.get(value) {
             value = *target;
@@ -108,46 +108,38 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let proxy = self.construct_native(p, Native::Proxy, args)?;
-        let revoke = self.native_with_env(Native::ProxyRevoke, proxy);
-        let result = self.object();
-        let proxy_atom = self.intern_atom("proxy");
-        let revoke_atom = self.intern_atom("revoke");
-        let state_atom = self.intern_atom("\0rqj:proxy-revoke-target");
-        self.set_property(result, proxy_atom, proxy)?;
-        self.set_property(result, revoke_atom, revoke)?;
-        self.set_property(result, state_atom, proxy)?;
-        self.set_property_attributes(
-            result,
-            PropertyKey::string(state_atom),
-            PropertyAttributes {
-                enumerable: false,
-                configurable: false,
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            },
-        );
-        Ok(result)
+        self.with_call_roots([proxy], |vm| {
+            let revoke = vm.native_with_env(Native::ProxyRevoke, proxy);
+            vm.with_call_roots([revoke], |vm| {
+                let result = vm.object();
+                let proxy_atom = vm.intern_atom("proxy");
+                let revoke_atom = vm.intern_atom("revoke");
+                vm.set_property(result, proxy_atom, proxy)?;
+                vm.set_property(result, revoke_atom, revoke)?;
+                Ok(result)
+            })
+        })
     }
 
     pub(super) fn proxy_revoke(&mut self, revoke: Value) -> Result<Value, JsError> {
-        let proxy = match self.heap.get(revoke) {
-            Some(Cell::Function { env, .. }) => *env,
+        let proxy = match self.heap.get_mut(revoke) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::ProxyRevoke),
+                env,
+                ..
+            }) => std::mem::replace(env, Value::NULL),
             _ => return Err(JsError("invalid proxy revoke function".into())),
         };
-        let Some(Cell::Proxy { handler, .. }) = self.heap.get_mut(proxy) else {
+        if proxy.is_null() {
+            return Ok(Value::UNDEFINED);
+        }
+        let Some(Cell::Proxy {
+            target, handler, ..
+        }) = self.heap.get_mut(proxy)
+        else {
             return Err(JsError("invalid proxy revoke target".into()));
         };
-        *handler = Value::NULL;
-        Ok(Value::UNDEFINED)
-    }
-
-    pub(super) fn proxy_revoke_receiver(&mut self, receiver: Value) -> Result<Value, JsError> {
-        let atom = self.intern_atom("\0rqj:proxy-revoke-target");
-        let proxy = self
-            .own_property(receiver, atom)
-            .ok_or_else(|| JsError("invalid proxy revoke function".into()))?;
-        let Some(Cell::Proxy { handler, .. }) = self.heap.get_mut(proxy) else {
-            return Err(JsError("invalid proxy revoke target".into()));
-        };
+        *target = Value::NULL;
         *handler = Value::NULL;
         Ok(Value::UNDEFINED)
     }

@@ -126,7 +126,14 @@ impl<H: Host> Vm<H> {
             return self.call_object_native(p, native, args);
         }
         if native == Native::ProxyRevoke {
-            return self.proxy_revoke_receiver(this);
+            let callee = self
+                .realm
+                .promise
+                .active_native
+                .last()
+                .copied()
+                .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
+            return self.proxy_revoke(callee);
         }
         if native.is_data_view_native() {
             return self.data_view_native(p, native, this, args);

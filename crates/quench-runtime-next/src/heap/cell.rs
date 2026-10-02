@@ -1093,6 +1093,14 @@ impl Object {
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
     }
 }
+/// Internal methods installed by ProxyCreate, retained after target release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProxyKind {
+    Object,
+    Callable,
+    Constructor,
+}
+
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
@@ -1170,6 +1178,7 @@ pub(crate) enum Cell {
     ArrayFromAsyncState(ArrayFromAsyncState),
     Proxy {
         object: Object,
+        kind: ProxyKind,
         target: Value,
         handler: Value,
     },

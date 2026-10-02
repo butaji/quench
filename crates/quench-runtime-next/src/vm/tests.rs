@@ -852,8 +852,8 @@ fn proxy_own_key_roots_release_after_invariant_completion() {
             let calls = vm.active_call_roots.len();
             let result = vm.proxy_own_keys(&program, proxy);
             match phase {
-                "accept" => {
-                    let keys = result.unwrap().unwrap();
+                "accept" | "fallback" => {
+                    let keys = result.unwrap();
                     assert_eq!(
                         keys.iter()
                             .map(|key| vm.to_string(&program, *key).unwrap())
@@ -861,7 +861,6 @@ fn proxy_own_key_roots_release_after_invariant_completion() {
                         ["first", "later"]
                     );
                 }
-                "fallback" => assert!(result.unwrap().is_none()),
                 "omit" | "duplicate" | "extra" | "invalid-type" | "revoked" => assert!(
                     vm.format_error(&program, &result.unwrap_err())
                         .contains("TypeError")
@@ -4520,6 +4519,239 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                             "remove={remove} symbol={symbol} {phase}"
                         );
                     }
+                }
+            }
+        }
+    }
+}
+
+
+#[test]
+fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, body, callable, constructable) in [
+            ("object", "return {};", false, false),
+            ("callable", "return ()=>42;", true, false),
+            ("constructor", "return function(){return 42;};", true, true),
+        ] {
+            for owner in ["proxy", "revoker", "record"] {
+                for entry in ["direct", "call", "guarded"] {
+                    let mut vm = Vm::new(Test262Host);
+                    let program = compile(
+                        &format!("function operand() {{{body}}}"),
+                        "proxy-revocation-owners.js",
+                    )
+                    .unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operand");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let target = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let handler = vm.object();
+                    let record = vm.proxy_revocable(&program, &[target, handler]).unwrap();
+                    let atom = vm.intern_atom("proxy");
+                    let proxy = vm.own_property(record, atom).unwrap();
+                    let atom = vm.intern_atom("revoke");
+                    let revoke = vm.own_property(record, atom).unwrap();
+                    let handles = [target, handler, proxy, revoke, record]
+                        .map(|value| vm.heap.weak_handle(value).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let active_native = vm.realm.promise.active_native.len();
+                    let realm = vm.realm.globals;
+                    let revoke_root = vm.heap.root(revoke);
+                    let owner_root = match owner {
+                        "proxy" => Some(vm.heap.root(proxy)),
+                        "record" => Some(vm.heap.root(record)),
+                        _ => None,
+                    };
+                    if owner == "record" {
+                        let key = vm.heap.alloc(super::Cell::String("proxy".into()));
+                        assert_eq!(
+                            vm.object_delete_property(&program, &[record, key]).unwrap(),
+                            Value::TRUE
+                        );
+                    }
+                    vm.collect_now(&program);
+                    for (handle, value) in handles[..4].iter().zip([target, handler, proxy, revoke])
+                    {
+                        assert_eq!(
+                            vm.heap.weak_value(*handle),
+                            Some(value),
+                            "{kind} {owner} {entry}"
+                        );
+                    }
+                    for _ in 0..2 {
+                        let result = match entry {
+                            "direct" => vm.proxy_revoke(revoke),
+                            "call" => vm.call_value(&program, revoke, Value::TRUE, &[Value::FALSE]),
+                            _ => vm.call_native_guarded(
+                                &program,
+                                Native::ProxyRevoke,
+                                Value::TRUE,
+                                &[Value::FALSE],
+                                revoke,
+                            ),
+                        };
+                        assert_eq!(result.unwrap(), Value::UNDEFINED);
+                        assert_eq!(vm.active_call_roots.len(), calls);
+                        assert_eq!(vm.realm.promise.active_native.len(), active_native);
+                        assert_eq!(vm.realm.globals, realm);
+                    }
+                    assert_eq!(vm.is_function(proxy), callable, "{kind} {owner} {entry}");
+                    assert_eq!(
+                        vm.is_constructable(&program, proxy),
+                        constructable,
+                        "{kind} {owner} {entry}"
+                    );
+                    if owner != "revoker" {
+                        vm.heap.release_root(revoke_root);
+                    }
+                    vm.collect_now(&program);
+                    assert!(
+                        vm.heap.weak_value(handles[0]).is_none(),
+                        "target retained: {kind} {owner} {entry}"
+                    );
+                    assert!(
+                        vm.heap.weak_value(handles[1]).is_none(),
+                        "handler retained: {kind} {owner} {entry}"
+                    );
+                    assert_eq!(
+                        vm.heap.weak_value(handles[2]),
+                        (owner == "proxy").then_some(proxy),
+                        "{kind} {owner} {entry}"
+                    );
+                    assert_eq!(
+                        vm.heap.weak_value(handles[3]),
+                        (owner != "proxy").then_some(revoke)
+                    );
+                    assert_eq!(
+                        vm.heap.weak_value(handles[4]),
+                        (owner == "record").then_some(record)
+                    );
+                    if owner != "proxy" {
+                        assert!(
+                            matches!(vm.heap.get(revoke),Some(super::Cell::Function {env,..}) if env.is_null())
+                        );
+                        assert_eq!(
+                            vm.call_value(&program, revoke, Value::UNDEFINED, &[])
+                                .unwrap(),
+                            Value::UNDEFINED
+                        );
+                    }
+                    if let Some(root) = owner_root {
+                        vm.heap.release_root(root);
+                    } else {
+                        vm.heap.release_root(revoke_root);
+                    }
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(
+                            vm.heap.weak_value(handle).is_none(),
+                            "{kind} {owner} {entry}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+#[test]
+fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for trapped in [false, true] {
+            for phase in ["success", "getter", "target", "trap"] {
+                if !trapped && phase == "trap" {
+                    continue;
+                }
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operand() {{
+                        var revoke;
+                        var r=Proxy.revocable(new Proxy({{first:42,[Symbol('entry')]:43}},{{ownKeys(object) {{
+                            $262.gc();if ('{phase}'==='target') throw {{kind:'target'}};return Reflect.ownKeys(object);
+                        }}}}),{{get ownKeys() {{
+                            revoke();$262.gc();if ('{phase}'==='getter') throw {{kind:'getter'}};
+                            if (!{trapped}) return null;
+                            return function(object) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};return Reflect.ownKeys(object);}};
+                        }}}});
+                        revoke=r.revoke;
+                        return r.proxy;
+                    }}
+                "#
+                );
+                let program = compile(&source, "proxy-own-keys-revocation-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let proxy = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let (target, handler) = match vm.heap.get(proxy) {
+                    Some(super::Cell::Proxy {
+                        target, handler, ..
+                    }) => (*target, *handler),
+                    _ => panic!("proxy"),
+                };
+                let handles =
+                    [proxy, target, handler].map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.proxy_own_keys(&program, proxy);
+                assert_eq!(
+                    result.is_ok(),
+                    phase == "success",
+                    "trapped={trapped} {phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let keys = match result {
+                    Ok(keys) => {
+                        assert_eq!(keys.len(), 2);
+                        assert_eq!(vm.to_string(&program, keys[0]).unwrap(), "first");
+                        assert!(
+                            matches!(vm.heap.get(keys[1]),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                        );
+                        for (handle, value) in handles.iter().zip([proxy, target, handler]) {
+                            assert_eq!(
+                                vm.heap.weak_value(*handle),
+                                Some(value),
+                                "trapped={trapped} {phase}"
+                            );
+                        }
+                        assert!(
+                            matches!(vm.heap.get(proxy),Some(super::Cell::Proxy {target,handler,..}) if target.is_null()&&handler.is_null())
+                        );
+                        keys.into_iter()
+                            .map(|value| vm.heap.weak_handle(value).unwrap())
+                            .collect::<Vec<_>>()
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        Vec::new()
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in handles.into_iter().chain(keys) {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
+                        "trapped={trapped} {phase}"
+                    );
                 }
             }
         }

@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
             "bigint"
         } else if matches!(self.heap.get(value), Some(Cell::Symbol(_))) {
             "symbol"
-        } else if value == self.function_proto || self.is_function(self.proxy_target(value)) {
+        } else if self.is_function(value) {
             "function"
         } else {
             "object"
