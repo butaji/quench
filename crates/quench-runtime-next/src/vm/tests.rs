@@ -670,6 +670,99 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn own_enumeration_roots_release_after_callback_completion() {
+    use super::object_keys::EnumerableOwnPropertyKind;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in ["keys", "values", "entries"] {
+            for phase in ["accept", "own-keys-throw", "descriptor-throw", "get-throw"] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var marker = {{kind:'{phase}'}};
+                    function makeSource() {{return new Proxy({{}}, {{get ownKeys() {{
+                        $262.gc(); return function() {{
+                            $262.gc(); if ('{phase}' === 'own-keys-throw') throw marker;
+                            return ['first','later',Symbol('ignored')];
+                        }};
+                    }}, getOwnPropertyDescriptor(object,key) {{
+                        $262.gc(); if (key === 'later' && '{phase}' === 'descriptor-throw') throw marker;
+                        return {{enumerable:true, configurable:true, writable:true, value:undefined}};
+                    }}, get(object,key) {{
+                        $262.gc(); if (key === 'later' && '{phase}' === 'get-throw') throw marker;
+                        return {{rank:key === 'first' ? 42 : 43}};
+                    }}}});}}
+                "#
+                );
+                let program = compile(&source, "enumeration-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let make = vm.intern_atom("makeSource");
+                let make = vm.own_property(vm.realm.globals, make).unwrap();
+                let source = vm
+                    .call_value(&program, make, Value::UNDEFINED, &[])
+                    .unwrap();
+                let source_weak = vm.heap.weak_handle(source).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let projection = match kind {
+                    "keys" => EnumerableOwnPropertyKind::Key,
+                    "values" => EnumerableOwnPropertyKind::Value,
+                    _ => EnumerableOwnPropertyKind::KeyValue,
+                };
+                let result = vm.enumerable_own_properties(&program, source, projection);
+                let succeeds = phase == "accept" || (phase == "get-throw" && kind == "keys");
+                let result_weak = if succeeds {
+                    let result = result.unwrap();
+                    let values = vm.array_values(result).unwrap();
+                    assert_eq!(values.len(), 2, "{kind}/{phase}");
+                    for (index, value) in values.into_iter().enumerate() {
+                        if kind == "keys" {
+                            assert_eq!(
+                                vm.to_string(&program, value).unwrap(),
+                                ["first", "later"][index]
+                            );
+                        } else {
+                            let value = if kind == "entries" {
+                                let pair = vm.array_values(value).unwrap();
+                                assert_eq!(
+                                    vm.to_string(&program, pair[0]).unwrap(),
+                                    ["first", "later"][index]
+                                );
+                                pair[1]
+                            } else {
+                                value
+                            };
+                            let rank = vm.intern_atom("rank");
+                            assert_eq!(
+                                vm.own_property(value, rank),
+                                Some(Value::number(42.0 + index as f64))
+                            );
+                        }
+                    }
+                    Some(vm.heap.weak_handle(result).unwrap())
+                } else {
+                    let marker = vm.intern_atom("marker");
+                    assert_eq!(
+                        result.unwrap_err().thrown_value(),
+                        vm.own_property(vm.realm.globals, marker)
+                    );
+                    None
+                };
+                assert_eq!(vm.heap.root_count_for_test(), roots, "{kind}/{phase}");
+                assert_eq!(vm.active_call_roots.len(), calls, "{kind}/{phase}");
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(source_weak).is_none(), "{kind}/{phase}");
+                if let Some(result_weak) = result_weak {
+                    assert!(vm.heap.weak_value(result_weak).is_none(), "{kind}/{phase}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn proxy_set_roots_release_after_collecting_completion() {
     use super::property_key::PropertyKey;
     for compile in [

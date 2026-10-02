@@ -1,5 +1,11 @@
 use super::*;
 
+pub(super) enum EnumerableOwnPropertyKind {
+    Key,
+    Value,
+    KeyValue,
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn indexed_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
         let (indices, array_length) = match self.heap.get(object) {
@@ -19,98 +25,66 @@ impl<H: Host> Vm<H> {
         Some(keys)
     }
 
-    pub(super) fn object_values(
+    pub(super) fn enumerable_own_properties(
         &mut self,
         p: &ResidualProgram,
         object: Value,
+        kind: EnumerableOwnPropertyKind,
     ) -> Result<Value, JsError> {
         let object = self.box_object(object)?;
-        let enumerable_atom = self.intern_atom("enumerable");
-        let mut values = Vec::new();
-        for key in self.object_own_key_values(p, object)? {
-            let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
-                continue;
-            };
-            let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-            if descriptor.is_undefined() {
-                continue;
+        let object = self.heap.root(object);
+        let mut keys = Vec::new();
+        let mut properties = Vec::new();
+        let outcome = (|| {
+            keys = self
+                .object_own_key_values(p, self.heap.root_value(object).unwrap())?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for key in &keys {
+                let property = self.heap.root_value(*key).unwrap();
+                if !matches!(self.heap.get(property), Some(Cell::String(_))) {
+                    continue;
+                }
+                let descriptor = self.object_get_own_property_descriptor(
+                    p,
+                    &[self.heap.root_value(object).unwrap(), property],
+                )?;
+                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                    continue;
+                }
+                let item = match kind {
+                    EnumerableOwnPropertyKind::Key => self.heap.root_value(*key).unwrap(),
+                    EnumerableOwnPropertyKind::Value | EnumerableOwnPropertyKind::KeyValue => self
+                        .get_index(
+                            p,
+                            self.heap.root_value(object).unwrap(),
+                            self.heap.root_value(*key).unwrap(),
+                        )?,
+                };
+                let property = match kind {
+                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
+                        object: Self::empty_object(self.array_proto),
+                        elements: Rc::new(vec![self.heap.root_value(*key).unwrap(), item]),
+                    }),
+                    EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
+                };
+                properties.push(self.heap.root(property));
             }
-            let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
-            if !self.truthy(enumerable) {
-                continue;
-            }
-            let value = if let Some(index) = super::object_static::array_index(name.host_string()) {
-                self.get_index(p, object, Value::number(index as f64))?
-            } else {
-                let atom = self.intern_js_atom(&name);
-                self.get_property(p, object, atom)?
-            };
-            values.push(value);
-        }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
-    }
-
-    pub(super) fn object_entries(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-    ) -> Result<Value, JsError> {
-        let object = self.box_object(object)?;
-        let enumerable_atom = self.intern_atom("enumerable");
-        let mut entries = Vec::new();
-        for key in self.object_own_key_values(p, object)? {
-            let Some(Cell::String(name)) = self.heap.get(key).cloned() else {
-                continue;
-            };
-            let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-            if descriptor.is_undefined() {
-                continue;
-            }
-            let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
-            if !self.truthy(enumerable) {
-                continue;
-            }
-            let value = if let Some(index) = super::object_static::array_index(name.host_string()) {
-                self.get_index(p, object, Value::number(index as f64))?
-            } else {
-                let atom = self.intern_js_atom(&name);
-                self.get_property(p, object, atom)?
-            };
-            let key = self.heap.alloc(Cell::String(name));
-            entries.push(self.heap.alloc(Cell::Array {
+            let elements = properties
+                .iter()
+                .map(|root| self.heap.root_value(*root).unwrap())
+                .collect();
+            Ok(self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![key, value]),
-            }));
+                elements: Rc::new(elements),
+            }))
+        })();
+        for root in keys.into_iter().chain(properties) {
+            self.heap.release_root(root);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
-        }))
-    }
-
-    pub(super) fn object_keys(
-        &mut self,
-        p: &ResidualProgram,
-        object: Value,
-    ) -> Result<Value, JsError> {
-        let object = self.box_object(object)?;
-        let mut values = Vec::new();
-        for key in self.object_own_key_values(p, object)? {
-            if !matches!(self.heap.get(key), Some(Cell::String(_))) {
-                continue;
-            }
-            let descriptor = self.object_get_own_property_descriptor(p, &[object, key])?;
-            if !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable") {
-                values.push(key);
-            }
-        }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        self.heap.release_root(object);
+        outcome
     }
 
     pub(super) fn object_names(
