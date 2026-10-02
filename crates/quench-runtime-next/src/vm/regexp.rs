@@ -176,7 +176,12 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         realm: Value,
     ) -> Result<(), JsError> {
-        for (name, native) in REGEXP_FLAG_ACCESSORS {
+        // Preserve the existing prototype property order: hasIndices was
+        // installed after the older accessors. Flags lookup uses canonical order.
+        let (has_indices, older_flags) = REGEXP_FLAG_ACCESSORS
+            .split_first()
+            .expect("RegExp flag metadata includes hasIndices");
+        for (name, native, _) in older_flags.iter().chain(std::iter::once(has_indices)) {
             let getter = self.native_with_realm(*native, realm, realm);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
@@ -991,7 +996,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
             Some(Cell::RegExp { flags, .. }) => flags.clone(),
-            _ if self.realm.intrinsics.regexp_intrinsics
+            _ if self
+                .realm
+                .intrinsics
+                .regexp_intrinsics
                 .get(&self.realm.globals)
                 .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
@@ -1003,17 +1011,12 @@ impl<H: Host> Vm<H> {
                 );
             }
         };
-        let contains = match native {
-            Native::RegExpGlobal => flags.contains('g'),
-            Native::RegExpIgnoreCase => flags.contains('i'),
-            Native::RegExpMultiline => flags.contains('m'),
-            Native::RegExpDotAll => flags.contains('s'),
-            Native::RegExpUnicode => flags.contains('u'),
-            Native::RegExpUnicodeSets => flags.contains('v'),
-            Native::RegExpSticky => flags.contains('y'),
-            Native::RegExpHasIndices => flags.contains('d'),
-            _ => return Err(JsError("invalid RegExp flag accessor".into())),
-        };
+        let flag = REGEXP_FLAG_ACCESSORS
+            .iter()
+            .find(|(_, accessor, _)| *accessor == native)
+            .map(|(_, _, flag)| *flag)
+            .ok_or_else(|| JsError("invalid RegExp flag accessor".into()))?;
+        let contains = flags.contains(flag);
         Ok(if contains { Value::TRUE } else { Value::FALSE })
     }
 
@@ -1022,28 +1025,20 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(p, "RegExp.prototype.flags called on non-object".into()));
-        }
-        let properties = [
-            ("hasIndices", 'd'),
-            ("global", 'g'),
-            ("ignoreCase", 'i'),
-            ("multiline", 'm'),
-            ("dotAll", 's'),
-            ("unicode", 'u'),
-            ("unicodeSets", 'v'),
-            ("sticky", 'y'),
-        ];
-        let mut flags = String::new();
-        for (property, flag) in properties {
-            let atom = self.intern_atom(property);
-            let value = self.get_property(p, receiver, atom)?;
-            if self.truthy(value) {
-                flags.push(flag);
+        self.with_call_roots([receiver], |vm| {
+            if !vm.is_object_like(receiver) {
+                return Err(vm.type_error(p, "RegExp.prototype.flags called on non-object".into()));
             }
-        }
-        Ok(self.heap.alloc(Cell::String(flags.into())))
+            let mut flags = String::new();
+            for (property, _, flag) in REGEXP_FLAG_ACCESSORS {
+                let atom = vm.intern_atom(property);
+                let value = vm.get_property(p, receiver, atom)?;
+                if vm.truthy(value) {
+                    flags.push(*flag);
+                }
+            }
+            Ok(vm.heap.alloc(Cell::String(flags.into())))
+        })
     }
 
     pub(super) fn regexp_legacy_getter_native(
@@ -1224,57 +1219,54 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::RegExp { .. }) = self.heap.get(receiver) else {
-            return Err(self.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
-        };
-        let is_intrinsic_instance = self.realm.intrinsics.regexp_intrinsics
-            .get(&self.realm.globals)
-            .is_some_and(|intrinsics| {
-                matches!(self.heap.get(receiver), Some(Cell::RegExp { object, .. }) if object.proto == intrinsics.prototype)
-            });
-        if !is_intrinsic_instance {
-            return Err(self.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
-        }
+        self.with_call_roots(
+            std::iter::once(receiver).chain(args.iter().copied()),
+            |vm| {
+                let Some(Cell::RegExp { .. }) = vm.heap.get(receiver) else {
+                    return Err(vm.type_error(
+                        p,
+                        "RegExp.prototype.compile called on incompatible receiver".into(),
+                    ));
+                };
+                let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let flags = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+                let (source, flags) = if let Some(Cell::RegExp {
+                    source,
+                    flags: original_flags,
+                    ..
+                }) = vm.heap.get(pattern)
+                {
+                    if !flags.is_undefined() {
+                        return Err(vm.type_error(
+                            p,
+                            "flags cannot be supplied when pattern is a RegExp".into(),
+                        ));
+                    }
+                    (source.clone(), original_flags.clone())
+                } else {
+                    vm.regexp_initialization_strings(p, pattern, flags)?
+                };
 
-        let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let flags = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let (source, flags) = if let Some(Cell::RegExp { source, flags: original_flags, .. }) = self.heap.get(pattern) {
-            if !flags.is_undefined() {
-                return Err(self.type_error(p, "flags cannot be supplied when pattern is a RegExp".into()));
-            }
-            (source.clone(), original_flags.clone())
-        } else {
-            let source = if pattern.is_undefined() {
-                JsString::from_str("")
-            } else {
-                self.coerce_js_string(p, pattern)?
-            };
-            let flags = if flags.is_undefined() {
-                String::new()
-            } else {
-                self.coerce_js_string(p, flags)?.host_string().to_owned()
-            };
-            (source, flags)
-        };
-
-        if let Err(error) = Self::compile_regexp(&source, &flags) {
-            let message = error.to_string();
-            let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
-            return self.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
-        }
-        let Some(Cell::RegExp {
-            source: current_source,
-            flags: current_flags,
-            ..
-        }) = self.heap.get_mut(receiver)
-        else {
-            unreachable!("RegExp receiver slot was validated before compilation")
-        };
-        *current_source = source;
-        *current_flags = flags;
-        let last_index = self.intern_atom("lastIndex");
-        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
-        Ok(receiver)
+                if let Err(error) = Self::compile_regexp(&source, &flags) {
+                    let message = error.to_string();
+                    let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
+                    return vm.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
+                }
+                let Some(Cell::RegExp {
+                    source: current_source,
+                    flags: current_flags,
+                    ..
+                }) = vm.heap.get_mut(receiver)
+                else {
+                    unreachable!("RegExp receiver slot was validated before compilation")
+                };
+                *current_source = source;
+                *current_flags = flags;
+                let last_index = vm.intern_atom("lastIndex");
+                vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+                Ok(receiver)
+            },
+        )
     }
 
     pub(super) fn regexp_to_string_native(
@@ -1282,21 +1274,26 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(
-                p,
-                "RegExp.prototype.toString called on incompatible receiver".into(),
-            ));
-        }
-        let source_atom = self.intern_atom("source");
-        let flags_atom = self.intern_atom("flags");
-        let source = self.get_property(p, receiver, source_atom)?;
-        let source = self.to_string(p, source)?;
-        let flags = self.get_property(p, receiver, flags_atom)?;
-        let flags = self.to_string(p, flags)?;
-        Ok(self
-            .heap
-            .alloc(Cell::String(format!("/{source}/{flags}").into())))
+        self.with_call_roots([receiver], |vm| {
+            if !vm.is_object_like(receiver) {
+                return Err(vm.type_error(
+                    p,
+                    "RegExp.prototype.toString called on incompatible receiver".into(),
+                ));
+            }
+            let source_atom = vm.intern_atom("source");
+            let flags_atom = vm.intern_atom("flags");
+            let source = vm.get_property(p, receiver, source_atom)?;
+            let source = vm.regexp_input_string(p, source)?;
+            let flags = vm.get_property(p, receiver, flags_atom)?;
+            let flags = vm.regexp_input_string(p, flags)?;
+            let mut output = Vec::new();
+            output.push(REGEXP_DELIMITER);
+            output.extend_from_slice(source.units());
+            output.push(REGEXP_DELIMITER);
+            output.extend_from_slice(flags.units());
+            vm.string_from_units(&output)
+        })
     }
 
     pub(super) fn regexp_escape_native(
@@ -1317,20 +1314,23 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(p, "RegExp.prototype.test called on non-object".into()));
-        }
-        let input = self.regexp_input_string(
-            p,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
-        let input = self.heap.alloc(Cell::String(input));
-        let result = self.regexp_exec_value(p, receiver, input)?;
-        Ok(if result.is_null() {
-            Value::FALSE
-        } else {
-            Value::TRUE
-        })
+        self.with_call_roots(
+            std::iter::once(receiver).chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_object_like(receiver) {
+                    return Err(vm.type_error(p, "RegExp.prototype.test called on non-object".into()));
+                }
+                let input =
+                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let input = vm.heap.alloc(Cell::String(input));
+                let result = vm.regexp_exec_value(p, receiver, input)?;
+                Ok(if result.is_null() {
+                    Value::FALSE
+                } else {
+                    Value::TRUE
+                })
+            },
+        )
     }
 
     pub(super) fn regexp_builtin_exec(
@@ -1339,92 +1339,83 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !matches!(self.heap.get(this), Some(Cell::RegExp { .. })) {
-            return Err(self.type_error(p, "RegExp method called on incompatible receiver".into()));
-        }
-        let input = self.regexp_input_string(
-            p,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-        )?;
-        let last_index_atom = self.intern_atom("lastIndex");
-        let last_index = self.get_property(p, this, last_index_atom)?;
-        let last_index = regexp_to_length(self.to_number(p, last_index)?);
-        let (source, flags) = match self.heap.get(this) {
-            Some(Cell::RegExp { source, flags, .. }) => {
-                (source.clone(), flags.clone())
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            if !matches!(vm.heap.get(this), Some(Cell::RegExp { .. })) {
+                return Err(vm.type_error(p, "RegExp method called on incompatible receiver".into()));
             }
-            _ => {
-                return Err(
-                    self.type_error(p, "RegExp method called on incompatible receiver".into())
-                );
+            let input = vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let last_index_atom = vm.intern_atom("lastIndex");
+            let last_index = vm.get_property(p, this, last_index_atom)?;
+            let last_index = vm.regexp_to_length_value(p, last_index)?;
+            let (source, flags) = match vm.heap.get(this) {
+                Some(Cell::RegExp { source, flags, .. }) => (source.clone(), flags.clone()),
+                _ => {
+                    return Err(
+                        vm.type_error(p, "RegExp method called on incompatible receiver".into())
+                    );
+                }
+            };
+            let regex = Self::compile_regexp(&source, &flags)?;
+            let stateful = flags.contains('g') || flags.contains('y');
+            let sticky = flags.contains('y');
+            let start = if stateful { last_index } else { 0 };
+            if stateful && start > input.units().len() {
+                vm.set_property_with_program_mode(p, this, last_index_atom, Value::number(0.0), true)?;
+                return Ok(Value::NULL);
             }
-        };
-        let regex = Self::compile_regexp(&source, &flags)?;
-        let stateful = flags.contains('g') || flags.contains('y');
-        let sticky = flags.contains('y');
-        let start = if stateful { last_index } else { 0 };
-        if stateful && start > input.units().len() {
-            self.set_property_with_program_mode(
-                p,
-                this,
-                last_index_atom,
-                Value::number(0.0),
-                true,
-            )?;
-            return Ok(Value::NULL);
-        }
-        let matched = regex.find_from_utf16(input.units(), start);
-        let matched = matched.filter(|matched| !sticky || matched.range.start == start);
-        let Some(matched) = matched else {
+            let matched = regex.find_from_utf16(input.units(), start);
+            let matched = matched.filter(|matched| !sticky || matched.range.start == start);
+            let Some(matched) = matched else {
+                if stateful {
+                    vm.set_property_with_program_mode(
+                        p,
+                        this,
+                        last_index_atom,
+                        Value::number(0.0),
+                        true,
+                    )?;
+                }
+                return Ok(Value::NULL);
+            };
             if stateful {
-                self.set_property_with_program_mode(
+                vm.set_property_with_program_mode(
                     p,
                     this,
                     last_index_atom,
-                    Value::number(0.0),
+                    Value::number(matched.range.end as f64),
                     true,
                 )?;
             }
-            return Ok(Value::NULL);
-        };
-        if stateful {
-            self.set_property_with_program_mode(
-                p,
-                this,
-                last_index_atom,
-                Value::number(matched.range.end as f64),
-                true,
-            )?;
-        }
-        let values = std::iter::once(Some(matched.range.clone()))
-            .chain(matched.captures.iter().cloned())
-            .map(|range| {
-                range.map_or(Value::UNDEFINED, |range| {
-                    self.heap
-                        .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+            let values = std::iter::once(Some(matched.range.clone()))
+                .chain(matched.captures.iter().cloned())
+                .map(|range| {
+                    range.map_or(Value::UNDEFINED, |range| {
+                        vm.heap
+                            .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                    })
                 })
-            })
-            .collect::<Vec<_>>();
-        let result = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        });
-        let named = regexp_named_capture_ranges(&matched);
-        let groups = self.regexp_groups_object(&named, input.units())?;
-        let index = matched.range.start;
-        let index_atom = self.intern_atom("index");
-        self.set_property(result, index_atom, Value::number(index as f64))?;
-        let input_value = self.heap.alloc(Cell::String(input));
-        let input_atom = self.intern_atom("input");
-        self.set_property(result, input_atom, input_value)?;
-        let groups_atom = self.intern_atom("groups");
-        self.set_property(result, groups_atom, groups)?;
-        if flags.contains('d') {
-            let indices = self.regexp_indices_array(&matched, &named)?;
-            let indices_atom = self.intern_atom("indices");
-            self.set_property(result, indices_atom, indices)?;
-        }
-        Ok(result)
+                .collect::<Vec<_>>();
+            let result = vm.heap.alloc(Cell::Array {
+                object: Self::empty_object(vm.array_proto),
+                elements: Rc::new(values),
+            });
+            let named = regexp_named_capture_ranges(&matched);
+            let groups = vm.regexp_groups_object(&named, input.units())?;
+            let index = matched.range.start;
+            let index_atom = vm.intern_atom("index");
+            vm.set_property(result, index_atom, Value::number(index as f64))?;
+            let input_value = vm.heap.alloc(Cell::String(input));
+            let input_atom = vm.intern_atom("input");
+            vm.set_property(result, input_atom, input_value)?;
+            let groups_atom = vm.intern_atom("groups");
+            vm.set_property(result, groups_atom, groups)?;
+            if flags.contains('d') {
+                let indices = vm.regexp_indices_array(&matched, &named)?;
+                let indices_atom = vm.intern_atom("indices");
+                vm.set_property(result, indices_atom, indices)?;
+            }
+            Ok(result)
+        })
     }
 
     pub(super) fn regexp_groups_object(
@@ -1730,13 +1721,13 @@ fn regexp_escape_control(character: char) -> Option<&'static str> {
     }
 }
 
-const REGEXP_FLAG_ACCESSORS: &[(&str, Native)] = &[
-    ("global", Native::RegExpGlobal),
-    ("ignoreCase", Native::RegExpIgnoreCase),
-    ("multiline", Native::RegExpMultiline),
-    ("dotAll", Native::RegExpDotAll),
-    ("unicode", Native::RegExpUnicode),
-    ("unicodeSets", Native::RegExpUnicodeSets),
-    ("sticky", Native::RegExpSticky),
-    ("hasIndices", Native::RegExpHasIndices),
+const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
+    ("hasIndices", Native::RegExpHasIndices, 'd'),
+    ("global", Native::RegExpGlobal, 'g'),
+    ("ignoreCase", Native::RegExpIgnoreCase, 'i'),
+    ("multiline", Native::RegExpMultiline, 'm'),
+    ("dotAll", Native::RegExpDotAll, 's'),
+    ("unicode", Native::RegExpUnicode, 'u'),
+    ("unicodeSets", Native::RegExpUnicodeSets, 'v'),
+    ("sticky", Native::RegExpSticky, 'y'),
 ];
