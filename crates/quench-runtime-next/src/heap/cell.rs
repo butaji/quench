@@ -862,6 +862,14 @@ pub(crate) enum IteratorKind {
     AsyncFromSync,
     AsyncGenerator,
 }
+impl IteratorKind {
+    pub(crate) fn is_array_iterator(self) -> bool {
+        matches!(
+            self,
+            Self::Array | Self::ArrayKeys | Self::ArrayValues | Self::ArrayEntries
+        )
+    }
+}
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
     RegExpStringMatchAll {

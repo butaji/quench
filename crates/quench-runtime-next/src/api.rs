@@ -2086,6 +2086,33 @@ mod tests {
     }
 
     #[test]
+    fn regression_array_iterator_advances_before_get_and_reentrant_next() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var method of ['values','entries']) {
+                var reads=0,iterator;
+                var source={length:2,get 0() {$262.gc();reads++;if (reads===1) throw 'item';return 10;},1:20};
+                iterator=Array.prototype[method].call(source);
+                try {iterator.next();} catch (error) {print(error);}
+                var value=iterator.next().value;
+                print(method==='entries'?value[0]+':'+value[1]:value);
+                print(reads);
+                var nested,entered=false;
+                source={length:2,get 0() {$262.gc();if (!entered) {entered=true;nested=iterator.next().value;}return 10;},1:20};
+                iterator=Array.prototype[method].call(source);
+                value=iterator.next().value;
+                print(method==='entries'?value[0]+':'+value[1]:value);
+                print(method==='entries'?nested[0]+':'+nested[1]:nested);
+                print(iterator.next().done);
+            }
+            "#,
+            &[
+                "item", "20", "1", "10", "20", "true", "item", "1:20", "1", "0:10", "1:20", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_iterator_step_rejects_primitive_before_done_access() {
         assert_output_in_execution_modes(
             r#"
