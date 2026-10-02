@@ -49,6 +49,16 @@ impl<H: Host> Vm<H> {
         self.new_array_with_prototype(values, self.array_proto)
     }
 
+    /// Append an own data element to an unexposed dense array. No guest code runs.
+    pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
+        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(array) else {
+            unreachable!("fresh array owner remains an array");
+        };
+        let elements = super::index::mutable_array_elements(elements);
+        elements.push(value);
+        elements.len()
+    }
+
     pub(super) fn new_array_with_prototype(
         &mut self,
         values: Vec<Value>,
