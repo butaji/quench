@@ -225,6 +225,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::SuperinstructionIndex => write_index_immediate(output, instruction),
         ImmediateRole::ArrayLength
         | ImmediateRole::FunctionNamePrefix
+        | ImmediateRole::PropertyDefinitionMode
         | ImmediateRole::BooleanFlag
         | ImmediateRole::WideInstructionIndex
         | ImmediateRole::ArrayIndex
@@ -289,6 +290,11 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
                 instruction.function_name_prefix()
             )
         }
+        ImmediateRole::PropertyDefinitionMode => write!(
+            output,
+            " definition={:?}",
+            instruction.property_definition_mode()
+        ),
         ImmediateRole::BooleanFlag => write!(output, " flag={:?}", instruction.boolean_flag()),
         ImmediateRole::ArrayIndex => write!(output, " index={}", instruction.array_index()),
         ImmediateRole::BinaryOperator
@@ -302,31 +308,38 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI64BinaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmScalarConversionOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::conversion::ScalarConversionOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmF32BinaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::float::F32BinaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmF32UnaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::float::F32UnaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmF64BinaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::float::F64BinaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmF64UnaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::float::F64UnaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI64UnaryOperator => write!(
-            output, " operator={:?}",
+            output,
+            " operator={:?}",
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI32UnaryOperator => write!(

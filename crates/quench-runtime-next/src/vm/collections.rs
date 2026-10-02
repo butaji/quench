@@ -152,7 +152,7 @@ impl<H: Host> Vm<H> {
         };
         let setter_atom = self.intern_atom(adder_name);
         let setter = self.get_property(p, collection, setter_atom)?;
-        if self.call_target(setter).is_err() {
+        if !self.is_function(setter) {
             return Err(self.type_error(p, adder_error.into()));
         }
         let iterator = self.get_iterator(p, iterable)?;
@@ -642,7 +642,7 @@ impl<H: Host> Vm<H> {
                 };
                 let setter_atom = self.intern_atom("set");
                 let setter = self.get_property(p, map, setter_atom)?;
-                if self.call_target(setter).is_err() {
+                if !self.is_function(setter) {
                     return Err(self.type_error(p, "Map.prototype.set is not callable".into()));
                 }
                 let iterator = self.get_iterator(p, iterable)?;
@@ -693,7 +693,7 @@ impl<H: Host> Vm<H> {
                 };
                 let add_atom = self.intern_atom("add");
                 let adder = self.get_property(p, set, add_atom)?;
-                if self.call_target(adder).is_err() {
+                if !self.is_function(adder) {
                     return Err(self.type_error(p, "Set.prototype.add is not callable".into()));
                 }
                 let iterator = self.get_iterator(p, iterable)?;
@@ -812,7 +812,7 @@ impl<H: Host> Vm<H> {
                     Native::MapEntries => self.collection_iterator(this, IteratorKind::MapEntries),
                     Native::MapForEach => {
                         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
-                        if self.call_target(callback).is_err() {
+                        if !self.is_function(callback) {
                             return Err(self.type_error(
                                 p,
                                 "Map.prototype.forEach callback is not callable".into(),
@@ -861,7 +861,7 @@ impl<H: Host> Vm<H> {
                 let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let computed_callback = if native == Native::MapGetOrInsertComputed {
                     let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                    if self.call_target(callback).is_err() {
+                    if !self.is_function(callback) {
                         return Err(self.type_error(
                             p,
                             "Map.prototype.getOrInsertComputed callback is not callable".into(),
@@ -1002,7 +1002,9 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.forEach called on incompatible receiver".into(),
                     ));
                 }
-                self.call_target(callback)?;
+                if !self.is_function(callback) {
+                    return Err(self.type_error(p, "callback is not callable".into()));
+                }
                 let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let mut index = 0;
                 while let Some(value) = self.heap.get(this).and_then(|cell| match cell {
@@ -1147,7 +1149,7 @@ impl<H: Host> Vm<H> {
                 self.validate_weak_map_receiver(p, this)?;
                 let key = self.weak_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let callback = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                if self.call_target(callback).is_err() {
+                if !self.is_function(callback) {
                     return Err(self.type_error(p, "WeakMap callback must be callable".into()));
                 }
                 if let Some(value) = self

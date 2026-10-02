@@ -670,6 +670,151 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn legacy_accessor_record_roots_release_after_each_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [
+            Native::ObjectPrototypeDefineGetter,
+            Native::ObjectPrototypeDefineSetter,
+        ] {
+            for phase in [
+                "success",
+                "boxed",
+                "key-throw",
+                "invalid",
+                "proxy-reject",
+                "proxy-throw",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var marker = {{kind:'{phase}'}};
+                    var target = '{phase}' === 'boxed' ? 1 : {{}};
+                    if ('{phase}'.startsWith('proxy-')) target = new Proxy(target, {{defineProperty() {{
+                        $262.gc(); if ('{phase}' === 'proxy-throw') throw marker; return false;
+                    }}}});
+                    var key = {{toString() {{$262.gc(); if ('{phase}' === 'key-throw') throw marker; return 'entry';}}}};
+                    var makeAccessor = function() {{return function() {{return 42;}};}};
+                "#
+                );
+                let program = compile(&source, "legacy-accessor-record-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let values = ["target", "key", "marker", "makeAccessor"].map(|name| {
+                    let atom = vm.intern_atom(name);
+                    vm.own_property(vm.realm.globals, atom).unwrap()
+                });
+                let accessor = vm
+                    .call_value(&program, values[3], Value::UNDEFINED, &[])
+                    .unwrap();
+                let weak = vm.heap.weak_handle(accessor).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let argument = if phase == "invalid" {
+                    Value::UNDEFINED
+                } else {
+                    accessor
+                };
+                let result = vm.object_prototype_define_accessor(
+                    &program,
+                    native,
+                    values[0],
+                    &[values[1], argument],
+                );
+                match phase {
+                    "success" | "boxed" => assert_eq!(result.unwrap(), Value::UNDEFINED),
+                    "invalid" | "proxy-reject" => {
+                        let error = result.unwrap_err();
+                        assert!(vm.format_error(&program, &error).contains("TypeError"));
+                    }
+                    _ => assert_eq!(result.unwrap_err().thrown_value(), Some(values[2])),
+                }
+                assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+                assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+                vm.collect_now(&program);
+                assert_eq!(
+                    vm.heap.weak_value(weak).is_some(),
+                    phase == "success",
+                    "{phase}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn class_field_record_roots_release_after_each_completion() {
+    use super::property_key::PropertyKey;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "ordinary",
+            "symbol",
+            "private",
+            "reject",
+            "proxy-reject",
+            "proxy-throw",
+        ] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var target = {{}}, marker = {{kind:'{phase}'}}, symbol = Symbol('entry');
+                if ('{phase}' === 'reject') Object.preventExtensions(target);
+                if ('{phase}'.startsWith('proxy-')) target = new Proxy(target, {{defineProperty() {{
+                    $262.gc(); if ('{phase}' === 'proxy-throw') throw marker; return false;
+                }}}});
+                var makeValue = function() {{return {{rank:42}};}};
+            "#
+            );
+            let program = compile(&source, "class-field-record-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let values = ["target", "marker", "symbol", "makeValue"].map(|name| {
+                let atom = vm.intern_atom(name);
+                vm.own_property(vm.realm.globals, atom).unwrap()
+            });
+            let atom = vm.intern_atom("entry");
+            let key = match phase {
+                "symbol" => PropertyKey::symbol(values[2]),
+                "private" => PropertyKey::private(atom),
+                _ => PropertyKey::string(atom),
+            };
+            let value = vm
+                .call_value(&program, values[3], Value::UNDEFINED, &[])
+                .unwrap();
+            let weak = vm.heap.weak_handle(value).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.define_class_field(&program, values[0], key, value);
+            match phase {
+                "ordinary" | "symbol" => result.unwrap(),
+                "proxy-throw" => assert_eq!(result.unwrap_err().thrown_value(), Some(values[1])),
+                "private" => assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("private names are not public class-field keys")
+                ),
+                _ => {
+                    let error = result.unwrap_err();
+                    assert!(vm.format_error(&program, &error).contains("TypeError"));
+                }
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
+            assert_eq!(vm.active_call_roots.len(), calls, "{phase}");
+            vm.collect_now(&program);
+            assert_eq!(
+                vm.heap.weak_value(weak).is_some(),
+                matches!(phase, "ordinary" | "symbol"),
+                "{phase}"
+            );
+        }
+    }
+}
+
+#[test]
 fn json_revival_roots_release_after_each_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

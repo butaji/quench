@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -1483,20 +1484,17 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<(), JsError> {
-        let descriptor = self.object();
-        for (name, field) in [
-            ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, field)?;
-        }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-        self.object_define_property(p, &[self.realm.globals, key, descriptor])
-            .map(|_| ())
-            .map_err(|_| self.type_error(p, "cannot define global eval binding".into()))
+        let value_root = self.heap.root(value);
+        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        let value = self.heap.root_value(value_root).unwrap();
+        let result = self.define_property_or_throw(
+            p,
+            self.realm.globals,
+            key,
+            PropertyDescriptorRecord::data(value),
+        );
+        self.heap.release_root(value_root);
+        result
     }
 
     fn store_eval_outer_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {

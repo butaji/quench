@@ -10,26 +10,49 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let target = self.box_object_or_type_error(p, receiver)?;
-        let accessor = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if !accessor.is_undefined() && self.call_target(accessor).is_err() {
-            return Err(self.type_error(p, "accessor is not callable".into()));
+        let receiver = self.heap.root(receiver);
+        let key_input = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let accessor = self
+            .heap
+            .root(args.get(1).copied().unwrap_or(Value::UNDEFINED));
+        let mut target_root = None;
+        let outcome = (|| {
+            let value = self.heap.root_value(receiver).unwrap();
+            let target = self.box_object_or_type_error(p, value)?;
+            let target = self.heap.root(target);
+            target_root = Some(target);
+            if !self.is_function(self.heap.root_value(accessor).unwrap()) {
+                return Err(self.type_error(p, "accessor is not callable".into()));
+            }
+            let input = self.heap.root_value(key_input).unwrap();
+            let key = self.to_property_key(p, input)?;
+            let function = self.heap.root_value(accessor).unwrap();
+            let (getter, setter) = match native {
+                Native::ObjectPrototypeDefineGetter => (Some(function), None),
+                Native::ObjectPrototypeDefineSetter => (None, Some(function)),
+                _ => unreachable!("legacy accessor definition kind"),
+            };
+            let descriptor = PropertyDescriptorRecord {
+                value: None,
+                writable: None,
+                enumerable: Some(true),
+                configurable: Some(true),
+                getter,
+                setter,
+            };
+            let target = self.heap.root_value(target).unwrap();
+            self.define_property_or_throw(p, target, key, descriptor)?;
+            Ok(Value::UNDEFINED)
+        })();
+        for root in [Some(receiver), Some(key_input), Some(accessor), target_root]
+            .into_iter()
+            .flatten()
+        {
+            self.heap.release_root(root);
         }
-        let key = self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let descriptor = self.object();
-        let field = if native == Native::ObjectPrototypeDefineGetter {
-            "get"
-        } else {
-            "set"
-        };
-        let field = self.intern_atom(field);
-        let enumerable = self.intern_atom("enumerable");
-        let configurable = self.intern_atom("configurable");
-        self.set_property(descriptor, field, accessor)?;
-        self.set_property(descriptor, enumerable, Value::TRUE)?;
-        self.set_property(descriptor, configurable, Value::TRUE)?;
-        self.object_define_property(p, &[target, key, descriptor])?;
-        Ok(Value::UNDEFINED)
+        outcome
     }
 
     pub(super) fn define_class_field(
@@ -39,55 +62,25 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
-        if let PropertyKey::String(atom) = key
-            && let Some(Cell::Object(object)) = self.heap.get(target)
-            && !object.is_module_namespace()
-        {
-            let exists = self.own_property(target, atom).is_some();
-            if exists
-                && self
-                    .property_attributes(target, key)
-                    .is_some_and(|attributes| !attributes.configurable)
-            {
-                return Err(self.type_error(p, "cannot redefine non-configurable property".into()));
-            }
-            if !exists && !object.is_extensible() {
-                return Err(
-                    self.type_error(p, "cannot add property to non-extensible object".into())
-                );
-            }
-            if exists {
-                self.remove_property_attributes(target, key);
-            }
-            self.set_shape_property(target, key, value)?;
-            self.set_property_attributes(target, key, DEFAULT_PROPERTY_ATTRIBUTES);
-            return Ok(());
-        }
-
-        let key_value = match key {
-            PropertyKey::String(atom) => {
-                let text = self.atom_name(atom).to_owned();
-                self.heap.alloc(Cell::String(text.into()))
-            }
-            PropertyKey::Symbol(symbol) => symbol,
-            PropertyKey::Private(_) => {
-                return Err(JsError::validation(
-                    "private names are not public class-field keys".into(),
-                ));
-            }
-        };
-        let descriptor = self.object();
-        for (name, field) in [
-            ("value", value),
-            ("writable", Value::TRUE),
-            ("enumerable", Value::TRUE),
-            ("configurable", Value::TRUE),
-        ] {
-            let atom = self.intern_atom(name);
-            self.set_property(descriptor, atom, field)?;
-        }
-        self.object_define_property(p, &[target, key_value, descriptor])?;
-        Ok(())
+        let target = self.heap.root(target);
+        let value = self.heap.root(value);
+        let outcome = (|| {
+            let key = match key {
+                PropertyKey::String(atom) => self.heap.alloc(Cell::String(self.atom_value(atom))),
+                PropertyKey::Symbol(symbol) => symbol,
+                PropertyKey::Private(_) => {
+                    return Err(JsError::validation(
+                        "private names are not public class-field keys".into(),
+                    ));
+                }
+            };
+            let target = self.heap.root_value(target).unwrap();
+            let value = self.heap.root_value(value).unwrap();
+            self.define_property_or_throw(p, target, key, PropertyDescriptorRecord::data(value))
+        })();
+        self.heap.release_root(value);
+        self.heap.release_root(target);
+        outcome
     }
 
     pub(super) fn object_prototype_to_locale_string(
