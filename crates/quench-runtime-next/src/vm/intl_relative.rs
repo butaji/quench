@@ -98,7 +98,7 @@ impl<H: Host> Vm<H> {
             )?;
         }
         let locales = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .filter(|locale| super::intl_number::is_supported_locale(locale))
             .map(|locale| self.heap.alloc(Cell::String(locale.into())))
@@ -176,7 +176,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
         let mut locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
         let options = match args.get(1).copied().filter(|value| !value.is_undefined()) {
             Some(value) if value.is_null() => {

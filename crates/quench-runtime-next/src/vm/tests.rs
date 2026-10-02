@@ -7299,3 +7299,109 @@ fn string_raw_roots_fresh_raw_views_and_original_substitutions() {
         }
     }
 }
+
+#[test]
+fn collator_construction_roots_boxed_locale_and_option_views() {
+    use super::Cell;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "usage-string",
+            "usage",
+            "length",
+            "index",
+            "locale",
+            "localeMatcher",
+            "collation",
+            "numeric",
+            "caseFirst",
+            "sensitivity",
+            "ignorePunctuation",
+        ] {
+            for abrupt in [false, true] {
+                let source = format!(
+                    r#"
+                var trace=[];function traceLog(){{return trace.join(',');}}
+                function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                function localeValue(){{return {{toString(){{hit('locale');return 'en';}}}};}}
+                function usageValue(){{return {{toString(){{hit('usage-string');return 'sort';}}}};}}
+                Object.defineProperty(Number.prototype,'length',{{configurable:true,get(){{hit('length');return 1;}}}});
+                Object.defineProperty(Number.prototype,'0',{{configurable:true,get(){{hit('index');return localeValue();}}}});
+                for(var key of ['usage','localeMatcher','collation','numeric','caseFirst','sensitivity','ignorePunctuation']){{
+                    ((name)=>Object.defineProperty(Number.prototype,name,{{configurable:true,get(){{hit(name);if(name==='usage')return usageValue();return undefined;}}}}))(key);
+                }}
+                "#
+                );
+                let program = compile(&source, "collator-boxed-roots.js").unwrap();
+                let mut vm = Vm::new(Test262Host);
+                vm.execute(&program).unwrap();
+                let constructor = *vm
+                    .realm
+                    .intrinsics
+                    .intl_collator_constructors
+                    .get(&vm.realm.globals)
+                    .unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let locales = if matches!(phase, "length" | "index" | "locale") {
+                    Value::number(42.0)
+                } else {
+                    vm.heap.alloc(Cell::String("en".into()))
+                };
+                let result = vm.intl_collator_construct(
+                    &program,
+                    &[locales, Value::number(7.0)],
+                    constructor,
+                );
+                assert_eq!(result.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(collator) => {
+                        let owner = vm.heap.root(collator);
+                        vm.collect_now(&program);
+                        let left = vm.heap.alloc(Cell::String("a".into()));
+                        let right = vm.heap.alloc(Cell::String("b".into()));
+                        let result = vm
+                            .intl_collator_native(
+                                &program,
+                                Native::IntlCollatorCompare,
+                                collator,
+                                &[left, right],
+                            )
+                            .unwrap();
+                        assert_eq!(result.as_number(), Some(-1.0), "{phase}");
+                        let atom = vm.intern_atom("traceLog");
+                        let logger = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let trace = vm
+                            .call_value(&program, logger, Value::UNDEFINED, &[])
+                            .unwrap();
+                        let prefix = if matches!(phase, "length" | "index" | "locale") {
+                            "length,index,locale,"
+                        } else {
+                            ""
+                        };
+                        assert_eq!(
+                            vm.to_string(&program, trace).unwrap(),
+                            format!(
+                                "{prefix}usage,usage-string,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation"
+                            ),
+                            "{phase}"
+                        );
+                        vm.heap.release_root(owner);
+                    }
+                    Err(error) => {
+                        let kind = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), kind)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                vm.collect_now(&program);
+            }
+        }
+    }
+}

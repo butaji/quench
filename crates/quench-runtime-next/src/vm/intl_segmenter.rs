@@ -60,7 +60,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let locale = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .find(|locale| segmenter_locale_supported(locale))
             .unwrap_or_else(|| "en-US".into());
@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             let locales = self
-                .collator_locale_list(p, args.first().copied())?
+                .canonical_locale_list(p, args.first().copied())?
                 .into_iter()
                 .filter(|locale| segmenter_locale_supported(locale))
                 .map(|locale| self.heap.alloc(Cell::String(locale.into())))

@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let prototype = self.display_names_instance_prototype(p, new_target)?;
         let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
         let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
         let options = self.display_names_options(p, args.get(1).copied())?;
         for (slot, value) in [

@@ -58,7 +58,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
         let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
         let (style, kind) = self.list_format_options(p, args.get(1).copied())?;
         let prototype_atom = self.intern_atom("prototype");
@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::IntlListFormatSupportedLocalesOf {
-            let locales = self.collator_locale_list(p, args.first().copied())?;
+            let locales = self.canonical_locale_list(p, args.first().copied())?;
             self.list_format_locale_matcher(p, args.get(1).copied())?;
             let values = locales
                 .into_iter()

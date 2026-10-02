@@ -411,7 +411,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let locales = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .filter(|locale| is_supported_locale(locale))
             .map(|locale| self.heap.alloc(Cell::String(locale.into())))
@@ -1712,10 +1712,6 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
-}
-
-pub(super) fn valid_locale_identifier(locale: &str) -> bool {
-    quench_intl::canonical_locale_identifier(locale).is_some()
 }
 
 fn locale_unicode_keyword(locale: &str, key: &str) -> Option<String> {

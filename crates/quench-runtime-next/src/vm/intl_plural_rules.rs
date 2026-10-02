@@ -82,7 +82,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         let locale = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .next()
             .unwrap_or_else(|| DEFAULT_PLURAL_RULES_LOCALE.into());
@@ -394,7 +394,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let locales = self
-            .collator_locale_list(p, args.first().copied())?
+            .canonical_locale_list(p, args.first().copied())?
             .into_iter()
             .filter(|locale| super::intl_number::is_supported_locale(locale))
             .map(|locale| self.heap.alloc(Cell::String(locale.into())))

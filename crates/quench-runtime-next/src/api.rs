@@ -2120,6 +2120,42 @@ mod tests {
     }
 
     #[test]
+    fn regression_collator_uses_one_canonical_locale_list() {
+        assert_output_in_execution_modes(
+            r#"
+            var trace=[];
+            var locales=new Proxy({length:3,0:{toString(){trace.push('locale');$262.gc();return 'EN';}},2:'en'}, {
+                get(target,key){trace.push('get:'+String(key));$262.gc();return target[key];},
+                has(target,key){trace.push('has:'+String(key));$262.gc();return key in target;}
+            });
+            var options={get usage(){trace.push('usage');$262.gc();return 'sort';}};
+            print(Math.sign('a'.localeCompare('b',locales,options)));
+            print(trace.join(','));
+            trace=[];
+            print(new Intl.Collator(locales,options).resolvedOptions().locale);
+            print(trace.join(','));
+            print(Intl.getCanonicalLocales([,new Intl.Locale('en'), 'EN']).join(','));
+            print(new Intl.Collator(new Intl.Locale('en')).resolvedOptions().locale);
+            try{new Intl.Collator(['en','bad_locale']);print('missed');}catch(e){print(e instanceof RangeError);}
+            var once=0;
+            print('a'.localeCompare('b',[{toString(){if(++once>1)throw 'twice';return 'en';}}]));
+            print(once);
+            "#,
+            &[
+                "-1",
+                "get:length,has:0,get:0,locale,has:1,has:2,get:2,usage",
+                "en",
+                "get:length,has:0,get:0,locale,has:1,has:2,get:2,usage",
+                "en",
+                "en",
+                "true",
+                "-1",
+                "1",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_string_raw_preserves_utf16_and_conversion_order() {
         assert_output_in_execution_modes(
             r#"

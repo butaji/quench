@@ -405,56 +405,72 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(locales) = args.first().copied() else {
-            return Ok(self.string_array(Vec::new()));
-        };
-        if locales.is_undefined() {
-            return Ok(self.string_array(Vec::new()));
-        }
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
+        Ok(self.string_array(locales))
+    }
 
-        let mut canonical = Vec::<String>::new();
-        if let Some(locale) = self.hidden_string(locales, INTL_LOCALE_SLOT) {
-            canonical.push(
-                canonical_locale(&locale)
-                    .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))?,
-            );
-        } else if matches!(self.heap.get(locales), Some(Cell::String(_))) {
-            let locale = self.to_string(p, locales)?;
-            canonical.push(
-                canonical_locale(&locale)
-                    .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))?,
-            );
-        } else {
-            if locales.is_null() {
-                return Err(self.type_error(p, "locales must not be null".into()));
+    pub(super) fn canonical_locale_list(
+        &mut self,
+        p: &ResidualProgram,
+        locales: Option<Value>,
+    ) -> Result<Vec<String>, JsError> {
+        self.with_call_roots(locales, |self_| {
+            let Some(locales) = locales else {
+                return Ok(Vec::new());
+            };
+            if locales.is_undefined() {
+                return Ok(Vec::new());
             }
-            let object = self.box_object(locales)?;
-            let length = self.array_like_length(p, object)?;
-            for index in 0..length {
-                let key = Value::number(index as f64);
-                if !self.has_property(p, object, key)? {
-                    continue;
+
+            let mut canonical = Vec::<String>::new();
+            if let Some(locale) = self_.hidden_string(locales, INTL_LOCALE_SLOT) {
+                canonical.push(
+                    canonical_locale(&locale)
+                        .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?,
+                );
+            } else if matches!(self_.heap.get(locales), Some(Cell::String(_))) {
+                let locale = self_.to_string(p, locales)?;
+                canonical.push(
+                    canonical_locale(&locale)
+                        .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?,
+                );
+            } else {
+                if locales.is_null() {
+                    return Err(self_.type_error(p, "locales must not be null".into()));
                 }
-                let value = self.get_index(p, object, key)?;
-                let locale = if self.is_object_like(value)
-                    && let Some(locale) = self.hidden_string(value, INTL_LOCALE_SLOT)
-                {
-                    locale
-                } else if matches!(self.heap.get(value), Some(Cell::String(_))) {
-                    self.to_string(p, value)?
-                } else if self.is_object_like(value) {
-                    self.to_string(p, value)?
-                } else {
-                    return Err(self.type_error(p, "locale list element is not a string".into()));
-                };
-                let locale = canonical_locale(&locale)
-                    .ok_or_else(|| self.range_error(p, "invalid locale identifier".into()))?;
-                if !canonical.contains(&locale) {
-                    canonical.push(locale);
-                }
+                let object = self_.box_object(locales)?;
+                return self_.with_call_roots([object], |self_| {
+                    let length = self_.array_like_length(p, object)?;
+                    for index in 0..length {
+                        let key = Value::number(index as f64);
+                        if !self_.has_property(p, object, key)? {
+                            continue;
+                        }
+                        let value = self_.get_index(p, object, key)?;
+                        let locale = if self_.is_object_like(value)
+                            && let Some(locale) = self_.hidden_string(value, INTL_LOCALE_SLOT)
+                        {
+                            locale
+                        } else if matches!(self_.heap.get(value), Some(Cell::String(_)))
+                            || self_.is_object_like(value)
+                        {
+                            self_.to_string(p, value)?
+                        } else {
+                            return Err(
+                                self_.type_error(p, "locale list element is not a string".into())
+                            );
+                        };
+                        let locale = canonical_locale(&locale)
+                            .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?;
+                        if !canonical.contains(&locale) {
+                            canonical.push(locale);
+                        }
+                    }
+                    Ok(canonical)
+                });
             }
-        }
-        Ok(self.string_array(canonical))
+            Ok(canonical)
+        })
     }
 
     fn string_array(&mut self, values: Vec<String>) -> Value {
