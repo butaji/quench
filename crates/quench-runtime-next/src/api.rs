@@ -1006,6 +1006,81 @@ mod tests {
     }
 
     #[test]
+    fn regression_promise_default_species_uses_method_realm_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm().global;
+            var home = foreign.Promise, local = Promise;
+            var foreignThen = home.prototype.then, localThen = local.prototype.then;
+            home.prototype.constructor = function Poison() {throw 'prototype constructor';};
+            foreign.Promise = function Poison() {throw 'global constructor';};
+            globalThis.Promise = function Poison() {throw 'local global constructor';};
+            for (var constructor of [undefined, {[Symbol.species]: null}, {get [Symbol.species]() {$262.gc(); return undefined;}}]) {
+                var source = local.resolve(42); source.constructor = constructor;
+                var result = foreignThen.call(source);
+                print(Object.getPrototypeOf(result) === home.prototype);
+                var other = home.resolve(43); other.constructor = constructor;
+                print(Object.getPrototypeOf(localThen.call(other)) === local.prototype);
+            }
+            "#,
+            &["true", "true", "true", "true", "true", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_promise_finally_selects_species_before_then_for_every_handler() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm().global;
+            var finallyMethod = foreign.Promise.prototype.finally;
+            for (var handler of [undefined, 1, function() {}]) {
+                var order = [];
+                var source = {
+                    get constructor() {order.push('constructor'); $262.gc(); return {
+                        get [Symbol.species]() {order.push('species'); $262.gc(); return undefined;}
+                    };},
+                    get then() {order.push('then'); $262.gc(); return function(a, b) {
+                        order.push('call'); print(handler === undefined || handler === 1 ? a === handler && b === handler : typeof a === 'function' && typeof b === 'function');
+                        return 42;
+                    };}
+                };
+                print(finallyMethod.call(source, handler)); print(order.join(','));
+            }
+            var reads = 0, marker = {};
+            var invalid = {constructor: {[Symbol.species]: () => {}}, get then() {reads++; throw marker;}};
+            try {finallyMethod.call(invalid);} catch (error) {print(error instanceof foreign.TypeError);}
+            print(reads);
+            var abrupt = {get constructor() {throw marker;}, get then() {reads++;}};
+            try {finallyMethod.call(abrupt, null);} catch (error) {print(error === marker);}
+            print(reads);
+            for (var primitive of [1, true, 's', Symbol(), 1n]) {
+                try {finallyMethod.call(primitive);} catch (error) {print(error instanceof foreign.TypeError);}
+            }
+            "#,
+            &[
+                "true",
+                "42",
+                "constructor,species,then,call",
+                "true",
+                "42",
+                "constructor,species,then,call",
+                "true",
+                "42",
+                "constructor,species,then,call",
+                "true",
+                "0",
+                "true",
+                "0",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_foreign_promise_installs_distinct_methods_and_descriptors() {
         assert_output_in_execution_modes(
             r#"

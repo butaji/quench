@@ -1185,6 +1185,10 @@ impl<H: Host> Vm<H> {
         let global = method_realm.unwrap_or(self.realm.globals);
         self.realm
             .intrinsics
+            .promise_constructors
+            .insert(global, promise);
+        self.realm
+            .intrinsics
             .builtin_prototypes
             .insert((global, Native::Promise), prototype);
         self.set_builtin_function_name(promise, "Promise")?;
@@ -4233,16 +4237,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        if self.realm.promise.records.contains_key(&value) {
-            let constructor_atom = self.intern_atom("constructor");
-            let constructor = self.get_property(p, value, constructor_atom)?;
-            if constructor == self.native_value(Native::Promise) {
-                return Ok(value);
-            }
-        }
-        let promise = self.promise_object();
-        self.promise_resolve_value(p, promise, value)?;
-        Ok(promise)
+        self.promise_resolve_for_constructor(p, self.intrinsic_promise_constructor(), value)
     }
 
     pub(super) fn promise_then(
@@ -4318,6 +4313,10 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    fn intrinsic_promise_constructor(&self) -> Value {
+        self.realm.intrinsics.promise_constructors[&self.realm.globals]
+    }
+
     fn promise_species_constructor(
         &mut self,
         p: &ResidualProgram,
@@ -4326,19 +4325,21 @@ impl<H: Host> Vm<H> {
         let constructor_atom = self.intern_atom("constructor");
         let constructor = self.get_property(p, promise, constructor_atom)?;
         if constructor.is_undefined() {
-            return Ok(self.native_value(Native::Promise));
+            return Ok(self.intrinsic_promise_constructor());
         }
         if !self.is_object_like(constructor) {
             return Err(self.type_error(p, "Promise constructor is not an object".into()));
         }
         let Some(species) = self.well_known_symbols.get("species").copied() else {
-            return Ok(self.native_value(Native::Promise));
+            return Ok(self.intrinsic_promise_constructor());
         };
         let species = self.get_index(p, constructor, species)?;
         if species.is_undefined() || species.is_null() {
-            Ok(self.native_value(Native::Promise))
-        } else {
+            Ok(self.intrinsic_promise_constructor())
+        } else if self.is_constructable(p, species) {
             Ok(species)
+        } else {
+            Err(self.type_error(p, "Promise species is not a constructor".into()))
         }
     }
 
@@ -4348,15 +4349,26 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         value: Value,
     ) -> Result<Value, JsError> {
-        if self.realm.promise.records.contains_key(&value) {
-            let constructor_atom = self.intern_atom("constructor");
-            if self.get_property(p, value, constructor_atom)? == constructor {
-                return Ok(value);
+        let constructor = self.heap.root(constructor);
+        let value = self.heap.root(value);
+        let outcome = (|| {
+            let input = self.heap.root_value(value).unwrap();
+            if self.realm.promise.records.contains_key(&input) {
+                let constructor_atom = self.intern_atom("constructor");
+                let observed = self.get_property(p, input, constructor_atom)?;
+                if observed == self.heap.root_value(constructor).unwrap() {
+                    return Ok(self.heap.root_value(value).unwrap());
+                }
             }
-        }
-        let (promise, resolve, _) = self.new_promise_capability(p, constructor)?;
-        self.call_value(p, resolve, Value::UNDEFINED, &[value])?;
-        Ok(promise)
+            let constructor = self.heap.root_value(constructor).unwrap();
+            let (promise, resolve, _) = self.new_promise_capability(p, constructor)?;
+            let value = self.heap.root_value(value).unwrap();
+            self.call_value(p, resolve, Value::UNDEFINED, &[value])?;
+            Ok(promise)
+        })();
+        self.heap.release_root(constructor);
+        self.heap.release_root(value);
+        outcome
     }
 
     fn finally_handler_function(
@@ -4532,24 +4544,47 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if receiver.is_null() || receiver.is_undefined() {
-            return Err(self.type_error(
-                p,
-                "Promise.prototype.finally called on nullish value".into(),
-            ));
+        if !self.is_object_like(receiver) {
+            return Err(self.type_error(p, "Promise.prototype.finally requires an object".into()));
         }
-        let then_atom = self.intern_atom("then");
-        let then = self.get_property(p, receiver, then_atom)?;
-        if !self.is_function(then) {
-            return Err(self.type_error(p, "Promise.prototype.finally then is not callable".into()));
+        let receiver = self.heap.root(receiver);
+        let handler = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let mut constructor_root = None;
+        let mut then_root = None;
+        let outcome = (|| {
+            let source = self.heap.root_value(receiver).unwrap();
+            let constructor = self.promise_species_constructor(p, source)?;
+            constructor_root = Some(self.heap.root(constructor));
+            let then_atom = self.intern_atom("then");
+            let source = self.heap.root_value(receiver).unwrap();
+            let then = self.get_property(p, source, then_atom)?;
+            if !self.is_function(then) {
+                return Err(self.type_error(p, "Promise.prototype.finally then is not callable".into()));
+            }
+            then_root = Some(self.heap.root(then));
+            let handler_value = self.heap.root_value(handler).unwrap();
+            // Callbacks cannot escape before invocation. Register them only
+            // after lookup succeeds, so a throwing getter retains no handler.
+            let callbacks = if self.is_function(handler_value) {
+                [false, true].map(|rejected| {
+                    let handler = self.heap.root_value(handler).unwrap();
+                    let constructor = self.heap.root_value(constructor_root.unwrap()).unwrap();
+                    self.finally_handler_function(handler, constructor, rejected)
+                })
+            } else {
+                [handler_value, handler_value]
+            };
+            let source = self.heap.root_value(receiver).unwrap();
+            let then = self.heap.root_value(then_root.unwrap()).unwrap();
+            self.call_value(p, then, source, &callbacks)
+        })();
+        for root in [constructor_root, then_root].into_iter().flatten() {
+            self.heap.release_root(root);
         }
-        let handler = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !self.is_function(handler) {
-            return self.call_value(p, then, receiver, &[handler, handler]);
-        }
-        let constructor = self.promise_species_constructor(p, receiver)?;
-        let fulfilled = self.finally_handler_function(handler, constructor, false);
-        let rejected = self.finally_handler_function(handler, constructor, true);
-        self.call_value(p, then, receiver, &[fulfilled, rejected])
+        self.heap.release_root(receiver);
+        self.heap.release_root(handler);
+        outcome
     }
 }
