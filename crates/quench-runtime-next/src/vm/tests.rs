@@ -3394,3 +3394,194 @@ fn aggregate_native_roots_restore_after_reject_callbacks_throw() {
         }
     }
 }
+
+#[test]
+fn property_copy_roots_release_after_callback_completion() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for create in [false, true] {
+            for phase in [
+                "success",
+                "keys",
+                "descriptor",
+                "get",
+                "write",
+                "reject",
+                "excluded",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        var source=new Proxy({{first:1,later:2}}, {{
+                            ownKeys(object) {{$262.gc(); if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}},
+                            getOwnPropertyDescriptor(object,key) {{$262.gc();if (('{phase}'==='descriptor' && key==='later') || ('{phase}'==='excluded' && key==='first')) throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}},
+                            get(object,key) {{$262.gc();if ('{phase}'==='get' && key==='later') throw {{kind:'get'}};return {{rank:key==='first'?42:43}};}}
+                        }});
+                        var target=new Proxy({{}}, {{
+                            set(object,key,value) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.set(object,key,value);}},
+                            defineProperty(object,key,descriptor) {{$262.gc();if ('{phase}'==='write' && key==='later') throw {{kind:'write'}};if ('{phase}'==='reject' && key==='later') return false;return Reflect.defineProperty(object,key,descriptor);}}
+                        }});
+                        return [target,source];
+                    }}
+                "#
+                );
+                let program = compile(&source, "copy-root-scope.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let operands = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let args = match vm.heap.get(operands) {
+                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    _ => panic!("operands"),
+                };
+                let handles = args
+                    .iter()
+                    .map(|v| vm.heap.weak_handle(*v).unwrap())
+                    .collect::<Vec<_>>();
+                let excluded = if phase == "excluded" {
+                    vec![vm.heap.alloc(super::Cell::String("first".into()))]
+                } else {
+                    vec![]
+                };
+                let first_atom = vm.intern_atom("first");
+                let later_atom = vm.intern_atom("later");
+                let rank_atom = vm.intern_atom("rank");
+                let excluded_handles = excluded
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let kind = if create {
+                    super::object_symbols::PropertyCopyKind::CreateDataProperty
+                } else {
+                    super::object_symbols::PropertyCopyKind::Set
+                };
+                let result =
+                    vm.copy_enumerable_properties(&program, args[0], args[1], &excluded, kind);
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(phase, "success" | "excluded"),
+                    "create={create} {phase}"
+                );
+                if let Err(error) = &result {
+                    if phase == "reject" {
+                        assert!(vm.format_error(&program, error).contains("TypeError"));
+                    } else {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    }
+                }
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                if phase != "keys" && phase != "excluded" {
+                    let value = vm.get_property(&program, args[0], first_atom).unwrap();
+                    let rank = vm.get_property(&program, value, rank_atom).unwrap();
+                    assert_eq!(rank, Value::number(42.0));
+                }
+                if phase == "success" || phase == "excluded" {
+                    let value = vm.get_property(&program, args[0], later_atom).unwrap();
+                    assert_eq!(
+                        vm.get_property(&program, value, rank_atom).unwrap(),
+                        Value::number(43.0)
+                    );
+                }
+                vm.collect_now(&program);
+                for handle in handles.into_iter().chain(excluded_handles) {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for descriptors in [false, true] {
+            for fails in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{return [1,new Proxy({{first:1,later:2}},{{
+                        getOwnPropertyDescriptor(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{value:{{rank:key==='first'?42:43}},writable:true,enumerable:true,configurable:true}};}},
+                        get(object,key) {{$262.gc();if ({fails} && key==='later') throw {{kind:'later'}};return {{rank:key==='first'?42:43}};}}
+                    }}),{{late:47}}];}}
+                "#
+                );
+                let program = compile(&source, "snapshot-native-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let operands = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let args = match vm.heap.get(operands) {
+                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    _ => panic!("operands"),
+                };
+                let source_handle = vm.heap.weak_handle(args[1]).unwrap();
+                let later_handle = vm.heap.weak_handle(args[2]).unwrap();
+                let first_atom = vm.intern_atom("first");
+                let rank_atom = vm.intern_atom("rank");
+                let value_atom = vm.intern_atom("value");
+                let late_atom = vm.intern_atom("late");
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if descriptors {
+                    vm.object_get_own_property_descriptors(&program, &args[1..2])
+                } else {
+                    vm.object_assign(&program, &args)
+                };
+                assert_eq!(result.is_err(), fails);
+                if let Err(error) = &result {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), "later");
+                }
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = if let Ok(result) = result {
+                    let first = vm.get_property(&program, result, first_atom).unwrap();
+                    let first = if descriptors {
+                        vm.get_property(&program, first, value_atom).unwrap()
+                    } else {
+                        first
+                    };
+                    assert_eq!(
+                        vm.get_property(&program, first, rank_atom).unwrap(),
+                        Value::number(42.0)
+                    );
+                    if !descriptors {
+                        assert_eq!(
+                            vm.get_property(&program, result, late_atom).unwrap(),
+                            Value::number(47.0)
+                        );
+                    }
+                    Some(vm.heap.weak_handle(result).unwrap())
+                } else {
+                    None
+                };
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(source_handle).is_none());
+                assert!(vm.heap.weak_value(later_handle).is_none());
+                if let Some(handle) = result_handle {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}

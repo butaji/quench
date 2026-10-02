@@ -697,42 +697,41 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(source), Some(Cell::Proxy { .. })) {
-            let result = self.object();
-            for key in self.object_own_key_values(p, source)? {
-                let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
+        let source =
+            self.box_object_or_type_error(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let source = self.heap.root(source);
+        let result = self.object();
+        let result = self.heap.root(result);
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            keys = self
+                .object_own_key_values(p, self.heap.root_value(source).unwrap())?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for key in &keys {
+                let descriptor = self.object_get_own_property_descriptor(
+                    p,
+                    &[
+                        self.heap.root_value(source).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    ],
+                )?;
                 if descriptor.is_undefined() {
                     continue;
                 }
-                match self.heap.get(key).cloned() {
-                    Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
-                    Some(Cell::String(name)) => {
-                        let atom = self.intern_js_atom(&name);
-                        self.set_property(result, atom, descriptor)?;
-                    }
-                    _ => unreachable!("validated own property key"),
-                }
+                self.define_property_or_throw(
+                    p,
+                    self.heap.root_value(result).unwrap(),
+                    self.heap.root_value(*key).unwrap(),
+                    PropertyDescriptorRecord::data(descriptor),
+                )?;
             }
-            return Ok(result);
+            Ok(self.heap.root_value(result).unwrap())
+        })();
+        for root in keys.into_iter().chain([source, result]) {
+            self.heap.release_root(root);
         }
-        let target = self.proxy_target(args.first().copied().unwrap_or(Value::UNDEFINED));
-        let target = self.box_object(target)?;
-        let result = self.object();
-        for key in self.object_own_key_values(p, target)? {
-            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-            if descriptor.is_undefined() {
-                continue;
-            }
-            match self.heap.get(key).cloned() {
-                Some(Cell::Symbol(_)) => self.set_symbol_property(result, key, descriptor)?,
-                Some(Cell::String(name)) => {
-                    let atom = self.intern_js_atom(&name);
-                    self.set_property(result, atom, descriptor)?;
-                }
-                _ => unreachable!("validated own property key"),
-            }
-        }
-        Ok(result)
+        outcome
     }
 }

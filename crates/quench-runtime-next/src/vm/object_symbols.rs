@@ -2,6 +2,11 @@ use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
 
+pub(super) enum PropertyCopyKind {
+    Set,
+    CreateDataProperty,
+}
+
 impl<H: Host> Vm<H> {
     fn own_keys_array(&mut self, keys: Vec<Value>) -> Value {
         let roots = keys
@@ -191,39 +196,86 @@ impl<H: Host> Vm<H> {
         source: Value,
         exclusions: Value,
     ) -> Result<(), JsError> {
-        if source.is_null() || source.is_undefined() {
-            return Ok(());
-        }
         let excluded = match self.heap.get(exclusions) {
             Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
             _ => Vec::new(),
         };
-        let enumerable_atom = self.intern_atom("enumerable");
-        for key in self.object_own_key_values(p, source)? {
-            if excluded
-                .iter()
-                .copied()
-                .any(|excluded| self.same_property_key(excluded, key))
-            {
-                continue;
-            }
-            let descriptor = self.object_get_own_property_descriptor(p, &[source, key])?;
-            if descriptor.is_undefined() {
-                continue;
-            }
-            let enumerable = self.get_property(p, descriptor, enumerable_atom)?;
-            if !self.truthy(enumerable) {
-                continue;
-            }
-            let value = self.get_index(p, source, key)?;
-            let property_key = match self.heap.get(key).cloned() {
-                Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
-                Some(Cell::Symbol(_)) => PropertyKey::symbol(key),
-                _ => continue,
-            };
-            self.set_shape_property(target, property_key, value)?;
+        self.copy_enumerable_properties(
+            p,
+            target,
+            source,
+            &excluded,
+            PropertyCopyKind::CreateDataProperty,
+        )
+    }
+
+    pub(super) fn copy_enumerable_properties(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        source: Value,
+        excluded: &[Value],
+        kind: PropertyCopyKind,
+    ) -> Result<(), JsError> {
+        if source.is_null() || source.is_undefined() {
+            return Ok(());
         }
-        Ok(())
+        let source = self.box_object(source)?;
+        let target = self.heap.root(target);
+        let source = self.heap.root(source);
+        let excluded = excluded
+            .iter()
+            .map(|key| self.heap.root(*key))
+            .collect::<Vec<_>>();
+        let mut keys = Vec::new();
+        let outcome = (|| {
+            keys = self
+                .object_own_key_values(p, self.heap.root_value(source).unwrap())?
+                .into_iter()
+                .map(|key| self.heap.root(key))
+                .collect();
+            for key in &keys {
+                if excluded.iter().any(|excluded| {
+                    self.same_property_key(
+                        self.heap.root_value(*excluded).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    )
+                }) {
+                    continue;
+                }
+                let descriptor = self.object_get_own_property_descriptor(
+                    p,
+                    &[
+                        self.heap.root_value(source).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    ],
+                )?;
+                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                    continue;
+                }
+                let value = self.get_index(
+                    p,
+                    self.heap.root_value(source).unwrap(),
+                    self.heap.root_value(*key).unwrap(),
+                )?;
+                let target = self.heap.root_value(target).unwrap();
+                let key = self.heap.root_value(*key).unwrap();
+                match kind {
+                    PropertyCopyKind::Set => self.set_index_mode(p, target, key, value, true)?,
+                    PropertyCopyKind::CreateDataProperty => self.define_property_or_throw(
+                        p,
+                        target,
+                        key,
+                        super::object_descriptors::PropertyDescriptorRecord::data(value),
+                    )?,
+                }
+            }
+            Ok(())
+        })();
+        for root in keys.into_iter().chain(excluded).chain([target, source]) {
+            self.heap.release_root(root);
+        }
+        outcome
     }
 
     pub(super) fn symbol_property(&self, object: Value, key: Value) -> Option<Value> {

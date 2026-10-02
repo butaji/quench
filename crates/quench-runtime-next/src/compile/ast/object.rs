@@ -276,43 +276,8 @@ impl FunctionCompiler<'_, '_> {
 
     fn object_spread(&mut self, target: Register, source: &Expression<'_>) {
         let source = self.expression(source);
-        let null = self.literal(Constant::Null);
-        let is_null = self.emit_binary(2, Operand::register(source), Operand::register(null));
-        let continue_non_null = self.emit(Op::JumpFalse, is_null, 0, 0, 0);
-        let skip_null = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.patch(continue_non_null);
-        let undefined = self.literal(Constant::Undefined);
-        let is_undefined =
-            self.emit_binary(2, Operand::register(source), Operand::register(undefined));
-        let continue_non_undefined = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
-        let skip_undefined = self.emit(Op::Jump, 0, 0, 0, 0);
-        self.patch(continue_non_undefined);
-        let object = self.load_name("Object");
-        let assign = self.reg();
-        let assign_atom = self.owner.atom("assign");
-        let assign_cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            assign,
-            FieldBase::register(object).0,
-            assign_cache,
-            assign_atom,
-        );
-        let base = self.next_reg;
-        let target_arg = self.reg();
-        self.emit(Op::Move, target_arg, target, 0, 0);
-        let source_arg = self.reg();
-        self.emit(Op::Move, source_arg, source, 0, 0);
-        let result = self.reg();
-        self.emit(
-            Op::Call,
-            result,
-            assign,
-            object,
-            crate::bytecode::ImmediateLayout::call_immediate(base, 2, false, false),
-        );
-        self.patch_instruction(skip_null, self.code.len() as u32);
-        self.patch_instruction(skip_undefined, self.code.len() as u32);
+        let exclusions = self.literal(Constant::Undefined);
+        self.emit(Op::CopyDataProperties, target, source, exclusions, 0);
     }
 
     pub(super) fn computed_object_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
