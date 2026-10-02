@@ -437,6 +437,10 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((global, Native::Iterator), prototype);
         let constructor = realm
             .map(|realm| self.native_with_realm(Native::Iterator, realm, realm))
             .unwrap_or_else(|| self.native_value(Native::Iterator));
@@ -2885,6 +2889,9 @@ impl<H: Host> Vm<H> {
                     return Ok(result);
                 }
             };
+            if kind == IteratorKind::IntlSegments {
+                return vm.intl_segment_iterator_next(p, this);
+            }
             if kind == IteratorKind::Generator {
                 return vm.generator_next(p, this, args);
             }
@@ -3099,7 +3106,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let result = self.object();
+        let result = self.heap.alloc(Cell::Object(Self::empty_object(
+            self.realm_object_prototype(self.realm.globals),
+        )));
         let value_atom = self
             .lookup_atom("value")
             .ok_or_else(|| JsError("iterator result atom is unavailable".into()))?;

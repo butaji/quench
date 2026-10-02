@@ -212,6 +212,7 @@ struct RealmIntrinsics {
     intl_list_format_prototypes: FxHashMap<Value, Value>,
     intl_relative_time_format_prototypes: FxHashMap<Value, Value>,
     intl_segmenter_prototypes: FxHashMap<Value, Value>,
+    intl_segment_iterator_prototypes: FxHashMap<Value, Value>,
     intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
 }

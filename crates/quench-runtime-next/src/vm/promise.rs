@@ -339,6 +339,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlSegmenterResolvedOptions => 0.0,
         Native::IntlSegmenterSegmentsIterator => 0.0,
         Native::IntlSegmenterSegmentsContaining => 1.0,
+        Native::IntlSegmenterIteratorNext => 0.0,
         Native::IntlGetCanonicalLocales | Native::IntlSupportedValuesOf | Native::IntlLocale => 1.0,
         Native::IntlLocaleToString | Native::IntlLocaleMaximize | Native::IntlLocaleMinimize
         | Native::IntlLocaleGetCalendars | Native::IntlLocaleGetCollations

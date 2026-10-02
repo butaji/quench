@@ -512,7 +512,7 @@ const NATIVES: &[Native] = &[
     Native::IntlRelativeTimeFormatResolvedOptions,
     Native::IntlSegmenter, Native::IntlSegmenterSupportedLocalesOf,
     Native::IntlSegmenterSegment, Native::IntlSegmenterResolvedOptions,
-    Native::IntlSegmenterSegmentsIterator, Native::IntlSegmenterSegmentsContaining,
+    Native::IntlSegmenterSegmentsIterator, Native::IntlSegmenterSegmentsContaining, Native::IntlSegmenterIteratorNext,
     Native::Symbol, Native::SymbolToString, Native::SymbolToPrimitive, Native::SymbolValueOf,
     Native::SymbolDescriptionGetter,
     Native::SymbolFor,
@@ -813,6 +813,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
         self.install_number(program)?;
+        self.install_intl_for_realm(program, self.realm.globals, self.object_proto)?;
         for (name, native) in [
             ("encodeURI", Native::EncodeUri),
             ("encodeURIComponent", Native::EncodeUriComponent),

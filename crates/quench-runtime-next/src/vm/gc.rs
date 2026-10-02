@@ -315,6 +315,11 @@ impl<H: Host> Vm<H> {
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
                 )
                 .chain(
+                    self.realm.intrinsics.intl_segment_iterator_prototypes
+                        .iter()
+                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
+                )
+                .chain(
                     self.realm.intrinsics.intl_segments_prototypes
                         .iter()
                         .flat_map(|(realm, prototype)| [*realm, *prototype]),
