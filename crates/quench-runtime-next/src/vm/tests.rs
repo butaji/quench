@@ -4934,3 +4934,147 @@ fn equality_roots_the_opposite_primitive_during_object_coercion() {
         }
     }
 }
+
+#[test]
+fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for ordinary in [false, true] {
+            for phase in ["success", "prototype", "traversal"] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        function C() {{}}
+                        return [new Proxy(Object.create(C.prototype), {{getPrototypeOf(target) {{
+                            $262.gc(); if ('{phase}'==='traversal') throw {{kind:'traversal'}};
+                            return Reflect.getPrototypeOf(target);
+                        }}}}), new Proxy(C, {{get(target,key) {{
+                            $262.gc();
+                            if (key===Symbol.hasInstance) return null;
+                            if (key==='prototype' && '{phase}'==='prototype') throw {{kind:'prototype'}};
+                            return Reflect.get(target,key);
+                        }}}})];
+                    }}
+                "#
+                );
+                let program = compile(&source, "instanceof-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let values = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let (value, constructor) = match vm.heap.get(values) {
+                    Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                    _ => panic!("operands"),
+                };
+                let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if ordinary {
+                    vm.ordinary_has_instance(&program, constructor, value)
+                } else {
+                    vm.instanceof(&program, value, constructor)
+                };
+                assert_eq!(
+                    result.is_ok(),
+                    phase == "success",
+                    "ordinary={ordinary} {phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                match result {
+                    Ok(result) => {
+                        assert!(result, "ordinary={ordinary}");
+                        for (handle, value) in handles.iter().zip([value, constructor]) {
+                            assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                        }
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for ordinary in [false, true] {
+            for throws in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operands() {{
+                        function C() {{}}
+                        Object.defineProperty(C,Symbol.hasInstance,{{value:null}});
+                        return [new Proxy({{}},{{getPrototypeOf() {{
+                            C.prototype={{}}; $262.gc();
+                            return new Proxy({{}},{{getPrototypeOf() {{
+                                $262.gc(); if ({throws}) throw {{kind:'cursor'}}; return null;
+                            }}}});
+                        }}}}),C,C.prototype];
+                    }}
+                "#
+                );
+                let program = compile(&source, "instanceof-detached-prototype.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operands");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let operands = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let values = match vm.heap.get(operands) {
+                    Some(super::Cell::Array { elements, .. }) => {
+                        [elements[0], elements[1], elements[2]]
+                    }
+                    _ => panic!("operands"),
+                };
+                let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if ordinary {
+                    vm.ordinary_has_instance(&program, values[1], values[0])
+                } else {
+                    vm.instanceof(&program, values[0], values[1])
+                };
+                assert_eq!(result.is_err(), throws);
+                match result {
+                    Ok(result) => assert!(!result),
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), "cursor");
+                    }
+                }
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip(values) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
