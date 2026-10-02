@@ -2086,6 +2086,67 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_invocations_keep_captured_operands_after_revocation() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var construct of [false,true]) {
+                for (var fallback of [false,true]) {
+                    var events=[],arg={rank:47},receiver={rank:46};
+                    function Target(value) {$262.gc();events.push('target');return {rank:42,arg:value,receiver:this};}
+                    function Destination() {}
+                    var handler={};
+                    Object.defineProperty(handler,construct?'construct':'apply',{get() {
+                        events.push('lookup');revocable.revoke();$262.gc();
+                        if (fallback) return null;
+                        return function(target,second,third) {
+                            $262.gc();events.push('trap');
+                            print(this===handler);print(target===Target);
+                            print(Array.isArray(construct?second:third));
+                            print((construct?third:second)===(construct?Destination:receiver));
+                            return {rank:42,arg:(construct?second:third)[0]};
+                        };
+                    }});
+                    var revocable=Proxy.revocable(Target,handler);
+                    var result=construct?Reflect.construct(revocable.proxy,[arg],Destination):Reflect.apply(revocable.proxy,receiver,[arg]);
+                    print(result.rank);print(result.arg===arg);print(result.arg.rank);print(events.join(','));
+                    try {Reflect.apply(revocable.proxy,receiver,[]);}catch(error) {print(error instanceof TypeError);}
+                }
+            }
+            "#,
+            &[
+                "true",
+                "true",
+                "true",
+                "true",
+                "42",
+                "true",
+                "47",
+                "lookup,trap",
+                "true",
+                "42",
+                "true",
+                "47",
+                "lookup,target",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "42",
+                "true",
+                "47",
+                "lookup,trap",
+                "true",
+                "42",
+                "true",
+                "47",
+                "lookup,target",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_proxy_mutation_fallback_keeps_captured_targets_alive() {
         assert_output_in_execution_modes(
             r#"

@@ -4226,3 +4226,135 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
         }
     }
 }
+
+
+#[test]
+fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for construct in [false, true] {
+            for phase in [
+                "success",
+                "fallback",
+                "getter",
+                "trap",
+                "invalid-trap",
+                "primitive-result",
+                "revoked",
+            ] {
+                if !construct && phase == "primitive-result" {
+                    continue;
+                }
+                let mut vm = Vm::new(Test262Host);
+                let method = if construct { "construct" } else { "apply" };
+                let source = format!(
+                    r#"
+                    function operand() {{
+                        function target(arg) {{ $262.gc(); return {{rank:42,arg:arg,receiver:this}}; }}
+                        var handler={{get {method}() {{
+                            $262.gc();
+                            if ('{phase}'==='getter') throw {{kind:'getter'}};
+                            if ('{phase}'==='fallback') return null;
+                            if ('{phase}'==='invalid-trap') return 1;
+                            return function(target,second,third) {{
+                                $262.gc();
+                                if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                if ('{phase}'==='primitive-result') return 1;
+                                return {{rank:42,arg:{construct} ? second[0] : third[0],receiver:{construct} ? third : second}};
+                            }};
+                        }}}};
+                        if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return r.proxy;}}
+                        return new Proxy(target,handler);
+                    }}
+                "#
+                );
+                let program = compile(&source, "proxy-invocation-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let proxy = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let receiver = vm.object();
+                vm.set_named(&program, receiver, "rank", Value::number(46.0))
+                    .unwrap();
+                let arg = vm.object();
+                vm.set_named(&program, arg, "rank", Value::number(47.0))
+                    .unwrap();
+                let handles =
+                    [proxy, receiver, arg].map(|value| vm.heap.weak_handle(value).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if construct {
+                    vm.proxy_construct(&program, proxy, proxy, &[arg])
+                } else {
+                    vm.proxy_call(&program, proxy, receiver, &[arg])
+                };
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(phase, "success" | "fallback"),
+                    "construct={construct} {phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(result) => {
+                        assert_eq!(
+                            vm.heap.weak_value(handles[0]),
+                            Some(proxy),
+                            "construct={construct} {phase}"
+                        );
+                        assert_eq!(vm.heap.weak_value(handles[2]), Some(arg));
+                        let rank = vm.intern_atom("rank");
+                        assert_eq!(vm.own_property(result, rank), Some(Value::number(42.0)));
+                        assert_eq!(vm.own_property(arg, rank), Some(Value::number(47.0)));
+                        let atom = vm.intern_atom("arg");
+                        assert_eq!(vm.own_property(result, atom), Some(arg));
+                        if !construct || phase == "success" {
+                            let atom = vm.intern_atom("receiver");
+                            assert_eq!(
+                                vm.own_property(result, atom),
+                                Some(if construct { proxy } else { receiver })
+                            );
+                            if !construct {
+                                assert_eq!(
+                                    vm.own_property(receiver, rank),
+                                    Some(Value::number(46.0))
+                                );
+                            }
+                        }
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Err(error) => {
+                        if matches!(phase, "getter" | "trap") {
+                            let atom = vm.intern_atom("kind");
+                            let kind = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        } else {
+                            assert!(
+                                vm.format_error(&program, &error).contains("TypeError"),
+                                "construct={construct} {phase}: {}",
+                                vm.format_error(&program, &error)
+                            );
+                        }
+                        None
+                    }
+                };
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(
+                        vm.heap.weak_value(handle).is_none(),
+                        "construct={construct} {phase}"
+                    );
+                }
+                if let Some(handle) = result_handle {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}

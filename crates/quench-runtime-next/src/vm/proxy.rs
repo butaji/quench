@@ -19,22 +19,29 @@ impl<H: Host> Vm<H> {
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
-        if !self.is_function(target) {
-            return Err(self.type_error(p, "value is not callable".into()));
-        }
-        let trap_atom = self.intern_atom("apply");
-        let trap = self.get_property(p, handler, trap_atom)?;
-        if !trap.is_undefined() && !trap.is_null() {
-            if !self.is_function(trap) {
-                return Err(self.type_error(p, "proxy apply trap is not callable".into()));
-            }
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            return self.call_value(p, trap, handler, &[target, this, arguments]);
-        }
-        self.call_value(p, target, this, args)
+        self.with_call_roots(
+            [proxy, target, handler, this]
+                .into_iter()
+                .chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_function(target) {
+                    return Err(vm.type_error(p, "value is not callable".into()));
+                }
+                let trap_atom = vm.intern_atom("apply");
+                let trap = vm.get_property(p, handler, trap_atom)?;
+                if !trap.is_undefined() && !trap.is_null() {
+                    if !vm.is_function(trap) {
+                        return Err(vm.type_error(p, "proxy apply trap is not callable".into()));
+                    }
+                    let arguments = vm.heap.alloc(Cell::Array {
+                        object: Self::empty_object(vm.array_proto),
+                        elements: Rc::new(args.to_vec()),
+                    });
+                    return vm.call_value(p, trap, handler, &[target, this, arguments]);
+                }
+                vm.call_value(p, target, this, args)
+            },
+        )
     }
 
     pub(super) fn proxy_construct(
@@ -44,6 +51,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(proxy).cloned()
@@ -51,31 +59,40 @@ impl<H: Host> Vm<H> {
             return Err(JsError("proxy construct target is invalid".into()));
         };
         if handler.is_null() {
-            return Err(JsError("cannot access a revoked proxy".into()));
+            return Err(self.type_error(p, "cannot access a revoked proxy".into()));
         }
-        if !self.is_constructable(p, target) {
-            return Err(self.type_error(p, "proxy target is not a constructor".into()));
-        }
-        let trap_atom = self.intern_atom("construct");
-        let trap = self.get_property(p, handler, trap_atom)?;
-        if !trap.is_undefined() && !trap.is_null() {
-            if !self.is_function(trap) {
-                return Err(self.type_error(p, "proxy construct trap is not callable".into()));
-            }
-            if !self.is_constructable(p, new_target) {
-                return Err(self.type_error(p, "newTarget is not a constructor".into()));
-            }
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            let result = self.call_value(p, trap, handler, &[target, arguments, new_target])?;
-            if !self.is_object_like(result) {
-                return Err(self.type_error(p, "proxy construct trap must return an object".into()));
-            }
-            return Ok(result);
-        }
-        self.construct_value_with_new_target(p, target, new_target, args)
+        self.with_call_roots(
+            [proxy, target, handler, new_target]
+                .into_iter()
+                .chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_constructable(p, target) {
+                    return Err(vm.type_error(p, "proxy target is not a constructor".into()));
+                }
+                let trap_atom = vm.intern_atom("construct");
+                let trap = vm.get_property(p, handler, trap_atom)?;
+                if !trap.is_undefined() && !trap.is_null() {
+                    if !vm.is_function(trap) {
+                        return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
+                    }
+                    if !vm.is_constructable(p, new_target) {
+                        return Err(vm.type_error(p, "newTarget is not a constructor".into()));
+                    }
+                    let arguments = vm.heap.alloc(Cell::Array {
+                        object: Self::empty_object(vm.array_proto),
+                        elements: Rc::new(args.to_vec()),
+                    });
+                    let result = vm.call_value(p, trap, handler, &[target, arguments, new_target])?;
+                    if !vm.is_object_like(result) {
+                        return Err(
+                            vm.type_error(p, "proxy construct trap must return an object".into())
+                        );
+                    }
+                    return Ok(result);
+                }
+                vm.construct_value_with_new_target(p, target, new_target, args)
+            },
+        )
     }
 
     pub(super) fn proxy_target(&self, mut value: Value) -> Value {
