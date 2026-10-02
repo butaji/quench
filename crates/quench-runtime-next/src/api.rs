@@ -2086,6 +2086,73 @@ mod tests {
     }
 
     #[test]
+    fn regression_match_all_orders_species_and_preserves_strings_and_setters() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[];
+            function matcherFactory() {var index=0;return {
+                get exec() {$262.gc();log.push('exec:get');return execute;},
+                get lastIndex() {$262.gc();log.push('index:get');return {[Symbol.toPrimitive](hint) {$262.gc();log.push('index:'+hint);return index;}};},
+                set lastIndex(value) {$262.gc();log.push('index:set:'+value);index=value;}
+            };}
+            function execute(input) {$262.gc();log.push('exec:'+input.charCodeAt(0));return resultFactory(input);}
+            function resultFactory(input) {return {tag:42,input:input,get 0() {$262.gc();log.push('match:get');return {[Symbol.toPrimitive](hint) {$262.gc();log.push('match:'+hint);return '';}};}};}
+            function speciesFactory() {return function Species(receiver,flags) {$262.gc();log.push('construct:'+flags.charCodeAt(0));return matcherFactory();};}
+            var receiver={
+                get constructor() {$262.gc();log.push('constructor');return {get [Symbol.species]() {$262.gc();log.push('species');return speciesFactory();}};},
+                get flags() {$262.gc();log.push('flags:get');return {[Symbol.toPrimitive](hint) {$262.gc();log.push('flags:'+hint);return String.fromCharCode(55296)+'g';}};},
+                get lastIndex() {$262.gc();log.push('lastIndex:get');return {[Symbol.toPrimitive](hint) {$262.gc();log.push('lastIndex:'+hint);return 0;}};}
+            };
+            var input={[Symbol.toPrimitive](hint) {$262.gc();log.push('input:'+hint);return String.fromCharCode(55296,97);}};
+            var iterator=RegExp.prototype[Symbol.matchAll].call(receiver,input);
+            var result=iterator.next();
+            print(result.value.tag);
+            print(result.value.input.charCodeAt(0));
+            print(log.join(','));
+            "#,
+            &[
+                "42",
+                "55296",
+                "input:string,constructor,species,flags:get,flags:string,construct:55296,lastIndex:get,lastIndex:number,index:set:0,exec:get,exec:55296,match:get,match:string,index:get,index:number,index:set:1",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_match_all_observes_strict_set_errors_and_species_validation() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var phase of ['create','advance']) {
+                var marker={},writes=0;
+                function Species() {return {exec() {$262.gc();return {0:''};},get lastIndex() {return 0;},set lastIndex(value) {$262.gc();writes++;if (phase==='create'||writes===2) throw marker;}};}
+                var receiver={constructor:{[Symbol.species]:Species},flags:'g',lastIndex:0};
+                try {var iterator=RegExp.prototype[Symbol.matchAll].call(receiver,'a');iterator.next();print(false);} catch (error) {print(error===marker);}
+                print(writes);
+            }
+            var reads=0;
+            for (var method of [Symbol.matchAll,Symbol.split]) {
+                var receiver={constructor:{[Symbol.species]:()=>({})},get flags() {reads++;throw 'flags';}};
+                try {RegExp.prototype[method].call(receiver,'a');print(false);} catch (error) {print(error instanceof TypeError);}
+            }
+            print(reads);
+            var matcher={};Object.defineProperty(matcher,'lastIndex',{value:0,writable:false});
+            var receiver={constructor:{[Symbol.species]:function(){return matcher;}},flags:'g',lastIndex:0};
+            try {RegExp.prototype[Symbol.matchAll].call(receiver,'a');print(false);} catch (error) {print(error instanceof TypeError);}
+            for (var flags of ['g','gu','gv','']) {
+                var writes=[],matchReads=0;
+                function Species() {return {exec() {return {get 0() {matchReads++;return '';}};},get lastIndex() {return 0;},set lastIndex(value) {$262.gc();writes.push(value);}};}
+                var receiver={constructor:{[Symbol.species]:Species},flags:flags,lastIndex:0};
+                RegExp.prototype[Symbol.matchAll].call(receiver,String.fromCodePoint(128512)).next();
+                print(writes.join(',')+':'+matchReads);
+            }
+            "#,
+            &[
+                "true", "1", "true", "2", "true", "true", "0", "true", "0,1:1", "0,2:1", "0,2:1", "0:0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_array_iterator_advances_before_get_and_reentrant_next() {
         assert_output_in_execution_modes(
             r#"

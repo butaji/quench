@@ -5676,3 +5676,188 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
         }
     }
 }
+
+#[test]
+fn regexp_match_all_creation_roots_fresh_species_matcher_and_inputs() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in ["success", "flags", "construct", "index", "setter"] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                function speciesFactory() {{return function Species() {{$262.gc();if ('{phase}'==='construct') throw {{kind:'construct'}};return matcherFactory();}};}}
+                function matcherFactory() {{return {{exec() {{return null;}},set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}}};}}
+                function source() {{return {{
+                    get constructor() {{$262.gc();return {{[Symbol.species]:speciesFactory()}};}},
+                    get flags() {{$262.gc();if ('{phase}'==='flags') throw {{kind:'flags'}};return 'g';}},
+                    get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return {{[Symbol.toPrimitive]() {{$262.gc();return 0;}}}};}}
+                }};}}
+            "#
+            );
+            let program = compile(&source, "match-all-creation-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("source");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let input = vm.heap.alloc(super::Cell::String("a".into()));
+            let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+            let roots = vm.heap.root_count_for_test();
+            let calls = vm.active_call_roots.len();
+            let result = vm.regexp_symbol_match_all(&program, receiver, &[input]);
+            assert_eq!(result.is_ok(), phase == "success", "{phase}");
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            assert_eq!(vm.active_call_roots.len(), calls);
+            for (handle, value) in handles.iter().zip([receiver, input]) {
+                assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}");
+            }
+            match result {
+                Ok(iterator) => {
+                    let matcher = match vm.heap.get(iterator) {
+                        Some(super::Cell::Iterator { source, .. }) => *source,
+                        _ => panic!("regexp iterator"),
+                    };
+                    assert!(vm.is_object_like(matcher));
+                    let matcher_handle = vm.heap.weak_handle(matcher).unwrap();
+                    let owner = vm.heap.root(iterator);
+                    vm.collect_now(&program);
+                    assert_eq!(vm.heap.weak_value(matcher_handle), Some(matcher));
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                    vm.heap.release_root(owner);
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(matcher_handle).is_none());
+                }
+                Err(error) => {
+                    let atom = vm.intern_atom("kind");
+                    let kind = vm
+                        .own_property(error.thrown_value().unwrap(), atom)
+                        .unwrap();
+                    assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (full, phases) in [
+            (false, &["success"][..]),
+            (
+                true,
+                &[
+                    "success", "exec", "match", "coercion", "index", "numeric", "setter", "done",
+                ][..],
+            ),
+        ] {
+            for &phase in phases {
+                let mut vm = Vm::new(Test262Host);
+                let input_code = if full { 55296 } else { 97 };
+                let source = format!(
+                    r#"
+                function execute(input) {{$262.gc();if (input.charCodeAt(0)!=={input_code}) throw {{kind:'input'}};return '{phase}'==='done'?null:resultFactory();}}
+                function resultFactory() {{return {{tag:42,get 0() {{$262.gc();if ('{phase}'==='match') throw {{kind:'match'}};
+                    return {full}?{{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='coercion') throw {{kind:'coercion'}};return '';}}}}:'';
+                }}}};}}
+                function numeric() {{return {{[Symbol.toPrimitive]() {{$262.gc();if ('{phase}'==='numeric') throw {{kind:'numeric'}};return 0;}}}};}}
+                function matcher() {{if (!{full}) return {{exec:execute,lastIndex:{{valueOf() {{$262.gc();return 0;}}}}}};return {{
+                    get exec() {{$262.gc();if ('{phase}'==='exec') throw {{kind:'exec'}};return execute;}},
+                    get lastIndex() {{$262.gc();if ('{phase}'==='index') throw {{kind:'index'}};return numeric();}},
+                    set lastIndex(value) {{$262.gc();if ('{phase}'==='setter') throw {{kind:'setter'}};}}
+                }};}}
+            "#
+                );
+                let program = compile(&source, "regexp-iterator-advance-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("matcher");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let matcher = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let iterator = vm.heap.alloc(super::Cell::Iterator {
+                    object: Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto),
+                    source: matcher,
+                    next_method: None,
+                    helper: Some(Box::new(
+                        crate::heap::IteratorHelper::RegExpStringMatchAll {
+                            input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),
+                            global: true,
+                            unicode: true,
+                        },
+                    )),
+                    helper_running: false,
+                    helper_started: false,
+                    kind: super::IteratorKind::RegExpStringMatchAll,
+                    index: 0,
+                    done: false,
+                    generator: None,
+                });
+                let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = vm.iterator_next(&program, iterator);
+                assert_eq!(
+                    result.is_ok(),
+                    matches!(phase, "success" | "done"),
+                    "{phase}"
+                );
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(result) => {
+                        let done = vm.intern_atom("done");
+                        assert_eq!(
+                            vm.own_property(result, done),
+                            Some(if phase == "done" {
+                                Value::TRUE
+                            } else {
+                                Value::FALSE
+                            })
+                        );
+                        if phase != "done" {
+                            let atom = vm.intern_atom("value");
+                            let matched = vm.own_property(result, atom).unwrap();
+                            let tag = vm.intern_atom("tag");
+                            assert_eq!(
+                                vm.own_property(matched, tag).unwrap().as_number(),
+                                Some(42.0)
+                            );
+                        }
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        None
+                    }
+                };
+                for (handle, value) in handles.iter().zip([matcher, iterator]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                }
+                assert!(
+                    matches!(vm.heap.get(iterator),Some(super::Cell::Iterator {done,..}) if *done==(phase=="done"))
+                );
+                vm.collect_now(&program);
+                for handle in handles.into_iter().chain(result_handle) {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
