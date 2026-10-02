@@ -1425,7 +1425,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let locales = self.collator_locale_list(p, args.first().copied())?;
+        let locales = self.canonical_locale_list(p, args.first().copied())?;
         let values = locales
             .into_iter()
             .filter(|locale| super::intl_number::is_supported_locale(locale))
