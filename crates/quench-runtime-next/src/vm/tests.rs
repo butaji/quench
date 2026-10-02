@@ -3814,7 +3814,6 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                     .iter()
                     .map(|value| vm.heap.weak_handle(*value).unwrap())
                     .collect::<Vec<_>>();
-                let key_root = (operation != "descriptor").then(|| vm.heap.root(args[1]));
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
                 let result = match operation {
@@ -3888,9 +3887,6 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                         None
                     }
                 };
-                if let Some(root) = key_root {
-                    vm.heap.release_root(root);
-                }
                 vm.collect_now(&program);
                 for handle in handles {
                     assert!(vm.heap.weak_value(handle).is_none(), "{operation} {phase}");
