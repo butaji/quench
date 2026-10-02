@@ -59,27 +59,22 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locale = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .find(|locale| segmenter_locale_supported(locale))
-            .unwrap_or_else(|| "en-US".into());
-        let granularity = self.segmenter_granularity(p, args.get(1).copied())?;
-        let realm = self.function_realm(p, new_target)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let candidate = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if self.is_object_like(candidate) {
-            candidate
-        } else {
-            self.realm.intrinsics.intl_segmenter_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let segmenter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_hidden_string(segmenter, SEGMENTER_LOCALE_SLOT, &locale)?;
-        self.set_hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT, &granularity)?;
-        Ok(segmenter)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlSegmenter)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locale = vm
+                    .canonical_locale_list(p, args.first().copied())?
+                    .into_iter()
+                    .find(|locale| segmenter_locale_supported(locale))
+                    .unwrap_or_else(|| "en-US".into());
+                let granularity = vm.segmenter_granularity(p, args.get(1).copied())?;
+
+                let segmenter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                vm.set_hidden_string(segmenter, SEGMENTER_LOCALE_SLOT, &locale)?;
+                vm.set_hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT, &granularity)?;
+                Ok(segmenter)
+            })
+        })
     }
 
     fn segmenter_granularity(
@@ -87,13 +82,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         options: Option<Value>,
     ) -> Result<String, JsError> {
-        let Some(options) = options.filter(|value| !value.is_undefined()) else {
-            return Ok("grapheme".into());
-        };
-        if options.is_null() {
-            return Err(self.type_error(p, "options must not be null".into()));
-        }
-        let options = self.box_object(options)?;
+        let options = self.get_options_object(p, options)?;
         self.string_option(
             p,
             options,

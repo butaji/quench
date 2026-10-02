@@ -2120,6 +2120,77 @@ mod tests {
     }
 
     #[test]
+    fn regression_intl_constructor_prototypes_precede_option_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            var names=['Collator','NumberFormat','DateTimeFormat','PluralRules','RelativeTimeFormat','ListFormat','Segmenter','DisplayNames','DurationFormat'];
+            for(var kind of names) {
+                var trace=[];
+                var locales={get length(){trace.push('length');$262.gc();return 1;},0:{toString(){trace.push('locale');$262.gc();return 'en';}}};
+                var options={get localeMatcher(){trace.push('matcher');$262.gc();return 'lookup';},type:kind==='DisplayNames'?'language':kind==='ListFormat'?'conjunction':'cardinal'};
+                var target=new Proxy(function(){},{get(value,key){if(key==='prototype'){trace.push('prototype');$262.gc();return {marker:'expected'};}return Reflect.get(value,key);}});
+                var result=Reflect.construct(Intl[kind],[locales,options],target);
+                print(trace.join(',')==='prototype,length,locale,matcher');
+                print(Object.getPrototypeOf(result).marker==='expected');
+            }
+            for(var kind of names) {
+                var record=Proxy.revocable(function(){},{get(value,key){if(key==='prototype'){record.revoke();return {marker:'kept'};}return Reflect.get(value,key);}});
+                var result=Reflect.construct(Intl[kind],['en',{type:kind==='DisplayNames'?'language':kind==='ListFormat'?'conjunction':'cardinal'}],record.proxy);
+                print(Object.getPrototypeOf(result).marker==='kept');
+            }
+            var foreign=$262.createRealm().global;
+            for(var kind of names) {
+                var target=foreign.Function('');target.prototype=undefined;
+                var result=Reflect.construct(Intl[kind],['en',{type:kind==='DisplayNames'?'language':kind==='ListFormat'?'conjunction':'cardinal'}],target);
+                print(Object.getPrototypeOf(result)===foreign.Intl[kind].prototype);
+            }
+            var first=new Intl.DurationFormat('en'),second=new Intl.DurationFormat('en');
+            print(first.format===second.format);
+            print(Object.prototype.hasOwnProperty.call(first,'format'));
+            print(Object.getOwnPropertyDescriptor(Intl.DurationFormat.prototype,'format').value===first.format);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "false", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_intl_get_options_object_distinguishes_coercing_apis() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads=0;
+            Object.defineProperty(Number.prototype,'localeMatcher',{configurable:true,get(){reads++;throw 'primitive options were read';}});
+            for(var kind of ['DisplayNames','DurationFormat','ListFormat','Segmenter']) {
+                for(var value of [null,true,false,0,42,'x',Symbol('x'),1n]) {
+                    try{new Intl[kind]('en',value);print(false);}catch(e){print(e instanceof TypeError);}
+                }
+            }
+            print(reads);
+            delete Number.prototype.localeMatcher;
+            for(var kind of ['NumberFormat','PluralRules','RelativeTimeFormat','DateTimeFormat']) {
+                print(new Intl[kind]('en',7).resolvedOptions().locale==='en');
+            }
+            for(var kind of ['DisplayNames','DurationFormat','ListFormat','Segmenter']) {
+                var options=new Number(7);options.type=kind==='DisplayNames'?'language':'conjunction';options.style='short';options.granularity='word';
+                print(new Intl[kind]('en',options).resolvedOptions().locale==='en');
+            }
+            print(new Intl.NumberFormat(new Intl.Locale('en')).resolvedOptions().locale);
+            print(new Intl.NumberFormat([,'EN','en']).resolvedOptions().locale);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "0",
+                "true", "true", "true", "true", "true", "true", "true", "true", "en", "en",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_collator_uses_one_canonical_locale_list() {
         assert_output_in_execution_modes(
             r#"

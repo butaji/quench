@@ -79,41 +79,28 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype = self.display_names_instance_prototype(p, new_target)?;
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let locales = self.canonical_locale_list(p, args.first().copied())?;
-        let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
-        let options = self.display_names_options(p, args.get(1).copied())?;
-        for (slot, value) in [
-            (DISPLAY_NAMES_LOCALE_SLOT, locale),
-            (DISPLAY_NAMES_TYPE_SLOT, options.display_type),
-            (DISPLAY_NAMES_STYLE_SLOT, options.style),
-            (DISPLAY_NAMES_FALLBACK_SLOT, options.fallback),
-            (
-                DISPLAY_NAMES_LANGUAGE_DISPLAY_SLOT,
-                options.language_display,
-            ),
-        ] {
-            self.set_hidden_string(instance, slot, &value)?;
-        }
-        Ok(instance)
-    }
-
-    fn display_names_instance_prototype(
-        &mut self,
-        p: &ResidualProgram,
-        new_target: Value,
-    ) -> Result<Value, JsError> {
-        let atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, atom)?;
-        if self.is_object_like(prototype) {
-            return Ok(prototype);
-        }
-        let realm = self.function_realm(p, new_target)?;
-        Ok(self.realm.intrinsics.intl_display_names_prototypes
-            .get(&realm)
-            .copied()
-            .unwrap_or(self.object_proto))
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlDisplayNames)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locales = vm.canonical_locale_list(p, args.first().copied())?;
+                let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
+                let options = vm.display_names_options(p, args.get(1).copied())?;
+                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                for (slot, value) in [
+                    (DISPLAY_NAMES_LOCALE_SLOT, locale),
+                    (DISPLAY_NAMES_TYPE_SLOT, options.display_type),
+                    (DISPLAY_NAMES_STYLE_SLOT, options.style),
+                    (DISPLAY_NAMES_FALLBACK_SLOT, options.fallback),
+                    (
+                        DISPLAY_NAMES_LANGUAGE_DISPLAY_SLOT,
+                        options.language_display,
+                    ),
+                ] {
+                    vm.set_hidden_string(instance, slot, &value)?;
+                }
+                Ok(instance)
+            })
+        })
     }
 
     fn display_names_options(
@@ -121,15 +108,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Option<Value>,
     ) -> Result<DisplayNamesOptions, JsError> {
-        let options = match value.filter(|value| !value.is_undefined()) {
-            Some(value) if value.is_null() => {
-                return Err(self.type_error(p, "options must not be null".into()));
-            }
-            Some(value) => self.box_object(value)?,
-            None => self
-                .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL))),
-        };
+        let options = self.get_options_object(p, value)?;
         let mut parsed = DisplayNamesOptions::default();
         for (name, default, allowed) in DISPLAY_NAMES_OPTIONS {
             let atom = self.intern_atom(name);
