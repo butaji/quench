@@ -2086,6 +2086,47 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_split_preserves_conversion_order_and_utf16() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[];
+            function Species(receiver,flags) {log.push('construct:'+flags.charCodeAt(0)+':'+flags.charAt(flags.length-1));return {
+                set lastIndex(value) {log.push('set:'+value);},
+                get lastIndex() {log.push('index');return {[Symbol.toPrimitive](hint) {log.push('index:'+hint);return 100;}};},
+                exec(input) {log.push('exec:'+input.charCodeAt(0));return {get length() {log.push('length');return {[Symbol.toPrimitive](hint) {log.push('length:'+hint);return 2;}};},get 1() {log.push('capture');return 42;}};}
+            };}
+            var receiver={get constructor() {log.push('constructor');return {[Symbol.species]:Species};},get flags() {log.push('flags');return {[Symbol.toPrimitive](hint) {log.push('flags:'+hint);return String.fromCharCode(55296)+'g';}};}};
+            var input={[Symbol.toPrimitive](hint) {log.push('input:'+hint);return String.fromCharCode(55296,97);}};
+            var limit={[Symbol.toPrimitive](hint) {log.push('limit:'+hint);return 100;}};
+            var output=RegExp.prototype[Symbol.split].call(receiver,input,limit);
+            print(output.length);print(output[0]);print(output[1]);print(output[2]);print(log.join(','));
+            for (var value of [0,1,2,-1,4294967297,Infinity,NaN]) {
+                var result=RegExp.prototype[Symbol.split].call(/,/,'a,b',{[Symbol.toPrimitive]() {return value;}});
+                print(result.join(':'));
+            }
+            var caught=0;
+            for (var value of [Symbol(),1n]) {try {RegExp.prototype[Symbol.split].call(/,/,'a,b',{[Symbol.toPrimitive]() {return value;}});} catch(error) {if(error instanceof TypeError)caught++;}}
+            print(caught);
+        "#,
+            &[
+                "3",
+                "",
+                "42",
+                "",
+                "input:string,constructor,flags,flags:string,construct:55296:y,limit:number,set:0,exec:55296,index,index:number,length,length:number,capture",
+                "",
+                "a",
+                "a:b",
+                "a:b",
+                "a",
+                "",
+                "",
+                "2",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_match_all_orders_species_and_preserves_strings_and_setters() {
         assert_output_in_execution_modes(
             r#"
