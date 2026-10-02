@@ -46,13 +46,13 @@ impl<H: Host> Vm<H> {
         self.megamorphic_methods.retain(|set| set.len != 0);
     }
 
-    pub(super) fn is_function(&self, mut value: Value) -> bool {
-        loop {
-            match self.heap.get(value) {
-                Some(Cell::Function { .. }) => return true,
-                Some(Cell::Proxy { target, .. }) => value = *target,
-                _ => return false,
+    pub(super) fn is_function(&self, value: Value) -> bool {
+        match self.heap.get(value) {
+            Some(Cell::Function { .. }) => true,
+            Some(Cell::Proxy { kind, .. }) => {
+                matches!(kind, ProxyKind::Callable | ProxyKind::Constructor)
             }
+            _ => false,
         }
     }
 

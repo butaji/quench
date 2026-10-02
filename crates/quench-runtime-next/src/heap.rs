@@ -647,6 +647,7 @@ impl Heap {
                 object: value,
                 target,
                 handler,
+                ..
             } => {
                 object(value);
                 work.extend([*target, *handler]);
