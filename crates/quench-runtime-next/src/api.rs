@@ -2086,6 +2086,76 @@ mod tests {
     }
 
     #[test]
+    fn regression_array_like_arguments_keep_earlier_collecting_values() {
+        assert_output_in_execution_modes(
+            r#"
+            function list() {return {length:{valueOf() {$262.gc(); return 2;}},
+                get 0() {return {rank:42};}, get 1() {$262.gc(); return {rank:43};}};}
+            function called(first, second) {print(first.rank); print(second.rank);}
+            Reflect.apply(called, null, list()); called.apply(null, list());
+            var result = Reflect.construct(function(first,second) {this.first=first; this.second=second;}, list());
+            print(result.first.rank); print(result.second.rank);
+            var events=[];
+            var proxy = new Proxy({}, {ownKeys() {return {length:2,
+                get 0() {events.push('first'); return 'fresh-' + events.length;},
+                get 1() {$262.gc(); events.push('second'); return Symbol('later');}};}});
+            var keys=Reflect.ownKeys(proxy);
+            print(keys[0]); print(keys[1].description); print(events.join(','));
+            "#,
+            &[
+                "42",
+                "43",
+                "42",
+                "43",
+                "42",
+                "43",
+                "fresh-1",
+                "later",
+                "first,second",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_own_keys_checks_types_and_observable_target_invariants() {
+        assert_output_in_execution_modes(
+            r#"
+            function outcome(action) {try {return String(action());} catch(error) {return error instanceof TypeError ? 'TypeError' : error;}}
+            var events=[];
+            print(outcome(function() {return Reflect.ownKeys(new Proxy({}, {ownKeys() {return {
+                length:2, get 0() {events.push('invalid'); return undefined;},
+                get 1() {events.push('later'); throw 'later error';}
+            };}}));})); print(events.join(','));
+            for (var sealed of [false,true]) {
+                var events=[], target={first:42, later:43};
+                Object.defineProperty(target,'first',{configurable:false});
+                if (sealed) Object.preventExtensions(target);
+                var inner=new Proxy(target, {isExtensible(object) {events.push('extensible'); $262.gc(); return Reflect.isExtensible(object);},
+                    ownKeys(object) {events.push('target-keys'); $262.gc(); return Reflect.ownKeys(object);},
+                    getOwnPropertyDescriptor(object,key) {events.push('descriptor:' + key); $262.gc(); return Reflect.getOwnPropertyDescriptor(object,key);}});
+                var outer=new Proxy(inner,{ownKeys() {events.push('trap'); return ['later','first'];}});
+                print(Reflect.ownKeys(outer).join(',')); print(events.join(','));
+                events=[];
+                print(outcome(function() {return Reflect.ownKeys(new Proxy(inner,{ownKeys() {events.push('trap'); return ['later'];}}));}));
+                print(events.join(','));
+            }
+            "#,
+            &[
+                "TypeError",
+                "invalid",
+                "later,first",
+                "trap,extensible,target-keys,descriptor:first,descriptor:later",
+                "TypeError",
+                "trap,extensible,target-keys,descriptor:first,descriptor:later",
+                "later,first",
+                "trap,extensible,target-keys,descriptor:first,descriptor:later",
+                "TypeError",
+                "trap,extensible,target-keys,descriptor:first,descriptor:later",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_own_enumeration_survives_collecting_callbacks() {
         assert_output_in_execution_modes(
             r#"
