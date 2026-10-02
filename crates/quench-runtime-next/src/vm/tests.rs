@@ -2679,3 +2679,118 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
         }
     }
 }
+
+#[test]
+fn promise_finally_restores_roots_after_each_effect_completion() {
+    let cases = [
+        (
+            "({get constructor() {$262.gc(); throw 'constructor';}})",
+            true,
+        ),
+        ("({constructor: {[Symbol.species]: () => {}}})", true),
+        (
+            "({constructor: undefined, get then() {$262.gc(); throw 'then';}})",
+            true,
+        ),
+        (
+            "({constructor: undefined, get then() {$262.gc(); return function() {$262.gc(); throw 'call';};}})",
+            true,
+        ),
+        (
+            "({constructor: undefined, get then() {$262.gc(); return function(a,b) {$262.gc(); return a === b ? 42 : 0;};}})",
+            false,
+        ),
+    ];
+    let callable_case = "({constructor: undefined, get then() {$262.gc(); throw 'then';}})";
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (source, fails, callable) in cases
+            .into_iter()
+            .map(|(source, fails)| (source, fails, false))
+            .chain(std::iter::once((callable_case, true, true)))
+        {
+            let mut vm = Vm::new(Test262Host);
+            let program = compile(
+                &format!("function create() {{return {source};}} function createHandler() {{return function() {{}};}}"),
+                "finally-roots.js",
+            )
+            .unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("create");
+            let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+            let receiver = vm
+                .call_value(&program, factory, Value::UNDEFINED, &[])
+                .unwrap();
+            let handler = if callable {
+                let atom = vm.intern_atom("createHandler");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                vm.call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap()
+            } else {
+                vm.object()
+            };
+            let receiver_weak = vm.heap.weak_handle(receiver).unwrap();
+            let handler_weak = vm.heap.weak_handle(handler).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let incoming = vm.active_call_roots.len();
+            let result = vm.call_native(&program, Native::PromiseFinally, receiver, &[handler]);
+            assert_eq!(result.is_err(), fails, "{source}");
+            if !fails {
+                assert_eq!(result.unwrap(), Value::number(42.0));
+            }
+            assert_eq!(vm.heap.root_count_for_test(), roots, "{source}");
+            assert_eq!(vm.active_call_roots.len(), incoming, "{source}");
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(receiver_weak).is_none(), "{source}");
+            assert!(vm.heap.weak_value(handler_weak).is_none(), "{source}");
+        }
+    }
+}
+
+#[test]
+fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(Test262Host);
+        let program = compile(
+            "var foreign = $262.createRealm().global; var invalid = () => {};",
+            "promise-intrinsic-roots.js",
+        )
+        .unwrap();
+        vm.execute(&program).unwrap();
+        let invalid_atom = vm.intern_atom("invalid");
+        let invalid = vm.own_property(vm.realm.globals, invalid_atom).unwrap();
+        let foreign_atom = vm.intern_atom("foreign");
+        let foreign = vm.own_property(vm.realm.globals, foreign_atom).unwrap();
+        vm.switch_realm_global(foreign);
+        let constructor = vm.realm.intrinsics.promise_constructors[&foreign];
+        let weak = vm.heap.weak_handle(constructor).unwrap();
+        let prototype = vm.realm.intrinsics.builtin_prototypes[&(foreign, Native::Promise)];
+        let promise_atom = vm.intern_atom("Promise");
+        vm.set_property(foreign, promise_atom, Value::NULL).unwrap();
+        let constructor_atom = vm.intern_atom("constructor");
+        vm.set_property(prototype, constructor_atom, Value::NULL)
+            .unwrap();
+        vm.collect_now(&program);
+        assert_eq!(vm.heap.weak_value(weak), Some(constructor));
+        let source = vm.promise_object();
+        vm.set_property(source, constructor_atom, Value::UNDEFINED)
+            .unwrap();
+        let roots = vm.heap.root_count_for_test();
+        let result = vm
+            .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
+            .unwrap();
+        assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+        let value = vm.object();
+        assert!(
+            vm.promise_resolve_for_constructor(&program, invalid, value)
+                .is_err()
+        );
+        assert_eq!(vm.heap.root_count_for_test(), roots);
+    }
+}

@@ -193,6 +193,7 @@ struct Realm {
 struct RealmIntrinsics {
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
+    promise_constructors: FxHashMap<Value, Value>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
