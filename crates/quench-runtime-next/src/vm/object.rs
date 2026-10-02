@@ -437,7 +437,7 @@ impl<H: Host> Vm<H> {
             return self.get_property(p, object, atom);
         };
         let receiver_shape = receiver.shape();
-        if self.shape_is_dictionary(receiver_shape) {
+        if receiver.is_module_namespace() || self.shape_is_dictionary(receiver_shape) {
             return self.get_property(p, object, atom);
         }
         // SAFETY: cache-site ids are emitted only by the compiler and execute
@@ -515,6 +515,9 @@ impl<H: Host> Vm<H> {
             let Some(current) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
+            if current.is_module_namespace() {
+                return self.get_property(p, object, atom);
+            }
             if let Some(slot) = self.shape_slot(current.shape(), atom)
                 && let Some(value) = self.heap.property_get(current, slot)
             {
