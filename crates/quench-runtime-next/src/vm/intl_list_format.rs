@@ -58,25 +58,20 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let locales = self.canonical_locale_list(p, args.first().copied())?;
-        let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
-        let (style, kind) = self.list_format_options(p, args.get(1).copied())?;
-        let prototype_atom = self.intern_atom("prototype");
-        let candidate = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if self.is_object_like(candidate) {
-            candidate
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            self.realm.intrinsics.intl_list_format_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_hidden_string(instance, LIST_FORMAT_LOCALE_SLOT, &locale)?;
-        self.set_hidden_string(instance, LIST_FORMAT_STYLE_SLOT, &style)?;
-        self.set_hidden_string(instance, LIST_FORMAT_TYPE_SLOT, &kind)?;
-        Ok(instance)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlListFormat)?;
+            vm.with_call_roots([prototype], |vm| {
+                let locales = vm.canonical_locale_list(p, args.first().copied())?;
+                let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
+                let (style, kind) = vm.list_format_options(p, args.get(1).copied())?;
+
+                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                vm.set_hidden_string(instance, LIST_FORMAT_LOCALE_SLOT, &locale)?;
+                vm.set_hidden_string(instance, LIST_FORMAT_STYLE_SLOT, &style)?;
+                vm.set_hidden_string(instance, LIST_FORMAT_TYPE_SLOT, &kind)?;
+                Ok(instance)
+            })
+        })
     }
 
     fn list_format_options(
@@ -84,15 +79,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         options: Option<Value>,
     ) -> Result<(String, String), JsError> {
-        let Some(options) = options.filter(|value| !value.is_undefined()) else {
-            return Ok(("long".into(), "conjunction".into()));
-        };
-        if options.is_null() {
-            return Err(self.type_error(p, "options must not be null".into()));
-        }
-        if !self.is_object_like(options) {
-            return Err(self.type_error(p, "options must be an object".into()));
-        }
+        let options = self.get_options_object(p, options)?;
         let mut style = "long".to_owned();
         let mut kind = "conjunction".to_owned();
         for (key, allowed) in [

@@ -7405,3 +7405,193 @@ fn collator_construction_roots_boxed_locale_and_option_views() {
         }
     }
 }
+
+#[test]
+fn intl_coerced_option_views_survive_fresh_conversion_callbacks() {
+    use super::Cell;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, key, expected) in [
+            ("NumberFormat", "style", "percent"),
+            ("PluralRules", "type", "ordinal"),
+            ("RelativeTimeFormat", "numeric", "auto"),
+        ] {
+            for phase in ["convert", "matcher", "selected"] {
+                for abrupt in [false, true] {
+                    let source = format!(
+                        r#"
+                    var trace=[];
+                    function hit(name){{trace.push(name);if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
+                    Object.defineProperty(Number.prototype,'localeMatcher',{{get(){{hit('matcher');return matcher();}},configurable:true}});
+                    Object.defineProperty(Number.prototype,'{key}',{{get(){{hit('selected');return '{expected}';}},configurable:true}});
+                    function inspect(value){{return Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
+                    function traceLog(){{return trace.join(',');}}
+                    "#
+                    );
+                    let program = compile(&source, "intl-coerced-view.js").unwrap();
+                    let mut vm = Vm::new(Test262Host);
+                    vm.execute(&program).unwrap();
+                    let intl = vm.intern_atom("Intl");
+                    let intl = vm.own_property(vm.realm.globals, intl).unwrap();
+                    let name = vm.intern_atom(kind);
+                    let constructor = vm.own_property(intl, name).unwrap();
+                    let locale = vm.heap.alloc(Cell::String("en".into()));
+                    let weak = vm.heap.weak_handle(locale).unwrap();
+                    let locale_owner = vm.heap.root(locale);
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = match kind {
+                        "NumberFormat" => vm.intl_number_format_construct(
+                            &program,
+                            &[locale, Value::number(7.0)],
+                            constructor,
+                        ),
+                        "PluralRules" => vm.intl_plural_rules_construct(
+                            &program,
+                            &[locale, Value::number(7.0)],
+                            constructor,
+                        ),
+                        "RelativeTimeFormat" => vm.intl_relative_time_format_construct(
+                            &program,
+                            &[locale, Value::number(7.0)],
+                            constructor,
+                        ),
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    assert_eq!(vm.heap.weak_value(weak), Some(locale), "{kind}/{phase}");
+                    match result {
+                        Ok(instance) => {
+                            let owner = vm.heap.root(instance);
+                            vm.collect_now(&program);
+                            let atom = vm.intern_atom("inspect");
+                            let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let output = vm
+                                .call_value(&program, inspect, Value::UNDEFINED, &[instance])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, output).unwrap(),
+                                expected,
+                                "{kind}/{phase}"
+                            );
+                            let atom = vm.intern_atom("traceLog");
+                            let logger = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let trace = vm
+                                .call_value(&program, logger, Value::UNDEFINED, &[])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, trace).unwrap(),
+                                "matcher,convert,selected",
+                                "{kind}/{phase}"
+                            );
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    vm.heap.release_root(locale_owner);
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(weak).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn intl_constructor_views_survive_prototype_and_option_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, key, expected) in [
+            ("DisplayNames", "type", "language"),
+            ("DurationFormat", "style", "short"),
+            ("DateTimeFormat", "year", "numeric"),
+        ] {
+            for phase in ["prototype", "locale", "matcher", "convert", "selected"] {
+                for abrupt in [false, true] {
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function matcher(){{return {{toString(){{hit('convert');return 'lookup';}}}};}}
+                    function locales(){{return {{get length(){{hit('locale');return 1;}},0:'en'}};}}
+                    function options(){{var value={{get localeMatcher(){{hit('matcher');return matcher();}}}};Object.defineProperty(value,'{key}',{{get(){{hit('selected');return '{expected}';}}}});return value;}}
+                    function target(){{return new Proxy(function(){{}},{{get(value,key){{if(key==='prototype'){{hit('prototype');return {{marker:'expected'}};}}return Reflect.get(value,key);}}}});}}
+                    function inspect(value){{return Object.getPrototypeOf(value).marker+':'+Intl.{kind}.prototype.resolvedOptions.call(value)['{key}'];}}
+                    "#
+                    );
+                    let program = compile(&source, "intl-constructor-views.js").unwrap();
+                    let mut vm = Vm::new(Test262Host);
+                    vm.execute(&program).unwrap();
+                    let mut args = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in ["locales", "options", "target"] {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        args.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = match kind {
+                        "DisplayNames" => {
+                            vm.intl_display_names_construct(&program, &args[..2], args[2])
+                        }
+                        "DurationFormat" => {
+                            vm.intl_duration_format_construct(&program, &args[..2], args[2])
+                        }
+                        "DateTimeFormat" => {
+                            vm.intl_date_time_format_construct(&program, &args[..2], args[2])
+                        }
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(result.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(instance) => {
+                            let owner = vm.heap.root(instance);
+                            vm.collect_now(&program);
+                            let atom = vm.intern_atom("inspect");
+                            let inspect = vm.own_property(vm.realm.globals, atom).unwrap();
+                            let output = vm
+                                .call_value(&program, inspect, Value::UNDEFINED, &[instance])
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, output).unwrap(),
+                                format!("expected:{expected}"),
+                                "{kind}/{phase}"
+                            );
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    vm.collect_now(&program);
+                }
+            }
+        }
+    }
+}
