@@ -13,6 +13,7 @@ const REGEXP_CARRIAGE_RETURN: u16 = b'\r' as u16;
 const REGEXP_LINE_SEPARATOR: u16 = 0x2028;
 const REGEXP_PARAGRAPH_SEPARATOR: u16 = 0x2029;
 const REGEXP_LEGACY_CAPTURE_COUNT: usize = 9;
+const REGEXP_SEARCH_NOT_FOUND_INDEX: f64 = -1.0;
 const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
     (&["input", "$_"], true),
     (&["lastMatch", "$&"], false),
@@ -676,38 +677,38 @@ impl<H: Host> Vm<H> {
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(
-                self.type_error(p, "RegExp.prototype[@@search] called on non-object".into())
-            );
-        }
-        let input = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let last_index_atom = self.intern_atom("lastIndex");
-        let previous = self.get_property(p, receiver, last_index_atom)?;
-        if !self.same_value(previous, Value::number(0.0)) {
-            self.set_property_with_program_mode(
-                p,
-                receiver,
-                last_index_atom,
-                Value::number(0.0),
-                true,
-            )?;
-        }
-        let result = self.regexp_exec(p, receiver, &input)?;
-        let current = self.get_property(p, receiver, last_index_atom)?;
-        if !self.same_value(current, previous) {
-            self.set_property_with_program_mode(p, receiver, last_index_atom, previous, true)?;
-        }
-        if result.is_null() {
-            return Ok(Value::number(-1.0));
-        }
-        if !self.is_object_like(result) {
-            return Err(self.type_error(p, "RegExp exec result is not an object".into()));
-        }
-        let index_atom = self.intern_atom("index");
-        let index = self.get_property(p, result, index_atom)?;
-        let index = regexp_to_length(self.to_number(p, index)?);
-        Ok(Value::number(index as f64))
+        self.with_call_roots(
+            std::iter::once(receiver).chain(args.iter().copied()),
+            |vm| {
+                if !vm.is_object_like(receiver) {
+                    return Err(
+                        vm.type_error(p, "RegExp.prototype[@@search] called on non-object".into())
+                    );
+                }
+                let input =
+                    vm.regexp_input_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let atom = vm.intern_atom("lastIndex");
+                let previous = vm.get_property(p, receiver, atom)?;
+                vm.with_call_roots([previous], |vm| {
+                    if !vm.same_value(previous, Value::number(0.0)) {
+                        vm.set_property_with_program_mode(p, receiver, atom, Value::number(0.0), true)?;
+                    }
+                    let input = vm.heap.alloc(Cell::String(input));
+                    let result = vm.regexp_exec_value(p, receiver, input)?;
+                    vm.with_call_roots([result], |vm| {
+                        let current = vm.get_property(p, receiver, atom)?;
+                        if !vm.same_value(current, previous) {
+                            vm.set_property_with_program_mode(p, receiver, atom, previous, true)?;
+                        }
+                        if result.is_null() {
+                            return Ok(Value::number(REGEXP_SEARCH_NOT_FOUND_INDEX));
+                        }
+                        let atom = vm.intern_atom("index");
+                        vm.get_property(p, result, atom)
+                    })
+                })
+            },
+        )
     }
 
     pub(super) fn regexp_symbol_split(
@@ -1034,16 +1035,6 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(self.array_proto),
             elements: Rc::new(matches),
         }))
-    }
-
-    pub(super) fn regexp_exec(
-        &mut self,
-        p: &ResidualProgram,
-        receiver: Value,
-        input: &str,
-    ) -> Result<Value, JsError> {
-        let input = self.heap.alloc(Cell::String(input.into()));
-        self.regexp_exec_value(p, receiver, input)
     }
 
     pub(super) fn regexp_exec_value(

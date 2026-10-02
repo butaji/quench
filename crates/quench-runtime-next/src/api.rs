@@ -2086,6 +2086,69 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_search_returns_index_without_conversion() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads=0,coercions=0;
+            var object={valueOf(){coercions++;throw 'converted';},[Symbol.toPrimitive](){coercions++;throw 'converted';}};
+            for(var index of [undefined,'index',-1.5,NaN,-0,Symbol(),1n,object,null]) {
+                var receiver={lastIndex:0,exec(){return {get index(){reads++;return index;}};}};
+                var actual=RegExp.prototype[Symbol.search].call(receiver,'a');
+                print(Object.is(actual,index));
+            }
+            print(reads);print(coercions);
+        "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "9", "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_search_restores_index_before_reading_fresh_result() {
+        assert_output_in_execution_modes(
+            r#"
+            var log=[],reads=0;
+            function previous(){return {tag:41};}
+            function result(){return {get index(){$262.gc();log.push('index');return {tag:43};}};}
+            var receiver={
+                get lastIndex(){$262.gc();if(reads++===0){log.push('previous');return previous();}log.push('current');return 0;},
+                set lastIndex(value){$262.gc();log.push(value===0?'reset':'restore:'+value.tag);},
+                get exec(){$262.gc();log.push('exec:get');return function(input){$262.gc();log.push('exec:'+input.charCodeAt(0));return result();};}
+            };
+            var input={[Symbol.toPrimitive](hint){$262.gc();log.push('input:'+hint);return String.fromCharCode(55296,97);}};
+            var value=RegExp.prototype[Symbol.search].call(receiver,input);
+            print(value.tag);print(log.join(','));
+            var writes=0,indexReads=0;
+            var missing={get lastIndex(){return writes===0?7:0;},set lastIndex(v){writes++;},exec(){return null;}};
+            print(RegExp.prototype[Symbol.search].call(missing,''));print(writes);
+            for(var initial of [0,-0,NaN,undefined]) {
+                var count=0;
+                var stable={get lastIndex(){return initial;},set lastIndex(v){count++;},exec(){return null;}};
+                RegExp.prototype[Symbol.search].call(stable,'');print(count);
+            }
+            var marker={},writesOnThrow=0;
+            var throwing={lastIndex:7,exec(){throw marker;}};
+            Object.defineProperty(throwing,'lastIndex',{get(){return 7;},set(v){writesOnThrow++;}});
+            try{RegExp.prototype[Symbol.search].call(throwing,'a');}catch(error){print(error===marker);}
+            print(writesOnThrow);
+        "#,
+            &[
+                "43",
+                "input:string,previous,reset,exec:get,exec:55296,current,restore:41,index",
+                "-1",
+                "2",
+                "0",
+                "1",
+                "1",
+                "1",
+                "true",
+                "1",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_regexp_split_preserves_conversion_order_and_utf16() {
         assert_output_in_execution_modes(
             r#"
