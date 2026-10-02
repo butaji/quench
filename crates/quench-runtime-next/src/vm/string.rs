@@ -500,55 +500,41 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if native == Native::StringSearch && self.is_object_like(pattern) {
-            let Some(symbol) = self.well_known_symbols.get("search").copied() else {
-                return Err(JsError("RegExp search symbol is unavailable".into()));
-            };
-            let method = self.get_index(p, pattern, symbol)?;
-            if self.is_function(method) {
-                let input = self.regexp_input_string(p, this)?;
-                let input = self.heap.alloc(Cell::String(input));
-                return self.call_value(p, method, pattern, &[input]);
-            }
-            if !method.is_undefined() && !method.is_null() {
-                return Err(self.type_error(p, "String search method is not callable".into()));
-            }
-        }
-        if native == Native::StringMatch && self.is_object_like(pattern) {
-            let Some(symbol) = self.well_known_symbols.get("match").copied() else {
-                return Err(JsError("RegExp match symbol is unavailable".into()));
-            };
-            let method = self.get_index(p, pattern, symbol)?;
-            if self.is_function(method) {
-                let input = self.regexp_input_string(p, this)?;
-                let input = self.heap.alloc(Cell::String(input));
-                return self.call_value(p, method, pattern, &[input]);
-            }
-            if !method.is_undefined() && !method.is_null() {
-                return Err(self.type_error(p, "RegExp @@match is not callable".into()));
-            }
-        }
-        let constructor_name = self.intern_atom("RegExp");
-        let constructor = self.get_property(p, self.realm.globals, constructor_name)?;
-        let matcher = self.construct_value(p, constructor, &[pattern, Value::UNDEFINED])?;
-        let symbol_name = if native == Native::StringSearch {
-            "search"
-        } else {
-            "match"
+        let name = match native {
+            Native::StringMatch => "match",
+            Native::StringSearch => "search",
+            _ => unreachable!("match/search dispatch owns only its two methods"),
         };
-        let symbol = self
-            .well_known_symbols
-            .get(symbol_name)
-            .copied()
-            .ok_or_else(|| self.type_error(p, "RegExp method symbol is unavailable".into()))?;
-        let method = self.get_index(p, matcher, symbol)?;
-        if !self.is_function(method) {
-            return Err(self.type_error(p, "RegExp method is not callable".into()));
-        }
-        let input = self.regexp_input_string(p, this)?;
-        let input = self.heap.alloc(Cell::String(input));
-        self.call_value(p, method, matcher, &[input])
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            vm.require_object_coercible(p, this)?;
+            let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let symbol = vm
+                .well_known_symbols
+                .get(name)
+                .copied()
+                .ok_or_else(|| vm.type_error(p, "RegExp method symbol is unavailable".into()))?;
+            if vm.is_object_like(pattern) {
+                let method = vm.get_index(p, pattern, symbol)?;
+                if !method.is_undefined() && !method.is_null() {
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "RegExp method is not callable".into()));
+                    }
+                    return vm.call_value(p, method, pattern, &[this]);
+                }
+            }
+            let input = vm.regexp_input_string(p, this)?;
+            let input = vm.heap.alloc(Cell::String(input));
+            vm.with_call_roots([input], |vm| {
+                let matcher = vm.regexp_create(p, pattern, Value::UNDEFINED)?;
+                vm.with_call_roots([matcher], |vm| {
+                    let method = vm.get_index(p, matcher, symbol)?;
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "RegExp method is not callable".into()));
+                    }
+                    vm.call_value(p, method, matcher, &[input])
+                })
+            })
+        })
     }
 
     pub(super) fn string_match_all_native(

@@ -1191,33 +1191,34 @@ impl<H: Host> Vm<H> {
         }
         let roots_start = self.active_call_roots.len();
         let result = (|| {
-            let input =
-                if let Some(Cell::RegExp { source, flags, .. }) = self.heap.get(pattern_value) {
-                    RegExpConstructorInput::Internal {
-                        source: source.clone(),
-                        original_flags: flags_omitted.then(|| flags.clone()),
-                    }
+            let input = if let Some(Cell::RegExp { source, flags, .. }) = self.heap.get(pattern_value) {
+                RegExpConstructorInput::Internal {
+                    source: source.clone(),
+                    original_flags: flags_omitted.then(|| flags.clone()),
+                }
+            } else {
+                let source = if pattern_is_regexp {
+                    let source_atom = self.intern_atom("source");
+                    self.get_property(p, pattern_value, source_atom)?
                 } else {
-                    let source = if pattern_is_regexp {
-                        let source_atom = self.intern_atom("source");
-                        self.get_property(p, pattern_value, source_atom)?
-                    } else {
-                        pattern_value
-                    };
-                    self.active_call_roots.push(source);
-                    let flags = if flags_omitted && pattern_is_regexp {
-                        let flags_atom = self.intern_atom("flags");
-                        self.get_property(p, pattern_value, flags_atom)?
-                    } else {
-                        flags_value
-                    };
-                    self.active_call_roots.push(flags);
-                    RegExpConstructorInput::Observable { source, flags }
+                    pattern_value
                 };
+                self.active_call_roots.push(source);
+                let flags = if flags_omitted && pattern_is_regexp {
+                    let flags_atom = self.intern_atom("flags");
+                    self.get_property(p, pattern_value, flags_atom)?
+                } else {
+                    flags_value
+                };
+                self.active_call_roots.push(flags);
+                RegExpConstructorInput::Observable { source, flags }
+            };
             let prototype = if let Some(new_target) = new_target {
                 self.regexp_prototype_from_new_target(p, new_target)?
             } else {
-                self.realm.intrinsics.regexp_intrinsics
+                self.realm
+                    .intrinsics
+                    .regexp_intrinsics
                     .get(&self.realm.globals)
                     .expect("RegExp intrinsics are installed for the active realm")
                     .prototype
@@ -1236,44 +1237,81 @@ impl<H: Host> Vm<H> {
                     (source, flags)
                 }
                 RegExpConstructorInput::Observable { source, flags } => {
-                    let source = if source.is_undefined() {
-                        JsString::from_str("")
-                    } else {
-                        self.regexp_input_string(p, source)?
-                    };
-                    let flags = if flags.is_undefined() {
-                        String::new()
-                    } else {
-                        self.to_string(p, flags)?
-                    };
-                    (source, flags)
+                    self.regexp_initialization_strings(p, source, flags)?
                 }
             };
-            let regex = Self::compile_regexp(&pattern, &flags)?;
-            drop(regex);
-            let object = self.heap.alloc(Cell::RegExp {
-                object: Self::empty_object(prototype),
-                source: pattern,
-                flags,
-            });
-            let last_index_atom = self.intern_atom("lastIndex");
-            self.set_property(object, last_index_atom, Value::number(0.0))?;
-            self.set_property_attributes(
-                object,
-                PropertyKey::string(last_index_atom),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-            Ok(object)
+            self.regexp_from_source(prototype, pattern, flags)
         })();
         self.active_call_roots.truncate(roots_start);
         result
+    }
+
+    pub(super) fn regexp_create(
+        &mut self,
+        p: &ResidualProgram,
+        pattern: Value,
+        flags: Value,
+    ) -> Result<Value, JsError> {
+        let prototype = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .expect("RegExp intrinsics are installed for the active realm")
+            .prototype;
+        let (source, flags) = self.regexp_initialization_strings(p, pattern, flags)?;
+        self.regexp_from_source(prototype, source, flags)
+    }
+
+    fn regexp_initialization_strings(
+        &mut self,
+        p: &ResidualProgram,
+        pattern: Value,
+        flags: Value,
+    ) -> Result<(JsString, String), JsError> {
+        self.with_call_roots([pattern, flags], |vm| {
+            let source = if pattern.is_undefined() {
+                JsString::from_str("")
+            } else {
+                vm.regexp_input_string(p, pattern)?
+            };
+            let flags = if flags.is_undefined() {
+                String::new()
+            } else {
+                vm.to_string(p, flags)?
+            };
+            Ok((source, flags))
+        })
+    }
+
+    fn regexp_from_source(
+        &mut self,
+        prototype: Value,
+        source: JsString,
+        flags: String,
+    ) -> Result<Value, JsError> {
+        let regex = Self::compile_regexp(&source, &flags)?;
+        drop(regex);
+        let object = self.heap.alloc(Cell::RegExp {
+            object: Self::empty_object(prototype),
+            source,
+            flags,
+        });
+        let last_index_atom = self.intern_atom("lastIndex");
+        self.set_property(object, last_index_atom, Value::number(0.0))?;
+        self.set_property_attributes(
+            object,
+            PropertyKey::string(last_index_atom),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        Ok(object)
     }
 
     pub(super) fn regexp_compile_native(

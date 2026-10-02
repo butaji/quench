@@ -6126,3 +6126,158 @@ fn regexp_match_roots_input_and_accumulated_strings_across_callbacks() {
         }
     }
 }
+
+#[test]
+fn string_match_search_custom_dispatch_roots_original_inputs() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (native, name) in [
+            (super::Native::StringMatch, "match"),
+            (super::Native::StringSearch, "search"),
+        ] {
+            for phase in ["get", "call"] {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                        function selected() {{return function(arg) {{hit('call');if(this.tag!==43||arg.tag!==42)throw {{kind:'identity'}};return {{tag:44,argument:arg,receiver:this}};}};}}
+                        function receiver() {{return {{tag:42,[Symbol.toPrimitive]() {{throw {{kind:'coerced'}};}}}};}}
+                        function pattern() {{return {{tag:43,get [Symbol.{name}]() {{hit('get');return selected();}}}};}}
+                    "#
+                    );
+                    let program = compile(&source, "string-custom-dispatch-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let factory = vm.intern_atom("receiver");
+                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                    let receiver = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let root = vm.heap.root(receiver);
+                    let factory = vm.intern_atom("pattern");
+                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                    let pattern = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    vm.heap.release_root(root);
+                    let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome =
+                        vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip([receiver, pattern]) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            for (key, expected) in [("argument", receiver), ("receiver", pattern)] {
+                                let atom = vm.intern_atom(key);
+                                assert_eq!(vm.own_property(value, atom), Some(expected));
+                            }
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (native, name) in [
+            (super::Native::StringMatch, "match"),
+            (super::Native::StringSearch, "search"),
+        ] {
+            for phase in ["input", "pattern", "method", "call"] {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                        function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                        function selected() {{return function(input) {{hit('call');if(input.charCodeAt(0)!==55296||this.source!=='a')throw {{kind:'values'}};return {{tag:44,matcher:this,input:input}};}};}}
+                        Object.defineProperty(RegExp.prototype,Symbol.{name},{{configurable:true,get() {{hit('method');return selected();}}}});
+                        function receiver() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return String.fromCharCode(55296,97);}}}};}}
+                        function pattern() {{return {{[Symbol.{name}]:null,[Symbol.toPrimitive](hint) {{hit('pattern');if(hint!=='string')throw {{kind:'pattern-hint'}};return 'a';}}}};}}
+                    "#
+                    );
+                    let program = compile(&source, "string-fallback-dispatch-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let factory = vm.intern_atom("receiver");
+                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                    let receiver = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let root = vm.heap.root(receiver);
+                    let factory = vm.intern_atom("pattern");
+                    let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                    let pattern = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    vm.heap.release_root(root);
+                    let handles = [receiver, pattern].map(|v| vm.heap.weak_handle(v).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome =
+                        vm.string_match_or_search_native(&program, native, receiver, &[pattern]);
+                    assert_eq!(outcome.is_ok(), !abrupt, "{name}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip([receiver, pattern]) {
+                        assert_eq!(vm.heap.weak_value(*handle), Some(value));
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            let atom = vm.intern_atom("matcher");
+                            let matcher = vm.own_property(value, atom).unwrap();
+                            assert!(
+                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{source,..})if source.host_string()=="a")
+                            );
+                            let atom = vm.intern_atom("input");
+                            let input = vm.own_property(value, atom).unwrap();
+                            assert!(
+                                matches!(vm.heap.get(input),Some(super::Cell::String(text))if text.units()==[0xd800,97])
+                            );
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}
