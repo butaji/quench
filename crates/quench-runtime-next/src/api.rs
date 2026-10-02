@@ -2086,6 +2086,125 @@ mod tests {
     }
 
     #[test]
+    fn regression_proxy_presence_and_delete_keep_captured_targets_after_revocation() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var remove of [false,true]) {
+                for (var fallback of [false,true]) {
+                    var symbol=Symbol('entry'),raw={[symbol]:42},events=[];
+                    var target=new Proxy(raw,{getOwnPropertyDescriptor(object,key) {events.push('descriptor');$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);},isExtensible(object) {events.push('extensible');$262.gc();return Reflect.isExtensible(object);}});
+                    var handler={};Object.defineProperty(handler,remove?'deleteProperty':'has',{get() {events.push('lookup');revocable.revoke();$262.gc();
+                        if (fallback) return null;
+                        return function(object,key) {events.push('trap');$262.gc();print(this===handler);print(object===target);print(key===symbol);return remove;};
+                    }});
+                    var revocable=Proxy.revocable(target,handler);
+                    print(remove?Reflect.deleteProperty(revocable.proxy,symbol):Reflect.has(revocable.proxy,symbol));print(events.join(','));
+                    try {if (remove) Reflect.deleteProperty(revocable.proxy,symbol);else Reflect.has(revocable.proxy,symbol);}catch(error) {print(error instanceof TypeError);}
+                }
+                events=[];target=new Proxy({}, {getOwnPropertyDescriptor() {events.push('descriptor');$262.gc();return undefined;},isExtensible() {events.push('extensible');throw new Error('unexpected');}});
+                var source=new Proxy(target,{has() {return false;},deleteProperty() {return true;}});
+                print(remove?Reflect.deleteProperty(source,'missing'):Reflect.has(source,'missing'));print(events.join(','));
+            }
+            "#,
+            &[
+                "true",
+                "true",
+                "true",
+                "false",
+                "lookup,trap,descriptor,extensible",
+                "true",
+                "true",
+                "lookup",
+                "true",
+                "false",
+                "descriptor",
+                "true",
+                "true",
+                "true",
+                "true",
+                "lookup,trap,descriptor,extensible",
+                "true",
+                "true",
+                "lookup",
+                "true",
+                "true",
+                "descriptor",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_presence_and_delete_coerce_keys_before_dispatch() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var remove of [false,true]) {
+                var events=[],handler={};
+                Object.defineProperty(handler,remove?'deleteProperty':'has',{get() {events.push('lookup');$262.gc();return function(object,key) {events.push('trap:'+key);return true;};}});
+                var source=new Proxy({},handler),key={toString() {events.push('key');$262.gc();return 'entry';}};
+                print(remove?Reflect.deleteProperty(source,key):key in source);print(events.join(','));
+                events=[];var revoked=Proxy.revocable({},handler);revoked.revoke();
+                key={toString() {events.push('key');throw {kind:'coercion'};}};
+                try {if (remove) Reflect.deleteProperty(revoked.proxy,key);else print(key in revoked.proxy);}catch(error) {print(error.kind);}
+                print(events.join(','));
+                events=[];revoked=Proxy.revocable({},handler);
+                key={toString() {events.push('key');revoked.revoke();$262.gc();return 'entry';}};
+                try {if (remove) Reflect.deleteProperty(revoked.proxy,key);else print(key in revoked.proxy);}catch(error) {print(error instanceof TypeError);}
+                print(events.join(','));
+            }
+            "#,
+            &[
+                "true",
+                "key,lookup,trap:entry",
+                "coercion",
+                "key",
+                "true",
+                "key",
+                "true",
+                "key,lookup,trap:entry",
+                "coercion",
+                "key",
+                "true",
+                "key",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_presence_invariants_skip_extensibility_for_frozen_properties() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var remove of [false,true]) {
+                var events=[],raw={};Object.defineProperty(raw,'entry',{value:42,configurable:false});
+                var target=new Proxy(raw,{getOwnPropertyDescriptor(object,key) {events.push('descriptor');$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);},isExtensible() {events.push('extensible');throw {kind:'extensible'};}});
+                var source=new Proxy(target,{has() {events.push('has');return false;},deleteProperty() {events.push('delete');return true;}});
+                try {if (remove) Reflect.deleteProperty(source,'entry');else Reflect.has(source,'entry');}catch(error) {print(error instanceof TypeError);}
+                print(events.join(','));
+                events=[];raw={entry:42};target=new Proxy(raw,{getOwnPropertyDescriptor(object,key) {events.push('descriptor');$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);},isExtensible(object) {events.push('extensible');$262.gc();return Reflect.isExtensible(object);}});
+                source=new Proxy(target,{has() {events.push('has');return false;},deleteProperty() {events.push('delete');return true;}});
+                print(remove?Reflect.deleteProperty(source,'entry'):Reflect.has(source,'entry'));print(events.join(','));
+                Object.preventExtensions(raw);events=[];
+                try {if (remove) Reflect.deleteProperty(source,'entry');else Reflect.has(source,'entry');}catch(error) {print(error instanceof TypeError);}
+                print(events.join(','));
+            }
+            "#,
+            &[
+                "true",
+                "has,descriptor",
+                "false",
+                "has,descriptor,extensible",
+                "true",
+                "has,descriptor,extensible",
+                "true",
+                "delete,descriptor",
+                "true",
+                "delete,descriptor,extensible",
+                "true",
+                "delete,descriptor,extensible",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_proxy_invocations_keep_captured_operands_after_revocation() {
         assert_output_in_execution_modes(
             r#"

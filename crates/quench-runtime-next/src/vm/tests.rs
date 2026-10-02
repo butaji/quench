@@ -4358,3 +4358,170 @@ fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
         }
     }
 }
+
+
+#[test]
+fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for remove in [false, true] {
+            for symbol in [false, true] {
+                for phase in [
+                    "success",
+                    "skip-validation",
+                    "getter",
+                    "trap",
+                    "descriptor",
+                    "field",
+                    "extensible",
+                    "invalid-trap",
+                    "fallback",
+                    "nonconfig",
+                    "nonext",
+                    "revoked",
+                    "coercion",
+                ] {
+                    if symbol && phase == "coercion" {
+                        continue;
+                    }
+                    let mut vm = Vm::new(Test262Host);
+                    let method = if remove { "deleteProperty" } else { "has" };
+                    let source = format!(
+                        r#"
+                        function operands() {{
+                            var raw={{entry:42}};
+                            if ('{phase}'==='nonconfig') Object.defineProperty(raw,'entry',{{configurable:false}});
+                            if ('{phase}'==='nonext') Object.preventExtensions(raw);
+                            var target=new Proxy(raw,{{
+                                getOwnPropertyDescriptor(object,key) {{$262.gc();
+                                    if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};
+                                    if ('{phase}'==='field') return {{value:42,writable:true,enumerable:true,get configurable() {{$262.gc();throw {{kind:'field'}};}}}};
+                                    return Reflect.getOwnPropertyDescriptor(object,key);
+                                }},
+                                isExtensible(object) {{$262.gc();if ('{phase}'==='extensible') throw {{kind:'extensible'}};return Reflect.isExtensible(object);}}
+                            }});
+                            var handler={{get {method}() {{$262.gc();
+                                if ('{phase}'==='getter') throw {{kind:'getter'}};
+                                if ('{phase}'==='invalid-trap') return 1;
+                                if ('{phase}'==='fallback') return null;
+                                return function(object,key) {{$262.gc();if ('{phase}'==='trap') throw {{kind:'trap'}};
+                                    return '{phase}'==='skip-validation' ? !{remove} : {remove};
+                                }};
+                            }}}};
+                            if ('{phase}'==='revoked') {{var r=Proxy.revocable(target,handler);r.revoke();return [r.proxy,raw];}}
+                            return [new Proxy(target,handler),raw];
+                        }}
+                        function keyOperand() {{return {{toString() {{$262.gc();throw {{kind:'coercion'}};}}}};}}
+                    "#
+                    );
+                    let program = compile(&source, "proxy-presence-delete-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let atom = vm.intern_atom("operands");
+                    let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                    let values = vm
+                        .call_value(&program, factory, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let (proxy, raw) = match vm.heap.get(values) {
+                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                        _ => panic!("operands"),
+                    };
+                    let key = if symbol {
+                        vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
+                    } else if phase == "coercion" {
+                        let atom = vm.intern_atom("keyOperand");
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        vm.call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap()
+                    } else {
+                        vm.heap.alloc(super::Cell::String("entry".into()))
+                    };
+                    if symbol {
+                        if phase == "nonext" {
+                            vm.object_data_mut(raw).unwrap().set_extensible(true);
+                        }
+                        vm.define_property_or_throw(
+                            &program,
+                            raw,
+                            key,
+                            super::object_descriptors::PropertyDescriptorRecord {
+                                configurable: Some(phase != "nonconfig"),
+                                ..super::object_descriptors::PropertyDescriptorRecord::data(
+                                    Value::number(42.0),
+                                )
+                            },
+                        )
+                        .unwrap();
+                        if phase == "nonext" {
+                            vm.object_data_mut(raw).unwrap().set_extensible(false);
+                        }
+                    }
+                    let handles = [proxy, key].map(|value| vm.heap.weak_handle(value).unwrap());
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = vm.call_reflect_native(
+                        &program,
+                        if remove {
+                            Native::ReflectDeleteProperty
+                        } else {
+                            Native::ReflectHas
+                        },
+                        &[proxy, key],
+                    );
+                    assert_eq!(
+                        result.is_ok(),
+                        matches!(phase, "success" | "skip-validation" | "fallback"),
+                        "remove={remove} symbol={symbol} {phase}"
+                    );
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    match result {
+                        Ok(result) => {
+                            assert_eq!(
+                                result,
+                                Vm::<Test262Host>::integrity_bool(if phase == "fallback" {
+                                    true
+                                } else if phase == "skip-validation" {
+                                    !remove
+                                } else {
+                                    remove
+                                })
+                            );
+                            assert_eq!(
+                                vm.heap.weak_value(handles[0]),
+                                Some(proxy),
+                                "remove={remove} symbol={symbol} {phase}"
+                            );
+                            assert_eq!(vm.heap.weak_value(handles[1]), Some(key));
+                            assert!(if symbol {
+                                matches!(vm.heap.get(key),Some(super::Cell::Symbol(Some(name))) if name=="entry")
+                            } else {
+                                matches!(vm.heap.get(key),Some(super::Cell::String(name)) if name.host_string()=="entry")
+                            });
+                        }
+                        Err(error) => {
+                            if matches!(phase, "invalid-trap" | "nonconfig" | "nonext" | "revoked")
+                            {
+                                assert!(vm.format_error(&program, &error).contains("TypeError"));
+                            } else {
+                                let atom = vm.intern_atom("kind");
+                                let kind = vm
+                                    .own_property(error.thrown_value().unwrap(), atom)
+                                    .unwrap();
+                                assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                            }
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(
+                            vm.heap.weak_value(handle).is_none(),
+                            "remove={remove} symbol={symbol} {phase}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

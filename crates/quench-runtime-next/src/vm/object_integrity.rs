@@ -38,121 +38,144 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
-        {
-            if handler.is_null() {
-                return Err(JsError("cannot access a revoked proxy".into()));
+        if !self.is_object_like(source) {
+            return Err(self.type_error(p, "delete target is not an object".into()));
+        }
+        let key = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        self.with_call_roots([source, key], |vm| {
+            let key = vm.to_property_key(p, key)?;
+            vm.delete_property_key(p, source, key)
+        })
+    }
+
+    fn delete_property_key(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
+        self.with_call_roots([target, key], |vm| {
+            if let Some(Cell::Proxy {
+                target, handler, ..
+            }) = vm.heap.get(target).cloned()
+            {
+                if handler.is_null() {
+                    return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
+                }
+                return vm.with_call_roots([target, handler], |vm| {
+                    let trap_name = "deleteProperty";
+                    let trap_atom = vm.intern_atom(trap_name);
+                    let trap = vm.get_property(p, handler, trap_atom)?;
+                    if trap.is_null() || trap.is_undefined() {
+                        return vm.delete_property_key(p, target, key);
+                    }
+                    if !vm.is_function(trap) {
+                        return Err(
+                            vm.type_error(p, "proxy deleteProperty trap is not callable".into())
+                        );
+                    }
+                    let result = vm.call_value(p, trap, handler, &[target, key])?;
+                    if !vm.truthy(result) {
+                        return Ok(Value::FALSE);
+                    }
+                    vm.validate_proxy_property_absence(p, target, key, trap_name)?;
+                    Ok(Value::TRUE)
+                });
             }
-            let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-            let key = self.to_property_key(p, key_value)?;
-            let trap_atom = self.intern_atom("deleteProperty");
-            let trap = self.get_property(p, handler, trap_atom)?;
-            if self.is_function(trap) {
-                let result = self.call_value(p, trap, handler, &[target, key])?;
-                if !self.truthy(result) {
+            let property_key = if matches!(vm.heap.get(key), Some(Cell::Symbol(_))) {
+                PropertyKey::symbol(key)
+            } else {
+                let Some(Cell::String(key)) = vm.heap.get(key).cloned() else {
+                    unreachable!("ToPropertyKey returns a string or symbol")
+                };
+                let atom = vm.intern_js_atom(&key);
+                vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+                if key.host_string() == "length"
+                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                    && !vm
+                        .object_data(target)
+                        .is_some_and(Object::is_arguments_object)
+                {
                     return Ok(Value::FALSE);
                 }
-                let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
-                if !descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable") {
-                    return Err(self.type_error(
-                        p,
-                        "proxy deleteProperty trap cannot delete a non-configurable property"
-                            .into(),
-                    ));
+                if matches!(vm.heap.get(target), Some(Cell::TypedArray { .. })) {
+                    match Self::typed_array_index_key(key.host_string()) {
+                        super::object_descriptors::TypedArrayIndexKey::Index(index) => {
+                            return Ok(
+                                if vm
+                                    .typed_array_length(target)
+                                    .is_some_and(|length| index < length)
+                                {
+                                    Value::FALSE
+                                } else {
+                                    Value::TRUE
+                                },
+                            );
+                        }
+                        super::object_descriptors::TypedArrayIndexKey::Invalid => {
+                            return Ok(Value::TRUE);
+                        }
+                        super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                    }
                 }
-                let extensible = if descriptor.is_undefined() {
-                    Value::TRUE
-                } else {
-                    self.object_is_extensible(p, &[target])?
-                };
-                if !descriptor.is_undefined() && !self.truthy(extensible) {
-                    return Err(self.type_error(
-                        p,
-                        "proxy deleteProperty trap cannot hide a property of a non-extensible target"
-                            .into(),
-                    ));
+                if let Some(index) =
+                    super::object_static::array_index(key.host_string()).map(|index| index as usize)
+                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                {
+                    return Ok(vm.delete_array_index(target, index));
                 }
-                return Ok(Value::TRUE);
-            } else if !trap.is_null() && !trap.is_undefined() {
-                return Err(self.type_error(p, "proxy deleteProperty trap is not callable".into()));
-            } else {
-                let mut forwarded = args.to_vec();
-                if let Some(receiver) = forwarded.first_mut() {
-                    *receiver = target;
-                }
-                return self.object_delete_property(p, &forwarded);
-            }
-        }
-        let target = self.proxy_target(source);
-        if self.object_data(target).is_none() {
-            return Err(JsError("delete target is not an object".into()));
-        }
-        let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        let key = self.to_property_key(p, key_value)?;
-        let property_key = if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-            PropertyKey::symbol(key)
-        } else {
-            let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
-                unreachable!("ToPropertyKey returns a string or symbol")
+                PropertyKey::string(atom)
             };
-            let atom = self.intern_js_atom(&key);
-            self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
-            if key.host_string() == "length"
-                && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-                && !self
-                    .object_data(target)
-                    .is_some_and(Object::is_arguments_object)
+            let Some((_, slot)) = vm
+                .object_property_slot(target, property_key)
+                .filter(|(_, slot)| {
+                    vm.object_data(target)
+                        .and_then(|object| vm.heap.property_get(object, *slot))
+                        .is_some()
+                })
+            else {
+                return Ok(Value::TRUE);
+            };
+            if !vm
+                .property_attributes(target, property_key)
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
+                .configurable
             {
                 return Ok(Value::FALSE);
             }
-            if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
-                match Self::typed_array_index_key(key.host_string()) {
-                    super::object_descriptors::TypedArrayIndexKey::Index(index) => {
-                        return Ok(if self
-                            .typed_array_length(target)
-                            .is_some_and(|length| index < length)
-                        {
-                            Value::FALSE
-                        } else {
-                            Value::TRUE
-                        });
-                    }
-                    super::object_descriptors::TypedArrayIndexKey::Invalid => {
-                        return Ok(Value::TRUE);
-                    }
-                    super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
-                }
-            }
-            if let Some(index) =
-                super::object_static::array_index(key.host_string()).map(|index| index as usize)
-                && matches!(self.heap.get(target), Some(Cell::Array { .. }))
-            {
-                return Ok(self.delete_array_index(target, index));
-            }
-            PropertyKey::string(atom)
-        };
-        let Some((_, slot)) =
-            self.object_property_slot(target, property_key)
-                .filter(|(_, slot)| {
-                    self.object_data(target)
-                        .and_then(|object| self.heap.property_get(object, *slot))
-                        .is_some()
-                })
-        else {
-            return Ok(Value::TRUE);
-        };
-        if !self
-            .property_attributes(target, property_key)
-            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES)
-            .configurable
-        {
-            return Ok(Value::FALSE);
+            vm.heap.property_set(target, slot, Value::DELETED);
+            vm.delete_shape_property(target, property_key);
+            Ok(Value::TRUE)
+        })
+    }
+
+    pub(super) fn validate_proxy_property_absence(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+        trap_name: &str,
+    ) -> Result<(), JsError> {
+        let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+        if descriptor.is_undefined() {
+            return Ok(());
         }
-        self.heap.property_set(target, slot, Value::DELETED);
-        self.delete_shape_property(target, property_key);
-        Ok(Value::TRUE)
+        let configurable = self.own_descriptor_record(descriptor).configurable;
+        if configurable == Some(false) {
+            return Err(self.type_error(
+                p,
+                format!("proxy {trap_name} trap cannot hide a non-configurable property"),
+            ));
+        }
+        let extensible = self.object_is_extensible(p, &[target])?;
+        if !self.truthy(extensible) {
+            return Err(self.type_error(
+                p,
+                format!("proxy {trap_name} trap cannot hide a property of a non-extensible target"),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn delete_reference_property(
