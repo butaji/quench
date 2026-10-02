@@ -240,60 +240,86 @@ impl<H: Host> Vm<H> {
         value: Value,
         receiver: Value,
     ) -> Result<bool, JsError> {
-        let mut current = target;
-        loop {
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = self.heap.get(current).cloned()
-            {
-                self.proxy_set_symbol(p, target, handler, receiver, key, value)?;
-                return Ok(true);
-            }
-            let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
-            if !descriptor.is_undefined() {
-                if self.descriptor_field(p, descriptor, "get")?.is_some()
-                    || self.descriptor_field(p, descriptor, "set")?.is_some()
+        let target_root = self.heap.root(target);
+        let key_root = self.heap.root(key);
+        let value_root = self.heap.root(value);
+        let receiver_root = self.heap.root(receiver);
+        let outcome = (|| {
+            let mut current = target;
+            loop {
+                if let Some(Cell::Proxy {
+                    target, handler, ..
+                }) = self.heap.get(current).cloned()
                 {
-                    let setter = self.descriptor_field(p, descriptor, "set")?;
-                    let Some(setter) = setter.filter(|setter| !setter.is_undefined()) else {
+                    return self.proxy_set(
+                        p,
+                        target,
+                        handler,
+                        self.heap.root_value(receiver_root).unwrap(),
+                        PropertyKey::symbol(self.heap.root_value(key_root).unwrap()),
+                        self.heap.root_value(value_root).unwrap(),
+                    );
+                }
+                let descriptor = self.object_get_own_property_descriptor(p, &[current, key])?;
+                if !descriptor.is_undefined() {
+                    if self.descriptor_field(p, descriptor, "get")?.is_some()
+                        || self.descriptor_field(p, descriptor, "set")?.is_some()
+                    {
+                        let setter = self.descriptor_field(p, descriptor, "set")?;
+                        let Some(setter) = setter.filter(|setter| !setter.is_undefined()) else {
+                            return Ok(false);
+                        };
+                        self.call_value(
+                            p,
+                            setter,
+                            self.heap.root_value(receiver_root).unwrap(),
+                            &[self.heap.root_value(value_root).unwrap()],
+                        )?;
+                        return Ok(true);
+                    }
+                    let writable = self
+                        .descriptor_field(p, descriptor, "writable")?
+                        .is_some_and(|writable| self.truthy(writable));
+                    if !writable {
                         return Ok(false);
-                    };
-                    self.call_value(p, setter, receiver, &[value])?;
-                    return Ok(true);
+                    }
+                    break;
                 }
-                let writable = self
-                    .descriptor_field(p, descriptor, "writable")?
-                    .is_some_and(|writable| self.truthy(writable));
-                if !writable {
-                    return Ok(false);
+                current = self.object_get_prototype_of(p, current)?;
+                if current.is_null() {
+                    break;
                 }
-                break;
             }
-            current = self.object_get_prototype_of(p, current)?;
-            if current.is_null() {
-                break;
-            }
-        }
 
-        if !self.is_object_like(receiver) {
-            return Ok(false);
-        }
-        if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
-            return Ok(false);
-        }
-        if let Some(attributes) = self.property_attributes(receiver, PropertyKey::symbol(key)) {
-            if attributes.accessor || !attributes.writable {
+            if !self.is_object_like(receiver) {
                 return Ok(false);
             }
-        } else if self.symbol_property(receiver, key).is_none()
-            && !self
-                .object_data(receiver)
-                .is_some_and(Object::is_extensible)
-        {
-            return Ok(false);
+            if matches!(self.heap.get(receiver), Some(Cell::Proxy { .. })) {
+                return self.set_receiver_proxy_data_property(
+                    p,
+                    self.heap.root_value(receiver_root).unwrap(),
+                    PropertyKey::symbol(self.heap.root_value(key_root).unwrap()),
+                    self.heap.root_value(value_root).unwrap(),
+                );
+            }
+            if let Some(attributes) = self.property_attributes(receiver, PropertyKey::symbol(key)) {
+                if attributes.accessor || !attributes.writable {
+                    return Ok(false);
+                }
+            } else if self.symbol_property(receiver, key).is_none()
+                && !self
+                    .object_data(receiver)
+                    .is_some_and(Object::is_extensible)
+            {
+                return Ok(false);
+            }
+            self.set_symbol_property(receiver, key, value)?;
+            Ok(true)
+        })();
+        for root in [target_root, key_root, value_root, receiver_root] {
+            self.heap.release_root(root);
         }
-        self.set_symbol_property(receiver, key, value)?;
-        Ok(true)
+        outcome
     }
 
     pub(super) fn object_symbols(

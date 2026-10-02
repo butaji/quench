@@ -670,6 +670,214 @@ impl Host for Test262Host {
 }
 
 #[test]
+fn proxy_set_roots_release_after_collecting_completion() {
+    use super::property_key::PropertyKey;
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for symbol in [false, true] {
+            for phase in [
+                "accept",
+                "reject",
+                "lookup-throw",
+                "trap-throw",
+                "descriptor-throw",
+                "frozen",
+                "forward",
+            ] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    var events = [], marker = {{kind:'{phase}'}};
+                    function makeOperands() {{
+                        var key = {symbol} ? Symbol('entry') : 'entry';
+                        var target = {{tag:41}};
+                        if ('{phase}' === 'frozen') Object.defineProperty(target, key, {{value:99}});
+                        target = new Proxy(target, {{getOwnPropertyDescriptor(object, key) {{
+                            $262.gc(); events.push('descriptor');
+                            if ('{phase}' === 'descriptor-throw') throw marker;
+                            return Reflect.getOwnPropertyDescriptor(object, key);
+                        }}}});
+                        var handler = {{get set() {{
+                            $262.gc(); events.push('lookup');
+                            if ('{phase}' === 'lookup-throw') throw marker;
+                            if ('{phase}' === 'forward') return undefined;
+                            return function(target, key, value, receiver) {{
+                                $262.gc(); events.push('trap');
+                                if (target.tag !== 41 || value.rank !== 42 || receiver.rank !== 43
+                                    || typeof key !== ({symbol} ? 'symbol' : 'string')) throw 'lost operand';
+                                if ('{phase}' === 'trap-throw') throw marker;
+                                return '{phase}' !== 'reject';
+                            }};
+                        }}}};
+                        return [target, handler, {{rank:43}}, key, {{rank:42}}];
+                    }}
+                "#
+                );
+                let program = compile(&source, "proxy-set-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let make = vm.intern_atom("makeOperands");
+                let make = vm.own_property(vm.realm.globals, make).unwrap();
+                let operands = vm
+                    .call_value(&program, make, Value::UNDEFINED, &[])
+                    .unwrap();
+                let [target, handler, receiver, key, value]: [Value; 5] =
+                    vm.array_values(operands).unwrap().try_into().unwrap();
+                let weak = vm.heap.weak_handle(value).unwrap();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let property = if symbol {
+                    PropertyKey::symbol(key)
+                } else {
+                    PropertyKey::string(vm.intern_atom("entry"))
+                };
+                let result = vm.proxy_set(&program, target, handler, receiver, property, value);
+                match phase {
+                    "accept" | "forward" => assert!(result.unwrap()),
+                    "reject" => assert!(!result.unwrap()),
+                    "frozen" => assert!(
+                        vm.format_error(&program, &result.unwrap_err())
+                            .contains("TypeError")
+                    ),
+                    _ => {
+                        let marker = vm.intern_atom("marker");
+                        assert_eq!(
+                            result.unwrap_err().thrown_value(),
+                            vm.own_property(vm.realm.globals, marker)
+                        );
+                    }
+                }
+                assert_eq!(
+                    vm.heap.root_count_for_test(),
+                    roots,
+                    "{phase}, symbol={symbol}"
+                );
+                assert_eq!(
+                    vm.active_call_roots.len(),
+                    calls,
+                    "{phase}, symbol={symbol}"
+                );
+                let rank = vm.intern_atom("rank");
+                assert_eq!(
+                    vm.own_property(value, rank),
+                    Some(Value::number(42.0)),
+                    "{phase}"
+                );
+                let events = vm.intern_atom("events");
+                let events = vm.own_property(vm.realm.globals, events).unwrap();
+                let observed = vm
+                    .array_values(events)
+                    .unwrap()
+                    .iter()
+                    .map(|value| vm.to_string(&program, *value).unwrap())
+                    .collect::<Vec<_>>();
+                let expected: &[&str] = match phase {
+                    "lookup-throw" | "forward" => &["lookup"],
+                    "reject" | "trap-throw" => &["lookup", "trap"],
+                    _ => &["lookup", "trap", "descriptor"],
+                };
+                assert_eq!(observed, expected, "{phase}, symbol={symbol}");
+                vm.collect_now(&program);
+                assert!(
+                    vm.heap.weak_value(weak).is_none(),
+                    "{phase}, symbol={symbol}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn receiver_proxy_writes_root_operands_across_traps() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for symbol in [false, true] {
+            for existing in [false, true] {
+                for phase in ["accept", "reject", "descriptor-throw", "define-throw"] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    var marker = {{kind:'{phase}'}};
+                    function makeOperands() {{
+                        var key = {symbol} ? Symbol('entry') : 'entry', receiver = {{tag:41}};
+                        if ({existing}) receiver[key] = 99;
+                        receiver = new Proxy(receiver, {{getOwnPropertyDescriptor(object, key) {{
+                            $262.gc();
+                            if (({symbol} ? key.description : key) !== 'entry' || object.tag !== 41) throw 'lost operand';
+                            if ('{phase}' === 'descriptor-throw') throw marker;
+                            return Reflect.getOwnPropertyDescriptor(object, key);
+                        }}, defineProperty(object, key, descriptor) {{
+                            $262.gc();
+                            if (({symbol} ? key.description : key) !== 'entry' || descriptor.value.rank !== 42
+                                || Object.hasOwn(descriptor, 'writable') !== !{existing}) throw 'lost operand';
+                            if ('{phase}' === 'define-throw') throw marker;
+                            if ('{phase}' === 'reject') return false;
+                            return Reflect.defineProperty(object, key, descriptor);
+                        }}}});
+                        return [{{}}, key, {{rank:42}}, receiver];
+                    }}
+                "#
+                    );
+                    let program = compile(&source, "symbol-receiver-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let make = vm.intern_atom("makeOperands");
+                    let make = vm.own_property(vm.realm.globals, make).unwrap();
+                    let operands = vm
+                        .call_value(&program, make, Value::UNDEFINED, &[])
+                        .unwrap();
+                    let [target, key, value, receiver]: [Value; 4] =
+                        vm.array_values(operands).unwrap().try_into().unwrap();
+                    let weak = vm.heap.weak_handle(value).unwrap();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = if symbol {
+                        vm.set_symbol_property_with_receiver(&program, target, key, value, receiver)
+                    } else {
+                        let atom = vm.intern_atom("entry");
+                        vm.set_property_with_receiver(&program, target, atom, value, receiver)
+                    };
+                    match phase {
+                        "accept" => assert!(result.unwrap()),
+                        "reject" => assert!(!result.unwrap()),
+                        _ => {
+                            let marker = vm.intern_atom("marker");
+                            assert_eq!(
+                                result.unwrap_err().thrown_value(),
+                                vm.own_property(vm.realm.globals, marker)
+                            );
+                        }
+                    }
+                    assert_eq!(
+                        vm.heap.root_count_for_test(),
+                        roots,
+                        "{phase}, existing={existing}"
+                    );
+                    assert_eq!(
+                        vm.active_call_roots.len(),
+                        calls,
+                        "{phase}, existing={existing}"
+                    );
+                    let rank = vm.intern_atom("rank");
+                    assert_eq!(
+                        vm.own_property(value, rank),
+                        Some(Value::number(42.0)),
+                        "{phase}"
+                    );
+                    vm.collect_now(&program);
+                    assert!(
+                        vm.heap.weak_value(weak).is_none(),
+                        "{phase}, existing={existing}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn legacy_accessor_record_roots_release_after_each_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
