@@ -42,11 +42,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let error = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let error = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let error = self.heap.root(error);
         let result = (|| {
             let error = self.heap.root_value(error).unwrap_or(Value::UNDEFINED);
-            self.set_builtin_value_named(error, "\0rqj:error-brand", Value::TRUE)?;
             let errors = self.heap.root_value(errors).unwrap_or(Value::UNDEFINED);
             self.set_builtin_value_named(error, "errors", errors)?;
             Ok(error)

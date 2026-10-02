@@ -158,12 +158,7 @@ impl JsError {
 
 impl<H: Host> Vm<H> {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
-        if !matches!(self.heap.get(value), Some(Cell::Object(_))) {
-            return false;
-        }
-        self.lookup_atom("\0rqj:error-brand")
-            .and_then(|atom| self.own_property(value, atom))
-            .is_some_and(|brand| brand == Value::TRUE)
+        matches!(self.heap.get(value), Some(Cell::Object(object)) if object.has_error_data())
     }
 
     pub(super) fn error_stack_getter(
@@ -332,10 +327,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
         let prototype = self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
-        self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)
-            .expect("fresh error object accepts internal brand");
         self.set_builtin_value_named(object, "message", message)
             .expect("fresh error object accepts message");
         JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
@@ -1724,10 +1717,9 @@ impl<H: Host> Vm<H> {
                 self.own_property(constructor, atom)
                     .unwrap_or(self.object_proto)
             });
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let root = self.heap.root(object);
         let outcome = (|| {
-            self.set_builtin_value_named(object, "\0rqj:error-brand", Value::TRUE)?;
             if let Some(message) = message {
                 let value = self.heap.root_value(message).unwrap();
                 let message = self.to_string(program, value)?;
@@ -1805,13 +1797,11 @@ impl<H: Host> Vm<H> {
                 .get(&(self.realm.globals, Native::AggregateError))
                 .copied()
                 .unwrap_or(self.object_proto);
-            let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
             let root = self.heap.root(value);
             object = Some(root);
             let new_target = self.heap.root_value(new_target).unwrap();
             self.set_constructed_prototype(program, value, new_target, Native::AggregateError)?;
-            let value = self.heap.root_value(root).unwrap();
-            self.set_builtin_value_named(value, "\0rqj:error-brand", Value::TRUE)?;
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.to_string(program, message)?;
