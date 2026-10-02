@@ -2086,6 +2086,28 @@ mod tests {
     }
 
     #[test]
+    fn regression_for_in_preserves_collecting_key_snapshots() {
+        assert_output_in_execution_modes(
+            r#"
+            function source() {return new Proxy({first:1,later:2}, {
+                getOwnPropertyDescriptor(object,key) {$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);},
+                getPrototypeOf() {$262.gc();return new Proxy({inherited:3}, {
+                    getOwnPropertyDescriptor(object,key) {$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);},
+                    getPrototypeOf() {$262.gc();return null;}
+                });}
+            });}
+            var keys=[];for(var key in source()) {$262.gc();keys.push(key);}print(keys.join(','));
+            var object=Object.create({hidden:1,inherited:2});
+            Object.defineProperty(object,'hidden',{value:3,enumerable:false});object.first=4;
+            keys=[];for(var key in object) {keys.push(key);}print(keys.join(','));
+            keys=[];for(var key in 'ab') {keys.push(key);}print(keys.join(','));
+            keys=[];for(var key in null) {keys.push(key);}for(var key in undefined) {keys.push(key);}print(keys.length);
+            "#,
+            &["first,later,inherited", "first,inherited", "0,1", "0"],
+        );
+    }
+
+    #[test]
     fn regression_property_copy_snapshots_survive_collecting_getters() {
         assert_output_in_execution_modes(
             r#"

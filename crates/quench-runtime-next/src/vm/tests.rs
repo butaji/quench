@@ -3585,3 +3585,132 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
         }
     }
 }
+
+#[test]
+fn for_in_roots_release_after_prototype_and_key_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for query in [false, true] {
+            for phase in [
+                "success",
+                "keys-getter",
+                "keys",
+                "descriptor-getter",
+                "descriptor",
+                "prototype-getter",
+                "prototype",
+                "cycle",
+                "shadow",
+                "missing",
+            ] {
+                if query && matches!(phase, "keys-getter" | "keys") {
+                    continue;
+                }
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function operand() {{
+                        var object={{first:1,later:2}};
+                        Object.defineProperty(object,'hidden',{{value:4,enumerable:false,configurable:true}});
+                        var source=new Proxy(object,{{
+                            get ownKeys() {{$262.gc();if ('{phase}'==='keys-getter') throw {{kind:'keys-getter'}};
+                                return function(object) {{$262.gc();if ('{phase}'==='keys') throw {{kind:'keys'}};return Reflect.ownKeys(object);}};
+                            }},
+                            get getOwnPropertyDescriptor() {{$262.gc();if ('{phase}'==='descriptor-getter') throw {{kind:'descriptor-getter'}};
+                                return function(object,key) {{$262.gc();if ('{phase}'==='descriptor') throw {{kind:'descriptor'}};return Reflect.getOwnPropertyDescriptor(object,key);}};
+                            }},
+                            get getPrototypeOf() {{$262.gc();if ('{phase}'==='prototype-getter') throw {{kind:'prototype-getter'}};
+                                return function() {{$262.gc();if ('{phase}'==='prototype') throw {{kind:'prototype'}};
+                                    if ('{phase}'==='cycle') return source;
+                                    return new Proxy({{inherited:3,hidden:5}},{{
+                                        ownKeys(object) {{$262.gc();return Reflect.ownKeys(object);}},
+                                        getOwnPropertyDescriptor(object,key) {{$262.gc();return Reflect.getOwnPropertyDescriptor(object,key);}},
+                                        getPrototypeOf() {{$262.gc();return null;}}
+                                    }});
+                                }};
+                            }}
+                        }});
+                        return source;
+                    }}
+                "#
+                );
+                let program = compile(&source, "for-in-native-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let atom = vm.intern_atom("operand");
+                let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                let source = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let source_handle = vm.heap.weak_handle(source).unwrap();
+                let key = vm.heap.alloc(super::Cell::String(
+                    match phase {
+                        "shadow" => "hidden",
+                        "missing" => "absent",
+                        _ => "inherited",
+                    }
+                    .into(),
+                ));
+                let key_handle = vm.heap.weak_handle(key).unwrap();
+                // Snapshot collection has no key input to keep alive.
+                let key_root = (!query).then(|| vm.heap.root(key));
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let result = if query {
+                    vm.object_for_in_key_is_enumerable(&program, source, key)
+                        .map(Vm::<Test262Host>::integrity_bool)
+                } else {
+                    vm.object_for_in_keys(&program, source)
+                };
+                let succeeds = matches!(phase, "success" | "cycle" | "shadow" | "missing");
+                assert_eq!(result.is_ok(), succeeds, "query={query} {phase}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result_handle = match result {
+                    Ok(result) if query => {
+                        assert_eq!(
+                            result,
+                            Vm::<Test262Host>::integrity_bool(phase == "success")
+                        );
+                        None
+                    }
+                    Ok(result) => {
+                        let elements = match vm.heap.get(result) {
+                            Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                            _ => panic!("key snapshot"),
+                        };
+                        let names = elements
+                            .into_iter()
+                            .map(|key| vm.to_string(&program, key).unwrap())
+                            .collect::<Vec<_>>();
+                        let expected = if phase == "cycle" {
+                            vec!["first", "later"]
+                        } else {
+                            vec!["first", "later", "inherited"]
+                        };
+                        assert_eq!(names, expected);
+                        Some(vm.heap.weak_handle(result).unwrap())
+                    }
+                    Err(error) => {
+                        let atom = vm.intern_atom("kind");
+                        let kind = vm
+                            .own_property(error.thrown_value().unwrap(), atom)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, kind).unwrap(), phase);
+                        None
+                    }
+                };
+                if let Some(root) = key_root {
+                    vm.heap.release_root(root);
+                }
+                vm.collect_now(&program);
+                assert!(vm.heap.weak_value(source_handle).is_none());
+                assert!(vm.heap.weak_value(key_handle).is_none());
+                if let Some(handle) = result_handle {
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+            }
+        }
+    }
+}
