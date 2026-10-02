@@ -2086,6 +2086,119 @@ mod tests {
     }
 
     #[test]
+    fn regression_revoked_proxy_keeps_installed_call_and_construct_methods() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var target of [{},()=>42,function(){},class C{},async()=>42,BigInt,Symbol,Function.prototype]) {
+                var r=Proxy.revocable(target,{});r.revoke();$262.gc();
+                print(typeof r.proxy);
+                var outer=new Proxy(r.proxy,{apply() {return 43;},construct() {return {rank:44};}});
+                try {print(Reflect.apply(outer,null,[]));}catch(error) {print(error instanceof TypeError);}
+                try {print(Reflect.construct(outer,[]).rank);}catch(error) {print(error instanceof TypeError);}
+            }
+            var events=[],r=Proxy.revocable(function(){},{});r.revoke();
+            var list={get length() {events.push('length');$262.gc();return 0;}};
+            var ctor=new Proxy(function(){},{construct(target,args,newTarget) {events.push('trap');print(newTarget===r.proxy);return {rank:45};}});
+            print(Reflect.construct(ctor,list,r.proxy).rank);print(events.join(','));
+            events=[];try {Reflect.apply(r.proxy,null,list);}catch(error) {print(error instanceof TypeError);}print(events.join(','));
+            "#,
+            &[
+                "object",
+                "true",
+                "true",
+                "function",
+                "43",
+                "true",
+                "function",
+                "43",
+                "44",
+                "function",
+                "43",
+                "44",
+                "function",
+                "43",
+                "true",
+                "function",
+                "43",
+                "44",
+                "function",
+                "43",
+                "44",
+                "function",
+                "43",
+                "true",
+                "true",
+                "45",
+                "length,trap",
+                "true",
+                "length",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_revoker_consumes_one_owner_and_ignores_receiver() {
+        assert_output_in_execution_modes(
+            r#"
+            var r=Proxy.revocable({},{}),revoke=r.revoke,proxy=r.proxy;
+            print(Reflect.ownKeys(r).join(','));print(Reflect.getOwnPropertyDescriptor(r,'\0rqj:proxy-revoke-target')===undefined);
+            for (var key of ['proxy','revoke']) {var d=Object.getOwnPropertyDescriptor(r,key);print(d.writable&&d.enumerable&&d.configurable);}
+            print(revoke.name);print(revoke.length);
+            var poison=new Proxy({}, {get() {throw new Error('receiver read');}});
+            print(Reflect.apply(revoke,poison,[poison]));print(revoke.call(poison));print(revoke.apply(poison,[]));
+            try {Reflect.getPrototypeOf(proxy);}catch(error) {print(error instanceof TypeError);}
+            print(revoke.name);print(revoke.length);
+            "#,
+            &[
+                "proxy,revoke",
+                "true",
+                "true",
+                "true",
+                "",
+                "0",
+                "undefined",
+                "undefined",
+                "undefined",
+                "true",
+                "",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_proxy_own_keys_fallback_retains_original_target_after_revocation() {
+        assert_output_in_execution_modes(
+            r#"
+            for (var trapped of [false,true]) {
+                var symbol=Symbol('entry'),events=[];
+                var target=new Proxy({first:42,[symbol]:43},{ownKeys(object) {events.push('target');$262.gc();return Reflect.ownKeys(object);}});
+                var r=Proxy.revocable(target,{get ownKeys() {events.push('lookup');r.revoke();$262.gc();
+                    if (!trapped) return null;
+                    return function(object) {events.push('trap');$262.gc();return Reflect.ownKeys(object);};
+                }});
+                var keys=Reflect.ownKeys(r.proxy);print(keys[0]);print(keys[1]===symbol);print(events.join(','));
+                try {Reflect.ownKeys(r.proxy);}catch(error) {print(error instanceof TypeError);}
+            }
+            var r=Proxy.revocable(function(){},{get construct() {r.revoke();$262.gc();return function(target,args,newTarget) {print(newTarget===r.proxy);return {rank:46};};}});
+            print(Reflect.construct(r.proxy,[]).rank);
+            "#,
+            &[
+                "first",
+                "true",
+                "lookup,target",
+                "true",
+                "first",
+                "true",
+                "lookup,trap,target,target",
+                "true",
+                "true",
+                "46",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_proxy_presence_and_delete_keep_captured_targets_after_revocation() {
         assert_output_in_execution_modes(
             r#"

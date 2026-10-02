@@ -100,9 +100,7 @@ impl<H: Host> Vm<H> {
             return false;
         };
         match cell {
-            Cell::Proxy {
-                target, handler, ..
-            } => !handler.is_null() && self.is_constructable(p, *target),
+            Cell::Proxy { kind, .. } => *kind == ProxyKind::Constructor,
             Cell::Function { kind, .. } => match kind {
                 FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id) => {
                     self.programs.get(*program_id).is_some_and(|program| {
@@ -862,8 +860,16 @@ impl<H: Host> Vm<H> {
                 if !self.is_object_like(handler) {
                     return Err(self.type_error(p, "Proxy handler must be an object".into()));
                 }
+                let kind = if self.is_constructable(p, target) {
+                    ProxyKind::Constructor
+                } else if self.is_function(target) {
+                    ProxyKind::Callable
+                } else {
+                    ProxyKind::Object
+                };
                 Ok(self.heap.alloc(Cell::Proxy {
                     object: Self::empty_object(self.object_proto),
+                    kind,
                     target,
                     handler,
                 }))

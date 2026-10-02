@@ -62,12 +62,13 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         proxy: Value,
-    ) -> Result<Option<Vec<Value>>, JsError> {
+    ) -> Result<Vec<Value>, JsError> {
+        let _stack = self.enter_stack()?;
         let Some(Cell::Proxy {
             target, handler, ..
         }) = self.heap.get(proxy).cloned()
         else {
-            return Ok(None);
+            unreachable!("Proxy own-key dispatch");
         };
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -81,7 +82,7 @@ impl<H: Host> Vm<H> {
             let trap_atom = self.intern_atom("ownKeys");
             let trap = self.get_property(p, self.heap.root_value(handler).unwrap(), trap_atom)?;
             if trap.is_undefined() || trap.is_null() {
-                return Ok(None);
+                return self.object_own_key_values(p, self.heap.root_value(target).unwrap());
             }
             if !self.is_function(trap) {
                 return Err(self.type_error(p, "proxy ownKeys trap is not callable".into()));
@@ -147,11 +148,10 @@ impl<H: Host> Vm<H> {
                     "proxy ownKeys trap changed the keys of a sealed target".into(),
                 ));
             }
-            Ok(Some(
-                keys.iter()
-                    .map(|key| self.heap.root_value(*key).unwrap())
-                    .collect(),
-            ))
+            Ok(keys
+                .iter()
+                .map(|key| self.heap.root_value(*key).unwrap())
+                .collect())
         })();
         for root in keys
             .into_iter()
@@ -405,14 +405,8 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Value, JsError> {
         if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-            if let Some(keys) = self.proxy_own_keys(p, object)? {
-                return Ok(self.own_keys_array(keys));
-            }
-            let Some(Cell::Proxy { target, .. }) = self.heap.get(object) else {
-                unreachable!("proxy disappeared during own-key operation")
-            };
-            let target = *target;
-            return self.object_own_keys(p, target);
+            let keys = self.proxy_own_keys(p, object)?;
+            return Ok(self.own_keys_array(keys));
         }
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;

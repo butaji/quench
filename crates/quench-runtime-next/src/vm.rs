@@ -6,7 +6,7 @@ use crate::bytecode::{
 };
 use crate::heap::{
     Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object,
-    RootId, TypedArrayKind, WeakHandle,
+    ProxyKind, RootId, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -1003,9 +1003,6 @@ impl<H: Host> Vm<H> {
                 match target {
                     CallTarget::Native(native) => {
                         vm.profile.call_target(0, args.len());
-                        if native == Native::ProxyRevoke {
-                            return vm.proxy_revoke(callee);
-                        }
                         vm.call_native_guarded(p, native, this, args, callee)
                     }
                     CallTarget::User(program_id, id, env) => {
