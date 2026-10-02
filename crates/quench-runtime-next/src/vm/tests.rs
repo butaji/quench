@@ -6942,3 +6942,144 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
         }
     }
 }
+
+#[test]
+fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for (kind, phases) in [
+            ("compile", &["input", "flags-string"][..]),
+            (
+                "format",
+                &["source", "source-string", "flags", "flags-string"][..],
+            ),
+            (
+                "flags",
+                &[
+                    "hasIndices",
+                    "global",
+                    "ignoreCase",
+                    "multiline",
+                    "dotAll",
+                    "unicode",
+                    "unicodeSets",
+                    "sticky",
+                ][..],
+            ),
+            ("exec", &["input", "last-index"][..]),
+            ("test", &["input", "exec-get", "exec-call"][..]),
+        ] {
+            for phase in phases {
+                for abrupt in [false, true] {
+                    let mut vm = Vm::new(Test262Host);
+                    let source = format!(
+                        r#"
+                    function hit(name){{if(name==='{phase}'){{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function text(name,value){{return {{[Symbol.toPrimitive](hint){{hit(name);if(hint!=='string')throw {{kind:'hint'}};return value;}}}};}}
+                    function input(){{return text('input','a');}}
+                    function flags(){{return text('flags-string','g');}}
+                    function receiver(){{if('{kind}'==='compile')return /old/;
+                        if('{kind}'==='exec'){{var value=/a/g;value.lastIndex={{[Symbol.toPrimitive](hint){{hit('last-index');if(hint!=='number')throw {{kind:'index-hint'}};return 0;}}}};return value;}}
+                        if('{kind}'==='test')return {{get exec(){{hit('exec-get');return function(input){{hit('exec-call');if(input!=='a')throw {{kind:'input'}};return {{}};}};}}}};
+                        if('{kind}'==='format')return {{get source(){{hit('source');return text('source-string','a');}},get flags(){{hit('flags');return text('flags-string','g');}}}};
+                        var result={{}};for(var name of ['hasIndices','global','ignoreCase','multiline','dotAll','unicode','unicodeSets','sticky']){{(function(name){{Object.defineProperty(result,name,{{get(){{hit(name);return true;}}}});}})(name);}}return result;
+                    }}
+                "#
+                    );
+                    let program = compile(&source, "regexp-entrypoint-roots.js").unwrap();
+                    vm.execute(&program).unwrap();
+                    let mut values = Vec::new();
+                    let mut owners = Vec::new();
+                    for name in [
+                        Some("receiver"),
+                        matches!(kind, "compile" | "exec" | "test").then_some("input"),
+                        (kind == "compile").then_some("flags"),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        let atom = vm.intern_atom(name);
+                        let factory = vm.own_property(vm.realm.globals, atom).unwrap();
+                        let value = vm
+                            .call_value(&program, factory, Value::UNDEFINED, &[])
+                            .unwrap();
+                        values.push(value);
+                        owners.push(vm.heap.root(value));
+                    }
+                    for owner in owners {
+                        vm.heap.release_root(owner);
+                    }
+                    let handles = values
+                        .iter()
+                        .map(|value| vm.heap.weak_handle(*value).unwrap())
+                        .collect::<Vec<_>>();
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let outcome = match kind {
+                        "compile" => vm.regexp_compile_native(&program, values[0], &values[1..]),
+                        "format" => vm.regexp_to_string_native(&program, values[0]),
+                        "flags" => vm.regexp_flags_native(&program, values[0]),
+                        "exec" => vm.regexp_builtin_exec(&program, values[0], &values[1..]),
+                        "test" => vm.regexp_test(&program, values[0], &values[1..]),
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(outcome.is_ok(), !abrupt, "{kind}/{phase}/{abrupt}");
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    for (handle, value) in handles.iter().zip(&values) {
+                        assert_eq!(
+                            vm.heap.weak_value(*handle),
+                            Some(*value),
+                            "{kind}/{phase}/{abrupt}"
+                        );
+                    }
+                    match outcome {
+                        Ok(value) => {
+                            let owner = vm.heap.root(value);
+                            vm.collect_now(&program);
+                            match kind {
+                                "compile" => {
+                                    assert_eq!(value, values[0]);
+                                    let Some(super::Cell::RegExp { source, flags, .. }) =
+                                        vm.heap.get(value)
+                                    else {
+                                        panic!("compiled receiver retained");
+                                    };
+                                    assert_eq!(source.units(), &[u16::from(b'a')]);
+                                    assert_eq!(flags, "g");
+                                }
+                                "format" => {
+                                    assert_eq!(vm.to_string(&program, value).unwrap(), "/a/g")
+                                }
+                                "flags" => {
+                                    assert_eq!(vm.to_string(&program, value).unwrap(), "dgimsuvy")
+                                }
+                                "test" => assert_eq!(value, Value::TRUE),
+                                "exec" => {
+                                    let matched =
+                                        vm.get_index(&program, value, Value::number(0.0)).unwrap();
+                                    assert_eq!(vm.to_string(&program, matched).unwrap(), "a");
+                                }
+                                _ => unreachable!(),
+                            };
+                            vm.heap.release_root(owner);
+                        }
+                        Err(error) => {
+                            let atom = vm.intern_atom("kind");
+                            let value = vm
+                                .own_property(error.thrown_value().unwrap(), atom)
+                                .unwrap();
+                            assert_eq!(vm.to_string(&program, value).unwrap(), *phase);
+                        }
+                    }
+                    vm.collect_now(&program);
+                    for handle in handles {
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
+                }
+            }
+        }
+    }
+}

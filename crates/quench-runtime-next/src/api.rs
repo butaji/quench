@@ -2120,6 +2120,43 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_entrypoints_preserve_utf16_conversion_and_compile_state() {
+        assert_output_in_execution_modes(
+            r#"
+            function units(text){var result=[];for(var i=0;i<text.length;i++)result.push(text.charCodeAt(i));return result.join(',');}
+            var log=[],receiver={get source(){log.push('source');return {[Symbol.toPrimitive](hint){$262.gc();log.push('source:'+hint);return '\ud800';}};},get flags(){log.push('flags');return {[Symbol.toPrimitive](hint){$262.gc();log.push('flags:'+hint);return '\udc00';}};}};
+            print(units(RegExp.prototype.toString.call(receiver)));print(log.join(','));
+            var receiver=/old/g;Object.setPrototypeOf(receiver,{});var log=[];
+            var input={[Symbol.toPrimitive](hint){$262.gc();log.push('input:'+hint);return '\ud800';}},flags={[Symbol.toPrimitive](hint){$262.gc();log.push('flags:'+hint);return 'i';}};
+            print(RegExp.prototype.compile.call(receiver,input,flags)===receiver);print(log.join(','));print(Object.getOwnPropertyDescriptor(RegExp.prototype,'source').get.call(receiver).charCodeAt(0));
+            var receiver=/old/g;receiver.lastIndex=7;try{receiver.compile('[');}catch(error){print(error instanceof SyntaxError);}print(receiver.source);print(receiver.lastIndex);
+            Object.defineProperty(receiver,'lastIndex',{writable:false});try{receiver.compile('new','i');}catch(error){print(error instanceof TypeError);}print(receiver.source);print(receiver.flags);print(receiver.lastIndex);
+            var receiver=/a/g,log=[];receiver.lastIndex={[Symbol.toPrimitive](hint){$262.gc();log.push(hint);return 0;}};print(receiver.exec('a')[0]);print(log.join(','));
+            var receiver={},log=[];for(var name of ['sticky','unicodeSets','unicode','dotAll','multiline','ignoreCase','global','hasIndices']){(function(name){Object.defineProperty(receiver,name,{get(){$262.gc();log.push(name);return true;}});})(name);}
+            print(Object.getOwnPropertyDescriptor(RegExp.prototype,'flags').get.call(receiver));print(log.join(','));
+        "#,
+            &[
+                "47,55296,47,56320",
+                "source,source:string,flags,flags:string",
+                "true",
+                "input:string,flags:string",
+                "55296",
+                "true",
+                "old",
+                "7",
+                "true",
+                "new",
+                "i",
+                "7",
+                "a",
+                "number",
+                "dgimsuvy",
+                "hasIndices,global,ignoreCase,multiline,dotAll,unicode,unicodeSets,sticky",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_regexp_construction_preserves_order_identity_and_descriptors() {
         assert_output_in_execution_modes(
             r#"
