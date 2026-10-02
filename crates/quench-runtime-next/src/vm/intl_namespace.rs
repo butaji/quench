@@ -507,13 +507,41 @@ impl<H: Host> Vm<H> {
         })
     }
 
+    pub(super) fn intl_supported_locales_of(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+        locale_supported: fn(&str) -> bool,
+    ) -> Result<Value, JsError> {
+        self.with_call_roots(args.iter().copied(), |vm| {
+            let mut locales = vm.canonical_locale_list(p, args.first().copied())?;
+            if let Some(options) = args.get(1).copied().filter(|value| !value.is_undefined()) {
+                if options.is_null() {
+                    return Err(vm.type_error(p, "options must not be null".into()));
+                }
+                let options = vm.box_object(options)?;
+                vm.with_call_roots([options], |vm| {
+                    vm.string_option(
+                        p,
+                        options,
+                        "localeMatcher",
+                        "best fit",
+                        &["lookup", "best fit"],
+                    )
+                })?;
+            }
+            locales.retain(|locale| locale_supported(locale));
+            Ok(vm.string_array(locales))
+        })
+    }
+
     fn string_array(&mut self, values: Vec<String>) -> Value {
         let elements = values
             .into_iter()
             .map(|value| self.heap.alloc(Cell::String(value.into())))
             .collect::<Vec<_>>();
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
             elements: Rc::new(elements),
         })
     }

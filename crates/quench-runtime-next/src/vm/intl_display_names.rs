@@ -45,7 +45,8 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm.intrinsics.intl_display_names_constructors
             .insert(global, constructor);
-        self.realm.intrinsics.intl_display_names_prototypes.insert(global, prototype);
+        self.realm.intrinsics.intl_display_names_prototypes
+            .insert(global, prototype);
         self.set_builtin_function_name(constructor, "DisplayNames")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -68,6 +69,10 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(method, length)?;
             self.set_builtin_value_named(prototype, name, method)?;
         }
+        let supported_locales =
+            self.native_with_realm(Native::IntlDisplayNamesSupportedLocalesOf, global, global);
+        self.set_builtin_function_name(supported_locales, "supportedLocalesOf")?;
+        self.set_builtin_value_named(constructor, "supportedLocalesOf", supported_locales)?;
         self.set_builtin_value_named(intl, "DisplayNames", constructor)?;
         let _ = program;
         Ok(())

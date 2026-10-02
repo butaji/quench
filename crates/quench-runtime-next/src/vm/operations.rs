@@ -203,8 +203,9 @@ impl<H: Host> Vm<H> {
             }
             Native::Date => self.date_call(),
             Native::IntlNumberFormat => self.intl_number_format_call(p, this, args),
-            Native::IntlNumberFormatSupportedLocalesOf => {
-                self.intl_number_format_supported_locales_of(p, args)
+            Native::IntlNumberFormatSupportedLocalesOf
+            | Native::IntlDisplayNamesSupportedLocalesOf => {
+                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
             }
             Native::IntlNumberFormatFormatGetter => self.intl_number_format_format_getter(p, this),
             Native::IntlNumberFormatFormat => self.intl_number_format_format(p, this, args),
@@ -259,7 +260,7 @@ impl<H: Host> Vm<H> {
                 self.intl_relative_time_format_resolved_options(p, this)
             }
             Native::IntlRelativeTimeFormatSupportedLocalesOf => {
-                self.intl_relative_time_format_supported_locales_of(p, args)
+                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
             }
             Native::IntlRelativeTimeFormatFormat
             | Native::IntlRelativeTimeFormatFormatToParts => {
@@ -289,7 +290,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
             Native::IntlDurationFormatSupportedLocalesOf => {
-                self.duration_format_supported_locales_of(p, args)
+                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
             }
             Native::IntlDurationFormatFormatGetter
             | Native::IntlDurationFormatFormat

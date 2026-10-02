@@ -441,22 +441,6 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "not a DurationFormat object".into()))
     }
 
-    pub(super) fn duration_format_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let locales = self.canonical_locale_list(p, args.first().copied())?;
-        let elements = locales
-            .into_iter()
-            .filter(|locale| super::intl_number::is_supported_locale(locale))
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect::<Vec<_>>();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(elements),
-        }))
-    }
 }
 
 fn immutable_duration_property() -> PropertyAttributes {

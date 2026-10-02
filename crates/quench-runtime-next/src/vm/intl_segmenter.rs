@@ -107,29 +107,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         if native == Native::IntlSegmenterSupportedLocalesOf {
-            if let Some(options) = args.get(1).copied().filter(|value| !value.is_undefined()) {
-                if options.is_null() {
-                    return Err(self.type_error(p, "options must not be null".into()));
-                }
-                let options = self.box_object(options)?;
-                self.string_option(
-                    p,
-                    options,
-                    "localeMatcher",
-                    "best fit",
-                    &["lookup", "best fit"],
-                )?;
-            }
-            let locales = self
-                .canonical_locale_list(p, args.first().copied())?
-                .into_iter()
-                .filter(|locale| segmenter_locale_supported(locale))
-                .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-                .collect();
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(locales),
-            }));
+            return self.intl_supported_locales_of(p, args, segmenter_locale_supported);
         }
         if native == Native::IntlSegmenterSegmentsIterator {
             let array = self

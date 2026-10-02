@@ -79,36 +79,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn intl_relative_time_format_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        if let Some(options) = args.get(1).copied().filter(|value| !value.is_undefined()) {
-            if options.is_null() {
-                return Err(self.type_error(p, "options must not be null".into()));
-            }
-            let options = self.box_object(options)?;
-            self.string_option(
-                p,
-                options,
-                "localeMatcher",
-                "best fit",
-                &["lookup", "best fit"],
-            )?;
-        }
-        let locales = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .filter(|locale| super::intl_number::is_supported_locale(locale))
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(locales),
-        }))
-    }
-
     fn intl_relative_time_format_value(
         &mut self,
         p: &ResidualProgram,

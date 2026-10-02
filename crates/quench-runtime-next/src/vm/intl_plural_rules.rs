@@ -375,30 +375,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::IntlPluralRulesSupportedLocalesOf => {
-                self.plural_rules_supported_locales_of(p, args)
+                self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
             }
             Native::IntlPluralRulesSelect => self.plural_rules_select(p, this, args),
             Native::IntlPluralRulesSelectRange => self.plural_rules_select_range(p, this, args),
             Native::IntlPluralRulesResolvedOptions => self.plural_rules_resolved_options(p, this),
             _ => Err(JsError("invalid Intl.PluralRules operation".into())),
         }
-    }
-
-    fn plural_rules_supported_locales_of(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let locales = self
-            .canonical_locale_list(p, args.first().copied())?
-            .into_iter()
-            .filter(|locale| super::intl_number::is_supported_locale(locale))
-            .map(|locale| self.heap.alloc(Cell::String(locale.into())))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(locales),
-        }))
     }
 
     fn plural_rules_select(

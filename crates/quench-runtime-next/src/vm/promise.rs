@@ -369,6 +369,7 @@ fn native_length(kind: Native) -> Option<f64> {
         Native::IntlDateTimeFormatFormatRangeToParts => 2.0,
         Native::IntlDateTimeFormatSupportedLocalesOf => 1.0,
         Native::IntlDisplayNames => 2.0,
+        Native::IntlDisplayNamesSupportedLocalesOf => 1.0,
         Native::IntlDisplayNamesOf => 1.0,
         Native::IntlDisplayNamesResolvedOptions => 0.0,
         Native::IntlDurationFormat => 0.0,
