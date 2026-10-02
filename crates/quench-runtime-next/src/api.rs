@@ -2120,6 +2120,92 @@ mod tests {
     }
 
     #[test]
+    fn regression_intl_locale_clones_slots_and_orders_constructor_effects() {
+        assert_output_in_execution_modes(
+            r#"
+            var original=new Intl.Locale('en-US');
+            original.toString=function(){throw 'stringified existing Locale';};
+            original[Symbol.toPrimitive]=function(){throw 'coerced existing Locale';};
+            print(new Intl.Locale(original).toString());
+            print(Intl.getCanonicalLocales([original]).join(','));
+            var trace=[];
+            var tag={toString(){trace.push('tag');$262.gc();return 'en';}};
+            var options={get language(){trace.push('language');$262.gc();return 'fr';}};
+            var target=new Proxy(function(){},{get(value,key){if(key==='prototype'){trace.push('prototype');$262.gc();return {marker:'kept'};}return Reflect.get(value,key);}});
+            var value=Reflect.construct(Intl.Locale,[tag,options],target);
+            print(trace.join(','));
+            print(Object.getPrototypeOf(value).marker);
+            print(Intl.Locale.prototype.toString.call(value));
+            var record=Proxy.revocable(function(){},{get(value,key){if(key==='prototype'){record.revoke();return {marker:'revoked'};}return Reflect.get(value,key);}});
+            print(Object.getPrototypeOf(Reflect.construct(Intl.Locale,['en'],record.proxy)).marker);
+            try{new Intl.Locale('bad_locale',null);print(false);}catch(e){print(e instanceof TypeError);}
+            try{new Intl.Locale('bad_locale',{get language(){throw 'read invalid tag options';}});print(false);}catch(e){print(e instanceof RangeError);}
+            var thrown={};
+            try{Reflect.construct(Intl.Locale,[],new Proxy(function(){},{get(){throw thrown;}}));print(false);}catch(e){print(e===thrown);}
+            for(var prototype of [function(){},new Proxy({},{}),[]]) {
+                var target=new Proxy(function(){},{get(value,key){return key==='prototype'?prototype:Reflect.get(value,key);}});
+                print(Object.getPrototypeOf(Reflect.construct(Intl.Locale,['en'],target))===prototype);
+            }
+            var foreign=$262.createRealm().global;
+            var target=foreign.Function('');target.prototype=undefined;
+            print(Object.getPrototypeOf(Reflect.construct(Intl.Locale,['en'],target))===foreign.Intl.Locale.prototype);
+            var foreignLocale=new foreign.Intl.Locale('de');foreignLocale.toString=function(){throw 'foreign toString';};
+            print(new Intl.Locale(foreignLocale).toString());
+            "#,
+            &[
+                "en-US",
+                "en-US",
+                "prototype,tag,language",
+                "kept",
+                "fr",
+                "revoked",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "de",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_intl_locale_derived_results_use_method_realm_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+            var source=new Intl.Locale('en');
+            Object.setPrototypeOf(source,{marker:'source prototype'});
+            var maximum=Intl.Locale.prototype.maximize.call(source);
+            var minimum=Intl.Locale.prototype.minimize.call(source);
+            print(Object.getPrototypeOf(maximum)===Intl.Locale.prototype);
+            print(Object.getPrototypeOf(minimum)===Intl.Locale.prototype);
+            print(maximum.toString());print(minimum.toString());
+            class CustomLocale extends Intl.Locale {}
+            var custom=new CustomLocale('en');
+            print(Object.getPrototypeOf(custom.maximize())===Intl.Locale.prototype);
+            print(Object.getPrototypeOf(custom.minimize())===Intl.Locale.prototype);
+            var foreign=$262.createRealm().global;
+            print(Object.getPrototypeOf(foreign.Intl.Locale.prototype.maximize.call(source))===foreign.Intl.Locale.prototype);
+            print(Object.getPrototypeOf(foreign.Intl.Locale.prototype.minimize.call(source))===foreign.Intl.Locale.prototype);
+            print(Object.getPrototypeOf(Intl.Locale.prototype.maximize.call(new foreign.Intl.Locale('en')))===Intl.Locale.prototype);
+            "#,
+            &[
+                "true",
+                "true",
+                "en-Latn-US",
+                "en",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_intl_constructor_prototypes_precede_option_effects() {
         assert_output_in_execution_modes(
             r#"

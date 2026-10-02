@@ -221,11 +221,17 @@ impl<H: Host> Vm<H> {
             Native::IntlLocaleToString => Ok(self.heap.alloc(Cell::String(locale.into()))),
             Native::IntlLocaleMaximize => {
                 let maximized = maximize_locale(&locale);
-                self.new_intl_locale_object(this, maximized)
+                self.new_intl_locale_object(
+                    self.realm.intrinsics.intl_locale_prototypes[&self.realm.globals],
+                    maximized,
+                )
             }
             Native::IntlLocaleMinimize => {
                 let minimized = minimize_locale(&locale);
-                self.new_intl_locale_object(this, minimized)
+                self.new_intl_locale_object(
+                    self.realm.intrinsics.intl_locale_prototypes[&self.realm.globals],
+                    minimized,
+                )
             }
             Native::IntlLocaleGetCalendars => Ok(self.string_array(vec![
                 unicode_locale_keyword(&locale, "ca").unwrap_or_else(|| "gregory".into()),
@@ -280,15 +286,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn new_intl_locale_object(
-        &mut self,
-        source: Value,
-        locale: String,
-    ) -> Result<Value, JsError> {
-        let prototype = self
-            .object_data(source)
-            .map(|object| object.proto)
-            .unwrap_or(self.object_proto);
+    fn new_intl_locale_object(&mut self, prototype: Value, locale: String) -> Result<Value, JsError> {
         let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.set_hidden_string(result, INTL_LOCALE_SLOT, &locale)?;
         Ok(result)
@@ -304,100 +302,85 @@ impl<H: Host> Vm<H> {
         if native != Native::IntlLocale {
             return Err(self.type_error(p, "value is not a constructor".into()));
         }
-        let tag = args
-            .first()
-            .copied()
-            .ok_or_else(|| self.type_error(p, "Intl.Locale requires a tag".into()))?;
-        if !matches!(self.heap.get(tag), Some(Cell::String(_))) && !self.is_object_like(tag) {
-            return Err(self.type_error(p, "locale tag must be a string".into()));
-        }
-        let tag = self.to_string(p, tag)?;
-        let mut locale = canonical_locale(&tag)
-            .ok_or_else(|| self.range_error(p, "invalid language tag".into()))?;
-        if let Some(options) = args.get(1).copied().filter(|value| !value.is_undefined()) {
-            if options.is_null() {
-                return Err(self.type_error(p, "options must not be null".into()));
-            }
-            let options = self.box_object(options)?;
-            for option in [
-                "language",
-                "script",
-                "region",
-                "variants",
-                "calendar",
-                "collation",
-                "hourCycle",
-                "firstDayOfWeek",
-                "caseFirst",
-                "numeric",
-                "numberingSystem",
-            ] {
-                let atom = self.intern_atom(option);
-                let value = self.get_property(p, options, atom)?;
-                if value.is_undefined() {
-                    continue;
-                }
-                if matches!(option, "language" | "script" | "region" | "variants") {
-                    locale = apply_locale_base_option(p, self, &locale, option, value)?;
-                    continue;
-                }
-                if option == "numeric" {
-                    locale = set_unicode_keyword(
-                        &locale,
-                        "kn",
-                        Some(if self.truthy(value) { "true" } else { "false" }),
-                    );
-                    continue;
-                }
-                let text = self.to_string(p, value)?;
-                let text = match option {
-                    "calendar" => {
-                        let value = option_value(p, self, option, &text)?;
-                        quench_intl::calendar_alias(&value)
+        self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
+            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlLocale)?;
+            vm.with_call_roots([prototype], |vm| {
+                let tag = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let tag = vm.locale_tag_string(p, tag)?;
+                let options = match args.get(1).copied().filter(|value| !value.is_undefined()) {
+                    Some(value) if value.is_null() => {
+                        return Err(vm.type_error(p, "options must not be null".into()));
                     }
-                    "hourCycle" => {
-                        if !matches!(text.as_str(), "h11" | "h12" | "h23" | "h24") {
-                            return Err(self.range_error(p, "invalid hourCycle".into()));
-                        }
-                        text
-                    }
-                    "caseFirst" => {
-                        if !matches!(text.as_str(), "upper" | "lower" | "false") {
-                            return Err(self.range_error(p, "invalid caseFirst".into()));
-                        }
-                        text
-                    }
-                    "firstDayOfWeek" => normalize_first_day_option(p, self, &text)?,
-                    _ => option_value(p, self, option, &text)?,
+                    Some(value) => Some(vm.box_object(value)?),
+                    None => None,
                 };
-                let key = match option {
-                    "calendar" => "ca",
-                    "collation" => "co",
-                    "hourCycle" => "hc",
-                    "firstDayOfWeek" => "fw",
-                    "caseFirst" => "kf",
-                    "numberingSystem" => "nu",
-                    _ => unreachable!(),
-                };
-                locale = set_unicode_keyword(&locale, key, Some(&text.to_ascii_lowercase()));
-            }
-            locale = canonical_locale(&locale)
-                .ok_or_else(|| self.range_error(p, "invalid language tag".into()))?;
-        }
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, new_target, prototype_atom)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            let realm = self.function_realm(p, new_target)?;
-            self.realm.intrinsics.intl_locale_prototypes
-                .get(&realm)
-                .copied()
-                .unwrap_or(self.object_proto)
-        };
-        let instance = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        self.set_hidden_string(instance, INTL_LOCALE_SLOT, &locale)?;
-        Ok(instance)
+                vm.with_call_roots(options, |vm| {
+                    let mut locale = canonical_locale(&tag)
+                        .ok_or_else(|| vm.range_error(p, "invalid language tag".into()))?;
+                    if let Some(options) = options {
+                        for option in [
+                            "language",
+                            "script",
+                            "region",
+                            "variants",
+                            "calendar",
+                            "collation",
+                            "hourCycle",
+                            "firstDayOfWeek",
+                            "caseFirst",
+                            "numeric",
+                            "numberingSystem",
+                        ] {
+                            let atom = vm.intern_atom(option);
+                            let value = vm.get_property(p, options, atom)?;
+                            if value.is_undefined() {
+                                continue;
+                            }
+                            if matches!(option, "language" | "script" | "region" | "variants") {
+                                locale = apply_locale_base_option(p, vm, &locale, option, value)?;
+                                continue;
+                            }
+                            if option == "numeric" {
+                                locale = set_unicode_keyword(
+                                    &locale,
+                                    "kn",
+                                    Some(if vm.truthy(value) { "true" } else { "false" }),
+                                );
+                                continue;
+                            }
+                            let text = vm.to_string(p, value)?;
+                            let (key, text) = match option {
+                                "calendar" => {
+                                    let value = option_value(p, vm, option, &text)?;
+                                    ("ca", quench_intl::calendar_alias(&value))
+                                }
+                                "hourCycle" => {
+                                    if !matches!(text.as_str(), "h11" | "h12" | "h23" | "h24") {
+                                        return Err(vm.range_error(p, "invalid hourCycle".into()));
+                                    }
+                                    ("hc", text)
+                                }
+                                "caseFirst" => {
+                                    if !matches!(text.as_str(), "upper" | "lower" | "false") {
+                                        return Err(vm.range_error(p, "invalid caseFirst".into()));
+                                    }
+                                    ("kf", text)
+                                }
+                                "firstDayOfWeek" => ("fw", normalize_first_day_option(p, vm, &text)?),
+                                "collation" => ("co", option_value(p, vm, option, &text)?),
+                                "numberingSystem" => ("nu", option_value(p, vm, option, &text)?),
+                                _ => unreachable!(),
+                            };
+                            locale =
+                                set_unicode_keyword(&locale, key, Some(&text.to_ascii_lowercase()));
+                        }
+                        locale = canonical_locale(&locale)
+                            .ok_or_else(|| vm.range_error(p, "invalid language tag".into()))?;
+                    }
+                    vm.new_intl_locale_object(prototype, locale)
+                })
+            })
+        })
     }
 
     fn intl_get_canonical_locales(
@@ -443,6 +426,7 @@ impl<H: Host> Vm<H> {
                 &self.realm.intrinsics.intl_relative_time_format_prototypes
             }
             Native::IntlDurationFormat => &self.realm.intrinsics.intl_duration_format_prototypes,
+            Native::IntlLocale => &self.realm.intrinsics.intl_locale_prototypes,
             _ => return None,
         })
     }
@@ -458,6 +442,16 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::Object(Self::empty_object(Value::NULL)))),
             Some(value) if self.is_object_like(value) => Ok(value),
             Some(_) => Err(self.type_error(p, "options must be an object".into())),
+        }
+    }
+
+    fn locale_tag_string(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
+        if !matches!(self.heap.get(value), Some(Cell::String(_))) && !self.is_object_like(value) {
+            return Err(self.type_error(p, "locale tag must be a string or object".into()));
+        }
+        match self.hidden_string(value, INTL_LOCALE_SLOT) {
+            Some(locale) => Ok(locale),
+            None => self.to_string(p, value),
         }
     }
 
@@ -499,19 +493,7 @@ impl<H: Host> Vm<H> {
                             continue;
                         }
                         let value = self_.get_index(p, object, key)?;
-                        let locale = if self_.is_object_like(value)
-                            && let Some(locale) = self_.hidden_string(value, INTL_LOCALE_SLOT)
-                        {
-                            locale
-                        } else if matches!(self_.heap.get(value), Some(Cell::String(_)))
-                            || self_.is_object_like(value)
-                        {
-                            self_.to_string(p, value)?
-                        } else {
-                            return Err(
-                                self_.type_error(p, "locale list element is not a string".into())
-                            );
-                        };
+                        let locale = self_.locale_tag_string(p, value)?;
                         let locale = canonical_locale(&locale)
                             .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?;
                         if !canonical.contains(&locale) {
