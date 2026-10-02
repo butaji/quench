@@ -218,6 +218,11 @@ impl<H: Host> Vm<H> {
                         .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
                 )
                 .chain(
+                    self.realm.intrinsics.promise_constructors
+                        .iter()
+                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
+                )
+                .chain(
                     self.realm.intrinsics.regexp_intrinsics
                         .iter()
                         .flat_map(|(realm, intrinsics)| {
