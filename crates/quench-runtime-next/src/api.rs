@@ -2086,6 +2086,71 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_match_preserves_utf16_and_unicode_advancement() {
+        assert_output_in_execution_modes(
+            r#"
+            for(var flags of ['g','gu','gv']) {
+                var writes='',calls=0,hints='';
+                var receiver={get flags(){$262.gc();return {[Symbol.toPrimitive](hint){$262.gc();hints+='flags:'+hint+',';return flags;}};},
+                    set lastIndex(value){$262.gc();writes+=value+',';},
+                    get lastIndex(){$262.gc();return {[Symbol.toPrimitive](hint){$262.gc();hints+='index:'+hint+',';return 0;}};},
+                    get exec(){$262.gc();return function(input){$262.gc();if(calls++)return null;return {get 0(){$262.gc();return {[Symbol.toPrimitive](hint){$262.gc();hints+='match:'+hint+',';return '';}};}};};}
+                };
+                var result=RegExp.prototype[Symbol.match].call(receiver,String.fromCodePoint(128512)+'a');
+                print(writes);print(result.length);print(hints);
+            }
+            var calls=0;
+            var receiver={flags:'g',lastIndex:0,exec(input){$262.gc();if(input.charCodeAt(0)!==55296)throw 'input';if(calls++===2)return null;return {get 0(){$262.gc();return String.fromCharCode(55296+calls);}};}};
+            var result=RegExp.prototype[Symbol.match].call(receiver,String.fromCharCode(55296,97));
+            $262.gc();print(result.length);print(result[0].charCodeAt(0));print(result[1].charCodeAt(0));
+        "#,
+            &[
+                "0,1,",
+                "1",
+                "flags:string,match:string,index:number,",
+                "0,2,",
+                "1",
+                "flags:string,match:string,index:number,",
+                "0,2,",
+                "1",
+                "flags:string,match:string,index:number,",
+                "2",
+                "55297",
+                "55298",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_regexp_match_keeps_non_global_identity_and_own_elements() {
+        assert_output_in_execution_modes(
+            r#"
+            var reads=0,writes=0,record={get 0(){reads++;throw 'read';}};
+            var receiver={flags:'',set lastIndex(v){writes++;},exec(){return record;}};
+            print(RegExp.prototype[Symbol.match].call(receiver,'a')===record);print(reads);print(writes);
+            var empty={flags:'g',lastIndex:3,exec(){return null;}};
+            print(RegExp.prototype[Symbol.match].call(empty,'a')===null);print(empty.lastIndex);
+            var count=0,readonly={flags:'g',exec(){count++;return null;}};
+            Object.defineProperty(readonly,'lastIndex',{value:0,writable:false});
+            try{RegExp.prototype[Symbol.match].call(readonly,'a');}catch(error){print(error instanceof TypeError);}print(count);
+            var marker={},throwing={get flags(){throw marker;}};
+            try{RegExp.prototype[Symbol.match].call(throwing,'a');}catch(error){print(error===marker);}
+            var symbol={flags:'g',lastIndex:0,exec(){return {0:Symbol()};}};
+            try{RegExp.prototype[Symbol.match].call(symbol,'a');}catch(error){print(error instanceof TypeError);}
+            var setterCalls=0;
+            Object.defineProperty(Array.prototype,'0',{configurable:true,set(value){setterCalls++;}});
+            var result=RegExp.prototype[Symbol.match].call(/a/g,'a');
+            var descriptor=Object.getOwnPropertyDescriptor(result,'0');
+            delete Array.prototype[0];
+            print(setterCalls);print(descriptor.value);print(descriptor.writable&&descriptor.enumerable&&descriptor.configurable);
+        "#,
+            &[
+                "true", "0", "0", "true", "0", "true", "0", "true", "true", "0", "a", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_regexp_search_returns_index_without_conversion() {
         assert_output_in_execution_modes(
             r#"

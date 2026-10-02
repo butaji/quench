@@ -6034,3 +6034,95 @@ fn regexp_search_roots_saved_index_and_fresh_result_across_callbacks() {
         }
     }
 }
+
+#[test]
+fn regexp_match_roots_input_and_accumulated_strings_across_callbacks() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for phase in [
+            "input",
+            "flags",
+            "flags-string",
+            "reset",
+            "exec-get",
+            "exec",
+            "match",
+            "match-string",
+            "index",
+            "index-number",
+            "advance",
+            "second-exec",
+        ] {
+            for abrupt in [false, true] {
+                let mut vm = Vm::new(Test262Host);
+                let source = format!(
+                    r#"
+                    function hit(name) {{if(name==='{phase}') {{$262.gc();if({abrupt})throw {{kind:name}};}}}}
+                    function result(text) {{return {{get 0() {{hit('match');return {{[Symbol.toPrimitive](hint) {{hit('match-string');if(hint!=='string')throw {{kind:'match-hint'}};return text;}}}};}}}};}}
+                    function receiver() {{var index=0,writes=0,calls=0;return {{
+                        get flags() {{hit('flags');return {{[Symbol.toPrimitive](hint) {{hit('flags-string');if(hint!=='string')throw {{kind:'flags-hint'}};return 'g';}}}};}},
+                        set lastIndex(value) {{hit(writes++===0?'reset':'advance');index=value;}},
+                        get lastIndex() {{hit('index');return {{[Symbol.toPrimitive](hint) {{hit('index-number');if(hint!=='number')throw {{kind:'index-hint'}};return index;}}}};}},
+                        get exec() {{hit('exec-get');return function(input) {{hit('exec');if(input!=='a')throw {{kind:'input-value'}};calls++;if(calls===4) {{hit('second-exec');return null;}}return result(calls===1?'A':calls===2?'':'B');}};}}
+                    }};}}
+                    function input() {{return {{[Symbol.toPrimitive](hint) {{hit('input');if(hint!=='string')throw {{kind:'input-hint'}};return 'a';}}}};}}
+                "#
+                );
+                let program = compile(&source, "regexp-match-roots.js").unwrap();
+                vm.execute(&program).unwrap();
+                let factory = vm.intern_atom("receiver");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let receiver = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                let receiver_root = vm.heap.root(receiver);
+                let factory = vm.intern_atom("input");
+                let factory = vm.own_property(vm.realm.globals, factory).unwrap();
+                let input = vm
+                    .call_value(&program, factory, Value::UNDEFINED, &[])
+                    .unwrap();
+                vm.heap.release_root(receiver_root);
+                let handles = [receiver, input].map(|v| vm.heap.weak_handle(v).unwrap());
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let outcome = vm.regexp_symbol_match(&program, receiver, &[input]);
+                assert_eq!(outcome.is_ok(), !abrupt, "{phase}/{abrupt}");
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                for (handle, value) in handles.iter().zip([receiver, input]) {
+                    assert_eq!(vm.heap.weak_value(*handle), Some(value), "{phase}/{abrupt}");
+                }
+                match outcome {
+                    Ok(array) => {
+                        let root = vm.heap.root(array);
+                        vm.collect_now(&program);
+                        for (index, text) in ["A", "", "B"].iter().enumerate() {
+                            let value = vm
+                                .get_index(&program, array, Value::number(index as f64))
+                                .unwrap();
+                            assert_eq!(
+                                vm.to_string(&program, value).unwrap(),
+                                *text,
+                                "{phase}/{index}"
+                            );
+                        }
+                        vm.heap.release_root(root);
+                    }
+                    Err(error) => {
+                        let kind = vm.intern_atom("kind");
+                        let value = vm
+                            .own_property(error.thrown_value().unwrap(), kind)
+                            .unwrap();
+                        assert_eq!(vm.to_string(&program, value).unwrap(), phase);
+                    }
+                }
+                vm.collect_now(&program);
+                for handle in handles {
+                    assert!(vm.heap.weak_value(handle).is_none(), "{phase}/{abrupt}");
+                }
+            }
+        }
+    }
+}
