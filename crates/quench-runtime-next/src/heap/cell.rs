@@ -932,6 +932,7 @@ struct ObjectExtras {
     arguments_map: Option<Vec<u16>>,
     arguments_object: bool,
     raw_json: bool,
+    error_data: bool,
     module_namespace: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
@@ -984,6 +985,17 @@ impl Object {
             properties,
             extras: None,
         }
+    }
+
+    /// Presence of [[ErrorData]] is the unforgeable Error brand.
+    pub(crate) fn error(proto: Value) -> Self {
+        let mut object = Self::new(proto, ValueVec::new());
+        object.extras_mut().error_data = true;
+        object
+    }
+
+    pub(crate) fn has_error_data(&self) -> bool {
+        self.extras.as_deref().is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn shape(&self) -> u32 {

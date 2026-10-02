@@ -2579,3 +2579,47 @@ fn regression_collection_preserves_unused_regexp_iterator_prototype() {
         assert!(vm.release_root(root));
     }
 }
+
+#[test]
+fn error_data_survives_collection_without_retaining_dead_errors() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for kind in [
+            Native::Error,
+            Native::TypeError,
+            Native::AggregateError,
+            Native::SuppressedError,
+        ] {
+            let mut vm = Vm::new(SilentHost);
+            let program = compile("", "error-data-roots.js").unwrap();
+            vm.initialize(&program).unwrap();
+            let roots = vm.heap.root_count_for_test();
+            let error = vm.construct_error_native(&program, kind, &[]).unwrap();
+            assert!(vm.error_is_error(error));
+            let root = vm.heap.root(error);
+            let weak = vm.heap.weak_handle(error).unwrap();
+            vm.collect_now(&program);
+            let error = vm.heap.root_value(root).unwrap();
+            assert!(vm.error_is_error(error));
+            let clone = vm
+                .heap
+                .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));
+            assert!(vm.error_is_error(clone));
+            vm.heap.release_root(root);
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(weak).is_none());
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+            let plain = vm.object();
+            assert!(!vm.error_is_error(plain));
+        }
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("", "error-data-internal.js").unwrap();
+        vm.initialize(&program).unwrap();
+        let exhausted = vm.stack_exhaustion_error().thrown_value().unwrap();
+        assert!(vm.error_is_error(exhausted));
+        let aggregate = vm.aggregate_error(vec![]).unwrap();
+        assert!(vm.error_is_error(aggregate));
+    }
+}

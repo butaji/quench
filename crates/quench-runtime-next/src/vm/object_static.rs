@@ -136,11 +136,7 @@ impl<H: Host> Vm<H> {
             "Boolean"
         } else if value.as_number().is_some() {
             "Number"
-        } else if self
-            .lookup_atom("\0rqj:error-brand")
-            .and_then(|atom| self.own_property(value, atom))
-            .is_some_and(|brand| brand == Value::TRUE)
-        {
+        } else if self.error_is_error(value) {
             "Error"
         } else if let Some(brand) = boxed_brand {
             brand

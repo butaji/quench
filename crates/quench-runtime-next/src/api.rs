@@ -1006,6 +1006,110 @@ mod tests {
     }
 
     #[test]
+    fn regression_error_brand_is_not_a_guest_property() {
+        assert_output_in_execution_modes(
+            r#"
+            var marker = '\0rqj:error-brand';
+            var forged = {[marker]: true};
+            print(Error.isError(forged));
+            print(Object.prototype.toString.call(forged));
+            var error = new Error('real');
+            print(Object.hasOwn(error, marker));
+            error[marker] = false;
+            print(Error.isError(error));
+            print(Object.prototype.toString.call(error));
+            delete error[marker];
+            print(Error.isError(error));
+            print(Error.isError(Object.create(error)));
+            print(Error.isError(Error.prototype));
+            var traps = 0;
+            var proxy = new Proxy(error, {get() {traps++; throw 'get';}, getOwnPropertyDescriptor() {traps++; throw 'descriptor';}});
+            print(Error.isError(proxy));
+            var revoked = Proxy.revocable(error, {}); revoked.revoke();
+            print(Error.isError(revoked.proxy)); print(traps);
+            class Custom extends Error {}
+            var custom = new Custom('subclass');
+            Object.setPrototypeOf(custom, null);
+            $262.gc(); print(Error.isError(custom)); print(Error.isError(error));
+            error[Symbol.toStringTag] = 'Custom';
+            print(Object.prototype.toString.call(error));
+            for (var constructor of [Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError])
+                print(Error.isError(new constructor('native')));
+            print(Error.isError(new AggregateError([], 'aggregate')));
+            print(Error.isError(new SuppressedError(1, 2, 'suppressed')));
+            try {null.value;} catch (caught) {print(Error.isError(caught));}
+            "#,
+            &[
+                "false",
+                "[object Object]",
+                "false",
+                "true",
+                "[object Error]",
+                "true",
+                "false",
+                "false",
+                "false",
+                "false",
+                "0",
+                "true",
+                "true",
+                "[object Custom]",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_error_brand_survives_realms_and_aggregate_jobs() {
+        assert_output_in_execution_modes(
+            r#"
+            var foreign = $262.createRealm().global;
+            var error = new foreign.Error('foreign');
+            print(Error.isError(error)); print(foreign.Error.isError(new Error('local')));
+            print(Error.isError(new Proxy(error, {})));
+            var stack = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').get;
+            print(stack.call({'\0rqj:error-brand':true}) === undefined);
+            error['\0rqj:error-brand'] = false;
+            $262.gc(); print(stack.call(error));
+            Promise.any([]).catch(function(error) {
+                print(Error.isError(error)); print(Object.hasOwn(error, '\0rqj:error-brand'));
+                error['\0rqj:error-brand'] = false;
+                $262.gc(); print(Error.isError(error)); print(Object.prototype.toString.call(error));
+            });
+            for (var value of [Object('s'), Object(1), Object(true), Object(1n), Object(Symbol()), [], function() {}])
+                print(Error.isError(value));
+            "#,
+            &[
+                "true",
+                "true",
+                "false",
+                "true",
+                "Error: foreign",
+                "false",
+                "false",
+                "false",
+                "false",
+                "false",
+                "false",
+                "false",
+                "true",
+                "false",
+                "true",
+                "[object Error]",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_error_stack_setter_uses_intrinsic_home_and_records() {
         assert_output_in_execution_modes(
             r#"
