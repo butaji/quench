@@ -1214,6 +1214,9 @@ pub(crate) enum Cell {
         object: Object,
         source: JsString,
         flags: String,
+        // Intrinsic constructor identity owns legacy eligibility and realm.
+        // Undefined disables legacy features for derived construction.
+        legacy_constructor: Value,
     },
     Error(String),
     PromiseResolvingState {
