@@ -56,7 +56,21 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let this = self.string_method_receiver(p, native, this)?;
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            let receiver = vm.string_method_receiver(p, native, this)?;
+            vm.with_call_roots([receiver], |vm| {
+                vm.call_native_dispatch(p, native, receiver, args)
+            })
+        })
+    }
+
+    fn call_native_dispatch(
+        &mut self,
+        p: &ResidualProgram,
+        native: Native,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         if let Some(result) = self.string_html_method(p, native, this, args) {
             return result;
         }

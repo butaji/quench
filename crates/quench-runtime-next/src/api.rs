@@ -2120,6 +2120,35 @@ mod tests {
     }
 
     #[test]
+    fn regression_native_string_receiver_conversion_preserves_utf16_and_order() {
+        assert_output_in_execution_modes(
+            r#"
+            function units(text){var result=[];for(var i=0;i<text.length;i++)result.push(text.charCodeAt(i));return result.join(',');}
+            for(var name of ['concat','anchor','substring']){
+                var log=[],receiver={[Symbol.toPrimitive](hint){$262.gc();log.push('input:'+hint);return '\ud800a\udc00';}};
+                var first={[Symbol.toPrimitive](hint){$262.gc();log.push('first:'+hint);return name==='substring'?0:'X';}},second={[Symbol.toPrimitive](hint){$262.gc();log.push('second:'+hint);return name==='substring'?1:'Y';}};
+                print(units(String.prototype[name].call(receiver,first,second)));print(log.join(','));
+            }
+            var calls=0,argument={[Symbol.toPrimitive](){calls++;throw 'argument';}};
+            try{String.prototype.concat.call(null,argument);}catch(error){print(error instanceof TypeError);}print(calls);
+            var marker={},receiver={[Symbol.toPrimitive](){throw marker;}};try{String.prototype.concat.call(receiver,argument);}catch(error){print(error===marker);}print(calls);
+        "#,
+            &[
+                "55296,97,56320,88,89",
+                "input:string,first:string,second:string",
+                "60,97,32,110,97,109,101,61,34,88,34,62,55296,97,56320,60,47,97,62",
+                "input:string,first:string",
+                "55296",
+                "input:string,first:number,second:number",
+                "true",
+                "0",
+                "true",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_regexp_compile_eligibility_survives_prototype_mutation() {
         assert_output_in_execution_modes(
             r#"
