@@ -2120,6 +2120,19 @@ mod tests {
     }
 
     #[test]
+    fn regression_regexp_compile_eligibility_survives_prototype_mutation() {
+        assert_output_in_execution_modes(
+            r#"
+            var value=/a/;Object.setPrototypeOf(value,{});$262.gc();print(RegExp.prototype.compile.call(value,'b')===value);
+            var value=new(class extends RegExp {})('a');Object.setPrototypeOf(value,RegExp.prototype);$262.gc();try{value.compile('b');print(false);}catch(error){print(error instanceof TypeError);}
+            var target=new Proxy(function(){},{get(object,key,receiver){if(key==='prototype')return RegExp.prototype;return Reflect.get(object,key,receiver);}});
+            var value=Reflect.construct(RegExp,['a'],target);$262.gc();try{value.compile('b');print(false);}catch(error){print(error instanceof TypeError);}
+        "#,
+            &["true", "true", "true"],
+        );
+    }
+
+    #[test]
     fn regression_regexp_entrypoints_preserve_utf16_conversion_and_compile_state() {
         assert_output_in_execution_modes(
             r#"

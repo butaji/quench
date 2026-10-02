@@ -1141,7 +1141,14 @@ impl<H: Host> Vm<H> {
                     vm.regexp_initialization_strings(p, source, flags)?
                 }
             };
-            vm.regexp_from_source(prototype, pattern, flags)
+            let intrinsic = vm.regexp_intrinsic_constructor();
+            let legacy_constructor = if new_target.is_none_or(|target| vm.same_value(target, intrinsic))
+            {
+                intrinsic
+            } else {
+                Value::UNDEFINED
+            };
+            vm.regexp_from_source(prototype, pattern, flags, legacy_constructor)
         })
     }
 
@@ -1159,7 +1166,7 @@ impl<H: Host> Vm<H> {
             .expect("RegExp intrinsics are installed for the active realm")
             .prototype;
         let (source, flags) = self.regexp_initialization_strings(p, pattern, flags)?;
-        self.regexp_from_source(prototype, source, flags)
+        self.regexp_from_source(prototype, source, flags, self.regexp_intrinsic_constructor())
     }
 
     fn regexp_initialization_strings(
@@ -1188,6 +1195,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         source: JsString,
         flags: String,
+        legacy_constructor: Value,
     ) -> Result<Value, JsError> {
         let regex = Self::compile_regexp(&source, &flags)?;
         drop(regex);
@@ -1195,6 +1203,7 @@ impl<H: Host> Vm<H> {
             object: Self::empty_object(prototype),
             source,
             flags,
+            legacy_constructor,
         });
         let last_index_atom = self.intern_atom("lastIndex");
         self.set_property(object, last_index_atom, Value::number(0.0))?;
@@ -1228,7 +1237,11 @@ impl<H: Host> Vm<H> {
                         "RegExp.prototype.compile called on incompatible receiver".into(),
                     ));
                 };
-                let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
+                let enabled = matches!(vm.heap.get(receiver), Some(Cell::RegExp { legacy_constructor, .. }) if vm.same_value(*legacy_constructor, vm.regexp_intrinsic_constructor()));
+            if !enabled {
+                return Err(vm.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
+            }
+            let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let flags = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                 let (source, flags) = if let Some(Cell::RegExp {
                     source,
