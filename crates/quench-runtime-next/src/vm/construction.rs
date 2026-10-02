@@ -399,7 +399,7 @@ impl<H: Host> Vm<H> {
         self.own_property(realm, atom)
     }
 
-    fn realm_object_prototype(&self, realm: Value) -> Value {
+    pub(super) fn realm_object_prototype(&self, realm: Value) -> Value {
         self.realm
             .intrinsics
             .builtin_prototypes

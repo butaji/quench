@@ -2120,6 +2120,72 @@ mod tests {
     }
 
     #[test]
+    fn regression_array_join_owns_box_and_preserves_string_units() {
+        assert_output_in_execution_modes(
+            r#"
+            var trace=[];
+            function item(){return {toString(){trace.push('item-string');$262.gc();return '\udfff';}};}
+            Object.defineProperty(Number.prototype,'length',{configurable:true,get(){trace.push('length');$262.gc();return 2;}});
+            Object.defineProperty(Number.prototype,'0',{configurable:true,get(){trace.push('index:0');$262.gc();return item();}});
+            Object.defineProperty(Number.prototype,'1',{configurable:true,get(){trace.push('index:1');$262.gc();return 'B';}});
+            var separator={toString(){trace.push('separator');$262.gc();return '\ud800';}};
+            var result=Array.prototype.join.call(7,separator);
+            print(result.length===3 && result.charCodeAt(0)===57343 && result.charCodeAt(1)===55296 && result.charCodeAt(2)===66);
+            print(trace.join(',')==='length,separator,index:0,item-string,index:1');
+            var thrown={};
+            try{Array.prototype.join.call(7,{toString(){$262.gc();throw thrown;}});print(false);}catch(e){print(e===thrown);}
+            print(['\ud800',null,undefined,'\udfff'].join('\udfff')==='\ud800\udfff\udfff\udfff\udfff');
+            "#,
+            &["true", "true", "true", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_list_format_uses_cached_iterator_and_exact_string_views() {
+        assert_output_in_execution_modes(
+            r#"
+            var formatter=new Intl.ListFormat('en');
+            for(var method of ['format','formatToParts']){
+                var trace=[];
+                function step(index){return {get done(){trace.push('done');$262.gc();return index===2;},get value(){trace.push('value');$262.gc();return index===0?'A':'B';}};}
+                function next(){trace.push('next');$262.gc();Object.defineProperty(this,'next',{value:function(){throw 'reread next';},configurable:true});return step(this.index++);}
+                var source={get [Symbol.iterator](){trace.push('iterator');$262.gc();return function(){trace.push('factory');$262.gc();return {index:0,get next(){trace.push('get-next');$262.gc();return next;}};};}};
+                var result=formatter[method](source);
+                print((method==='format'?result:result.map(part=>part.value).join(''))==='A and B');
+                print(trace.join(',')==='iterator,factory,get-next,next,done,value,next,done,value,next,done');
+                for(var phase of ['next','done','value','non-object','invalid']){
+                    var closed=0;var thrown={};
+                    var source={[Symbol.iterator](){return {next(){if(phase==='next')throw thrown;if(phase==='non-object')return 7;return {get done(){if(phase==='done')throw thrown;return false;},get value(){if(phase==='value')throw thrown;return 7;}};},return(){closed++;$262.gc();throw 'close failure';}};}};
+                    try{formatter[method](source);print(false);}catch(e){print((phase==='invalid'||phase==='non-object'?e instanceof TypeError:e===thrown) && closed===(phase==='invalid'?1:0));}
+                }
+                for(var close of ['throw-getter','throw-call','primitive','noncallable','missing']){
+                    var closed=0;
+                    var source={[Symbol.iterator](){return {next(){return {done:false,value:7};},get return(){closed++;$262.gc();if(close==='throw-getter')throw {};if(close==='noncallable')return 7;if(close==='missing')return undefined;return function(){closed++;$262.gc();if(close==='throw-call')throw {};return 7;};}};}};
+                    try{formatter[method](source);print(false);}catch(e){print(e instanceof TypeError && closed===(close==='throw-call'||close==='primitive'?2:1));}
+                }
+                var units=['\ud800','\udfff'];
+                var result=formatter[method](units);
+                var text=method==='format'?result:result.map(part=>part.value).join('');
+                print(text.length===7 && text.charCodeAt(0)===55296 && text.charCodeAt(6)===57343);
+                print((method==='format'?formatter[method](undefined)==='':formatter[method](undefined).length===0));
+                var touched=false;
+                try{Intl.ListFormat.prototype[method].call({}, {get [Symbol.iterator](){touched=true;}});print(false);}catch(e){print(e instanceof TypeError && !touched);}
+            }
+            var foreign=$262.createRealm().global;
+            var parts=foreign.Intl.ListFormat.prototype.formatToParts.call(formatter,['A','B']);
+            print(Object.getPrototypeOf(parts)===foreign.Array.prototype && parts.every(part=>Object.getPrototypeOf(part)===foreign.Object.prototype));
+            var parts=Intl.ListFormat.prototype.formatToParts.call(new foreign.Intl.ListFormat('en'),['A','B']);
+            print(Object.getPrototypeOf(parts)===Array.prototype && parts.every(part=>Object.getPrototypeOf(part)===Object.prototype));
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_intl_supported_locales_share_order_validation_and_realms() {
         assert_output_in_execution_modes(
             r#"

@@ -2051,7 +2051,7 @@ impl<H: Host> Vm<H> {
         Ok(values)
     }
 
-    fn iterator_get_direct(
+    pub(super) fn iterator_get_direct(
         &mut self,
         p: &ResidualProgram,
         iterator: Value,

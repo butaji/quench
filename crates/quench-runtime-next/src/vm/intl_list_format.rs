@@ -4,10 +4,9 @@ const LIST_FORMAT_LOCALE_SLOT: &str = "\0rqj:intl-list-format-locale";
 const LIST_FORMAT_TYPE_SLOT: &str = "\0rqj:intl-list-format-type";
 const LIST_FORMAT_STYLE_SLOT: &str = "\0rqj:intl-list-format-style";
 
-#[derive(Clone)]
 struct ListPart {
     kind: &'static str,
-    value: String,
+    value: JsString,
 }
 
 impl<H: Host> Vm<H> {
@@ -134,19 +133,23 @@ impl<H: Host> Vm<H> {
         if native == Native::IntlListFormatFormat {
             let text = parts
                 .iter()
-                .map(|part| part.value.as_str())
-                .collect::<String>();
-            return Ok(self.heap.alloc(Cell::String(text.into())));
+                .flat_map(|part| part.value.units().iter().copied())
+                .collect::<Vec<_>>();
+            return Ok(self.heap.alloc(Cell::String(JsString::from_units(&text))));
         }
         let mut values = Vec::with_capacity(parts.len());
         for part in parts {
-            let object = self.object();
+            let object = self.heap.alloc(Cell::Object(Self::empty_object(
+                self.realm_object_prototype(self.realm.globals),
+            )));
             self.set_intl_string_property(object, "type", part.kind)?;
-            self.set_intl_string_property(object, "value", &part.value)?;
+            let atom = self.intern_atom("value");
+            let value = self.heap.alloc(Cell::String(part.value));
+            self.set_property(object, atom, value)?;
             values.push(object);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
             elements: Rc::new(values),
         }))
     }
@@ -158,44 +161,31 @@ impl<H: Host> Vm<H> {
         value: Option<Value>,
     ) -> Result<Vec<ListPart>, JsError> {
         let value = value.unwrap_or(Value::UNDEFINED);
-        let mut items = Vec::new();
-        if !value.is_undefined() {
-            let iterator = self.get_iterator(p, value)?;
-            let done_atom = self.intern_atom("done");
-            let value_atom = self.intern_atom("value");
-            loop {
-                let step = match self.iterator_next(p, iterator) {
-                    Ok(step) => step,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                let done = match self.get_property(p, step, done_atom) {
-                    Ok(done) => self.truthy(done),
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                if done {
-                    break;
-                }
-                let item = match self.get_property(p, step, value_atom) {
-                    Ok(item) => item,
-                    Err(error) => return Err(self.iterator_abrupt(p, iterator, error)),
-                };
-                let Some(item) = (match self.heap.get(item) {
-                    Some(Cell::String(value)) => Some(value.to_string()),
-                    _ => None,
-                }) else {
-                    let error = self.type_error(
-                        p,
-                        "ListFormat iterable values must be strings".into(),
-                    );
-                    return Err(self.iterator_abrupt(p, iterator, error));
-                };
-                items.push(item);
+        self.with_call_roots([formatter, value], |vm| {
+            let mut items = Vec::new();
+            if !value.is_undefined() {
+                let iterator = vm.get_iterator(p, value)?;
+                let iterator = vm.iterator_get_direct(p, iterator)?;
+                vm.with_call_roots([iterator], |vm| {
+                    while let Some(item) = vm.iterator_step_value(p, iterator)? {
+                        let Some(item) = (match vm.heap.get(item) {
+                            Some(Cell::String(value)) => Some(value.clone()),
+                            _ => None,
+                        }) else {
+                            let error =
+                                vm.type_error(p, "ListFormat iterable values must be strings".into());
+                            return Err(vm.iterator_abrupt(p, iterator, error));
+                        };
+                        items.push(item);
+                    }
+                    Ok(())
+                })?;
             }
-        }
-        let kind = self.list_format_slot(p, formatter, LIST_FORMAT_TYPE_SLOT)?;
-        let style = self.list_format_slot(p, formatter, LIST_FORMAT_STYLE_SLOT)?;
-        let locale = self.list_format_slot(p, formatter, LIST_FORMAT_LOCALE_SLOT)?;
-        Ok(join_list_parts(&items, &locale, &kind, &style))
+            let kind = vm.list_format_slot(p, formatter, LIST_FORMAT_TYPE_SLOT)?;
+            let style = vm.list_format_slot(p, formatter, LIST_FORMAT_STYLE_SLOT)?;
+            let locale = vm.list_format_slot(p, formatter, LIST_FORMAT_LOCALE_SLOT)?;
+            Ok(join_list_parts(&items, &locale, &kind, &style))
+        })
     }
 
     fn list_format_slot(
@@ -221,7 +211,7 @@ fn list_format_immutable_attributes() -> PropertyAttributes {
     }
 }
 
-fn join_list_parts(items: &[String], locale: &str, kind: &str, style: &str) -> Vec<ListPart> {
+fn join_list_parts(items: &[JsString], locale: &str, kind: &str, style: &str) -> Vec<ListPart> {
     let mut parts = Vec::new();
     for (index, item) in items.iter().enumerate() {
         if index > 0 {
