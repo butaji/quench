@@ -2623,3 +2623,59 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
         assert!(vm.error_is_error(aggregate));
     }
 }
+
+#[test]
+fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for foreign in [false, true] {
+            let mut vm = Vm::new(Test262Host);
+            let program = compile(
+                "var foreign = $262.createRealm().global;",
+                "aggregate-intrinsics-roots.js",
+            )
+            .unwrap();
+            vm.execute(&program).unwrap();
+            if foreign {
+                let atom = vm.intern_atom("foreign");
+                let global = vm.own_property(vm.realm.globals, atom).unwrap();
+                vm.switch_realm_global(global);
+            }
+            let global = vm.realm.globals;
+            let error_prototype =
+                vm.realm.intrinsics.builtin_prototypes[&(global, Native::AggregateError)];
+            let array_prototype = vm.array_prototype_for_realm(global);
+            let promise_prototype =
+                vm.realm.intrinsics.builtin_prototypes[&(global, Native::Promise)];
+            for name in ["AggregateError", "Array", "Promise"] {
+                let atom = vm.intern_atom(name);
+                vm.set_property(global, atom, Value::NULL).unwrap();
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.get(promise_prototype).is_some());
+            let roots = vm.heap.root_count_for_test();
+            let reason = vm.object();
+            let reason_weak = vm.heap.weak_handle(reason).unwrap();
+            let error = vm.aggregate_error(vec![reason]).unwrap();
+            assert!(vm.error_is_error(error));
+            assert_eq!(vm.object_data(error).unwrap().proto, error_prototype);
+            let errors_atom = vm.intern_atom("errors");
+            let errors = vm.own_property(error, errors_atom).unwrap();
+            assert_eq!(vm.object_data(errors).unwrap().proto, array_prototype);
+            let error_weak = vm.heap.weak_handle(error).unwrap();
+            let errors_weak = vm.heap.weak_handle(errors).unwrap();
+            let root = vm.heap.root(error);
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(reason_weak).is_some());
+            assert!(vm.heap.weak_value(errors_weak).is_some());
+            vm.heap.release_root(root);
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(reason_weak).is_none());
+            assert!(vm.heap.weak_value(errors_weak).is_none());
+            assert!(vm.heap.weak_value(error_weak).is_none());
+            assert_eq!(vm.heap.root_count_for_test(), roots);
+        }
+    }
+}
