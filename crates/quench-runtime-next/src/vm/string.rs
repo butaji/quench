@@ -1,5 +1,10 @@
 use super::*;
 
+enum StringReplacement {
+    Callable(Value),
+    Template(JsString),
+}
+
 const MATCH_ALL_FLAGS: &str = "g";
 
 const STRING_METHODS: &[(&str, Native, f64)] = &[
@@ -83,10 +88,6 @@ fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
     STRING_HTML_METHODS
         .iter()
         .find(|method| method.native == native)
-}
-
-fn utf16_index(text: &str, byte_index: usize) -> usize {
-    text[..byte_index].encode_utf16().count()
 }
 
 pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Option<usize> {
@@ -599,228 +600,98 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         replace_all: bool,
     ) -> Result<Value, JsError> {
-        let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-        if replace_all && !search_value.is_null() && !search_value.is_undefined() {
-            let is_regexp = self.regexp_is_regexp(p, search_value)?;
-            if is_regexp {
-                let flags_atom = self.intern_atom("flags");
-                let flags = self.get_property(p, search_value, flags_atom)?;
-                self.require_object_coercible(p, flags)?;
-                let flags = self.to_string(p, flags)?;
-                if !flags.contains('g') {
-                    return Err(self.type_error(
-                        p,
-                        "String.prototype.replaceAll requires a global RegExp".into(),
-                    ));
-                }
-            }
-        }
-        if self.is_object_like(search_value) {
-            let symbol = self
-                .well_known_symbols
-                .get("replace")
-                .copied()
-                .ok_or_else(|| self.type_error(p, "RegExp replace symbol is unavailable".into()))?;
-            let method = self.get_index(p, search_value, symbol)?;
-            if !method.is_undefined() && !method.is_null() {
-                if !self.is_function(method) {
-                    return Err(self.type_error(p, "String replace method is not callable".into()));
-                }
-                return self.call_value(p, method, search_value, &[this, replacement_value]);
-            }
-        }
-        let receiver = self.regexp_input_string(p, this)?;
-        let receiver_host = receiver.host_string();
-        let search = self.to_string(p, search_value)?;
-        let replacement_function = matches!(
-            self.heap.get(replacement_value),
-            Some(Cell::Function { .. })
-        );
-        let replacement = if replacement_function {
-            String::new()
-        } else {
-            self.to_string(p, replacement_value)?
-        };
-        if replace_all && search.is_empty() {
-            let input = self.heap.alloc(Cell::String(receiver.clone()));
-            let units = receiver.units().to_vec();
-            let mut output = Vec::new();
-            for (offset, unit) in units.iter().copied().enumerate() {
-                let text = if replacement_function {
-                    let callback_args = [
-                        self.heap.alloc(Cell::String(String::new().into())),
-                        Value::number(offset as f64),
-                        input,
-                    ];
-                    let value =
-                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
-                    self.to_string(p, value)?
-                } else {
-                    replacement.clone()
-                };
-                output.extend(text.encode_utf16());
-                output.push(unit);
-            }
-            let text = if replacement_function {
-                let callback_args = [
-                    self.heap.alloc(Cell::String(String::new().into())),
-                    Value::number(units.len() as f64),
-                    input,
-                ];
-                let value =
-                    self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
-                self.to_string(p, value)?
-            } else {
-                replacement
-            };
-            output.extend(text.encode_utf16());
-            return self.string_from_units(&output);
-        }
-        let Some(index) = receiver_host.find(&search) else {
-            return Ok(self.heap.alloc(Cell::String(receiver)));
-        };
-        if replace_all && !search.is_empty() {
-            let mut result = String::with_capacity(receiver_host.len());
-            let mut cursor = 0;
-            for (index, _) in receiver_host.match_indices(&search) {
-                result.push_str(&receiver_host[cursor..index]);
-                let replacement_text = if replacement_function {
-                    let callback_args = [
-                        self.heap.alloc(Cell::String(search.clone().into())),
-                        Value::number(utf16_index(receiver_host, index) as f64),
-                        self.heap.alloc(Cell::String(receiver.clone())),
-                    ];
-                    let value =
-                        self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
-                    self.to_string(p, value)?
-                } else {
-                    expand_replacement(
-                        &replacement,
-                        &search,
-                        &[],
-                        receiver_host,
-                        index,
-                        index + search.len(),
-                        &[],
-                    )
-                };
-                result.push_str(&replacement_text);
-                cursor = index + search.len();
-            }
-            result.push_str(&receiver_host[cursor..]);
-            return Ok(self.heap.alloc(Cell::String(result.into())));
-        }
-        let replacement = if replacement_function {
-            let callback_args = [
-                self.heap.alloc(Cell::String(search.clone().into())),
-                Value::number(utf16_index(receiver_host, index) as f64),
-                self.heap.alloc(Cell::String(receiver.clone())),
-            ];
-            let value = self.call_value(p, replacement_value, Value::UNDEFINED, &callback_args)?;
-            self.to_string(p, value)?
-        } else {
-            expand_replacement(
-                &replacement,
-                &search,
-                &[],
-                receiver_host,
-                index,
-                index + search.len(),
-                &[],
-            )
-        };
-        let mut result = String::with_capacity(
-            receiver_host.len() + replacement.len().saturating_sub(search.len()),
-        );
-        result.push_str(&receiver_host[..index]);
-        result.push_str(&replacement);
-        result.push_str(&receiver_host[index + search.len()..]);
-        Ok(self.heap.alloc(Cell::String(result.into())))
-    }
-}
-
-fn expand_replacement(
-    template: &str,
-    whole: &str,
-    captures: &[Option<&str>],
-    input: &str,
-    start: usize,
-    end: usize,
-    named_captures: &[(String, Option<std::ops::Range<usize>>)],
-) -> String {
-    let chars = template.chars().collect::<Vec<_>>();
-    let mut output = String::with_capacity(template.len());
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] != '$' || index + 1 >= chars.len() {
-            output.push(chars[index]);
-            index += 1;
-            continue;
-        }
-        let next = chars[index + 1];
-        match next {
-            '$' => {
-                output.push('$');
-                index += 2;
-            }
-            '&' => {
-                output.push_str(whole);
-                index += 2;
-            }
-            '`' => {
-                output.push_str(&input[..start]);
-                index += 2;
-            }
-            '\'' => {
-                output.push_str(&input[end..]);
-                index += 2;
-            }
-            '<' if !named_captures.is_empty() => {
-                let name_start = index + 2;
-                if let Some(close) = chars[name_start..]
-                    .iter()
-                    .position(|character| *character == '>')
-                {
-                    let name = chars[name_start..name_start + close]
-                        .iter()
-                        .collect::<String>();
-                    if let Some((_, Some(range))) =
-                        named_captures.iter().find(|(group, _)| group == &name)
-                    {
-                        output.push_str(&input[range.clone()]);
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            vm.require_object_coercible(p, this)?;
+            let search_value = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let replacement_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+            if vm.is_object_like(search_value) {
+                if replace_all && vm.regexp_is_regexp(p, search_value)? {
+                    let atom = vm.intern_atom("flags");
+                    let flags = vm.get_property(p, search_value, atom)?;
+                    vm.require_object_coercible(p, flags)?;
+                    let flags = vm.regexp_input_string(p, flags)?;
+                    if !flags.host_string().contains(MATCH_ALL_FLAGS) {
+                        return Err(vm.type_error(
+                            p,
+                            "String.prototype.replaceAll requires a global RegExp".into(),
+                        ));
                     }
-                    index = name_start + close + 1;
-                } else {
-                    output.push('$');
-                    index += 1;
+                }
+                let symbol = vm
+                    .well_known_symbols
+                    .get("replace")
+                    .copied()
+                    .ok_or_else(|| vm.type_error(p, "RegExp replace symbol is unavailable".into()))?;
+                let method = vm.get_index(p, search_value, symbol)?;
+                if !method.is_undefined() && !method.is_null() {
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "String replace method is not callable".into()));
+                    }
+                    return vm.call_value(p, method, search_value, &[this, replacement_value]);
                 }
             }
-            '0'..='9' if next != '0' => {
-                let first = next.to_digit(10).unwrap() as usize;
-                let mut consumed = 1;
-                let mut capture_index = first;
-                if index + 2 < chars.len()
-                    && chars[index + 2].is_ascii_digit()
-                    && first * 10 + chars[index + 2].to_digit(10).unwrap() as usize
-                        <= captures.len()
-                {
-                    capture_index = first * 10 + chars[index + 2].to_digit(10).unwrap() as usize;
-                    consumed = 2;
+            let input = vm.regexp_input_string(p, this)?;
+            let search = vm.regexp_input_string(p, search_value)?;
+            let replacement = if vm.is_function(replacement_value) {
+                StringReplacement::Callable(replacement_value)
+            } else {
+                StringReplacement::Template(vm.regexp_input_string(p, replacement_value)?)
+            };
+            let Some(first) = input.find_units(search.units(), 0) else {
+                return Ok(vm.heap.alloc(Cell::String(input)));
+            };
+            let callback_inputs = match replacement {
+                StringReplacement::Callable(_) => Some([
+                    vm.heap.alloc(Cell::String(search.clone())),
+                    vm.heap.alloc(Cell::String(input.clone())),
+                ]),
+                StringReplacement::Template(_) => None,
+            };
+            vm.with_call_roots(callback_inputs.into_iter().flatten(), |vm| {
+                let search_length = search.units().len();
+                // Empty matches occur at each code-unit boundary. The immutable
+                // input/search strings determine positions independently of callbacks.
+                let advance = search_length.max(1);
+                let mut position = Some(first);
+                let mut cursor = 0;
+                let mut output = Vec::new();
+                while let Some(index) = position {
+                    output.extend_from_slice(&input.units()[cursor..index]);
+                    let text = match &replacement {
+                        StringReplacement::Callable(method) => {
+                            let [matched, input] =
+                                callback_inputs.expect("callable replacement owns guest strings");
+                            let value = vm.call_value(
+                                p,
+                                *method,
+                                Value::UNDEFINED,
+                                &[matched, Value::number(index as f64), input],
+                            )?;
+                            vm.regexp_input_string(p, value)?
+                        }
+                        StringReplacement::Template(template) => vm.replacement_substitution(
+                            p,
+                            template,
+                            &input,
+                            index,
+                            &search,
+                            &[],
+                            Value::UNDEFINED,
+                        )?,
+                    };
+                    output.extend_from_slice(text.units());
+                    cursor = index + search_length;
+                    let next = index + advance;
+                    position = if replace_all && next <= input.units().len() {
+                        input.find_units(search.units(), next)
+                    } else {
+                        None
+                    };
                 }
-                if capture_index <= captures.len() {
-                    output.push_str(captures[capture_index - 1].unwrap_or(""));
-                    index += consumed + 1;
-                } else {
-                    output.push('$');
-                    index += 1;
-                }
-            }
-            _ => {
-                output.push('$');
-                index += 1;
-            }
-        }
+                output.extend_from_slice(&input.units()[cursor..]);
+                vm.string_from_units(&output)
+            })
+        })
     }
-    output
+
 }

@@ -2086,6 +2086,79 @@ mod tests {
     }
 
     #[test]
+    fn regression_string_replace_preserves_utf16_and_shares_substitutions() {
+        assert_output_in_execution_modes(
+            r#"
+            function units(value){var result=[];for(var i=0;i<value.length;i++)result.push(value.charCodeAt(i));return result.join(',');}
+            for(var name of ['replace','replaceAll']){
+                var input=String.fromCharCode(55296,97,55297,97),search=String.fromCharCode(55296),replacement=String.fromCharCode(56320);
+                print(units(String.prototype[name].call(input,search,replacement)));
+                print(units(String.prototype[name].call(String.fromCharCode(55296,97),String.fromCharCode(65533),'X')));
+                var input=String.fromCharCode(55296,97,55297),template=String.fromCharCode(56320)+'$$$&$`'+"$'"+'$1$<x>';
+                print(units(String.prototype[name].call(input,'a',template)));
+                print(String.prototype[name].call('ab','',"[$`][$&][$']$$$1"));
+                var log=[],proxy=new Proxy(function(){},{apply(target,thisArg,args){$262.gc();log.push(args[0].charCodeAt(0)+':'+args[1]+':'+args[2].charCodeAt(0)+':'+(thisArg===undefined));return {[Symbol.toPrimitive](hint){$262.gc();log.push(hint);return String.fromCharCode(57343);}};}});
+                var input=String.fromCodePoint(128512)+'x'+String.fromCodePoint(128512);
+                print(units(String.prototype[name].call(input,String.fromCharCode(55357),proxy)));print(log.join(','));
+            }
+        "#,
+            &[
+                "56320,97,55297,97",
+                "55296,97",
+                "55296,56320,36,97,55296,55297,36,49,36,60,120,62,55297",
+                "[][][ab]$$1ab",
+                "57343,56832,120,55357,56832",
+                "55357:0:55357:true,string",
+                "56320,97,55297,97",
+                "55296,97",
+                "55296,56320,36,97,55296,55297,36,49,36,60,120,62,55297",
+                "[][][ab]$$1a[a][][b]$$1b[ab][][]$$1",
+                "57343,56832,120,57343,56832",
+                "55357:0:55357:true,string,55357:3:55357:true,string",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_string_replace_protocol_identity_and_conversion_order() {
+        assert_output_in_execution_modes(
+            r#"
+            for(var name of ['replace','replaceAll']){
+                var log=[],input={[Symbol.toPrimitive](){throw 'input';}},replacement={[Symbol.toPrimitive](){throw 'replacement';}},record={};
+                var search={get [Symbol.match](){log.push('is-regexp');return true;},get flags(){log.push('flags');return 'g';},get [Symbol.replace](){log.push('method');return function(arg,value){$262.gc();print(this===search&&arg===input&&value===replacement);return record;};}};
+                print(String.prototype[name].call(input,search,replacement)===record);print(log.join(','));
+                var log=[],receiver={[Symbol.toPrimitive](hint){log.push('input:'+hint);return 'abc';}},search={[Symbol.match]:false,[Symbol.replace]:null,[Symbol.toPrimitive](hint){log.push('search:'+hint);return 'z';}},replacement={[Symbol.toPrimitive](hint){log.push('replacement:'+hint);return 'X';}};
+                print(String.prototype[name].call(receiver,search,replacement));print(log.join(','));
+                var marker={},replacement={[Symbol.toPrimitive](){throw marker;}};try{String.prototype[name].call('abc','z',replacement);}catch(error){print(error===marker);}
+                var reads=0,search={get [Symbol.replace](){reads++;return function(){};}};try{String.prototype[name].call(null,search,'X');}catch(error){print(error instanceof TypeError);}print(reads);
+            }
+            var methods=0,search={[Symbol.match]:true,flags:'i',get [Symbol.replace](){methods++;return function(){};}};
+            try{String.prototype.replaceAll.call('abc',search,'X');}catch(error){print(error instanceof TypeError);}print(methods);
+        "#,
+            &[
+                "true",
+                "true",
+                "method",
+                "abc",
+                "input:string,search:string,replacement:string",
+                "true",
+                "true",
+                "0",
+                "true",
+                "true",
+                "is-regexp,flags,method",
+                "abc",
+                "input:string,search:string,replacement:string",
+                "true",
+                "true",
+                "0",
+                "true",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_string_match_all_custom_dispatch_preserves_identity_and_flags_order() {
         assert_output_in_execution_modes(
             r#"
