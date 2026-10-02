@@ -2,12 +2,7 @@ use super::*;
 use num_bigint::BigInt;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn equal(
-        &mut self,
-        p: &ResidualProgram,
-        a: Value,
-        b: Value,
-    ) -> Result<bool, JsError> {
+    pub(super) fn equal(&mut self, p: &ResidualProgram, a: Value, b: Value) -> Result<bool, JsError> {
         if a.as_number().is_some_and(f64::is_nan) || b.as_number().is_some_and(f64::is_nan) {
             return Ok(false);
         }
@@ -60,14 +55,16 @@ impl<H: Host> Vm<H> {
         if let Some(boolean) = b.as_bool() {
             return self.equal(p, a, Value::number(f64::from(boolean)));
         }
-        if self.is_object_like(a) && !b.is_null() && !b.is_undefined() && !self.is_object_like(b) {
-            let primitive = self.to_primitive(p, a, "default")?;
-            return self.equal(p, primitive, b);
+        match (self.is_object_like(a), self.is_object_like(b)) {
+            (true, false) | (false, true) => self.with_call_roots([a, b], |vm| {
+                let (a, b) = if vm.is_object_like(a) {
+                    (vm.to_primitive(p, a, "default")?, b)
+                } else {
+                    (a, vm.to_primitive(p, b, "default")?)
+                };
+                vm.equal(p, a, b)
+            }),
+            _ => Ok(false),
         }
-        if self.is_object_like(b) && !a.is_null() && !a.is_undefined() && !self.is_object_like(a) {
-            let primitive = self.to_primitive(p, b, "default")?;
-            return self.equal(p, a, primitive);
-        }
-        Ok(false)
     }
 }
