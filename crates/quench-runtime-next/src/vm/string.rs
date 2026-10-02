@@ -446,54 +446,50 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if this.is_null() || this.is_undefined() {
-            return Err(self.type_error(p, "String.prototype.split called on nullish value".into()));
-        }
-        let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let limit = args.get(1).copied();
-        if self.is_object_like(separator) {
-            let symbol = self
-                .well_known_symbols
-                .get("split")
-                .copied()
-                .ok_or_else(|| self.type_error(p, "RegExp split symbol is unavailable".into()))?;
-            let method = self.get_index(p, separator, symbol)?;
-            if !method.is_undefined() && !method.is_null() {
-                if !self.is_function(method) {
-                    return Err(self.type_error(p, "String split method is not callable".into()));
+        self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
+            vm.require_object_coercible(p, this)?;
+            let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
+            let limit = args.get(1).copied();
+            if vm.is_object_like(separator) {
+                let symbol = vm
+                    .well_known_symbols
+                    .get("split")
+                    .copied()
+                    .ok_or_else(|| vm.type_error(p, "RegExp split symbol is unavailable".into()))?;
+                let method = vm.get_index(p, separator, symbol)?;
+                if !method.is_undefined() && !method.is_null() {
+                    if !vm.is_function(method) {
+                        return Err(vm.type_error(p, "String split method is not callable".into()));
+                    }
+                    return vm.call_value(
+                        p,
+                        method,
+                        separator,
+                        &[this, limit.unwrap_or(Value::UNDEFINED)],
+                    );
                 }
-                return self.call_value(
-                    p,
-                    method,
-                    separator,
-                    &[this, limit.unwrap_or(Value::UNDEFINED)],
-                );
             }
-        }
 
-        let input = self.regexp_input_string(p, this)?;
-        let limit = self.regexp_split_limit(p, limit)?;
-        let parts = if separator.is_undefined() {
-            vec![input]
-        } else {
-            let separator = self.regexp_input_string(p, separator)?;
-            input.split_units(separator.units())
-        };
-        if limit == 0 {
-            return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(Vec::new()),
-            }));
-        }
-        let values = parts
-            .into_iter()
-            .take(limit)
-            .map(|part| self.heap.alloc(Cell::String(part)))
-            .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+            let input = vm.regexp_input_string(p, this)?;
+            let limit = vm.regexp_split_limit(p, limit)?;
+            let separator_string = vm.regexp_input_string(p, separator)?;
+            let parts = if limit == 0 {
+                Vec::new()
+            } else if separator.is_undefined() {
+                vec![input]
+            } else {
+                input.split_units(separator_string.units())
+            };
+            let values = parts
+                .into_iter()
+                .take(limit)
+                .map(|part| vm.heap.alloc(Cell::String(part)))
+                .collect();
+            Ok(vm.heap.alloc(Cell::Array {
+                object: Self::empty_object(vm.array_proto),
+                elements: Rc::new(values),
+            }))
+        })
     }
 
     pub(super) fn string_match_or_search_native(
