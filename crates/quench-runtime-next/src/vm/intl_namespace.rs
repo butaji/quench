@@ -3,6 +3,97 @@ use super::*;
 const INTL_LOCALE_SLOT: &str = "\0rqj:intl-locale";
 
 impl<H: Host> Vm<H> {
+    pub(super) fn install_intl_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(), JsError> {
+        let intl = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
+        let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
+        self.realm.intrinsics.intl_number_format_constructors
+            .insert(global, constructor);
+        self.set_builtin_function_name(constructor, "NumberFormat")?;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+        self.realm.intrinsics.intl_number_format_prototypes.insert(global, prototype);
+        let fallback_symbol = self.heap.alloc(Cell::Symbol(Some(
+            "IntlLegacyConstructedSymbol".into(),
+        )));
+        self.realm.intrinsics.intl_number_format_fallback_symbols
+            .insert(global, fallback_symbol);
+        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        let prototype_atom = self.intern_atom("prototype");
+        self.set_property_attributes(
+            constructor,
+            PropertyKey::string(prototype_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: false,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
+        self.set_builtin_value_named(prototype, "constructor", constructor)?;
+        self.install_builtin_to_string_tag(prototype, "Intl.NumberFormat")?;
+        let resolved_options =
+            self.native_with_realm(Native::IntlNumberFormatResolvedOptions, global, global);
+        self.set_builtin_function_name(resolved_options, "resolvedOptions")?;
+        self.set_builtin_value_named(prototype, "resolvedOptions", resolved_options)?;
+        let format_getter =
+            self.native_with_realm(Native::IntlNumberFormatFormatGetter, global, global);
+        self.set_builtin_function_name(format_getter, "get format")?;
+        let format_atom = self.intern_atom("format");
+        self.set_builtin_value_named(prototype, "format", format_getter)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(format_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(format_getter),
+                setter: None,
+            },
+        );
+        let format_to_parts =
+            self.native_with_realm(Native::IntlNumberFormatFormatToParts, global, global);
+        self.set_builtin_function_name(format_to_parts, "formatToParts")?;
+        self.set_builtin_value_named(prototype, "formatToParts", format_to_parts)?;
+        for (name, native) in [
+            ("formatRange", Native::IntlNumberFormatFormatRange),
+            (
+                "formatRangeToParts",
+                Native::IntlNumberFormatFormatRangeToParts,
+            ),
+        ] {
+            let method = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(method, name)?;
+            self.set_builtin_value_named(prototype, name, method)?;
+        }
+        self.set_builtin_value_named(intl, "NumberFormat", constructor)?;
+        let supported =
+            self.native_with_realm(Native::IntlNumberFormatSupportedLocalesOf, global, global);
+        self.set_builtin_function_name(supported, "supportedLocalesOf")?;
+        self.set_builtin_value_named(constructor, "supportedLocalesOf", supported)?;
+        self.install_intl_collator_for_realm(program, intl, global, object_prototype)?;
+        self.install_intl_plural_rules_for_realm(intl, global, object_prototype)?;
+        self.install_intl_date_time_format_for_realm(intl, global, object_prototype)?;
+        self.install_intl_display_names_for_realm(program, intl, global, object_prototype)?;
+        self.install_intl_duration_format_for_realm(intl, global, object_prototype)?;
+        self.install_intl_list_format_for_realm(intl, global, object_prototype)?;
+        self.install_intl_segmenter_for_realm(intl, global, object_prototype)?;
+        self.set_builtin_value_named(global, "Intl", intl)?;
+        Ok(())
+    }
+
     pub(super) fn install_intl_namespace_for_realm(
         &mut self,
         _program: &ResidualProgram,
