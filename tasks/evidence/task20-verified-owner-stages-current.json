@@ -1,33 +1,6 @@
 {
   "task": "20",
   "scope": "Sparse changed-owner stages plus representative cross-cutting canaries; not a full Test262 run.",
-  "stage_ids": [
-    9,
-    10,
-    11,
-    14,
-    16,
-    20,
-    26,
-    31,
-    35,
-    36,
-    37,
-    38,
-    39,
-    46,
-    47,
-    49,
-    50,
-    53,
-    58,
-    60,
-    61,
-    66,
-    79,
-    80,
-    81
-  ],
   "stages": [
     {
       "id": 9,
