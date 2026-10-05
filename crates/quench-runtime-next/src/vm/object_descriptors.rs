@@ -465,25 +465,12 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_js_atom(&key);
             self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
             let target = self.heap.root_value(source).unwrap();
-            if key.host_string() == "length"
-                && let Some(Cell::Array { elements, .. }) = self.heap.get(target)
-                && !self
-                    .object_data(target)
-                    .is_some_and(Object::is_arguments_object)
+            if atom == self.length_atom
+                && let Some(length) = self.own_array_length(target)
             {
-                let length = self.heap.sparse_length(target).unwrap_or(elements.len());
                 let length_attributes = self
-                    .descriptors
-                    .get(&(target, PropertyKey::string(self.length_atom)))
-                    .copied()
-                    .unwrap_or(PropertyAttributes {
-                        writable: true,
-                        enumerable: false,
-                        configurable: false,
-                        accessor: false,
-                        getter: None,
-                        setter: None,
-                    });
+                    .property_attributes(target, PropertyKey::string(self.length_atom))
+                    .expect("array length has attributes");
                 return self.property_descriptor_object(
                     Value::number(length as f64),
                     PropertyAttributes {

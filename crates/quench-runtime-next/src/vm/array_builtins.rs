@@ -115,19 +115,6 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(array, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", array)?;
         let length = self.intern_atom("length");
-        self.set_builtin_value_named(prototype, "length", Value::number(0.0))?;
-        self.set_property_attributes(
-            prototype,
-            PropertyKey::string(length),
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
         self.set_property_attributes(
             array,
             PropertyKey::string(length),
