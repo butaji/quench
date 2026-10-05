@@ -1,0 +1,180 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "6637dbcb2d16bc4deacc8224ded7f7d660cb15e4",
+  "qualification": "Isolated removal of prototype-walk typed-array/collection field shortcuts; other pending Node, Wasm, parser and Promise changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/object_get.rs": "1a9c71b048e3e2912668487bbe2887d5efff7a36bd3d3a6a09978ac5a58a2a28",
+    "crates/quench-runtime-next/src/vm/typed_array_access.rs": "74b3c825d940c834d1c705684f5ace334c40a81fc8dac53b683c47c68eea13be"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Installed intrinsic getter descriptors own typed-array length/byteLength/byteOffset/buffer and Map/Set size. Ordinary property lookup preserves the original receiver.",
+    "invariant": "Internal slots belong to the getter receiver, not a branded object encountered in its prototype chain. Deleting or overriding a getter or replacing the prototype changes lookup naturally.",
+    "reduction": "Removed 42 lines: duplicate typed-array and collection projections plus the unused indexed_view_property helper. No new representation, branch, cache or duplicated semantic unit test."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinaryget",
+    "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-get-%typedarray%.prototype.length",
+    "https://tc39.es/ecma262/multipage/keyed-collections.html#sec-get-map.prototype.size"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-typed-array-gen.cc": "f618d7e1b277f9378688235083517b11249b3cf20f4263a35e608baee6a54840",
+    "tests/node/deps/v8/src/builtins/builtins-collections-gen.cc": "4046a4b9e0db3af6719ce3dffaf3d9f8932814ec5054d0a02554591bfede99d4"
+  },
+  "build": {
+    "profile": "release; correctness only",
+    "log": "target/iteration/task13-prototype-accessors/build.log",
+    "binaries": {
+      "before-quench-next": "40701375861001fd0fe2888091fdca2b19f0f9f83a42c494cea4a19da6e1acbf",
+      "before-run-stages-next": "a8d845e9664366048a39679ab73900045056c763ca039817bc5adc001396b951",
+      "after-quench-next": "165686b5ae2a5e96ff03ed402c9320624d6f405bdda520ded69708834b67124b",
+      "after-run-stages-next": "873308f9a9a3b9949ad62f04fc7e5b5935ca37db7bde8a7d1a39ff92e66848b8"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 3117,
+    "passed_before": 3112,
+    "passed_after": 3113,
+    "gained": [
+      "staging/sm/regress/regress-571014.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+      "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js"
+    ],
+    "scopes": [
+      {
+        "scope": "array-buffer",
+        "before_report": "target/iteration/task13-prototype-accessors/before-array-buffer.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-array-buffer.json",
+        "passed_before": 221,
+        "passed_after": 221,
+        "failed_after": 0
+      },
+      {
+        "scope": "data-view",
+        "before_report": "target/iteration/task13-prototype-accessors/before-data-view.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-data-view.json",
+        "passed_before": 561,
+        "passed_after": 561,
+        "failed_after": 0
+      },
+      {
+        "scope": "intl-typed-array",
+        "before_report": "target/iteration/task13-prototype-accessors/before-intl-typed-array.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-intl-typed-array.json",
+        "passed_before": 1,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "map",
+        "before_report": "target/iteration/task13-prototype-accessors/before-map.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-map.json",
+        "passed_before": 204,
+        "passed_after": 204,
+        "failed_after": 0
+      },
+      {
+        "scope": "proxy-get",
+        "before_report": "target/iteration/task13-prototype-accessors/before-proxy-get.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-proxy-get.json",
+        "passed_before": 19,
+        "passed_after": 19,
+        "failed_after": 0
+      },
+      {
+        "scope": "reflect-get",
+        "before_report": "target/iteration/task13-prototype-accessors/before-reflect-get.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-reflect-get.json",
+        "passed_before": 11,
+        "passed_after": 11,
+        "failed_after": 0
+      },
+      {
+        "scope": "regress-brand",
+        "before_report": "target/iteration/task13-prototype-accessors/before-regress-brand.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-regress-brand.json",
+        "passed_before": 0,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "set",
+        "before_report": "target/iteration/task13-prototype-accessors/before-set.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-set.json",
+        "passed_before": 383,
+        "passed_after": 383,
+        "failed_after": 0
+      },
+      {
+        "scope": "shared-buffer",
+        "before_report": "target/iteration/task13-prototype-accessors/before-shared-buffer.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-shared-buffer.json",
+        "passed_before": 104,
+        "passed_after": 104,
+        "failed_after": 0
+      },
+      {
+        "scope": "staged-typed-array",
+        "before_report": "target/iteration/task13-prototype-accessors/before-staged-typed-array.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-staged-typed-array.json",
+        "passed_before": 96,
+        "passed_after": 96,
+        "failed_after": 0
+      },
+      {
+        "scope": "typed-arrays",
+        "before_report": "target/iteration/task13-prototype-accessors/before-typed-arrays.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-typed-arrays.json",
+        "passed_before": 1442,
+        "passed_after": 1442,
+        "failed_after": 4
+      },
+      {
+        "scope": "uint8",
+        "before_report": "target/iteration/task13-prototype-accessors/before-uint8.json",
+        "after_report": "target/iteration/task13-prototype-accessors/after-uint8.json",
+        "passed_before": 70,
+        "passed_after": 70,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for every matched scope"
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "summary": {
+      "sources": 120,
+      "observations_per_build": 240,
+      "before_matches": 142,
+      "after_matches": 240,
+      "losses": 0
+    },
+    "report": "target/iteration/task13-prototype-accessors/node-controls.json",
+    "coverage": [
+      "direct, inherited and proxied receivers",
+      "Reflect.get invalid and valid receivers",
+      "getter deletion/replacement",
+      "prototype replacement",
+      "own shadowing",
+      "subclass receivers",
+      "typed arrays, ArrayBuffer, SharedArrayBuffer, DataView, Map and Set"
+    ]
+  },
+  "limits": [
+    "Three official copyWithin timeouts and the recorded immutable-species fixture conflict remain unchanged.",
+    "Bounded affected-scope qualification; no full-suite, Stage A or performance claim.",
+    "Pins, inputs, guest harness, expectations and deadlines unchanged."
+  ]
+}
