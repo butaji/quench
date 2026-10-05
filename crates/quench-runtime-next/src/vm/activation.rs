@@ -68,6 +68,7 @@ impl CallContext {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Continuation {
     pub context: CallContext,
+    pub original_arguments: Vec<Value>,
     pub program: ProgramId,
     pub function: u32,
     pub pc: usize,
@@ -140,6 +141,7 @@ impl Continuation {
     ) -> Self {
         Self {
             context: std::mem::replace(&mut frame.context, CallContext::Internal),
+            original_arguments: std::mem::take(&mut frame.original_arguments),
             program: frame.program,
             function: frame.function,
             pc: frame.pc,
@@ -159,6 +161,7 @@ impl Continuation {
     pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
         super::Frame {
             context: self.context,
+            original_arguments: self.original_arguments,
             program: self.program,
             function: self.function,
             pc: self.pc,
@@ -178,6 +181,7 @@ impl Continuation {
         self.context
             .callee()
             .into_iter()
+            .chain(self.original_arguments.iter().copied())
             .chain(std::iter::once(self.env))
             .chain(std::iter::once(self.this))
             .chain(self.locals.iter().copied())
@@ -202,6 +206,7 @@ mod tests {
     fn continuation_roots_include_frame_and_completion_values() {
         let continuation = Continuation {
             context: CallContext::Function(Value::heap(9)),
+            original_arguments: vec![Value::heap(10)],
             program: ProgramId::MAIN,
             function: 3,
             pc: 7,
@@ -220,6 +225,7 @@ mod tests {
             continuation.roots().collect::<Vec<_>>(),
             [
                 Value::heap(9),
+                Value::heap(10),
                 Value::heap(1),
                 Value::heap(2),
                 Value::heap(4),
@@ -229,6 +235,16 @@ mod tests {
                 Value::heap(7)
             ]
         );
+        let mut frame = continuation.into_frame(0);
+        assert_eq!(frame.original_arguments, [Value::heap(10)]);
+        let restored = Continuation::from_frame(
+            &mut frame,
+            Completion::Await(Value::heap(6)),
+            Some(1),
+            Value::heap(7),
+        );
+        assert!(frame.original_arguments.is_empty());
+        assert_eq!(restored.original_arguments, [Value::heap(10)]);
     }
 
     #[test]

@@ -74,6 +74,35 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn function_arguments(&mut self, function: Value) -> Result<Value, JsError> {
+        let Some(frame) = self
+            .frames
+            .iter()
+            .rfind(|frame| frame.context.callable() == Some(function))
+        else {
+            return Ok(Value::NULL);
+        };
+        let expose_callee = self
+            .programs
+            .get(frame.program)
+            .and_then(|program| {
+                program
+                    .functions
+                    .get(frame.function as usize)
+                    .map(|metadata| metadata.simple_parameters)
+            })
+            .unwrap_or(false);
+        let args = Rc::new(frame.original_arguments.clone());
+        let arguments = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
+            elements: args.clone(),
+        });
+        self.with_call_roots([arguments], |vm| {
+            vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
+            Ok(arguments)
+        })
+    }
+
     pub(super) fn bind_function(
         &mut self,
         p: &ResidualProgram,

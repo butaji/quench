@@ -153,6 +153,7 @@ mod tests;
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
     context: CallContext,
+    original_arguments: Vec<Value>,
     program: ProgramId,
     function: u32,
     pc: usize,

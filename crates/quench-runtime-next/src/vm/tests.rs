@@ -525,10 +525,14 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let live = vm
         .heap
         .alloc(crate::heap::Cell::Error("live register".into()));
+    let original = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("original argument".into()));
     let mut registers = vec![Value::UNDEFINED; 65];
     registers[64] = live;
     vm.frames.push(super::Frame {
         context: super::activation::CallContext::Internal,
+        original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -545,10 +549,12 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
 
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_some());
+    assert!(vm.heap.get(original).is_some());
 
     vm.frames.pop();
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_none());
+    assert!(vm.heap.get(original).is_none());
 }
 
 #[test]
@@ -3128,9 +3134,13 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     let held = vm
         .heap
         .alloc(crate::heap::Cell::Error("suspended binding".into()));
+    let original = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("suspended argument".into()));
     let held_atom = vm.intern_atom("held");
     let id = vm.suspend_continuation(Continuation {
         context: super::activation::CallContext::Internal,
+        original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
         active_iterators: vec![],
         function: 0,
@@ -3148,11 +3158,16 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_some());
     assert!(vm.heap.get(held).is_some());
-    assert!(vm.resume_continuation(id).is_some());
+    assert!(vm.heap.get(original).is_some());
+    assert_eq!(
+        vm.resume_continuation(id).unwrap().original_arguments,
+        [original]
+    );
     assert!(vm.resume_continuation(id).is_none());
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_none());
     assert!(vm.heap.get(held).is_none());
+    assert!(vm.heap.get(original).is_none());
 }
 
 #[test]
@@ -3162,6 +3177,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
     vm.initialize(&program).unwrap();
     let continuation = || Continuation {
         context: super::activation::CallContext::Internal,
+        original_arguments: vec![],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -3194,6 +3210,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
 fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let mut frame = super::Frame {
         context: super::activation::CallContext::Internal,
+        original_arguments: vec![Value::heap(14)],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -3217,6 +3234,11 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         frame.registers,
         [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
     );
+    assert_eq!(frame.original_arguments, [Value::heap(14)]);
+    frame.context = super::activation::CallContext::Function(Value::heap(15));
+    let recycled = Vm::<SilentHost>::recycle_frame(frame);
+    assert_eq!(recycled.context, super::activation::CallContext::Internal);
+    assert!(recycled.original_arguments.is_empty());
 }
 
 #[test]
@@ -5363,6 +5385,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             let atom = vm.intern_atom("binding");
             let mut frame = super::Frame {
                 context: super::activation::CallContext::Internal,
+                original_arguments: vec![],
                 program: super::program_store::ProgramId::MAIN,
                 function: 0,
                 pc: 0,
