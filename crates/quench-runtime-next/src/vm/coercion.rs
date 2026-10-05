@@ -259,11 +259,6 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(value) {
             return Ok(value);
         }
-        let hint = if matches!(self.heap.get(value), Some(Cell::Date { .. })) && hint == "default" {
-            "string"
-        } else {
-            hint
-        };
         if let Some(symbol) = self.well_known_symbols.get("toPrimitive").copied() {
             let method = self.get_index(program, value, symbol)?;
             if !method.is_undefined() && !method.is_null() {
@@ -282,6 +277,15 @@ impl<H: Host> Vm<H> {
                 );
             }
         }
+        self.ordinary_to_primitive(program, value, hint)
+    }
+
+    pub(super) fn ordinary_to_primitive(
+        &mut self,
+        program: &ResidualProgram,
+        value: Value,
+        hint: &str,
+    ) -> Result<Value, JsError> {
         let names = if hint == "string" {
             ["toString", "valueOf"]
         } else {
