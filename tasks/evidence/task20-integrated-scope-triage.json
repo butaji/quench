@@ -1,0 +1,246 @@
+{
+  "kind": "Integrated working-tree triage; not qualification of an isolated commit or Stage A gate",
+  "source_revision": "e58e54e83d510989d04616ae0c8a0a5b3d9c7a62",
+  "source_dirty": true,
+  "source_manifest_sha256": "ba3e7c552c24f4be052d9397c856a9901d562667a5e8e7202b6729f56d9ffebc",
+  "tracked_diff_sha256": "026e5bce886c4cbe91e5e0507c137d6303b01509732e07cae7015e6d80f3fb08",
+  "binaries": {
+    "run-stages-next": "151955b329ef30b9d28655ee548e177f3dfb93bf08990a26ff84ab4545b3b769",
+    "quench-next": "df0a4e3379dbf513738dd2af7db761250fde913c6c3384b11e4f2d98c0836a20",
+    "quench-node-next": "bff398bb33dffe27e58b2e3342cb87a500141d130eb8a5dbb432c54e6f49de2a",
+    "run-shared": "6a235b3b1f5ba6346399a6e2be7dc4f2f9b7a38644e1e69752374c60c0e4563e"
+  },
+  "build_checks": [
+    "cargo check -p quench-runtime-next -p quench-node-test -p quench-wasm-test",
+    "cargo build --release -p quench-test262 --bin run-stages-next -p quench-runtime-next --bin quench-next -p quench-node --bin quench-node-next -p quench-wasm-test --bin run-shared"
+  ],
+  "test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "baseline_revision": "e58e54e83d510989d04616ae0c8a0a5b3d9c7a62",
+    "scopes": [
+      {
+        "scope": "blocks",
+        "total": 21,
+        "before_passed": 21,
+        "after_passed": 21
+      },
+      {
+        "scope": "functions",
+        "total": 451,
+        "before_passed": 451,
+        "after_passed": 451
+      },
+      {
+        "scope": "labels",
+        "total": 24,
+        "before_passed": 24,
+        "after_passed": 24
+      },
+      {
+        "scope": "switch",
+        "total": 111,
+        "before_passed": 111,
+        "after_passed": 111
+      },
+      {
+        "scope": "with",
+        "total": 181,
+        "before_passed": 181,
+        "after_passed": 181
+      },
+      {
+        "scope": "annex-language",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845
+      },
+      {
+        "scope": "staged-lexical",
+        "total": 34,
+        "before_passed": 29,
+        "after_passed": 33
+      },
+      {
+        "scope": "eval",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347
+      },
+      {
+        "scope": "block-scope",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145
+      },
+      {
+        "scope": "destructuring",
+        "total": 19,
+        "before_passed": 19,
+        "after_passed": 19
+      },
+      {
+        "scope": "identifier-resolution",
+        "total": 14,
+        "before_passed": 14,
+        "after_passed": 14
+      },
+      {
+        "scope": "let",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145
+      },
+      {
+        "scope": "const",
+        "total": 136,
+        "before_passed": 136,
+        "after_passed": 136
+      },
+      {
+        "scope": "try",
+        "total": 201,
+        "before_passed": 201,
+        "after_passed": 201
+      },
+      {
+        "scope": "assignment",
+        "total": 485,
+        "before_passed": 485,
+        "after_passed": 485
+      },
+      {
+        "scope": "prefix-increment",
+        "total": 33,
+        "before_passed": 33,
+        "after_passed": 33
+      },
+      {
+        "scope": "postfix-increment",
+        "total": 38,
+        "before_passed": 38,
+        "after_passed": 38
+      },
+      {
+        "scope": "prefix-decrement",
+        "total": 34,
+        "before_passed": 34,
+        "after_passed": 34
+      },
+      {
+        "scope": "postfix-decrement",
+        "total": 37,
+        "before_passed": 37,
+        "after_passed": 37
+      },
+      {
+        "scope": "typeof",
+        "total": 16,
+        "before_passed": 16,
+        "after_passed": 16
+      },
+      {
+        "scope": "delete",
+        "total": 165,
+        "before_passed": 165,
+        "after_passed": 165
+      },
+      {
+        "scope": "function-code",
+        "total": 217,
+        "before_passed": 217,
+        "after_passed": 217
+      }
+    ],
+    "distinct": {
+      "total": 3699,
+      "before_passed": 3694,
+      "after_passed": 3698,
+      "gains": [
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-with.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/unscopables-global.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/var-in-catch-body-annex-b-eval.js"
+        ]
+      ],
+      "regressions": [],
+      "remaining_failures": [
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+        ]
+      ]
+    },
+    "compare": "22 matching inventories via compare-runs --reports; no full Test262 run",
+    "jobs": 2,
+    "timeout_ms": 10000
+  },
+  "wasm": {
+    "pin": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+    "files": [
+      {
+        "path": "crates/quench-wasm-test/testsuite/block.wast",
+        "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/br.wast",
+        "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/call.wast",
+        "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/if.wast",
+        "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/local_get.wast",
+        "sha256": "7829b58483bc8a158e97335c63a82db0fb9123555bcde27f779914254fe12c3e"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/local_set.wast",
+        "sha256": "93df4f2089fce0a8f453635d4fcc750d676edb24af3826ba221a347a8da2df45"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/local_tee.wast",
+        "sha256": "36cea2d29048fcd9567358a74cce59169a64be6d282bc8aaac99a4b3a5e03dcf"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/loop.wast",
+        "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/return.wast",
+        "sha256": "987f665cbf9be3d240325fcc14bfa449e8fb8ad9e8193afa3aff03ddb33bd7ce"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "sha256": "21949b27168593550e309437c03509b2dec7e1084d55d6bf096527457dc3d879"
+      },
+      {
+        "path": "crates/quench-wasm-test/testsuite/select.wast",
+        "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+      }
+    ],
+    "directives": 1250,
+    "passed": 1250,
+    "failed": 0,
+    "inventory_complete": true,
+    "timeout_ms": 60000,
+    "comparison": "Current selected scope passes. No matching same-scope historical baseline was qualified; no Wasm regression claim."
+  },
+  "next_action": "Qualify and commit the coherent binding/environment ownership model, including captured scope metadata, selective slot cloning, eval variable environments and shared declaration discovery. Do not infer isolated fix provenance from the whole dirty snapshot.",
+  "open": "Production still uses legacy paths. Shared Node host exposes uptime only; implemented Node cases and complete same-build Test262/Wasm inventories remain unqualified.",
+  "raw_artifacts": "target/iteration/task20-integrated-scope-check"
+}
