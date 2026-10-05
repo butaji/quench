@@ -665,7 +665,7 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
-    pub eval_sites: Vec<EvalSite>,
+    pub binding_sites: Vec<BindingSite>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -674,10 +674,11 @@ pub struct Function {
     pub(crate) register_root_offset: u32,
 }
 
+/// Scoped binding projections at an instruction resume PC.
 #[derive(Clone, Debug)]
-pub(crate) struct EvalSite {
+pub(crate) struct BindingSite {
     pub(crate) resume_pc: u32,
-    pub(crate) lexical_bindings: Vec<EvalBinding>,
+    pub(crate) bindings: Vec<EvalBinding>,
 }
 
 #[derive(Clone, Copy, Debug)]

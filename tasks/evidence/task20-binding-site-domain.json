@@ -1,0 +1,38 @@
+{
+  "change": "Canonical binding-site metadata naming; semantics and residual binary layout unchanged",
+  "base_revision": "5a784709b7bfb6e54a6a2eda9569ab203f246765",
+  "source_files": [
+    "crates/quench-runtime-next/src/bytecode.rs",
+    "crates/quench-runtime-next/src/bytecode/binary.rs",
+    "crates/quench-runtime-next/src/bytecode/tests.rs",
+    "crates/quench-runtime-next/src/bytecode/validate.rs",
+    "crates/quench-runtime-next/src/compile.rs",
+    "crates/quench-runtime-next/src/compile/arrow.rs",
+    "crates/quench-runtime-next/src/compile/ast.rs",
+    "crates/quench-runtime-next/src/compile/ast/call.rs",
+    "crates/quench-runtime-next/src/compile/liveness.rs",
+    "crates/quench-runtime-next/src/compile/numeric.rs",
+    "crates/quench-runtime-next/src/profile/dispatch_pairs.rs",
+    "crates/quench-runtime-next/src/vm/eval.rs",
+    "crates/quench-runtime-next/src/wasm.rs"
+  ],
+  "verification": {
+    "identifier_projection_equivalence": true,
+    "decoder_checks": {
+      "passed": 3,
+      "failed": 0
+    },
+    "residual_round_trip": {
+      "passed": 1,
+      "failed": 0
+    },
+    "consumer_check": [
+      "quench-test262",
+      "quench-wasm",
+      "quench-node"
+    ]
+  },
+  "test262": "Not run for this identifier-only change; no execution behavior changed",
+  "remaining": "Dynamic with/eval/catch scope resolution remains open",
+  "raw_logs": "target/iteration/task20-binding-site-domain"
+}
