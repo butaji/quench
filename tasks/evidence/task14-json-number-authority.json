@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "tasks": [
+    "14",
+    "20",
+    "21"
+  ],
+  "baseline_source_head": "519ccc90b3cb1661ac3251afb889f30647778be4",
+  "source_sha256": {
+    "Cargo.lock": "2c4b7fb244f08aab7404a72b1354d46bf8e082a0fe2e7d1f4cec4ae668698b0d",
+    "crates/quench-runtime-next/Cargo.toml": "2be8e8262f3aac6b65f7c74f12d80465d4dd62bc34fd5ad5bca29902de441ad2",
+    "crates/quench-runtime-next/src/number_to_string.rs": "3ccc7cc01471b51c19cf951dbece8ba6de1b529281f5025369ec057cabc66a92",
+    "crates/quench-runtime-next/src/vm/json.rs": "73eabb2b90f5e5b2036c7af7c7dc17f81d4ab1313b18531e8fefc19364014bfb"
+  },
+  "qualification": "Isolated changes on the committed baseline; broader pending work excluded and preserved. The final release build includes removal of one duplicated cfg(test) syntax test. Suite reports precede that test-only deletion; the final production controls were repeated.",
+  "build_profile": "release, correctness only; no speed or RSS claim",
+  "build_log": "target/iteration/task14-json-numbers-final-build.log",
+  "binary_sha256": {
+    "node": "daca629de4d230f227a315ad3fd820d923b63a79a271ff072a993089f54526e0",
+    "test262": "269f5c73ea85bb3df8782df78a27e1dd3202f5a8d8a31d92b338915b92df9215"
+  },
+  "production_node_binary_unchanged_after_test_deletion": true,
+  "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": "JsonValue::Number carries f64 directly. Serialization uses the same Number-to-string formatter as String(number), with no i64 cast or serde number. Grammar-valid overflow remains Infinity; stringify retains its existing non-finite-to-null rule. Reviver source eligibility uses core SameValue, including signed zero.",
+  "reduction": [
+    "Removed the unused direct serde_json and regex runtime dependencies after auditing all runtime source consumers. The shared quench-regexp backend remains.",
+    "Removed identical integral/fractional branches in the shared number formatter.",
+    "Removed the JSON invalid-number syntax unit test already covered by Test262; retained three internal UTF-16 writer/source representation checks."
+  ],
+  "controls": {
+    "report": "target/iteration/task14-json-numbers/controls.json",
+    "report_sha256": "7a7ce19570f31bd7373c1746b9c835d856adeaf4847ffe2802891b094a4d8fb9",
+    "node_version": "v26.10.0",
+    "count": 12,
+    "before_matches": 3,
+    "after_matches": 12,
+    "scope": "Large-number thresholds and i64 boundary, valid overflow/underflow, reviver signed-zero mutations/source retention, raw JSON overflow and invalid grammar, boxed/toJSON/replacer numbers, JSON modules and unchanged regexp backreference/lookbehind controls.",
+    "finite_corpus": {
+      "cases": 2500,
+      "before_number_string_matches": 2500,
+      "before_json_number_string_matches": 2479,
+      "after_triple_matches": 2500,
+      "inputs": "target/iteration/task14-json-numbers/finite-corpus-inputs.json"
+    }
+  },
+  "internal_checks": {
+    "passed": 3,
+    "log": "target/iteration/task14-json-numbers-qualified-internal.log",
+    "scope": "WTF-16 writer lone-surrogate/pair handling and source-bearing parser unit preservation."
+  },
+  "affected_test262": {
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "full_suite_run": false,
+    "total": 294,
+    "passed_before": 293,
+    "passed_after": 293,
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "json",
+        "stages": [
+          53,
+          53
+        ],
+        "filter": "",
+        "before": {
+          "total": 165,
+          "passed": 165,
+          "failed": 0,
+          "exit": 0
+        },
+        "after": {
+          "total": 165,
+          "passed": 165,
+          "failed": 0,
+          "exit": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-numbers/before-json.json",
+        "before_sha256": "97cac29401508d685a92b73eef21c6a6d2af85922e58b59e035bfb49d67fdf3c",
+        "after_report": "target/iteration/task14-json-numbers/after-json.json",
+        "after_sha256": "0839d63bc4f62568d483cf04911fe4d7dbdfeff28d3527ee7ab93e41c764a914"
+      },
+      {
+        "scope": "staged-json",
+        "stages": [
+          114,
+          114
+        ],
+        "filter": "staging/sm/JSON/",
+        "before": {
+          "total": 39,
+          "passed": 38,
+          "failed": 1,
+          "exit": 1
+        },
+        "after": {
+          "total": 39,
+          "passed": 38,
+          "failed": 1,
+          "exit": 1
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-numbers/before-staged-json.json",
+        "before_sha256": "c973b5aaae5912833cd84851f18568d4e6356e1a1c8ee78573bac34de52a7f5e",
+        "after_report": "target/iteration/task14-json-numbers/after-staged-json.json",
+        "after_sha256": "c042dfde0c8af6e2269dd15de2de1073836e00bc42183153e58ac25d1ce60524"
+      },
+      {
+        "scope": "number-to-string",
+        "stages": [
+          59,
+          59
+        ],
+        "filter": "built-ins/Number/prototype/toString/",
+        "before": {
+          "total": 90,
+          "passed": 90,
+          "failed": 0,
+          "exit": 0
+        },
+        "after": {
+          "total": 90,
+          "passed": 90,
+          "failed": 0,
+          "exit": 0
+        },
+        "compare_exit": 0,
+        "regressions": 0,
+        "before_report": "target/iteration/task14-json-numbers/before-number-to-string.json",
+        "before_sha256": "41332c8b12445e3686bbdd5df6cdada5cff1c1417f7930e8272db51d5837c926",
+        "after_report": "target/iteration/task14-json-numbers/after-number-to-string.json",
+        "after_sha256": "9a1095b852866f972b86f68194dd81071e1ba3ca492505be38511da89decdc4b"
+      }
+    ]
+  },
+  "remaining_failure": {
+    "case": "staging/sm/JSON/parse-with-source.js",
+    "before": "SyntaxError: invalid number",
+    "after": "Cross-realm TypeError originates in the wrong realm. The overflowing-number section now completes.",
+    "next_action": "Install the JSON namespace and native methods per creation realm through the shared intrinsic installer; preserve realm-owned object/array/context and error prototypes.",
+    "fixture_sha256": "45303724329fc0a1792eb2a64e3e9a1852c565b97d3a01fa5371aebab4fbec84"
+  },
+  "limits": [
+    "No fixture, harness, discovery, expectation or pin changes. No new guest API implementation or benchmark recognition.",
+    "The selected staged realm failure remains required. Stage A and complete Test262/Wasm/implemented-Node gates remain open."
+  ]
+}
