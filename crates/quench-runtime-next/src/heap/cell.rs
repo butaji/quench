@@ -607,6 +607,10 @@ pub(crate) struct ArrayFromAsyncState {
     pub(crate) awaiting: ArrayFromAsyncAwait,
 }
 impl TypedArrayKind {
+    pub(crate) const fn is_bigint(self) -> bool {
+        matches!(self, Self::BigInt64 | Self::BigUint64)
+    }
+
     pub(crate) const fn width(self) -> usize {
         match self {
             Self::Uint8 => 1,
