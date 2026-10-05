@@ -334,6 +334,85 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// Copies validated views without guest effects; callers retain roots for both views.
+    pub(super) fn typed_array_copy_elements(
+        &mut self,
+        p: &ResidualProgram,
+        source: Value,
+        target: Value,
+        target_start: usize,
+        length: usize,
+    ) -> Result<(), JsError> {
+        let Some(Cell::TypedArray {
+            kind,
+            buffer,
+            offset,
+            ..
+        }) = self.heap.get(source)
+        else {
+            unreachable!("typed copy source was validated");
+        };
+        let (source_kind, source_buffer, source_offset) = (*kind, *buffer, *offset);
+        let Some(Cell::TypedArray {
+            kind,
+            buffer,
+            offset,
+            ..
+        }) = self.heap.get(target)
+        else {
+            unreachable!("typed copy target was validated");
+        };
+        let (target_kind, target_buffer, target_offset) = (*kind, *buffer, *offset);
+        if source_kind.is_bigint() != target_kind.is_bigint() {
+            return Err(self.type_error(p, "typed array content types differ".into()));
+        }
+        if source_kind == target_kind {
+            let target_offset = target_offset + target_start * target_kind.width();
+            let byte_length = length * source_kind.width();
+            if source_buffer == target_buffer {
+                let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
+                    unreachable!("typed copy backing buffer was validated");
+                };
+                // Set snapshots overlapping source bytes, unlike slice's forward copy.
+                Rc::make_mut(bytes)
+                    .copy_within(source_offset..source_offset + byte_length, target_offset);
+            } else {
+                let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(source_buffer) else {
+                    unreachable!("typed copy source backing buffer was validated");
+                };
+                let source_bytes = Rc::clone(bytes);
+                let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(target_buffer) else {
+                    unreachable!("typed copy target backing buffer was validated");
+                };
+                Rc::make_mut(bytes)[target_offset..target_offset + byte_length]
+                    .copy_from_slice(&source_bytes[source_offset..source_offset + byte_length]);
+            }
+            return Ok(());
+        }
+        let snapshot = if source_buffer == target_buffer {
+            let mut values = Vec::with_capacity(length);
+            for index in 0..length {
+                let value = self.typed_array_get(source, index).unwrap();
+                values.push(self.typed_array_convert_value(p, target_kind, value)?);
+            }
+            Some(values)
+        } else {
+            None
+        };
+        for index in 0..length {
+            let converted;
+            let value = if let Some(values) = &snapshot {
+                &values[index]
+            } else {
+                let value = self.typed_array_get(source, index).unwrap();
+                converted = self.typed_array_convert_value(p, target_kind, value)?;
+                &converted
+            };
+            self.typed_array_write_element(target, target_start + index, value);
+        }
+        Ok(())
+    }
+
     pub(super) fn typed_array_convert_value(
         &mut self,
         p: &ResidualProgram,
