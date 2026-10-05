@@ -2,8 +2,10 @@
 //!
 //! Builtins return `Value::Object` they own (plain Rust objects
 //! exposed through the runtime's ordinary object semantics). The
-//! host never re-enters the VM for state — every state lives in
-//! the Rust envelope.
+//! shared adapter re-enters the VM through rooted public operations; Node
+//! process and scheduling state remains in the existing Rust envelope.
+
+mod shared_vm;
 
 use std::cell::RefCell;
 use std::collections::HashSet;

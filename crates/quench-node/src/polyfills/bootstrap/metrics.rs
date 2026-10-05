@@ -1,10 +1,8 @@
 //! Polyfill: `metrics`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchProcessStart = Date.now();
-const __quenchOriginalRequireWithProcessMetrics = globalThis.require;
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"const __quenchOriginalRequireWithProcessMetrics = globalThis.require;
 if (globalThis.process) {
-  globalThis.process.uptime ||= () =>
-    (Date.now() - __quenchProcessStart) / 1000;
   globalThis.process.memoryUsage ||= () => ({
     rss: 0,
     heapTotal: 0,
@@ -20,4 +18,5 @@ globalThis.require = (specifier) => {
   }
   return __quenchOriginalRequireWithProcessMetrics(specifier);
 };
-"#);
+"#
+);
