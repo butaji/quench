@@ -37,6 +37,22 @@ pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
 }
 
+/// One canonical process identity in the active VM. The legacy variant is
+/// transitional and disappears with the legacy runtime at task 27.
+pub enum ProcessModule {
+    Legacy(Value),
+    Shared(rqj::RootId),
+}
+
+impl ProcessModule {
+    pub(crate) fn legacy(&self) -> Option<Value> {
+        match self {
+            Self::Legacy(value) => Some(value.clone()),
+            Self::Shared(_) => None,
+        }
+    }
+}
+
 pub struct HostState {
     pub async_hooks: crate::modules::async_hooks::AsyncHooksState,
     pub timers: crate::modules::timers::TimerRegistry,
@@ -91,7 +107,7 @@ pub struct HostState {
     /// Canonical `require("console")` module and global console identity.
     pub console_module: Option<Value>,
     /// Canonical `require("process")` module and global process identity.
-    pub process_module: Option<Value>,
+    pub process_module: Option<ProcessModule>,
     /// Canonical `require("module")` namespace for this realm.
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
@@ -455,7 +471,7 @@ pub fn install_with_argv_and_title_and_exec_argv(
     let bindings =
         crate::registry::namespace_bindings_with_exec_argv(&argv, &exec_path, title, exec_argv);
     if let Some((_, process)) = bindings.iter().find(|(name, _)| name == "process") {
-        host.state.borrow_mut().process_module = Some(process.clone());
+        host.state.borrow_mut().process_module = Some(ProcessModule::Legacy(process.clone()));
     }
     let mut context = VmContext::with_output_sink(sink)
         .with_host(host.clone())

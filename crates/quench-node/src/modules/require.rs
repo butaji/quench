@@ -2104,13 +2104,17 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             .or_else(|| Some(crate::modules::console::build_value())),
         "process" => {
             let process = state.borrow();
-            process.process_module.clone().or_else(|| {
-                Some(crate::modules::process::build_with_title(
-                    &process.process.argv,
-                    &process.process.exec_path,
-                    &process.process.title,
-                ))
-            })
+            process
+                .process_module
+                .as_ref()
+                .and_then(crate::host::ProcessModule::legacy)
+                .or_else(|| {
+                    Some(crate::modules::process::build_with_title(
+                        &process.process.argv,
+                        &process.process.exec_path,
+                        &process.process.title,
+                    ))
+                })
         }
         "module" => Some(module_api(state)),
         "buffer" => Some(crate::modules::buffer::build_module()),
