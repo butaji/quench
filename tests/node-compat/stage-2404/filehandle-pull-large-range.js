@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 const assert = require("assert");
 const fs = require("fs");
 const path = `/tmp/quench-node-stage-2404-${process.pid}`;
