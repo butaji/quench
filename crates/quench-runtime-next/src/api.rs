@@ -248,6 +248,20 @@ mod tests {
     }
 
     #[test]
+    fn regression_suspended_with_scopes_survive_gc_and_closure_capture() {
+        assert_output_in_execution_modes(
+            r#"
+var x="outer",saved;function* f(){with({x:"inner"}){saved=()=>x;try{yield x;yield eval("x");}finally{$262.gc();print(saved());print(x);}}}var g=f();print(g.next().value);$262.gc();print(g.next().value);$262.gc();print(g.return("done").value);print(saved());print(x);
+var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();print(x);await 0;print(eval("x"));}}asyncRun();$262.gc();print(x);
+            "#,
+            &[
+                "inner", "inner", "inner", "inner", "done", "inner", "outer", "outer", "inner",
+                "inner",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_with_binding_key_survives_collecting_unscopables() {
         assert_output_in_execution_modes(
             r#"

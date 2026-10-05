@@ -165,6 +165,8 @@ pub(super) struct Frame {
     captured: bool,
     registers: Vec<Value>,
     active_iterators: Vec<ActiveIterator>,
+    // Empty while active; owns the transferred scope stack while detached.
+    with_objects: Vec<Value>,
     with_base: usize,
 }
 impl Frame {

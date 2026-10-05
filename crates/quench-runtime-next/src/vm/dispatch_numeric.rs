@@ -111,6 +111,7 @@ impl<H: Host> Vm<H> {
             captured: false,
             registers: vec![],
             active_iterators: vec![],
+            with_objects: Vec::new(),
             with_base: self.with_stack.len(),
         });
         frame
