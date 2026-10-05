@@ -99,7 +99,7 @@ impl JsError {
         self.0.payload.thrown
     }
 
-    pub(super) fn replace_thrown_value(&mut self, value: Value) {
+    pub(crate) fn replace_thrown_value(&mut self, value: Value) {
         self.0.payload.thrown = Some(value);
     }
 

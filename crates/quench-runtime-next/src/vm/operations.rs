@@ -195,6 +195,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
             native if native.is_host_control_native() => self.call_host(p, native, args),
+            Native::HostFunction => self.call_host_function(this, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let text = self.to_string(p, v)?;

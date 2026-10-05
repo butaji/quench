@@ -31,4 +31,7 @@ pub use value::Value;
 pub use vm::JsError;
 
 mod api;
-pub use api::{ExecutionRequest, RootedError, Runtime, RuntimeError, SourceKind};
+pub use api::{
+    ExecutionRequest, HostFunction, HostFunctionId, NativeContext, RootedError, Runtime,
+    RuntimeError, SourceKind,
+};
