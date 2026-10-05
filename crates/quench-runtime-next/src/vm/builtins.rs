@@ -1173,6 +1173,30 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        if matches!(
+            self.heap.get(function),
+            Some(Cell::Function { kind: FunctionKind::Native(native), .. })
+                if *native != Native::FunctionBoundCall
+        ) {
+            let property_name = name
+                .strip_prefix("get ")
+                .or_else(|| name.strip_prefix("set "))
+                .unwrap_or(name);
+            let symbol_member = property_name
+                .strip_prefix("[Symbol.")
+                .and_then(|name| name.strip_suffix(']'));
+            let source_name = if oxc_syntax::identifier::is_identifier_name(property_name)
+                || symbol_member.is_some_and(oxc_syntax::identifier::is_identifier_name)
+            {
+                name
+            } else {
+                ""
+            };
+            self.set_function_source(
+                function,
+                &format!("function {source_name}() {{ [native code] }}"),
+            )?;
+        }
         Ok(())
     }
 

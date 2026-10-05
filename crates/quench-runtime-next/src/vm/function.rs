@@ -14,7 +14,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.get(function) {
             Some(Cell::Function {
-                kind: FunctionKind::Native(Native::FunctionBoundCall),
+                kind: FunctionKind::Native(_),
                 ..
             }) => true,
             Some(Cell::Function {
