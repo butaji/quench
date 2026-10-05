@@ -15,6 +15,21 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
+    pub(crate) fn embedding_truthy(&self, root: RootId) -> Result<bool, JsError> {
+        Ok(self.truthy(self.embedding_value(root)?))
+    }
+
+    pub(crate) fn embedding_same_value(&self, left: RootId, right: RootId) -> Result<bool, JsError> {
+        Ok(self.same_value(self.embedding_value(left)?, self.embedding_value(right)?))
+    }
+
+    pub(crate) fn embedding_equal(&mut self, left: RootId, right: RootId) -> Result<bool, JsError> {
+        let left = self.embedding_value(left)?;
+        let right = self.embedding_value(right)?;
+        let program = self.embedding_program()?;
+        self.equal(&program, left, right)
+    }
+
     pub(crate) fn evaluate_embedding_script(
         &mut self,
         source: &str,
