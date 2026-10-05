@@ -11,6 +11,11 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "uptime" (0) => crate::modules::process::shared_vm::uptime,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
+        method "assert" (1) => crate::modules::assert::shared_vm::ok,
+        method "ok" (1) => crate::modules::assert::shared_vm::ok,
+        method "strict" (1) => crate::modules::assert::shared_vm::ok,
+        method "strictEqual" (2) => crate::modules::assert::shared_vm::strict_equal,
+        method "throws" (3) => crate::modules::assert::shared_vm::throws,
     ]
 }
 
