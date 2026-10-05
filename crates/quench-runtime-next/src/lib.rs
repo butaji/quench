@@ -31,4 +31,4 @@ pub use value::Value;
 pub use vm::JsError;
 
 mod api;
-pub use api::{ExecutionRequest, Runtime, RuntimeError, SourceKind};
+pub use api::{ExecutionRequest, RootedError, Runtime, RuntimeError, SourceKind};

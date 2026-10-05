@@ -1,6 +1,10 @@
 use crate::vm::Vm;
 use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value};
 
+#[path = "api_embedding.rs"]
+mod embedding;
+pub use embedding::RootedError;
+
 /// The syntax context used when compiling source.  The v2 compiler currently
 /// accepts the Script subset; the other contexts are explicit so callers do
 /// not accidentally treat module/eval source as an ordinary script.
@@ -106,6 +110,11 @@ impl<H: Host> Runtime<H> {
 
     pub fn release_root(&mut self, root: RootId) -> bool {
         self.vm.release_root(root)
+    }
+
+    /// Read a generation-checked persistent handle belonging to this runtime.
+    pub fn rooted_value(&self, root: RootId) -> Option<Value> {
+        self.vm.root_value(root)
     }
 
     /// Check whether a persistent handle still belongs to this runtime.

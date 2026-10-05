@@ -10,6 +10,8 @@ struct RootTableId(u64);
 
 impl RootTableId {
     fn fresh() -> Self {
+        // Keep the atomic update API available at the declared Rust 1.97 MSRV.
+        #[allow(deprecated)]
         let id = NEXT_ROOT_TABLE_ID
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("root table identity space exhausted");
