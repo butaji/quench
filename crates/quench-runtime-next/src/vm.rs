@@ -12,6 +12,7 @@ use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
 use crate::value_vec::ValueVec;
+use activation::CallContext;
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
@@ -57,10 +58,11 @@ mod eval;
 mod field_cache;
 mod finalization;
 mod function;
-mod host_function;
 mod function_cache;
 mod gc;
 mod generator;
+mod group_by;
+mod host_function;
 mod index;
 mod intl_collator;
 mod intl_datetime;
@@ -74,10 +76,9 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
-mod group_by;
 mod property_definition;
-use property_definition::PropertyDefinitionKind;
 use group_by::GroupByKind;
+use property_definition::PropertyDefinitionKind;
 mod iterators;
 mod json;
 mod method_cache;
@@ -152,6 +153,8 @@ use wtf16::JsString;
 #[cfg(test)]
 mod tests;
 pub(super) struct Frame {
+    // Actual callable identity is distinct from the code ID and captured environment.
+    context: CallContext,
     program: ProgramId,
     function: u32,
     pc: usize,
@@ -420,10 +423,20 @@ pub(super) struct PropertyAttributes {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
+
     pub accessor: bool,
     pub getter: Option<Value>,
     pub setter: Option<Value>,
 }
+
+impl PropertyAttributes {
+    /// CanDeclareGlobalFunction accepts a configurable property, or an
+    /// enumerable, writable data property when it cannot be reconfigured.
+    fn permits_global_function_declaration(self) -> bool {
+        self.configurable || (!self.accessor && self.writable && self.enumerable)
+    }
+}
+
 const DEFAULT_PROPERTY_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     writable: true,
     enumerable: true,
@@ -679,7 +692,7 @@ impl<H: Host> Vm<H> {
                         setter: None,
                     },
                 );
-            } else if attributes.accessor || !attributes.writable || !attributes.enumerable {
+            } else if !attributes.permits_global_function_declaration() {
                 return Err(self.type_error(program, "cannot declare global function".into()));
             }
         }
@@ -758,10 +771,7 @@ impl<H: Host> Vm<H> {
                     .position(|candidate| candidate == atom)
                     .and_then(|slot| {
                         if frame.captured {
-                            match self.heap.get(frame.env) {
-                                Some(Cell::Environment { slots, .. }) => slots.get(slot).copied(),
-                                _ => None,
-                            }
+                            self.heap.environment_slot(frame.env, slot)
                         } else {
                             frame.locals.get(slot).copied()
                         }
@@ -934,20 +944,23 @@ impl<H: Host> Vm<H> {
         self.install_builtins(program)?;
         self.initialize_host(program)
     }
+    fn materialize_constant(&mut self, constant: &Constant) -> Value {
+        match constant {
+            Constant::Number(v) => Value::number(*v),
+            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
+            Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
+            Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
+            Constant::Boolean(true) => Value::TRUE,
+            Constant::Boolean(false) => Value::FALSE,
+            Constant::Null => Value::NULL,
+            Constant::Undefined => Value::UNDEFINED,
+        }
+    }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
         let mut constants = Vec::with_capacity(program.constants.len());
         for constant in &program.constants {
-            let value = match constant {
-                Constant::Number(v) => Value::number(*v),
-                Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
-                Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
-                Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
-                Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
-                Constant::Boolean(true) => Value::TRUE,
-                Constant::Boolean(false) => Value::FALSE,
-                Constant::Null => Value::NULL,
-                Constant::Undefined => Value::UNDEFINED,
-            };
+            let value = self.materialize_constant(constant);
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
@@ -1027,10 +1040,19 @@ impl<H: Host> Vm<H> {
                             .is_some_and(|function| function.is_class_constructor)
                             && vm.construct_target.is_none()
                         {
-                            Err(vm
-                                .type_error(p, "class constructor cannot be called without new".into()))
+                            Err(vm.type_error(
+                                p,
+                                "class constructor cannot be called without new".into(),
+                            ))
                         } else {
-                            vm.call_user_maybe_async(&program, id, env, this, args)
+                            vm.call_user_maybe_async(
+                                &program,
+                                id,
+                                env,
+                                this,
+                                args,
+                                CallContext::user_function(id, callee),
+                            )
                         };
                         vm.active_program = active_program;
                         vm.realm.globals = current_global;
@@ -1047,7 +1069,14 @@ impl<H: Host> Vm<H> {
                             _ => vm.realm.globals,
                         };
                         let current_global = std::mem::replace(&mut vm.realm.globals, realm);
-                        let result = vm.call_user_numeric(&program, id, env, this, args);
+                        let result = vm.call_user_numeric(
+                            &program,
+                            id,
+                            env,
+                            this,
+                            args,
+                            CallContext::user_function(id, callee),
+                        );
                         vm.active_program = active_program;
                         vm.realm.globals = current_global;
                         result
@@ -1089,7 +1118,13 @@ impl<H: Host> Vm<H> {
         })?;
         let previous_program = std::mem::replace(&mut self.active_program, program_id);
         let previous_global = std::mem::replace(&mut self.realm.globals, realm);
-        let outcome = self.call_user_construct_frame(&program, id, env, args);
+        let outcome = self.call_user_construct_frame(
+            &program,
+            id,
+            env,
+            args,
+            CallContext::user_function(id, callee),
+        );
         self.active_program = previous_program;
         self.realm.globals = previous_global;
         match outcome? {

@@ -1,3 +1,4 @@
+use super::destructure::AssignmentReference;
 use super::*;
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
@@ -167,25 +168,44 @@ impl FunctionCompiler<'_, '_> {
         let _ = flags;
         destination
     }
-    pub(crate) fn load_atom(&mut self, atom: Atom) -> Register {
-        let compiler_binding = self.is_compiler_binding(atom);
-        let lexical = self.active_lexical_binding(atom);
-        let atom = lexical.unwrap_or(atom);
-        let dst = self.reg();
+    fn parameter_binding_atom(&self, atom: Atom) -> Atom {
         if self.parameter_context
-            && atom == self.owner.atom("arguments")
+            && self.owner.atoms[atom as usize].as_ref() == "arguments"
             && let Some(slot) = self.parameter_arguments_slot
         {
-            self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-        } else if (self.with_depth == self.inherited_with_depth
-            || lexical.is_some()
-            || compiler_binding)
+            self.locals[usize::from(slot)]
+        } else {
+            atom
+        }
+    }
+
+    pub(crate) fn load_atom(&mut self, atom: Atom) -> Register {
+        self.load_atom_reference(atom, None)
+    }
+
+    pub(super) fn load_atom_reference(
+        &mut self,
+        atom: Atom,
+        receiver: Option<Register>,
+    ) -> Register {
+        let atom = self.parameter_binding_atom(atom);
+        let compiler_binding = self.is_compiler_binding(atom);
+        let lexical = if self.dynamic_eval
+            && self.lexical_binding_kind(atom) == LexicalBindingKind::FunctionName
+        {
+            None
+        } else {
+            self.active_lexical_binding(atom)
+        };
+        let atom = lexical.unwrap_or(atom);
+        let dst = self.reg();
+        if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
             && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
         } else if self.with_depth == 0
-            && !self.dynamic_eval
+            && (!self.dynamic_eval || compiler_binding)
             && let Some((depth, slot)) = self
                 .scopes
                 .iter()
@@ -201,7 +221,14 @@ impl FunctionCompiler<'_, '_> {
             );
         } else {
             let cache = self.owner.cache_site();
-            self.emit(Op::LoadName, dst, 0, cache, atom);
+            match receiver {
+                Some(receiver) => {
+                    self.emit(Op::LoadNameCall, dst, receiver, cache, atom);
+                }
+                None => {
+                    self.emit(Op::LoadName, dst, 0, cache, atom);
+                }
+            }
         }
         dst
     }
@@ -220,18 +247,29 @@ impl FunctionCompiler<'_, '_> {
         value: Register,
         initializing: bool,
     ) {
-        let source_atom = atom;
+        let source_atom = self.parameter_binding_atom(atom);
         let binding_kind = self.lexical_binding_kind(source_atom);
-        let immutable_lexical = !initializing && binding_kind == LexicalBindingKind::Immutable;
+        let immutable_lexical = !initializing
+            && binding_kind == LexicalBindingKind::Immutable
+            && (self.with_depth == self.inherited_with_depth
+                || self.active_lexical_binding(source_atom).is_some());
         let compiler_binding = self.is_compiler_binding(source_atom);
-        let lexical = self.active_lexical_binding(source_atom);
+        let lexical = if self.dynamic_eval && binding_kind == LexicalBindingKind::FunctionName {
+            None
+        } else {
+            self.active_lexical_binding(source_atom)
+        };
         let atom = lexical.unwrap_or(source_atom);
         let function_name_binding = !initializing
-            && (binding_kind == LexicalBindingKind::FunctionName
-                || self.has_function_name_capture(source_atom));
+            && ((!self.dynamic_eval
+                && binding_kind == LexicalBindingKind::FunctionName
+                && (self.with_depth == self.inherited_with_depth || lexical.is_some()))
+                || (self.with_depth == 0
+                    && !self.dynamic_eval
+                    && self.has_function_name_capture(source_atom)));
         if function_name_binding {
             if self.strict {
-                self.throw_immutable_binding(atom);
+                self.throw_immutable_binding(source_atom);
             }
             return;
         }
@@ -240,6 +278,7 @@ impl FunctionCompiler<'_, '_> {
             .contains("\0rqj:class-binding:")
             || immutable_lexical
             || (self.with_depth == 0
+                && !self.dynamic_eval
                 && !self.local_slots.contains_key(&atom)
                 && self.has_immutable_capture(atom))
         {
@@ -268,6 +307,7 @@ impl FunctionCompiler<'_, '_> {
                 );
             }
         } else if (self.with_depth == 0 || initializing)
+            && (!self.dynamic_eval || compiler_binding)
             && let Some((depth, slot)) = self
                 .scopes
                 .iter()
@@ -283,13 +323,7 @@ impl FunctionCompiler<'_, '_> {
             );
         } else {
             let cache = self.owner.cache_site();
-            self.emit(
-                Op::StoreName,
-                value,
-                u16::from(initializing),
-                cache,
-                atom,
-            );
+            self.emit(Op::StoreName, value, u16::from(initializing), cache, atom);
         }
     }
 
@@ -303,19 +337,11 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         if let Some(slot) = self.local_slots.get(&atom).copied() {
-            self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
-        }
-        if self.function_id == 0 && !self.owner.module_goal {
-            let cache = self.owner.cache_site();
-            self.emit(Op::StoreName, value, 0, cache, atom);
+            self.emit(Op::StoreVarBinding, value, 0, 0, u32::from(slot));
         }
     }
 
-    pub(super) fn annex_b_outer_binding_allowed(
-        &self,
-        atom: Atom,
-        declaration_start: u32,
-    ) -> bool {
+    pub(super) fn annex_b_outer_binding_allowed(&self, atom: Atom, declaration_start: u32) -> bool {
         let parameter_binding = self
             .local_slots
             .get(&atom)
@@ -368,10 +394,11 @@ impl FunctionCompiler<'_, '_> {
         let function = self.owner.compile_function(
             name,
             &params,
-            body,
+            FunctionBody::Statements(body),
             &scopes,
             Some(self.function_id),
             FunctionOptions {
+                source_text: self.owner.source_text(value.span),
                 defaults: Some(&value.params),
                 name_binding,
                 async_function: value.r#async,
@@ -523,69 +550,6 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
-    pub(super) fn assign_target(
-        &mut self,
-        target: &SimpleAssignmentTarget<'_>,
-        right: Register,
-        operator: u8,
-    ) -> Register {
-        match target {
-            SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
-                let atom = self.owner.atom(id.name.as_str());
-                let value = self.compound_name(atom, right, operator);
-                self.store_atom(atom, value);
-                value
-            }
-            SimpleAssignmentTarget::StaticMemberExpression(item) => {
-                let atom = self.owner.atom(item.property.name.as_str());
-                if operator == 0 && matches!(&item.object, Expression::ThisExpression(_)) {
-                    let site = self.owner.cache_site();
-                    self.emit_set_this_field(right, site, atom);
-                    return right;
-                }
-                let object = self.expression(&item.object);
-                let value = self.compound_field(object, atom, right, operator);
-                let site = self.owner.cache_site();
-                self.emit_set_field(value, object, site, atom);
-                // A top-level global declaration is represented by the root
-                // frame while `globalThis` is its object view. Keep both
-                // views coherent at this explicit mutation boundary.
-                if matches!(&item.object, Expression::Identifier(id) if id.name == "globalThis") {
-                    self.store_atom(atom, value);
-                }
-                value
-            }
-            SimpleAssignmentTarget::PrivateFieldExpression(item) => {
-                let atom = self.owner.private_name_atom(item.field.span);
-                let object = self.expression(&item.object);
-                self.emit(Op::CheckPrivate, object, 0, 0, atom);
-                let value = self.compound_field(object, atom, right, operator);
-                let site = self.owner.cache_site();
-                self.emit_set_field(value, object, site, atom);
-                value
-            }
-            SimpleAssignmentTarget::ComputedMemberExpression(item) => {
-                let object = self.expression(&item.object);
-                if matches!(&item.object, Expression::Super(_)) {
-                    let receiver = self.reg();
-                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
-                }
-                let raw_key = self.expression(&item.expression);
-                self.emit(Op::RequireObjectCoercible, 0, object, 0, 0);
-                let key = self.reg();
-                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
-                let value = self.compound_index(object, key, right, operator);
-                self.emit(Op::SetIndex, value, object, key, u32::from(self.strict));
-                value
-            }
-            _ => {
-                self.owner
-                    .reject(target.span(), "assignment target unsupported");
-                right
-            }
-        }
-    }
-
     pub(super) fn emit_set_field(
         &mut self,
         value: Register,
@@ -609,128 +573,13 @@ impl FunctionCompiler<'_, '_> {
         };
         self.emit(op, value, 0, site, atom);
     }
-    pub(super) fn compound_name(&mut self, atom: Atom, right: Register, op: u8) -> Register {
-        if op == 0 {
-            return right;
-        }
-        let left = self.load_atom(atom);
-        self.apply_compound(left, right, op)
-    }
-    pub(super) fn compound_field(
-        &mut self,
-        object: Register,
-        atom: Atom,
-        right: Register,
-        op: u8,
-    ) -> Register {
-        if op == 0 {
-            return right;
-        }
-        let left = self.reg();
-        let cache = self.owner.cache_site();
-        self.emit(
-            Op::GetField,
-            left,
-            FieldBase::register(object).0,
-            cache,
-            atom,
-        );
-        self.apply_compound(left, right, op)
-    }
-    pub(super) fn compound_index(
-        &mut self,
-        object: Register,
-        key: Register,
-        right: Register,
-        op: u8,
-    ) -> Register {
-        if op == 0 {
-            return right;
-        }
-        let left = self.reg();
-        self.emit(Op::GetIndex, left, object, key, 0);
-        self.apply_compound(left, right, op)
-    }
-    pub(super) fn apply_compound(&mut self, left: Register, right: Register, op: u8) -> Register {
-        self.emit_binary(
-            u32::from(op + 7),
-            Operand::register(left),
-            Operand::register(right),
-        )
-    }
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>) -> Register {
-        if let SimpleAssignmentTarget::StaticMemberExpression(target) = &value.argument
-            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
-            && matches!(&target.object, Expression::CallExpression(_))
-        {
-            return self.throw_invalid_call_assignment(&target.object);
+        let reference = self.prepare_assignment_reference(&value.argument);
+        if let AssignmentReference::Abrupt(result) = reference {
+            return result;
         }
-        let (old, target) = match &value.argument {
-            SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
-                let atom = self.owner.atom(id.name.as_str());
-                let capture_global_reference = self.needs_strict_global_reference_capture(atom);
-                let environment = if self.with_depth != 0 || capture_global_reference {
-                    let environment = self.reg();
-                    let cache = self.owner.cache_site();
-                    self.emit(
-                        Op::ResolveName,
-                        environment,
-                        u16::from(capture_global_reference),
-                        cache,
-                        atom,
-                    );
-                    Some(environment)
-                } else {
-                    None
-                };
-                let old = if let Some(environment) = environment {
-                    let old = self.reg();
-                    self.emit(
-                        Op::LoadResolvedName,
-                        old,
-                        environment,
-                        u16::from(self.strict),
-                        atom,
-                    );
-                    old
-                } else {
-                    self.load_atom(atom)
-                };
-                (old, UpdateTarget::Name(atom, environment))
-            }
-            SimpleAssignmentTarget::StaticMemberExpression(item) => {
-                let object = self.expression(&item.object);
-                let atom = self.owner.atom(item.property.name.as_str());
-                let old = self.reg();
-                let cache = self.owner.cache_site();
-                self.emit(
-                    Op::GetField,
-                    old,
-                    FieldBase::register(object).0,
-                    cache,
-                    atom,
-                );
-                (old, UpdateTarget::Field(atom, object))
-            }
-            SimpleAssignmentTarget::ComputedMemberExpression(item) => {
-                let object = self.expression(&item.object);
-                if matches!(&item.object, Expression::Super(_)) {
-                    let receiver = self.reg();
-                    self.emit(Op::LoadThis, receiver, 0, 0, 0);
-                }
-                let raw_key = self.expression(&item.expression);
-                self.emit(Op::RequireObjectCoercible, 0, object, 0, 0);
-                let key = self.reg();
-                self.emit(Op::ToPropertyKey, key, raw_key, 0, 0);
-                let old = self.reg();
-                self.emit(Op::GetIndex, old, object, key, 0);
-                (old, UpdateTarget::Index(object, key))
-            }
-            _ => {
-                self.owner.reject(value.span, "update target unsupported");
-                return self.literal(Constant::Undefined);
-            }
-        };
+        let reference = self.canonicalize_assignment_reference(reference, true);
+        let old = self.load_assignment_reference(reference);
         let numeric_old = self.reg();
         self.emit(Op::ToNumeric, numeric_old, old, 0, 0);
         let next = self.reg();
@@ -741,25 +590,7 @@ impl FunctionCompiler<'_, '_> {
             0,
             u32::from(value.operator as u8),
         );
-        match target {
-            UpdateTarget::Name(atom, Some(environment)) => {
-                self.emit(
-                    Op::StoreResolvedName,
-                    next,
-                    environment,
-                    u16::from(self.strict),
-                    atom,
-                );
-            }
-            UpdateTarget::Name(atom, None) => self.store_atom(atom, next),
-            UpdateTarget::Field(atom, object) => {
-                let cache = self.owner.cache_site();
-                self.emit_set_field(next, object, cache, atom);
-            }
-            UpdateTarget::Index(object, key) => {
-                self.emit(Op::SetIndex, next, object, key, u32::from(self.strict));
-            }
-        }
+        self.store_assignment_reference(reference, next);
         if value.prefix { next } else { numeric_old }
     }
 

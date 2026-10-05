@@ -8,7 +8,8 @@ struct BindingIterator {
 }
 
 #[derive(Clone, Copy)]
-enum AssignmentReference {
+pub(super) enum AssignmentReference {
+    Abrupt(Register),
     Name {
         atom: Atom,
         environment: Option<Register>,
@@ -17,7 +18,6 @@ enum AssignmentReference {
     Field {
         object: Register,
         atom: Atom,
-        mirror_global: bool,
     },
     SuperField {
         base: Register,
@@ -41,15 +41,11 @@ enum AssignmentReference {
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn assignment(&mut self, value: &AssignmentExpression<'_>) -> Register {
-        if let Some(SimpleAssignmentTarget::StaticMemberExpression(target)) =
-            value.left.as_simple_assignment_target()
-            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
-            && matches!(&target.object, Expression::CallExpression(_))
-        {
-            return self.throw_invalid_call_assignment(&target.object);
-        }
         if let Some(target) = value.left.as_simple_assignment_target() {
             let reference = self.prepare_assignment_reference(target);
+            if let AssignmentReference::Abrupt(result) = reference {
+                return result;
+            }
             let operator = value.operator as u8;
             if operator == 0 {
                 let right = self.expression(&value.right);
@@ -127,8 +123,9 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn load_assignment_reference(&mut self, reference: AssignmentReference) -> Register {
+    pub(super) fn load_assignment_reference(&mut self, reference: AssignmentReference) -> Register {
         match reference {
+            AssignmentReference::Abrupt(result) => result,
             AssignmentReference::Name { atom, environment } => {
                 if let Some(environment) = environment {
                     let value = self.reg();
@@ -145,8 +142,7 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
             AssignmentReference::ThisField(atom) => {
-                let object = self.reg();
-                self.emit(Op::LoadThis, object, 0, 0, 0);
+                let object = self.load_this_value();
                 let value = self.reg();
                 let cache = self.owner.cache_site();
                 self.emit(
@@ -226,7 +222,7 @@ impl FunctionCompiler<'_, '_> {
         (source == identifier.name.as_str()).then(|| self.owner.atom(source))
     }
 
-    fn canonicalize_assignment_reference(
+    pub(super) fn canonicalize_assignment_reference(
         &mut self,
         reference: AssignmentReference,
         require_object: bool,
@@ -265,7 +261,9 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn assign_pattern(&mut self, target: &AssignmentTarget<'_>, value: Register) {
         if let Some(simple) = target.as_simple_assignment_target() {
-            self.assign_target(simple, value, 0);
+            let reference = self.prepare_assignment_reference(simple);
+            let reference = self.canonicalize_assignment_reference(reference, true);
+            self.store_assignment_reference(reference, value);
             return;
         }
         match target {
@@ -401,15 +399,23 @@ impl FunctionCompiler<'_, '_> {
         self.assign_maybe_default(element, value);
     }
 
-    fn prepare_assignment_reference(
+    pub(super) fn prepare_assignment_reference(
         &mut self,
         target: &SimpleAssignmentTarget<'_>,
     ) -> AssignmentReference {
+        if let Some(call) = crate::compile::annex_b_targets::call_target(target) {
+            return AssignmentReference::Abrupt(self.throw_invalid_call_assignment(call));
+        }
         match target {
             SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
                 let capture_global_reference = self.needs_strict_global_reference_capture(atom);
-                let resolve_reference = self.with_depth != 0 || capture_global_reference;
+                // RHS eval can introduce a nearer binding, but PutValue must retain
+                // the environment selected by the LHS. Own local slots are stable.
+                let capture_eval_reference = self.dynamic_eval
+                    && !self.local_slots.contains_key(&self.resolve_lexical(atom));
+                let resolve_reference =
+                    self.with_depth != 0 || capture_global_reference || capture_eval_reference;
                 let environment = if resolve_reference {
                     let resolved = self.reg();
                     let cache = self.owner.cache_site();
@@ -441,11 +447,7 @@ impl FunctionCompiler<'_, '_> {
                     AssignmentReference::ThisField(atom)
                 } else {
                     let object = self.expression(&member.object);
-                    AssignmentReference::Field {
-                        object,
-                        atom,
-                        mirror_global: matches!(&member.object, Expression::Identifier(id) if id.name == "globalThis"),
-                    }
+                    AssignmentReference::Field { object, atom }
                 }
             }
             SimpleAssignmentTarget::PrivateFieldExpression(member) => {
@@ -483,8 +485,13 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn store_assignment_reference(&mut self, reference: AssignmentReference, value: Register) {
+    pub(super) fn store_assignment_reference(
+        &mut self,
+        reference: AssignmentReference,
+        value: Register,
+    ) {
         match reference {
+            AssignmentReference::Abrupt(_) => {}
             AssignmentReference::Name {
                 atom,
                 environment: Some(environment),
@@ -505,16 +512,9 @@ impl FunctionCompiler<'_, '_> {
                 let site = self.owner.cache_site();
                 self.emit_set_this_field(value, site, atom);
             }
-            AssignmentReference::Field {
-                object,
-                atom,
-                mirror_global,
-            } => {
+            AssignmentReference::Field { object, atom } => {
                 let site = self.owner.cache_site();
                 self.emit_set_field(value, object, site, atom);
-                if mirror_global {
-                    self.store_atom(atom, value);
-                }
             }
             AssignmentReference::SuperField {
                 base,
@@ -820,24 +820,7 @@ impl FunctionCompiler<'_, '_> {
         let result = self.reg();
         let next_start = self.code.len() as u32;
         self.emit(Op::Call, result, iterator.next, iterator.iterator, 0);
-        let next_end = self.code.len() as u32;
-        let after_next_error = self.emit(Op::Jump, 0, 0, 0, 0);
-        let next_error_target = self.code.len() as u32;
-        let error_atom = self.hidden_local("\0rqj:iterator-next-error");
-        self.handlers.push(crate::bytecode::Handler {
-            start: next_start,
-            end: next_end,
-            target: next_error_target,
-            slot: self.local_slot(error_atom),
-            return_target: None,
-            return_slot: None,
-            with_depth: self.with_depth,
-        });
-        let original_error = self.load_atom(error_atom);
-        let done = self.literal(Constant::Boolean(true));
-        self.emit(Op::Move, iterator.done, done, 0, 0);
-        self.emit(Op::Throw, original_error, 0, 0, 0);
-        self.patch(after_next_error);
+        self.emit(Op::RequireIteratorResult, 0, result, 0, 0);
         let done_value = self.reg();
         let done_atom = self.owner.atom("done");
         let done_cache = self.owner.cache_site();
@@ -861,8 +844,26 @@ impl FunctionCompiler<'_, '_> {
             value_cache,
             value_atom,
         );
-        self.patch(already_done);
         self.patch(end_step);
+        let next_end = self.code.len() as u32;
+        let after_next_error = self.emit(Op::Jump, 0, 0, 0, 0);
+        let next_error_target = self.code.len() as u32;
+        let error_atom = self.hidden_local("\0rqj:iterator-next-error");
+        self.handlers.push(crate::bytecode::Handler {
+            start: next_start,
+            end: next_end,
+            target: next_error_target,
+            slot: self.local_slot(error_atom),
+            return_target: None,
+            return_slot: None,
+            with_depth: self.with_depth,
+        });
+        let original_error = self.load_atom(error_atom);
+        let done = self.literal(Constant::Boolean(true));
+        self.emit(Op::Move, iterator.done, done, 0, 0);
+        self.emit(Op::Throw, original_error, 0, 0, 0);
+        self.patch(after_next_error);
+        self.patch(already_done);
         value
     }
 

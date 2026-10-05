@@ -11,7 +11,7 @@ impl Compiler<'_> {
     ) -> FxHashSet<Atom> {
         let mut seen: FxHashSet<_> = output.iter().copied().collect();
         let mut function_scope = seen.clone();
-        let annex_b_collisions = super::early::annex_b_lexical_collisions(body);
+        let annex_b_collisions = self.annex_b_collisions(body);
         self.collect_locals_into(
             body,
             output,

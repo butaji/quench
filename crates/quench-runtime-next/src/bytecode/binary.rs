@@ -1,8 +1,9 @@
 use super::{
-    AtomTable, Constant, DispatchClass, EvalBinding, EvalBindingLocation, BindingSite, FieldBase,
-    FieldSite, Function, Handler, Instr, LexicalBindingKind, MethodSite, ModuleImportBinding,
-    ModuleImportName, ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind,
-    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Superinstruction, WideInstruction,
+    AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
+    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
+    MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
+    ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
+    Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 5] = &[b'R', b'Q', b'J', 0, super::ResidualProgram::FORMAT_VERSION];
@@ -13,6 +14,41 @@ const OPTIONAL_STRING_NONE: u8 = 0;
 const OPTIONAL_STRING_SOME: u8 = 1;
 const MODULE_LINK_PLAN_NONE: u8 = 0;
 const MODULE_LINK_PLAN_SOME: u8 = 1;
+
+fn read_eval_binding(input: &mut BinaryReader<'_>) -> Result<EvalBinding, String> {
+    Ok(EvalBinding {
+        atom: input.u32()?,
+        location: match input.u8()? {
+            EVAL_BINDING_LOCAL => EvalBindingLocation::Local(input.u16()?),
+            EVAL_BINDING_CAPTURE => EvalBindingLocation::Capture {
+                depth: input.u16()?,
+                slot: input.u16()?,
+            },
+            _ => return Err("invalid eval binding location".into()),
+        },
+        with_depth: input.u16()?,
+        kind: LexicalBindingKind::from_binary_tag(input.u8()?)?,
+        declaration: EvalBindingDeclaration::from_binary_tag(input.u8()?)?,
+    })
+}
+
+fn write_eval_binding(out: &mut BinaryWriter, binding: &EvalBinding) {
+    out.u32(binding.atom);
+    match binding.location {
+        EvalBindingLocation::Local(slot) => {
+            out.u8(EVAL_BINDING_LOCAL);
+            out.u16(slot);
+        }
+        EvalBindingLocation::Capture { depth, slot } => {
+            out.u8(EVAL_BINDING_CAPTURE);
+            out.u16(depth);
+            out.u16(slot);
+        }
+    }
+    out.u16(binding.with_depth);
+    out.u8(binding.kind as u8);
+    out.u8(binding.declaration as u8);
+}
 
 pub(super) fn write_program(
     program: &super::ResidualProgram,
@@ -128,10 +164,12 @@ pub(super) fn write_program(
         out.u8(u8::from(function.is_generator));
         out.u8(u8::from(function.is_class_constructor));
         out.u8(u8::from(function.derived_constructor));
+        out.option_u32(function.instance_initializer);
         out.u32(function.super_home_atom.unwrap_or(u32::MAX));
         out.u8(u8::from(function.constructible));
         out.u8(u8::from(function.class_field_initializer));
         out.u8(u8::from(function.parameter_eval_arguments_error));
+        out.u8(u8::from(function.simple_parameters));
         out.u8(u8::from(function.strict));
         out.u16(function.arguments_slot.unwrap_or(u16::MAX));
         out.u16(function.locals);
@@ -142,6 +180,17 @@ pub(super) fn write_program(
         out.u32(function.environment_atoms.len() as u32);
         for atom in &function.environment_atoms {
             out.u32(*atom);
+        }
+        out.u32(function.name_bindings.len() as u32);
+        for binding in &function.name_bindings {
+            write_eval_binding(&mut out, binding);
+        }
+        out.u32(function.environment_clones.len() as u32);
+        for slots in &function.environment_clones {
+            out.u32(slots.len() as u32);
+            for slot in slots {
+                out.u16(*slot);
+            }
         }
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
@@ -172,21 +221,7 @@ pub(super) fn write_program(
             out.u32(site.resume_pc);
             out.u32(site.bindings.len() as u32);
             for binding in &site.bindings {
-                out.u32(binding.atom);
-                match binding.location {
-                    EvalBindingLocation::Local(slot) => {
-                        out.u8(EVAL_BINDING_LOCAL);
-                        out.u16(slot);
-                    }
-                    EvalBindingLocation::Capture { depth, slot } => {
-                        out.u8(EVAL_BINDING_CAPTURE);
-                        out.u16(depth);
-                        out.u16(slot);
-                    }
-                }
-                out.u16(binding.with_depth);
-                out.u8(binding.kind as u8);
-                out.u8(u8::from(binding.catch_parameter));
+                write_eval_binding(&mut out, binding);
             }
         }
         out.u16(function.registers);
@@ -377,6 +412,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid derived constructor flag".into()),
         };
+        let instance_initializer = input.option_u32()?;
         let super_home_atom = match input.u32()? {
             u32::MAX => None,
             atom => Some(atom),
@@ -396,6 +432,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             1 => true,
             _ => return Err("invalid parameter eval flag".into()),
         };
+        let simple_parameters = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid simple parameters flag".into()),
+        };
         let strict = match input.u8()? {
             0 => false,
             1 => true,
@@ -408,6 +449,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let locals = input.u16()?;
         let local_atoms = input.list(|input| input.u32())?;
         let environment_atoms = input.list(|input| input.u32())?;
+        let name_bindings = input.list(read_eval_binding)?;
+        let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
         let lexical_atoms = input.list(|input| input.u32())?;
         let global_lexical_atoms = input.list(|input| input.u32())?;
         let global_var_atoms = input.list(|input| input.u32())?;
@@ -416,26 +459,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let global_immutable_atoms = input.list(|input| input.u32())?;
         let binding_sites = input.list(|input| {
             let resume_pc = input.u32()?;
-            let bindings = input.list(|input| {
-                Ok(EvalBinding {
-                    atom: input.u32()?,
-                    location: match input.u8()? {
-                        EVAL_BINDING_LOCAL => EvalBindingLocation::Local(input.u16()?),
-                        EVAL_BINDING_CAPTURE => EvalBindingLocation::Capture {
-                            depth: input.u16()?,
-                            slot: input.u16()?,
-                        },
-                        _ => return Err("invalid eval binding location".into()),
-                    },
-                    with_depth: input.u16()?,
-                    kind: LexicalBindingKind::from_binary_tag(input.u8()?)?,
-                    catch_parameter: match input.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err("invalid eval binding catch flag".into()),
-                    },
-                })
-            })?;
+            let bindings = input.list(read_eval_binding)?;
             Ok(BindingSite {
                 resume_pc,
                 bindings,
@@ -511,15 +535,19 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             is_generator,
             is_class_constructor,
             derived_constructor,
+            instance_initializer,
             super_home_atom,
             constructible,
             class_field_initializer,
             parameter_eval_arguments_error,
             arguments_slot,
+            simple_parameters,
             strict,
             locals,
             local_atoms,
             environment_atoms,
+            environment_clones,
+            name_bindings,
             lexical_atoms,
             global_lexical_atoms,
             global_var_atoms,

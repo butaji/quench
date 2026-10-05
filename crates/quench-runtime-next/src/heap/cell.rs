@@ -65,7 +65,7 @@ impl WeakMapEntries {
 #[rustfmt::skip]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Native {
-    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicFunction, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
+    Print, HostDone, CreateRealm, IsHTMLDDA, EvalScript, CollectGarbage, RealmTypeError, Eval, ToString, Function, FunctionPrototype, FunctionPrototypeHasInstance, FunctionCaller, DynamicImport, AbstractModuleSource, AbstractModuleSourceToStringTag, ShadowRealm, ShadowRealmEvaluate, ShadowRealmImportValue, ShadowRealmImportValueFulfilled, ShadowRealmWrappedFunction,
     Object,
     ObjectKeys, ForInKeys, ForInKeyIsEnumerable, ObjectValues, ObjectEntries, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ObjectGetOwnPropertyDescriptor, ObjectGetOwnPropertyDescriptors, ObjectFromEntries, ObjectIs,
     ObjectCreate, ObjectAssign, ObjectDefineProperty, ObjectDefineProperties, ObjectGetPrototypeOf, ObjectPreventExtensions, ObjectIsExtensible, ObjectSeal, ObjectIsSealed, ObjectFreeze, ObjectIsFrozen, ObjectGroupBy,
@@ -629,7 +629,6 @@ impl Native {
         matches!(
             self,
             Self::Function
-                | Self::DynamicFunction
                 | Self::AsyncFunction
                 | Self::GeneratorFunction
                 | Self::AsyncGeneratorFunction
@@ -1114,6 +1113,48 @@ pub(crate) enum ProxyKind {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) enum EnvironmentSlot {
+    Owned(Value),
+    /// Direct owner of this slot index; the referenced slot is always Owned.
+    Shared(Value),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EnvironmentSlots(pub(super) Box<[EnvironmentSlot]>);
+
+impl EnvironmentSlots {
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        self.0.iter().map(|slot| match slot {
+            EnvironmentSlot::Owned(value) | EnvironmentSlot::Shared(value) => *value,
+        })
+    }
+}
+
+impl From<Box<[Value]>> for EnvironmentSlots {
+    fn from(values: Box<[Value]>) -> Self {
+        Self(values.into_iter().map(EnvironmentSlot::Owned).collect())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum EnvironmentBindings {
+    Owned(Vec<(Atom, Value)>),
+    Shared(Value),
+}
+
+impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
+    fn from(bindings: Vec<(Atom, Value)>) -> Self {
+        Self::Owned(bindings)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum RegExpLegacyOwner {
     Enabled(Value),
     Disabled(Value),
@@ -1222,9 +1263,10 @@ pub(crate) enum Cell {
         parent: Value,
         program: Option<u32>,
         root_eval_scope: bool,
+        binding_site_pc: Option<u32>,
         function: u32,
-        slots: Box<[Value]>,
-        dynamic_bindings: Vec<(Atom, Value)>,
+        slots: EnvironmentSlots,
+        dynamic_bindings: EnvironmentBindings,
         with_objects: Vec<Value>,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.

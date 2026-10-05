@@ -99,14 +99,14 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
     let second_regexp_prototype = vm.object();
     let first_segmenter_prototype = vm.object();
     let second_segmenter_prototype = vm.object();
-    vm.realm.intrinsics.builtin_prototypes.insert(
-        (first_global, Native::TypeError),
-        first_error_prototype,
-    );
-    vm.realm.intrinsics.builtin_prototypes.insert(
-        (second_global, Native::TypeError),
-        second_error_prototype,
-    );
+    vm.realm
+        .intrinsics
+        .builtin_prototypes
+        .insert((first_global, Native::TypeError), first_error_prototype);
+    vm.realm
+        .intrinsics
+        .builtin_prototypes
+        .insert((second_global, Native::TypeError), second_error_prototype);
     vm.realm.intrinsics.iterator_prototypes.insert(
         first_global,
         IteratorRealmPrototypes {
@@ -162,21 +162,31 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         assert!(vm.heap.get(object).is_some());
     }
     assert_eq!(
-        vm.realm.intrinsics.builtin_prototypes.get(&(first_global, Native::TypeError)),
+        vm.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(first_global, Native::TypeError)),
         Some(&first_error_prototype)
     );
     assert_eq!(
-        vm.realm.intrinsics.builtin_prototypes.get(&(second_global, Native::TypeError)),
+        vm.realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(second_global, Native::TypeError)),
         Some(&second_error_prototype)
     );
     assert_eq!(
-        vm.realm.intrinsics.iterator_prototypes
+        vm.realm
+            .intrinsics
+            .iterator_prototypes
             .get(&first_global)
             .map(|prototypes| prototypes.generator),
         Some(first_iterator_prototype)
     );
     assert_eq!(
-        vm.realm.intrinsics.iterator_prototypes
+        vm.realm
+            .intrinsics
+            .iterator_prototypes
             .get(&second_global)
             .map(|prototypes| prototypes.generator),
         Some(second_iterator_prototype)
@@ -226,7 +236,11 @@ fn realm_promise_records_keep_values_rooted() {
     assert!(vm.heap.get(promise).is_some());
     assert!(vm.heap.get(result).is_some());
     assert_eq!(
-        vm.realm.promise.records.get(&promise).map(|record| record.result),
+        vm.realm
+            .promise
+            .records
+            .get(&promise)
+            .map(|record| record.result),
         Some(result)
     );
 }
@@ -323,9 +337,18 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
             assert_eq!(
                 output.borrow().as_slice(),
                 [
-                    "3", "9", "function", "function", "7", "true",
+                    "3",
+                    "9",
+                    "function",
+                    "function",
+                    "7",
+                    "true",
                     if strict { "blocked" } else { "not-blocked" },
-                    "1", "false", "4", "6", "class"
+                    "1",
+                    "false",
+                    "4",
+                    "6",
+                    "class"
                 ],
                 "strict={strict}"
             );
@@ -505,6 +528,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     let mut registers = vec![Value::UNDEFINED; 65];
     registers[64] = live;
     vm.frames.push(super::Frame {
+        context: super::activation::CallContext::Internal,
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -591,18 +615,20 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         program: None,
         root_eval_scope: false,
+        binding_site_pc: None,
         function: u32::MAX,
-        slots: Box::new([]),
-        dynamic_bindings: vec![],
+        slots: Vec::<Value>::new().into_boxed_slice().into(),
+        dynamic_bindings: vec![].into(),
         with_objects: vec![],
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
         program: None,
         root_eval_scope: false,
+        binding_site_pc: None,
         function: u32::MAX,
-        slots: Box::new([]),
-        dynamic_bindings: vec![],
+        slots: Vec::<Value>::new().into_boxed_slice().into(),
+        dynamic_bindings: vec![].into(),
         with_objects: vec![],
     });
     vm.method_caches.push([
@@ -641,9 +667,10 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         parent: crate::Value::NULL,
         program: None,
         root_eval_scope: false,
+        binding_site_pc: None,
         function: u32::MAX,
-        slots: Box::new([]),
-        dynamic_bindings: vec![],
+        slots: Vec::<Value>::new().into_boxed_slice().into(),
+        dynamic_bindings: vec![].into(),
         with_objects: vec![],
     });
     assert_eq!(reused, dead);
@@ -1827,10 +1854,12 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 parent: Value::NULL,
                 program: Some(super::program_store::ProgramId::MAIN.raw()),
                 root_eval_scope: false,
+                binding_site_pc: None,
                 function: super::ROOT_FUNCTION_ID,
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
-                    .into_boxed_slice(),
-                dynamic_bindings: vec![],
+                    .into_boxed_slice()
+                    .into(),
+                dynamic_bindings: vec![].into(),
                 with_objects: vec![],
             });
             vm.programs
@@ -2669,25 +2698,60 @@ fn typed_sort_snapshot_roots_release_after_comparator_errors() {
 #[test]
 fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
     let cases = [
-        ("var source = [3, 1, 2]; var comparator = (left, right) => left - right;", false, false),
-        ("var source = null; var comparator = (left, right) => left - right;", true, true),
-        ("var source = [3, 1, 2]; var comparator = undefined; \
-          Object.defineProperty(source, '1', {get() {throw new Error('getter')}});", true, true),
-        ("var source = [3, 1, 2]; var comparator = () => {throw new Error('compare')};", true, true),
-        ("var source = [3, 1, 2]; var comparator = () => \
-          ({valueOf() {throw new Error('coercion')}});", true, true),
-        ("var source = [{toString() {throw new Error('string')}}, {}]; var comparator = undefined;", true, true),
-        ("var source = [3, 1, 2]; var comparator = undefined; \
-          Object.defineProperty(source, '0', {get() {return 3}, set() {throw new Error('setter')}});", true, false),
-        ("var source = [3, , 1]; var comparator = undefined; \
-          Object.defineProperty(source, '2', {configurable: false});", true, false),
+        (
+            "var source = [3, 1, 2]; var comparator = (left, right) => left - right;",
+            false,
+            false,
+        ),
+        (
+            "var source = null; var comparator = (left, right) => left - right;",
+            true,
+            true,
+        ),
+        (
+            "var source = [3, 1, 2]; var comparator = undefined; \
+          Object.defineProperty(source, '1', {get() {throw new Error('getter')}});",
+            true,
+            true,
+        ),
+        (
+            "var source = [3, 1, 2]; var comparator = () => {throw new Error('compare')};",
+            true,
+            true,
+        ),
+        (
+            "var source = [3, 1, 2]; var comparator = () => \
+          ({valueOf() {throw new Error('coercion')}});",
+            true,
+            true,
+        ),
+        (
+            "var source = [{toString() {throw new Error('string')}}, {}]; var comparator = undefined;",
+            true,
+            true,
+        ),
+        (
+            "var source = [3, 1, 2]; var comparator = undefined; \
+          Object.defineProperty(source, '0', {get() {return 3}, set() {throw new Error('setter')}});",
+            true,
+            false,
+        ),
+        (
+            "var source = [3, , 1]; var comparator = undefined; \
+          Object.defineProperty(source, '2', {configurable: false});",
+            true,
+            false,
+        ),
     ];
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
     ] {
         for (source, sort_fails, copy_fails) in cases {
-            for (native, fails) in [(Native::ArraySort, sort_fails), (Native::ArrayToSorted, copy_fails)] {
+            for (native, fails) in [
+                (Native::ArraySort, sort_fails),
+                (Native::ArrayToSorted, copy_fails),
+            ] {
                 let mut vm = Vm::new(SilentHost);
                 let program = compile(source, "sort-roots.js").unwrap();
                 vm.execute(&program).unwrap();
@@ -2699,7 +2763,9 @@ fn sort_snapshot_roots_release_after_guest_failures_and_writeback() {
                 let outcome = vm.array_modern_native(&program, native, source, &[comparator]);
                 assert_eq!(outcome.is_err(), fails);
                 assert_eq!(vm.heap.root_count_for_test(), roots_before);
-                if native == Native::ArrayToSorted && let Ok(result) = outcome {
+                if native == Native::ArrayToSorted
+                    && let Ok(result) = outcome
+                {
                     let handle = vm.heap.weak_handle(result).unwrap();
                     vm.collect_now(&program);
                     assert!(vm.heap.weak_value(handle).is_none());
@@ -2717,12 +2783,24 @@ fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
     ] {
         for (source, getters_fail, coercion_fails) in [
             ("var source = [1, 2, 3]; var index = 1;", false, false),
-            ("var source = [1, 2, 3]; var index = 1; \
+            (
+                "var source = [1, 2, 3]; var index = 1; \
               for (var key of [0, 1, 2]) Object.defineProperty(source, key, \
-              {get() {throw new Error('getter')}});", true, false),
-            ("var source = [1, 2, 3]; var index = {valueOf() {throw new Error('coercion')}};", false, true),
+              {get() {throw new Error('getter')}});",
+                true,
+                false,
+            ),
+            (
+                "var source = [1, 2, 3]; var index = {valueOf() {throw new Error('coercion')}};",
+                false,
+                true,
+            ),
         ] {
-            for native in [Native::ArrayWith, Native::ArrayToReversed, Native::ArrayToSpliced] {
+            for native in [
+                Native::ArrayWith,
+                Native::ArrayToReversed,
+                Native::ArrayToSpliced,
+            ] {
                 let mut vm = Vm::new(SilentHost);
                 let program = compile(source, "copy-roots.js").unwrap();
                 vm.execute(&program).unwrap();
@@ -2731,8 +2809,12 @@ fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
                 let index_atom = vm.intern_atom("index");
                 let index = vm.own_property(vm.realm.globals, index_atom).unwrap();
                 let roots_before = vm.heap.root_count_for_test();
-                let outcome = vm.array_copy_native(&program, native, source, &[index, Value::number(1.0)]);
-                assert_eq!(outcome.is_err(), getters_fail || (coercion_fails && native != Native::ArrayToReversed));
+                let outcome =
+                    vm.array_copy_native(&program, native, source, &[index, Value::number(1.0)]);
+                assert_eq!(
+                    outcome.is_err(),
+                    getters_fail || (coercion_fails && native != Native::ArrayToReversed)
+                );
                 assert_eq!(vm.heap.root_count_for_test(), roots_before);
                 if let Ok(result) = outcome {
                     let handle = vm.heap.weak_handle(result).unwrap();
@@ -2747,14 +2829,34 @@ fn array_copy_roots_release_after_success_getters_and_coercion_errors() {
 #[test]
 fn reduction_roots_release_on_success_and_abrupt_completion() {
     let cases = [
-        ("var source = [1, 2]; var callback = (accumulator, value) => ({sum: 42});", false, false),
-        ("var source = [1, 2]; var callback = () => {throw new Error('callback')};", true, true),
-        ("var source = [1, 2]; var callback = () => ({sum: 42}); \
+        (
+            "var source = [1, 2]; var callback = (accumulator, value) => ({sum: 42});",
+            false,
+            false,
+        ),
+        (
+            "var source = [1, 2]; var callback = () => {throw new Error('callback')};",
+            true,
+            true,
+        ),
+        (
+            "var source = [1, 2]; var callback = () => ({sum: 42}); \
           for (var index of [0, 1]) Object.defineProperty(source, index, \
-          {get() {throw new Error('getter')}});", true, true),
-        ("var source = new Proxy([1, 2], {has() {throw new Error('has')}}); \
-          var callback = () => ({sum: 42});", true, true),
-        ("var source = []; var callback = () => ({sum: 42});", true, false),
+          {get() {throw new Error('getter')}});",
+            true,
+            true,
+        ),
+        (
+            "var source = new Proxy([1, 2], {has() {throw new Error('has')}}); \
+          var callback = () => ({sum: 42});",
+            true,
+            true,
+        ),
+        (
+            "var source = []; var callback = () => ({sum: 42});",
+            true,
+            false,
+        ),
     ];
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
@@ -2762,7 +2864,8 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
     ] {
         for native in [Native::ArrayReduce, Native::ArrayReduceRight] {
             for (source, fails_without_initial, fails_with_initial) in cases {
-                for (initial, fails) in [(false, fails_without_initial), (true, fails_with_initial)] {
+                for (initial, fails) in [(false, fails_without_initial), (true, fails_with_initial)]
+                {
                     let mut vm = Vm::new(SilentHost);
                     let program = compile(source, "reduce-roots.js").unwrap();
                     vm.execute(&program).unwrap();
@@ -2771,7 +2874,9 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
                     let callback_atom = vm.intern_atom("callback");
                     let callback = vm.own_property(vm.realm.globals, callback_atom).unwrap();
                     let mut args = vec![callback];
-                    if initial { args.push(Value::UNDEFINED); }
+                    if initial {
+                        args.push(Value::UNDEFINED);
+                    }
                     let roots_before = vm.heap.root_count_for_test();
                     let outcome = vm.array_reduce_native(&program, native, source, &args);
                     assert_eq!(outcome.is_err(), fails);
@@ -2791,15 +2896,35 @@ fn reduction_roots_release_on_success_and_abrupt_completion() {
 #[test]
 fn flattening_roots_release_after_success_and_abrupt_completion() {
     let cases = [
-        ("var source = [1]; var mapper = value => [value];", false, false),
-        ("var source = [1]; var mapper = value => [value]; \
-          Object.defineProperty(source, '0', {get() {throw new Error('source')}});", true, true),
-        ("var nested = [1]; Object.defineProperty(nested, '0', \
-          {get() {throw new Error('nested')}}); var source = [nested]; var mapper = value => value;", true, true),
-        ("var source = [1]; var mapper = value => [value]; \
+        (
+            "var source = [1]; var mapper = value => [value];",
+            false,
+            false,
+        ),
+        (
+            "var source = [1]; var mapper = value => [value]; \
+          Object.defineProperty(source, '0', {get() {throw new Error('source')}});",
+            true,
+            true,
+        ),
+        (
+            "var nested = [1]; Object.defineProperty(nested, '0', \
+          {get() {throw new Error('nested')}}); var source = [nested]; var mapper = value => value;",
+            true,
+            true,
+        ),
+        (
+            "var source = [1]; var mapper = value => [value]; \
           source.constructor = {[Symbol.species]: function() { \
-          return new Proxy({}, {defineProperty() {return false}})}};", true, true),
-        ("var source = [1]; var mapper = value => {throw new Error('mapper')};", false, true),
+          return new Proxy({}, {defineProperty() {return false}})}};",
+            true,
+            true,
+        ),
+        (
+            "var source = [1]; var mapper = value => {throw new Error('mapper')};",
+            false,
+            true,
+        ),
     ];
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
@@ -2817,7 +2942,11 @@ fn flattening_roots_release_after_success_and_abrupt_completion() {
                 let source = vm.own_property(vm.realm.globals, source_atom).unwrap();
                 let mapper_atom = vm.intern_atom("mapper");
                 let mapper = vm.own_property(vm.realm.globals, mapper_atom).unwrap();
-                let args = if native == Native::ArrayFlatMap { vec![mapper] } else { vec![] };
+                let args = if native == Native::ArrayFlatMap {
+                    vec![mapper]
+                } else {
+                    vec![]
+                };
                 let roots_before = vm.heap.root_count_for_test();
                 let outcome = vm.array_flatten_native(&program, native, source, &args);
                 assert_eq!(outcome.is_err(), fails);
@@ -2843,9 +2972,14 @@ fn flattening_uses_rooted_frames_instead_of_native_recursion() {
         nested = vm.new_array(vec![nested]);
     }
     let roots_before = vm.heap.root_count_for_test();
-    let result = vm.array_flatten_native(
-        &program, Native::ArrayFlat, nested, &[Value::number(f64::INFINITY)],
-    ).unwrap();
+    let result = vm
+        .array_flatten_native(
+            &program,
+            Native::ArrayFlat,
+            nested,
+            &[Value::number(f64::INFINITY)],
+        )
+        .unwrap();
     assert_eq!(vm.array_value_at(result, 0), Value::number(42.0));
     assert_eq!(vm.heap.root_count_for_test(), roots_before);
 }
@@ -2968,14 +3102,18 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         parent: Value::NULL,
         program: None,
         root_eval_scope: false,
+        binding_site_pc: None,
         function: u32::MAX,
-        slots: Box::new([]),
-        dynamic_bindings: vec![],
+        slots: Vec::<Value>::new().into_boxed_slice().into(),
+        dynamic_bindings: vec![].into(),
         with_objects: vec![],
     });
-    let held = vm.heap.alloc(crate::heap::Cell::Error("suspended binding".into()));
+    let held = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("suspended binding".into()));
     let held_atom = vm.intern_atom("held");
     let id = vm.suspend_continuation(Continuation {
+        context: super::activation::CallContext::Internal,
         program: super::program_store::ProgramId::MAIN,
         active_iterators: vec![],
         function: 0,
@@ -3006,6 +3144,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
     let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
     vm.initialize(&program).unwrap();
     let continuation = || Continuation {
+        context: super::activation::CallContext::Internal,
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -3037,6 +3176,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
 #[test]
 fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let mut frame = super::Frame {
+        context: super::activation::CallContext::Internal,
         program: super::program_store::ProgramId::MAIN,
         function: 0,
         pc: 0,
@@ -4222,7 +4362,6 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
     }
 }
 
-
 #[test]
 fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
     for compile in [
@@ -4353,7 +4492,6 @@ fn proxy_invocations_root_fresh_operands_and_restore_scopes() {
         }
     }
 }
-
 
 #[test]
 fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
@@ -4521,7 +4659,6 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
     }
 }
 
-
 #[test]
 fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
     for compile in [
@@ -4658,7 +4795,6 @@ fn proxy_revocation_consumes_captured_ownership_and_preserves_kind() {
     }
 }
 
-
 #[test]
 fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
     for compile in [
@@ -4753,7 +4889,6 @@ fn proxy_own_keys_keeps_captured_target_after_revoking_getter() {
         }
     }
 }
-
 
 #[test]
 fn coerced_binary_operands_restore_roots_after_each_completion() {
@@ -5210,6 +5345,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 .collect::<Vec<_>>();
             let atom = vm.intern_atom("binding");
             let mut frame = super::Frame {
+                context: super::activation::CallContext::Internal,
                 program: super::program_store::ProgramId::MAIN,
                 function: 0,
                 pc: 0,

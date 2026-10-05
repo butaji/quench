@@ -20,28 +20,17 @@ impl FunctionCompiler<'_, '_> {
             return self.delete_expression(&value.argument);
         }
         let input = if value.operator == UnaryOperator::Typeof {
-            if let Expression::Identifier(identifier) = &value.argument {
+            let mut operand = &value.argument;
+            while let Expression::ParenthesizedExpression(parenthesized) = operand {
+                operand = &parenthesized.expression;
+            }
+            if let Expression::Identifier(identifier) = operand {
                 let atom = self.owner.atom(identifier.name.as_str());
                 let bound = self.function_scope.contains(&atom)
                     || self.active_lexical_binding(atom).is_some()
                     || self.scopes.iter().any(|scope| scope.contains_key(&atom));
                 if bound {
-                    self.expression(&value.argument)
-                } else {
-                    let input = self.reg();
-                    let cache = self.owner.cache_site();
-                    self.emit(Op::LoadNameTypeof, input, 0, cache, atom);
-                    input
-                }
-            } else if let Expression::ParenthesizedExpression(parenthesized) = &value.argument
-                && let Expression::Identifier(identifier) = &parenthesized.expression
-            {
-                let atom = self.owner.atom(identifier.name.as_str());
-                let bound = self.function_scope.contains(&atom)
-                    || self.active_lexical_binding(atom).is_some()
-                    || self.scopes.iter().any(|scope| scope.contains_key(&atom));
-                if bound {
-                    self.expression(&value.argument)
+                    self.expression(operand)
                 } else {
                     let input = self.reg();
                     let cache = self.owner.cache_site();
@@ -49,7 +38,7 @@ impl FunctionCompiler<'_, '_> {
                     input
                 }
             } else {
-                self.expression(&value.argument)
+                self.expression(operand)
             }
         } else {
             self.expression(&value.argument)
@@ -84,9 +73,7 @@ impl FunctionCompiler<'_, '_> {
                 let key = self.expression(&member.expression);
                 (target, key)
             }
-            Expression::Identifier(identifier) if identifier.name == "arguments" => {
-                return self.literal(Constant::Boolean(false));
-            }
+            Expression::ChainExpression(chain) => return self.delete_chain(&chain.expression),
             Expression::Identifier(identifier) => {
                 if self.strict {
                     self.owner
@@ -94,9 +81,6 @@ impl FunctionCompiler<'_, '_> {
                     return self.literal(Constant::Undefined);
                 }
                 let atom = self.owner.atom(identifier.name.as_str());
-                if self.active_lexical_binding(atom).is_some() {
-                    return self.literal(Constant::Boolean(false));
-                }
                 let result = self.reg();
                 self.emit(Op::DeleteName, result, 0, 0, atom);
                 return result;
@@ -166,8 +150,8 @@ impl FunctionCompiler<'_, '_> {
                 return self.direct_eval_spread_call(value);
             }
             if matches!(&value.callee, Expression::Super(_)) {
+                let superclass = self.super_constructor();
                 let arguments = self.spread_arguments(&value.arguments);
-                let superclass = self.load_name("\0rqj:super");
                 let result = self.reg();
                 self.emit(
                     Op::Construct,
@@ -195,7 +179,6 @@ impl FunctionCompiler<'_, '_> {
         {
             self.parameter_eval_arguments_error = true;
         }
-        self.dynamic_eval |= direct_eval;
         let this = if direct_eval {
             self.this_override.unwrap_or(this)
         } else {
@@ -238,7 +221,6 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::Move, argument_array, expanded_arguments, 0, 0);
         let result = self.reg();
         let parameter_eval = self.parameter_context;
-        self.dynamic_eval = true;
         let pc = self.emit(
             Op::CallDirectEvalArray,
             result,
@@ -266,7 +248,11 @@ impl FunctionCompiler<'_, '_> {
                 .get(&atom)
                 .copied()
                 .unwrap_or(LexicalBindingKind::Mutable),
-            catch_parameter: scope.catch_parameter,
+            declaration: if scope.catch_parameter {
+                crate::bytecode::EvalBindingDeclaration::CatchParameter
+            } else {
+                crate::bytecode::EvalBindingDeclaration::Lexical
+            },
         })
     }
 
@@ -284,18 +270,42 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn record_lexical_binding_site(&mut self, pc: usize) {
+    pub(super) fn record_lexical_binding_site(&mut self, pc: usize) {
         let mut visible = rustc_hash::FxHashSet::default();
         let mut bindings = Vec::new();
         for scope in self.lexical_scopes.iter().rev() {
-            if self.with_depth != 0 && scope.with_depth < self.with_depth {
-                continue;
-            }
             for atom in scope.bindings.keys() {
-                if visible.insert(*atom)
+                if scope.kinds.get(atom) != Some(&LexicalBindingKind::FunctionName)
+                    && visible.insert(*atom)
                     && let Some(binding) = self.lexical_binding_projection(scope, *atom)
                 {
                     bindings.push(binding);
+                }
+            }
+        }
+        bindings.sort_unstable_by_key(|binding| binding.atom);
+        self.binding_sites.push(crate::bytecode::BindingSite {
+            resume_pc: (pc + 1) as u32,
+            bindings,
+        });
+    }
+
+    pub(crate) fn name_bindings(&mut self) -> Vec<crate::bytecode::EvalBinding> {
+        let mut visible = rustc_hash::FxHashSet::default();
+        let mut bindings = Vec::new();
+        for scope in self.lexical_scopes.iter().rev() {
+            for (atom, target) in &scope.bindings {
+                if scope.kinds.get(atom) == Some(&LexicalBindingKind::FunctionName)
+                    && visible.insert(*atom)
+                    && let Some(slot) = self.local_slots.get(target)
+                {
+                    bindings.push(crate::bytecode::EvalBinding {
+                        atom: *atom,
+                        location: crate::bytecode::EvalBindingLocation::Local(*slot),
+                        with_depth: scope.with_depth.saturating_sub(self.inherited_with_depth),
+                        kind: LexicalBindingKind::FunctionName,
+                        declaration: crate::bytecode::EvalBindingDeclaration::Lexical,
+                    });
                 }
             }
         }
@@ -326,31 +336,59 @@ impl FunctionCompiler<'_, '_> {
                     location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
                     with_depth: 0,
                     kind,
-                    catch_parameter: self
+                    declaration: if self
                         .owner
                         .atom_index
                         .get(catch_marker.as_str())
-                        .is_some_and(|marker| scope.contains_key(marker)),
+                        .is_some_and(|marker| scope.contains_key(marker))
+                    {
+                        crate::bytecode::EvalBindingDeclaration::CatchParameter
+                    } else {
+                        crate::bytecode::EvalBindingDeclaration::Lexical
+                    },
+                });
+            }
+            // Lexical markers own mutability and declaration conflicts. Add
+            // ordinary captures only after those source names have been resolved.
+            for (atom, slot) in scope.iter() {
+                if self.owner.atoms[*atom as usize].contains('\0') || !visible.insert(*atom) {
+                    continue;
+                }
+                bindings.push(crate::bytecode::EvalBinding {
+                    atom: *atom,
+                    location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
+                    with_depth: 0,
+                    kind: LexicalBindingKind::Mutable,
+                    declaration: crate::bytecode::EvalBindingDeclaration::Variable,
                 });
             }
         }
         bindings.sort_unstable_by_key(|binding| binding.atom);
-        self.binding_sites.push(crate::bytecode::BindingSite {
-            resume_pc: (pc + 1) as u32,
-            bindings,
-        });
+        bindings
     }
 
     fn after_super_call(&mut self, result: Register) {
         self.emit(Op::SuperCallCheck, 0, 0, 0, 0);
-        if self.defer_instance_fields {
-            self.emit(Op::InitializeThis, result, 0, 0, 0);
-            let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-            self.deferred_instance_field_edges
-                .push((edge, self.code.len() as u32));
-        } else if self.super_call_binds_this {
+        if self.super_call_binds_this {
             self.emit(Op::InitializeThis, result, 0, 0, 0);
         }
+    }
+
+    pub(super) fn super_constructor(&mut self) -> Register {
+        let active = self.load_name("\0rqj:super");
+        let get_prototype = self.load_name("\0rqj:super-base");
+        let receiver = self.literal(Constant::Undefined);
+        let argument = self.reg();
+        self.emit(Op::Move, argument, active, 0, 0);
+        let result = self.reg();
+        self.emit(
+            Op::Call,
+            result,
+            get_prototype,
+            receiver,
+            crate::bytecode::ImmediateLayout::call_immediate(argument, 1, false, false),
+        );
+        result
     }
 
     pub(super) fn construct(&mut self, value: &NewExpression<'_>) -> Register {
@@ -389,143 +427,104 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
+    pub(super) fn static_member_callee(
+        &mut self,
+        member: &StaticMemberExpression<'_>,
+    ) -> (Register, Register) {
+        if matches!(&member.object, Expression::Super(_)) {
+            let callee = self.static_member(member);
+            return (callee, self.load_this_value());
+        }
+        let receiver = self.expression(&member.object);
+        let (callee, end) = if member.optional {
+            let (callee, end, jump) = self.emit_optional_prefix(receiver);
+            self.patch_instruction(jump, self.code.len() as u32);
+            (callee, end)
+        } else {
+            (self.reg(), None)
+        };
+        let atom = self.owner.atom(member.property.name.as_str());
+        let cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            callee,
+            FieldBase::register(receiver).0,
+            cache,
+            atom,
+        );
+        if let Some(end) = end {
+            self.patch(end);
+        }
+        (callee, receiver)
+    }
+
+    pub(super) fn computed_member_callee(
+        &mut self,
+        member: &ComputedMemberExpression<'_>,
+    ) -> (Register, Register) {
+        if matches!(&member.object, Expression::Super(_)) {
+            let callee = self.computed_member(member);
+            return (callee, self.load_this_value());
+        }
+        let receiver = self.expression(&member.object);
+        let (callee, end) = if member.optional {
+            let (callee, end, jump) = self.emit_optional_prefix(receiver);
+            self.patch_instruction(jump, self.code.len() as u32);
+            (callee, end)
+        } else {
+            (self.reg(), None)
+        };
+        let key = self.expression_outside_optional_chain(&member.expression);
+        self.emit(Op::GetIndex, callee, receiver, key, 0);
+        if let Some(end) = end {
+            self.patch(end);
+        }
+        (callee, receiver)
+    }
+
+    pub(super) fn private_field_callee(
+        &mut self,
+        member: &PrivateFieldExpression<'_>,
+    ) -> (Register, Register) {
+        let receiver = self.expression(&member.object);
+        let (callee, end) = if member.optional {
+            let (callee, end, jump) = self.emit_optional_prefix(receiver);
+            self.patch_instruction(jump, self.code.len() as u32);
+            (callee, end)
+        } else {
+            (self.reg(), None)
+        };
+        let atom = self.owner.private_name_atom(member.field.span);
+        let cache = self.owner.cache_site();
+        self.emit(
+            Op::GetField,
+            callee,
+            FieldBase::register(receiver).0,
+            cache,
+            atom,
+        );
+        if let Some(end) = end {
+            self.patch(end);
+        }
+        (callee, receiver)
+    }
+
     pub(crate) fn callee(&mut self, value: &Expression<'_>) -> (Register, Register) {
         match value {
             Expression::Super(_) => {
-                let callee = self.load_name("\0rqj:super");
+                let callee = self.super_constructor();
                 let this = self.literal(Constant::Undefined);
                 (callee, this)
             }
-            Expression::StaticMemberExpression(item) => {
-                if matches!(&item.object, Expression::Super(_)) {
-                    let base = self.expression(&item.object);
-                    let target = if self.super_static || self.super_home {
-                        base
-                    } else {
-                        let prototype = self.reg();
-                        let atom = self.owner.atom("prototype");
-                        let cache = self.owner.cache_site();
-                        self.emit(
-                            Op::GetField,
-                            prototype,
-                            FieldBase::register(base).0,
-                            cache,
-                            atom,
-                        );
-                        prototype
-                    };
-                    let callee = self.reg();
-                    let method_atom = self.owner.atom(item.property.name.as_str());
-                    let method_cache = self.owner.cache_site();
-                    self.emit(
-                        Op::GetField,
-                        callee,
-                        FieldBase::register(target).0,
-                        method_cache,
-                        method_atom,
-                    );
-                    let this = self.load_this_value();
-                    return (callee, this);
-                }
-                let this = self.expression(&item.object);
-                let dst = self.reg();
-                let atom = self.owner.atom(item.property.name.as_str());
-                let cache = self.owner.cache_site();
-                self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
-                (dst, this)
-            }
-            Expression::PrivateFieldExpression(item) => {
-                let this = self.expression(&item.object);
-                let atom = self.owner.private_name_atom(item.field.span);
-                let dst = self.reg();
-                let cache = self.owner.cache_site();
-                self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
-                (dst, this)
-            }
-            Expression::ChainExpression(item) => match &item.expression {
-                ChainElement::StaticMemberExpression(member) => {
-                    let this = self.expression(&member.object);
-                    let callee = if member.optional {
-                        let (dst, end, jump) = self.emit_optional_prefix(this);
-                        let atom = self.owner.atom(member.property.name.as_str());
-                        let cache = self.owner.cache_site();
-                        self.patch_instruction(jump, self.code.len() as u32);
-                        self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
-                        if let Some(end) = end {
-                            self.patch(end);
-                        }
-                        dst
-                    } else {
-                        let dst = self.reg();
-                        let atom = self.owner.atom(member.property.name.as_str());
-                        let cache = self.owner.cache_site();
-                        self.emit(Op::GetField, dst, FieldBase::register(this).0, cache, atom);
-                        dst
-                    };
-                    (callee, this)
-                }
-                ChainElement::ComputedMemberExpression(member) => {
-                    let this = self.expression(&member.object);
-                    let callee = if member.optional {
-                        let (dst, end, jump) = self.emit_optional_prefix(this);
-                        self.patch_instruction(jump, self.code.len() as u32);
-                        let key = self.expression_outside_optional_chain(&member.expression);
-                        self.emit(Op::GetIndex, dst, this, key, 0);
-                        if let Some(end) = end {
-                            self.patch(end);
-                        }
-                        dst
-                    } else {
-                        let key = self.expression_outside_optional_chain(&member.expression);
-                        let dst = self.reg();
-                        self.emit(Op::GetIndex, dst, this, key, 0);
-                        dst
-                    };
-                    (callee, this)
-                }
-                _ => {
-                    let callee = self.expression(value);
-                    let this = self.literal(Constant::Undefined);
-                    (callee, this)
-                }
-            },
+            Expression::StaticMemberExpression(item) => self.static_member_callee(item),
+            Expression::PrivateFieldExpression(item) => self.private_field_callee(item),
+            Expression::ChainExpression(item) => self.chain_callee(&item.expression),
             Expression::ParenthesizedExpression(item) => self.callee(&item.expression),
-            Expression::ComputedMemberExpression(item) => {
-                let this = if matches!(&item.object, Expression::Super(_))
-                    && !self.super_static
-                    && !self.super_home
-                {
-                    let base = self.expression(&item.object);
-                    let prototype = self.reg();
-                    let atom = self.owner.atom("prototype");
-                    let cache = self.owner.cache_site();
-                    self.emit(
-                        Op::GetField,
-                        prototype,
-                        FieldBase::register(base).0,
-                        cache,
-                        atom,
-                    );
-                    prototype
-                } else {
-                    self.expression(&item.object)
-                };
-                let key = self.expression(&item.expression);
-                let dst = self.reg();
-                self.emit(Op::GetIndex, dst, this, key, 0);
-                if matches!(&item.object, Expression::Super(_)) {
-                    let receiver = self.load_this_value();
-                    (dst, receiver)
-                } else {
-                    (dst, this)
-                }
-            }
-            Expression::Identifier(identifier) if self.with_depth != 0 => {
-                let callee = self.reg();
-                let this = self.reg();
+            Expression::ComputedMemberExpression(item) => self.computed_member_callee(item),
+            Expression::Identifier(identifier) => {
+                let this = self.literal(Constant::Undefined);
                 let atom = self.owner.atom(identifier.name.as_str());
-                let cache = self.owner.cache_site();
-                self.emit(Op::LoadNameCall, callee, this, cache, atom);
+                let callee = self.load_atom_reference(atom, Some(this));
                 (callee, this)
             }
             _ => {
@@ -658,19 +657,5 @@ impl FunctionCompiler<'_, '_> {
         }
 
         arguments
-    }
-
-    pub(super) fn argument_registers(&mut self, values: &[Argument<'_>]) -> Vec<Register> {
-        values
-            .iter()
-            .filter_map(|argument| {
-                let Some(expression) = argument.as_expression() else {
-                    self.owner
-                        .reject(argument.span(), "spread arguments unsupported");
-                    return None;
-                };
-                Some(self.expression(expression))
-            })
-            .collect()
     }
 }

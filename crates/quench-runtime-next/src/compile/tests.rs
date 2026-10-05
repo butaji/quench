@@ -44,7 +44,6 @@ fn scalar_constants_reuse_exact_slots() {
         SpecializationMode::Enabled,
         &[],
         FxHashMap::default(),
-        String::new(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     assert_eq!(compiler.constant(Constant::String("x".into())), 1);
@@ -61,7 +60,6 @@ fn scalar_constants_preserve_signed_zero_bits() {
         SpecializationMode::Enabled,
         &[],
         FxHashMap::default(),
-        String::new(),
     );
     assert_ne!(
         compiler.constant(Constant::Number(0.0)),
@@ -77,7 +75,6 @@ fn constant_runs_remain_fresh_and_contiguous() {
         SpecializationMode::Enabled,
         &[],
         FxHashMap::default(),
-        String::new(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
     let start = compiler.constant_run(vec![Constant::Number(1.0), Constant::Number(1.0)]);
