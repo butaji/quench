@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "tasks": [
+    "20"
+  ],
+  "baseline_source_head": "265e9a09ad7c4ef830a08ee0343ae0777d740a3d",
+  "qualification": "Isolated source-phase linking and dynamic import call-root repair; pending Promise storage, Node, Wasm and parser changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/host.rs": "65a683630056e1f41bc912b08c9f77c5ff9c53531e121afa0416583ba34e59d1",
+    "crates/quench-runtime-next/src/vm/promise.rs": "c58a394652637e1fa579f58eeae06c52f420c22020b6019653aa69a4cfc34a12",
+    "crates/quench-test262/src/next_host.rs": "ae81d7859e16f896dccd42743b74d9b35d272c3e69dee8f197ff887fdf9e8869"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Host owns module-source availability; module_source_value owns availability validation and identity for every static/dynamic source request.",
+    "invariant": "Resolve complete requests, validate source bindings before dependency evaluation, reject JavaScript source imports without executing dependencies; retain the import promise through coercion/host callbacks using existing call roots.",
+    "reduction": "Removed unconditional dynamic source rejection and unconditional static source-object allocation in favor of the shared operation. No new side map or duplicate semantic unit test."
+  },
+  "embedding": "Existing native Test262 host retains its advertised synthetic module-source record via the new capability. No guest harness, fixture, pin, input discovery, expected result or timeout changed. Production VM never inspects its specifier.",
+  "contracts": [
+    "https://tc39.es/proposal-source-phase-imports/"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/source-text-module.cc": "37450c90e2f2e454bd6535a2da6c92253fd0153d9bc74a14bb121350c4ae2df1"
+  },
+  "build": {
+    "profile": "release; correctness only",
+    "log": "target/iteration/task20-source-module-link/build.log",
+    "binaries": {
+      "before-quench-next": "0f1d16fc2a9297126c2475c101b4967b42d51ccea42be27ffc0364721de27c6e",
+      "before-run-stages-next": "16719467619b96a5cfe18966867d9a9a74d44968ce0e6f322ff97d90df3abdf0",
+      "after-quench-next": "40701375861001fd0fe2888091fdca2b19f0f9f83a42c494cea4a19da6e1acbf",
+      "after-run-stages-next": "a8d845e9664366048a39679ab73900045056c763ca039817bc5adc001396b951"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "distinct_cases": 1744,
+    "passed_before": 1743,
+    "passed_after": 1744,
+    "gained": [
+      "staging/source-phase-imports/import-source-source-text-module.js"
+    ],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "defer-staging",
+        "before": "target/iteration/task20-source-module-link/before-defer-staging.json",
+        "after": "target/iteration/task20-source-module-link/after-defer-staging.json",
+        "before_passed": 5,
+        "after_passed": 5,
+        "failed_after": 0
+      },
+      {
+        "scope": "dynamic-import",
+        "before": "target/iteration/task20-source-module-link/before-dynamic-import.json",
+        "after": "target/iteration/task20-source-module-link/after-dynamic-import.json",
+        "before_passed": 1004,
+        "after_passed": 1004,
+        "failed_after": 0
+      },
+      {
+        "scope": "imports",
+        "before": "target/iteration/task20-source-module-link/before-imports.json",
+        "after": "target/iteration/task20-source-module-link/after-imports.json",
+        "before_passed": 127,
+        "after_passed": 127,
+        "failed_after": 0
+      },
+      {
+        "scope": "modules",
+        "before": "target/iteration/task20-source-module-link/before-modules.json",
+        "after": "target/iteration/task20-source-module-link/after-modules.json",
+        "before_passed": 599,
+        "after_passed": 599,
+        "failed_after": 0
+      },
+      {
+        "scope": "source-object",
+        "before": "target/iteration/task20-source-module-link/before-source-object.json",
+        "after": "target/iteration/task20-source-module-link/after-source-object.json",
+        "before_passed": 8,
+        "after_passed": 8,
+        "failed_after": 0
+      },
+      {
+        "scope": "source-phase",
+        "before": "target/iteration/task20-source-module-link/before-source-phase.json",
+        "after": "target/iteration/task20-source-module-link/after-source-phase.json",
+        "before_passed": 0,
+        "after_passed": 1,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for each matched scope"
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "summary": {
+      "sources": 8,
+      "observations_per_build": 8,
+      "before_matches": 4,
+      "after_matches": 8,
+      "losses": 0
+    },
+    "mode": "Existing module-loading worker embedding; normal mode. Standalone SystemHost does not load modules.",
+    "report": "target/iteration/task20-source-module-link/node-controls.json",
+    "coverage": [
+      "direct source rejection and fresh error",
+      "static and indirect source rejection, cached error identity",
+      "mixed request list rejects before dependency effects",
+      "normal module namespace identity and live bindings",
+      "specifier and options ordering, thrown identity"
+    ]
+  },
+  "gc_control": {
+    "before": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "next runtime async: SyntaxError: Source phase import object is not defined for module '<module source>'\n"
+    },
+    "after": {
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "limits": [
+    "Bounded qualification; no full Test262 or Stage A claim.",
+    "No Wasm source-object capability is qualified by this change.",
+    "Stage B performance has not started."
+  ]
+}

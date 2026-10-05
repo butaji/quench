@@ -1574,25 +1574,21 @@ impl<H: Host> Vm<H> {
             .and_then(|value| value.as_number())
             .and_then(crate::bytecode::ModuleRequestPhase::from_runtime_value)
             .unwrap_or(crate::bytecode::ModuleRequestPhase::Evaluation);
-        let operation = (|| {
-            let specifier = self.to_string(p, specifier)?;
-            let module_type = self.validate_dynamic_import_options(p, options)?;
-            let resolution = self.host.resolve_dynamic_import(&p.source_name, &specifier);
+        let operation = self.with_call_roots([promise], |vm| {
+            let specifier = vm.to_string(p, specifier)?;
+            let module_type = vm.validate_dynamic_import_options(p, options)?;
+            let resolution = vm.host.resolve_dynamic_import(&p.source_name, &specifier);
             match resolution {
-                Err(message) => return Err(self.type_error(p, message)),
+                Err(message) => return Err(vm.type_error(p, message)),
                 Ok(Some(module)) => {
                     if phase == crate::bytecode::ModuleRequestPhase::Source {
-                        return self.syntax_error_result(
-                            p,
-                            &format!(
-                                "Source phase import object is not defined for module '{}'",
-                                module.name
-                            ),
-                        );
+                        let source = vm.module_source_value(p, &module)?;
+                        vm.promise_resolve_value(p, promise, source)?;
+                        return Ok(Value::UNDEFINED);
                     }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
-                    if let Some(outcome) = self
+                    if let Some(outcome) = vm
                         .realm
                         .promise
                         .modules
@@ -1603,7 +1599,7 @@ impl<H: Host> Vm<H> {
                             ModuleOutcome::Evaluated(namespace) => {
                                 let namespace =
                                     if phase == crate::bytecode::ModuleRequestPhase::Defer {
-                                        let deferred = self
+                                        let deferred = vm
                                             .realm
                                             .promise
                                             .modules
@@ -1613,8 +1609,8 @@ impl<H: Host> Vm<H> {
                                             Some(namespace) => namespace,
                                             None => {
                                                 let namespace =
-                                                    self.deferred_module_namespace(p, &module)?;
-                                                self.realm
+                                                    vm.deferred_module_namespace(p, &module)?;
+                                                vm.realm
                                                     .promise
                                                     .modules
                                                     .get_mut(&cache_key)
@@ -1626,26 +1622,26 @@ impl<H: Host> Vm<H> {
                                     } else {
                                         namespace
                                     };
-                                self.promise_resolve_value(p, promise, namespace)?;
+                                vm.promise_resolve_value(p, promise, namespace)?;
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Deferred(namespace)
                                 if phase == crate::bytecode::ModuleRequestPhase::Defer =>
                             {
-                                self.promise_resolve_value(p, promise, namespace)?;
+                                vm.promise_resolve_value(p, promise, namespace)?;
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Deferred(namespace) => {
                                 let namespace =
-                                    self.evaluate_deferred_module_namespace(p, namespace)?;
-                                self.promise_resolve_value(p, promise, namespace)?;
+                                    vm.evaluate_deferred_module_namespace(p, namespace)?;
+                                vm.promise_resolve_value(p, promise, namespace)?;
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Errored(reason) => {
                                 if phase == crate::bytecode::ModuleRequestPhase::Defer
                                     && module_type == "javascript"
                                 {
-                                    let namespace = self
+                                    let namespace = vm
                                         .realm
                                         .promise
                                         .modules
@@ -1655,8 +1651,8 @@ impl<H: Host> Vm<H> {
                                         Some(namespace) => namespace,
                                         None => {
                                             let namespace =
-                                                self.deferred_module_namespace(p, &module)?;
-                                            self.realm
+                                                vm.deferred_module_namespace(p, &module)?;
+                                            vm.realm
                                                 .promise
                                                 .modules
                                                 .get_mut(&cache_key)
@@ -1665,19 +1661,14 @@ impl<H: Host> Vm<H> {
                                             namespace
                                         }
                                     };
-                                    self.promise_resolve_value(p, promise, namespace)?;
+                                    vm.promise_resolve_value(p, promise, namespace)?;
                                 } else {
-                                    self.promise_settle(
-                                        p,
-                                        promise,
-                                        PromiseState::Rejected,
-                                        reason,
-                                    )?;
+                                    vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                                 }
                                 return Ok(Value::UNDEFINED);
                             }
                             ModuleOutcome::Pending(_) => {
-                                let joined = self
+                                let joined = vm
                                     .realm
                                     .promise
                                     .modules
@@ -1689,8 +1680,8 @@ impl<H: Host> Vm<H> {
                             }
                         }
                     }
-                    if let Some(namespace) = self.root_module_namespace(p, &module)? {
-                        self.realm
+                    if let Some(namespace) = vm.root_module_namespace(p, &module)? {
+                        vm.realm
                             .promise
                             .modules
                             .insert(cache_key, ModuleRecord::evaluating_root(namespace, promise));
@@ -1698,9 +1689,9 @@ impl<H: Host> Vm<H> {
                     }
                     if module_type == "javascript"
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
-                        && self.deferred_dependency_batch
+                        && vm.deferred_dependency_batch
                     {
-                        if let Some(job) = self
+                        if let Some(job) = vm
                             .realm
                             .promise
                             .dynamic_import_jobs
@@ -1709,14 +1700,11 @@ impl<H: Host> Vm<H> {
                         {
                             job.promises.push(promise);
                         } else {
-                            self.realm
-                                .promise
-                                .dynamic_import_jobs
-                                .push(DynamicImportJob {
-                                    cache_key,
-                                    module,
-                                    promises: vec![promise],
-                                });
+                            vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
+                                cache_key,
+                                module,
+                                promises: vec![promise],
+                            });
                         }
                         return Ok(Value::UNDEFINED);
                     }
@@ -1725,45 +1713,45 @@ impl<H: Host> Vm<H> {
                     {
                         let mut seen = FxHashSet::default();
                         let mut asynchronous = Vec::new();
-                        self.gather_async_transitive_dependencies(
+                        vm.gather_async_transitive_dependencies(
                             p,
                             &module,
                             &mut seen,
                             &mut asynchronous,
                         )?;
                         if asynchronous.is_empty() {
-                            let namespace = self.deferred_module_namespace(p, &module)?;
-                            self.realm
+                            let namespace = vm.deferred_module_namespace(p, &module)?;
+                            vm.realm
                                 .promise
                                 .modules
                                 .insert(cache_key, ModuleRecord::deferred(namespace));
-                            self.promise_resolve_value(p, promise, namespace)?;
+                            vm.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
                         let mut active = ModuleEvaluationStack::default();
                         for dependency in asynchronous {
-                            self.evaluate_static_module_source(p, dependency, &mut active)?;
+                            vm.evaluate_static_module_source(p, dependency, &mut active)?;
                         }
                         let entry_has_tla =
                             crate::Engine::static_module_plan(&module.source, &module.name)
                                 .is_some_and(|plan| plan.has_top_level_await);
                         if !entry_has_tla {
-                            let namespace = self.deferred_module_namespace(p, &module)?;
-                            self.realm
+                            let namespace = vm.deferred_module_namespace(p, &module)?;
+                            vm.realm
                                 .promise
                                 .modules
                                 .insert(cache_key, ModuleRecord::deferred(namespace));
-                            self.promise_resolve_value(p, promise, namespace)?;
+                            vm.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
-                        if let Some(ModuleOutcome::Evaluated(namespace)) = self
+                        if let Some(ModuleOutcome::Evaluated(namespace)) = vm
                             .realm
                             .promise
                             .modules
                             .get(&cache_key)
                             .map(|record| record.outcome)
                         {
-                            self.promise_resolve_value(p, promise, namespace)?;
+                            vm.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
                     }
@@ -1772,12 +1760,12 @@ impl<H: Host> Vm<H> {
                     {
                         let mut active = ModuleEvaluationStack::default();
                         let outer_batch =
-                            std::mem::replace(&mut self.deferred_dependency_batch, true);
+                            std::mem::replace(&mut vm.deferred_dependency_batch, true);
                         let evaluation =
-                            self.evaluate_static_module_source(p, module.clone(), &mut active);
-                        self.deferred_dependency_batch = outer_batch;
+                            vm.evaluate_static_module_source(p, module.clone(), &mut active);
+                        vm.deferred_dependency_batch = outer_batch;
                         evaluation?;
-                        match self
+                        match vm
                             .realm
                             .promise
                             .modules
@@ -1785,13 +1773,13 @@ impl<H: Host> Vm<H> {
                             .map(|record| record.outcome)
                         {
                             Some(ModuleOutcome::Evaluated(namespace)) => {
-                                self.promise_resolve_value(p, promise, namespace)?;
+                                vm.promise_resolve_value(p, promise, namespace)?;
                             }
                             Some(ModuleOutcome::Errored(reason)) => {
-                                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                                vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
                             }
                             Some(ModuleOutcome::Pending(_)) => {
-                                let joined = self
+                                let joined = vm
                                     .realm
                                     .promise
                                     .modules
@@ -1801,7 +1789,7 @@ impl<H: Host> Vm<H> {
                                 debug_assert!(joined);
                             }
                             Some(ModuleOutcome::Deferred(_)) | None => {
-                                return Err(self.type_error(
+                                return Err(vm.type_error(
                                     p,
                                     "dynamic module evaluation did not create a module record"
                                         .into(),
@@ -1815,10 +1803,10 @@ impl<H: Host> Vm<H> {
                     debug_assert!(linked);
                     let evaluating = record.begin_evaluation();
                     debug_assert!(evaluating);
-                    self.realm.promise.modules.insert(cache_key.clone(), record);
-                    match self.evaluate_dynamic_module(p, &module, module_type, phase) {
+                    vm.realm.promise.modules.insert(cache_key.clone(), record);
+                    match vm.evaluate_dynamic_module(p, &module, module_type, phase) {
                         Ok(namespace) => {
-                            let waiters = self
+                            let waiters = vm
                                 .realm
                                 .promise
                                 .modules
@@ -1827,14 +1815,14 @@ impl<H: Host> Vm<H> {
                                 .evaluate(namespace)
                                 .expect("module record is evaluating");
                             for waiter in waiters {
-                                self.promise_resolve_value(p, waiter, namespace)?;
+                                vm.promise_resolve_value(p, waiter, namespace)?;
                             }
                         }
                         Err(error) => {
                             let reason = error.thrown_value().unwrap_or_else(|| {
-                                self.heap.alloc(Cell::Error(error.into_message()))
+                                vm.heap.alloc(Cell::Error(error.into_message()))
                             });
-                            let waiters = self
+                            let waiters = vm
                                 .realm
                                 .promise
                                 .modules
@@ -1843,7 +1831,7 @@ impl<H: Host> Vm<H> {
                                 .fail(reason)
                                 .expect("module record is pending");
                             for waiter in waiters {
-                                self.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
+                                vm.promise_settle(p, waiter, PromiseState::Rejected, reason)?;
                             }
                         }
                     }
@@ -1851,8 +1839,8 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(None) => {}
             }
-            Err(self.type_error(p, "host did not resolve dynamic import module".into()))
-        })();
+            Err(vm.type_error(p, "host did not resolve dynamic import module".into()))
+        });
         if let Err(error) = operation {
             let reason = error
                 .thrown_value()
@@ -2061,7 +2049,7 @@ impl<H: Host> Vm<H> {
         phase: crate::bytecode::ModuleRequestPhase,
     ) -> Result<Value, JsError> {
         if phase == crate::bytecode::ModuleRequestPhase::Source {
-            return Ok(self.module_source_value(module));
+            return self.module_source_value(p, module);
         }
         match module_type {
             "bytes" => {
@@ -2101,10 +2089,23 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn module_source_value(&mut self, module: &ModuleSource) -> Value {
+    fn module_source_value(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+    ) -> Result<Value, JsError> {
+        if !self.host.has_module_source(module) {
+            return self.syntax_error_result(
+                p,
+                &format!(
+                    "Source phase import object is not defined for module '{}'",
+                    module.name
+                ),
+            );
+        }
         let identity = crate::module_identity::normalize(std::path::Path::new(&module.name));
         if let Some(value) = self.realm.promise.module_sources.get(&identity) {
-            return *value;
+            return Ok(*value);
         }
         let prototype_atom = self.intern_atom("prototype");
         let constructor = self.native_value(Native::AbstractModuleSource);
@@ -2113,7 +2114,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto);
         let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.realm.promise.module_sources.insert(identity, value);
-        value
+        Ok(value)
     }
 
     fn evaluate_javascript_module(
@@ -2627,7 +2628,7 @@ impl<H: Host> Vm<H> {
                 values.push((
                     local,
                     crate::vm::program_store::ModuleImport::Value(
-                        self.module_source_value(&module),
+                        self.module_source_value(p, &module)?,
                     ),
                 ));
                 continue;
@@ -2814,6 +2815,11 @@ impl<H: Host> Vm<H> {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for (request, module) in requests.iter().zip(&resolved) {
+            if request.phase == crate::bytecode::ModuleRequestPhase::Source {
+                self.module_source_value(p, module)?;
+            }
+        }
         for (request, module) in requests.iter().zip(resolved) {
             match request.phase {
                 crate::bytecode::ModuleRequestPhase::Evaluation => {
@@ -2832,9 +2838,7 @@ impl<H: Host> Vm<H> {
                 crate::bytecode::ModuleRequestPhase::Defer => {
                     self.prepare_deferred_module_request(p, module)?;
                 }
-                crate::bytecode::ModuleRequestPhase::Source => {
-                    self.module_source_value(&module);
-                }
+                crate::bytecode::ModuleRequestPhase::Source => {}
             }
         }
         Ok(())
