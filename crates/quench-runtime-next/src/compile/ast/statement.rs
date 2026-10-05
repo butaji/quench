@@ -24,7 +24,21 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
         match statement {
-            Statement::EmptyStatement(_) | Statement::FunctionDeclaration(_) => {}
+            Statement::EmptyStatement(_) => {}
+            Statement::FunctionDeclaration(function) => {
+                if !self.strict
+                    && super::early::annex_b_function_eligible(function)
+                    && let Some(identifier) = &function.id
+                {
+                    let atom = self.owner.atom(identifier.name.as_str());
+                    if self.active_lexical_binding(atom).is_some()
+                        && self.annex_b_outer_binding_allowed(atom, function.span.start)
+                    {
+                        let value = self.load_atom(atom);
+                        self.store_annex_b_outer(atom, value, function.span.start);
+                    }
+                }
+            }
             Statement::ExportDeclaration(item) => match &item.declaration {
                 Declaration::VariableDeclaration(declaration) => self.variables(declaration),
                 Declaration::ClassDeclaration(declaration) => {
@@ -385,6 +399,7 @@ impl FunctionCompiler<'_, '_> {
                 let declaration = std::slice::from_ref(statement);
                 self.push_lexical_scope(declaration);
                 self.emit_hoisted(declaration);
+                self.statement(statement);
                 self.lexical_scopes.pop();
             }
             _ => self.statement(statement),

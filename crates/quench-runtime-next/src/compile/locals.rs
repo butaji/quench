@@ -37,6 +37,7 @@ impl Compiler<'_> {
         annex_b_collisions: &FxHashSet<u32>,
     ) {
         for statement in body {
+            let statement = super::early::statement_without_labels(statement);
             match statement {
                 Statement::VariableDeclaration(declaration) => {
                     for item in &declaration.declarations {
@@ -235,6 +236,16 @@ impl Compiler<'_> {
                         annex_b_collisions,
                     )
                 }
+                Statement::WithStatement(item) => self.collect_locals_into(
+                    std::slice::from_ref(&item.body),
+                    output,
+                    seen,
+                    function_scope,
+                    strict,
+                    implicit_arguments_binding,
+                    true,
+                    annex_b_collisions,
+                ),
                 Statement::WhileStatement(item) => self.collect_locals_into(
                     std::slice::from_ref(&item.body),
                     output,

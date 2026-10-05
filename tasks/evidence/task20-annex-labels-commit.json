@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "kind": "labelled_annex_b_declaration_semantics",
+  "base_commit": "18f96769cfd1d1d6dcd3d841b29ede6bdd756c76",
+  "timestamp_utc": "2026-10-05T04:43:27.193792+00:00",
+  "staged_sources": {
+    "crates/quench-runtime-next/src/compile/ast.rs": "cf673da8672309f8aaba7088ff4ed09966e89d6f599c95a9f032731531bb75e2",
+    "crates/quench-runtime-next/src/compile/ast/statement.rs": "246335b381da07bfb0ef269ec9ca78b1b34ab850e7de3a1cbcd398f7945514da",
+    "crates/quench-runtime-next/src/compile/early.rs": "860aa4d38a535632af701dbf1a46f43c67f396bb04e885785748f40047b8895c",
+    "crates/quench-runtime-next/src/compile/locals.rs": "24b30e9e797f4d545c1a7858b64f1703e8621b879987e5b481fc7f3303f3d5c9"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "affected_test262": {
+    "profile": "release",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 2014,
+    "before_passed": 2005,
+    "after_passed": 2007,
+    "regressions": [],
+    "gained": [
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-label.js",
+      "staging/sm/lexical-environment/block-scoped-functions-deprecated-redecl.js"
+    ],
+    "remaining": [
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-with.js",
+      "staging/sm/lexical-environment/unscopables-basics.js",
+      "staging/sm/lexical-environment/unscopables-global.js",
+      "staging/sm/lexical-environment/unscopables-mutation-frozen.js",
+      "staging/sm/lexical-environment/var-in-catch-body-annex-b-eval.js"
+    ],
+    "scopes": [
+      {
+        "scope": "blocks",
+        "total": 21,
+        "before_passed": 21,
+        "after_passed": 21,
+        "compare_exit": 0
+      },
+      {
+        "scope": "functions",
+        "total": 451,
+        "before_passed": 451,
+        "after_passed": 451,
+        "compare_exit": 0
+      },
+      {
+        "scope": "labels",
+        "total": 24,
+        "before_passed": 24,
+        "after_passed": 24,
+        "compare_exit": 0
+      },
+      {
+        "scope": "switch",
+        "total": 111,
+        "before_passed": 111,
+        "after_passed": 111,
+        "compare_exit": 0
+      },
+      {
+        "scope": "with",
+        "total": 181,
+        "before_passed": 181,
+        "after_passed": 181,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex-language",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-lexical",
+        "total": 34,
+        "before_passed": 25,
+        "after_passed": 27,
+        "compare_exit": 0
+      },
+      {
+        "scope": "eval",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347,
+        "compare_exit": 0
+      }
+    ]
+  },
+  "node_controls": {
+    "matched": 30,
+    "differences": 0,
+    "modes": ["normal", "generic"],
+    "scope": "Hoisting, declaration timing, labelled/duplicate functions, lexical collision, synthetic if functions and strict early errors"
+  },
+  "rejected_candidate": {
+    "reason": "Synthetic if-function path missed declaration evaluation after moving outer assignment to its statement",
+    "regressions": 190,
+    "committed": false,
+    "summary": "target/iteration/task20-annex-labels-commit/rejected-missing-if-evaluation/summary.json"
+  },
+  "binaries": {
+    "before": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-annex-labels-commit/before",
+      "sha256": "f477aca7fbef2b754716bd2c4ccba09ca7a047601bd0c9146602a5f32e51e606"
+    },
+    "after": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-annex-labels-commit/after",
+      "sha256": "b271d621ce3840f39472c350b559095ed384038cb58853c2bd3d673bd87eec51"
+    },
+    "quench-next": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/task20-annex-labels-commit/quench-next",
+      "sha256": "c6ba283315442651aa535f084437b4cc7df6c50bdf56fb86e57a001836aa8d00"
+    }
+  },
+  "raw_artifacts": {
+    "target/iteration/task20-annex-labels-commit/after-annex-language.json": "a9b3cb158d0091f355f32299a681c42bad45809285aee8d7c89a7b45903d3d95",
+    "target/iteration/task20-annex-labels-commit/after-blocks.json": "637458244c93251852cc8e0080f73575f183b1fbd0a38a1f80c440f460c40bbd",
+    "target/iteration/task20-annex-labels-commit/after-eval.json": "4594a71be19542b61bd8af89511bce37acf42a0dcff8a599ce0583e8cb3b9630",
+    "target/iteration/task20-annex-labels-commit/after-functions.json": "384ecdbdb197b78f2a1cddbc96f97058c4b1fe03b54fef434d8038fcadc2d108",
+    "target/iteration/task20-annex-labels-commit/after-labels.json": "62e8b1582b0670e8d5ce4b1c87f6b5b4ed2c70fa946c9f043fdf8a08bdc69aac",
+    "target/iteration/task20-annex-labels-commit/after-staged-lexical.json": "9ac7097d827ee6434244d4445e5b296ebfcead993fbef65ba1e31746107798aa",
+    "target/iteration/task20-annex-labels-commit/after-summary.json": "3b8e54ba04ed50c1c319cf5890f039cf315f62100f3e7695db4acbf1503396a5",
+    "target/iteration/task20-annex-labels-commit/after-switch.json": "2e6d2dfcbb1f562272e8d0aef6f28670dfb15fe6aae0d2e54b58cb99cfb27f89",
+    "target/iteration/task20-annex-labels-commit/after-with.json": "5cc55cfeebb3961f96612b43d0a0110256659c2b6da77695f50cdbf00ef363ce",
+    "target/iteration/task20-annex-labels-commit/before-annex-language.json": "d6503e85948c6946e3bf6cc1b2fac5ce6daade25e7c0c28e7c17c96523195460",
+    "target/iteration/task20-annex-labels-commit/before-blocks.json": "bddd896a8f04e33f2c496509080beefe275473450ff8b191369302d1c5770508",
+    "target/iteration/task20-annex-labels-commit/before-eval.json": "95f6740edba4515aa6786e8447ab60cc35462831c296c147041028d91987d5a2",
+    "target/iteration/task20-annex-labels-commit/before-functions.json": "8dbe3313acfb50dc6da4942b2c5e3ca763534c4ac9932ad6a7957a3486ea1d62",
+    "target/iteration/task20-annex-labels-commit/before-labels.json": "832b1a413a5da68843aebfe645556121dddcd7a72c172357f6240a4ca4bae234",
+    "target/iteration/task20-annex-labels-commit/before-staged-lexical.json": "aa988f5a5912673d7d896e8377de9ab2eb0201b5d2def17002398d4d6a0764d2",
+    "target/iteration/task20-annex-labels-commit/before-summary.json": "6b5829f40c95d09b80a99042e4fc90987853aa48f81fbb2c14347f46c4e3f5d3",
+    "target/iteration/task20-annex-labels-commit/before-switch.json": "6a86cbc066449ad1f1eab858689464333e9c38b9b19adbf9d048ad09d113abab",
+    "target/iteration/task20-annex-labels-commit/before-with.json": "c89e5dae8e7f1b8bc51ad0f58ebcfae2e83d18e8e6d7f064be3c485d0f30ef23",
+    "target/iteration/task20-annex-labels-commit/controls.json": "b15890666fe9b678038d1036d0e648c294d208760841c479d09186b4d4867f6e"
+  },
+  "limits": [
+    "Complete Test262 and Stage A remain open.",
+    "The seven selected lexical-environment failures remain recorded, including the unchanged Annex B arguments conflict.",
+    "No suite, harness, expectation or pin changed. No full suite or benchmark ran.",
+    "No duplicate unit tests added; pinned suites and guest oracle controls qualify these semantics."
+  ]
+}
