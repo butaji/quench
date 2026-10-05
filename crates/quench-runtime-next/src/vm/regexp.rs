@@ -422,7 +422,7 @@ impl<H: Host> Vm<H> {
                             )?;
                         }
                     }
-                    let mut output = Vec::new();
+                    let mut output = super::wtf16::JsStringBuilder::default();
                     let mut next_source = 0;
                     for result in results {
                         vm.with_call_roots([result], |vm| {
@@ -494,17 +494,18 @@ impl<H: Host> Vm<H> {
                             // Backward positions still run replacement effects; only
                             // the projection into the output is conditional.
                             if position >= next_source {
-                                output.extend_from_slice(&input.units()[next_source..position]);
-                                output.extend_from_slice(text.units());
+                                output.append_slice(&input, next_source..position);
+                                output.append(&text);
                                 next_source = position.saturating_add(matched.units().len());
                             }
                             Ok::<_, JsError>(())
                         })?;
                     }
                     if next_source < input.units().len() {
-                        output.extend_from_slice(&input.units()[next_source..]);
+                        output.append_slice(&input, next_source..input.units().len());
                     }
-                    vm.string_from_units(&output)
+                    let output = vm.string_build_result(p, output.finish())?;
+                    Ok(vm.heap.alloc(Cell::String(output)))
                 })
             },
         )
@@ -521,30 +522,30 @@ impl<H: Host> Vm<H> {
         groups: Value,
     ) -> Result<JsString, JsError> {
         let units = template.units();
-        let mut output = Vec::new();
+        let mut output = super::wtf16::JsStringBuilder::default();
         let mut cursor = 0usize;
         while cursor < units.len() {
             if units[cursor] != u16::from(b'$') || cursor + 1 == units.len() {
-                output.push(units[cursor]);
+                output.append_slice(template, cursor..cursor + 1);
                 cursor += 1;
                 continue;
             }
             match units[cursor + 1] {
                 unit if unit == u16::from(b'$') => {
-                    output.push(u16::from(b'$'));
+                    output.append_slice(template, cursor..cursor + 1);
                     cursor += 2;
                 }
                 unit if unit == u16::from(b'&') => {
-                    output.extend_from_slice(matched.units());
+                    output.append(matched);
                     cursor += 2;
                 }
                 unit if unit == u16::from(b'`') => {
-                    output.extend_from_slice(&input.units()[..match_position]);
+                    output.append_slice(input, 0..match_position);
                     cursor += 2;
                 }
                 unit if unit == u16::from(b'\'') => {
                     let end = match_position.saturating_add(matched.units().len());
-                    output.extend_from_slice(&input.units()[end.min(input.units().len())..]);
+                    output.append_slice(input, end.min(input.units().len())..input.units().len());
                     cursor += 2;
                 }
                 unit if (u16::from(b'0')..=u16::from(b'9')).contains(&unit) => {
@@ -567,12 +568,15 @@ impl<H: Host> Vm<H> {
                     if let Some((capture, consumed)) = selected {
                         let value = captures[capture - 1];
                         if !value.is_undefined() {
-                            let value = self.coerce_js_string(p, value)?;
-                            output.extend_from_slice(value.units());
+                            // RegExp replacement has already converted every capture.
+                            let Some(Cell::String(value)) = self.heap.get(value) else {
+                                unreachable!("replacement captures are strings or undefined");
+                            };
+                            output.append(value);
                         }
                         cursor += consumed + 1;
                     } else {
-                        output.push(u16::from(b'$'));
+                        output.append_slice(template, cursor..cursor + 1);
                         cursor += 1;
                     }
                 }
@@ -582,7 +586,7 @@ impl<H: Host> Vm<H> {
                         .position(|unit| *unit == u16::from(b'>'))
                         .map(|offset| cursor + 2 + offset)
                     else {
-                        output.push(u16::from(b'$'));
+                        output.append_slice(template, cursor..cursor + 1);
                         cursor += 1;
                         continue;
                     };
@@ -592,19 +596,18 @@ impl<H: Host> Vm<H> {
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
                         let value = self.coerce_js_string(p, value)?;
-                        output.extend_from_slice(value.units());
+                        output.append(&value);
                     }
                     cursor = end + 1;
                 }
                 _ => {
-                    output.push(u16::from(b'$'));
+                    output.append_slice(template, cursor..cursor + 1);
                     cursor += 1;
                 }
             }
         }
-        Ok(JsString::from_units(&output))
+        self.string_build_result(p, output.finish())
     }
-
     pub(super) fn regexp_symbol_search(
         &mut self,
         p: &ResidualProgram,
