@@ -1,0 +1,165 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "34a66f221b4976380e3c67d59ef340aa351a9af0",
+  "qualification": "Isolated copyWithin contract fix on the committed shared VM; unrelated pending TypedArray construction, set, slice, Node and Wasm changes preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/typed_array.rs": "0d49caf8da642f22a6d1571d813c31930ead7196a6af853ea17f2c55519d4e20"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "copy": "Validated backing bytes are the copy authority. Rc::make_mut(bytes).copy_within preserves exact encodings and overlap, replacing a temporary vector of JavaScript values and element coercions.",
+    "ordering": "Coerce target, start and end against the original length. Revalidate only when original count is positive, then clamp copying to the current length. Empty copying does not add a detached/out-of-bounds error.",
+    "reduction": "Removed intermediate validation branches and per-element conversion/storage. No new side maps, fixture changes or duplicate unit tests."
+  },
+  "spec": "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-%typedarray%.prototype.copywithin",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-typed-array.cc": "df1f9abf85ddb71c68ef1abf7a6e38df405ba65c81a23a4037d39845e0c6bbc4"
+  },
+  "build": {
+    "profile": "release; correctness qualification, no Stage B performance claim",
+    "log": "target/iteration/task13-typed-array-copy-within/build.log",
+    "before_binary_sha256": "de7f10e5b86322a070efbf62596ec7d235c2874ebde0535e4831bb5ac60521c1",
+    "after_binary_sha256": "2a4359903a5ea983b5eec08ddf0df71606c06a328223bf7df87a9f301cf1ab79"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1542,
+    "passed_before": 1533,
+    "passed_after": 1533,
+    "gained": [],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "typed-array",
+        "total": 1446,
+        "passed_before": 1443,
+        "passed_after": 1443,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-copy-within/before-typed-array.json": "596029c4cc327c8478cec089cb820ad8ca690b25d5e297fb25b14318f84b7c8f",
+          "target/iteration/task13-typed-array-copy-within/after-typed-array.json": "bf833d6091553e953b640609e8d640af5b9f18fcf442b561b70501a3ac1e3ace",
+          "target/iteration/task13-typed-array-copy-within/compare-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        },
+        "remaining_failures": [
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          }
+        ]
+      },
+      {
+        "scope": "staged-typed-array",
+        "total": 96,
+        "passed_before": 90,
+        "passed_after": 90,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task13-typed-array-copy-within/before-staged-typed-array.json": "e92057d46e04cedcf1ebcf946cb308b7a13508f9524c4e0210626376aaaaf750",
+          "target/iteration/task13-typed-array-copy-within/after-staged-typed-array.json": "562f398c2ebf1663123e7cbb37f1812c098fc31ec2a23f324bbd8323faea2ffe",
+          "target/iteration/task13-typed-array-copy-within/compare-staged-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        },
+        "remaining_failures": [
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+            "reason": "next runtime: TypeError: property descriptor is not an object",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+            "reason": "next runtime: Test262Error: Expected a ExpectedError but got a Error",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/iterator-next-with-detached.js",
+            "reason": "next runtime: TypeError: cannot read properties of undefined",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/set-detached.js",
+            "reason": "next runtime: Test262Error: Expected a ExpectedError but got a TypeError",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/set-wrapped.js",
+            "reason": "next runtime: TypeError: cannot read properties of undefined",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/slice-bitwise-same.js",
+            "reason": "next runtime: Test262Error: Expected SameValue(\u00ab2143289344\u00bb, \u00ab2139095041\u00bb) to be true",
+            "stage": "114"
+          }
+        ]
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "sources": 65,
+    "observations_per_build": 130,
+    "before_matches": 114,
+    "after_matches": 130,
+    "losses": 0,
+    "gained_sources": [
+      "detach-target-0",
+      "detach-start-0",
+      "detach-end-0",
+      "detach-then-end-throws",
+      "resize-False-0-0",
+      "resize-False-8-0",
+      "nan-bits-Float32Array",
+      "nan-bits-Float64Array"
+    ],
+    "report": "target/iteration/task13-typed-array-copy-within/node-controls.json",
+    "sha256": "53f98b497f3968c6228630334c372aa078f940bd72c242151327f22729cb6363"
+  },
+  "timeout_diagnosis": {
+    "qualification_timeout_unchanged": true,
+    "worker_trace": {
+      "fixture": "/Users/admin/Code/GitHub/quench-v2/tests/test262/test/built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+      "diagnostic_only": true,
+      "external_timeout_seconds": 45,
+      "elapsed_seconds": 13.144673833,
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    "interpretation": "One unchanged fixture completes successfully in about 13 seconds when observed directly outside the suite deadline. It remains a suite timeout at 10 seconds. Dense fill/construction alone is fast; the argument-factory path needs further cost tracing. This diagnostic is not a gained suite pass.",
+    "artifacts": {
+      "target/iteration/task13-typed-array-copy-within/detachment-worker-trace.json": "213ae2c896bdc0f8fa6b30f3ce3a68506492763ceeb4c8aca877507b02049fc4",
+      "target/iteration/task13-typed-array-copy-within/construction-trace.json": "f6a1f818100b656be78823804a123b1736bde5524538a7b0f11e3ec3d361027f",
+      "target/iteration/task13-typed-array-copy-within/arraylike-trace.json": "e26074c9ba63f04e3e837c8461901433efdf8af8d177e116397e1369a55b4113"
+    }
+  },
+  "limits": [
+    "Nine selected suite failures remain; task 13, task 20 and Stage A remain open.",
+    "This does not qualify production single-VM cutover, Wasm, Node frozen suite or Stage B performance."
+  ]
+}

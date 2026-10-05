@@ -291,29 +291,34 @@ impl<H: Host> Vm<H> {
             Native::Uint8ArrayFill => self.typed_array_fill_native(p, this, args, length),
             Native::Uint8ArrayCopyWithin => {
                 let target = self.typed_array_relative_index(p, args.first(), length)?;
-                self.typed_array_validate_current_write(p, this)?;
                 let start = self.typed_array_relative_index(p, args.get(1), length)?;
-                self.typed_array_validate_current_write(p, this)?;
                 let end_arg = args.get(2).filter(|value| !value.is_undefined());
                 let end = match end_arg {
                     Some(value) => self.typed_array_relative_index(p, Some(value), length)?,
                     None => length,
                 };
-                self.typed_array_validate_current_write(p, this)?;
-                let current_length = self.typed_array_length(this).unwrap_or_default();
-                let effective_length = current_length.min(length);
-                let count = end
-                    .saturating_sub(start)
-                    .min(effective_length.saturating_sub(target))
-                    .min(effective_length.saturating_sub(start));
-                let values = (0..count)
-                    .map(|index| {
-                        self.typed_array_get(this, start + index)
-                            .unwrap_or(Value::UNDEFINED)
-                    })
-                    .collect::<Vec<_>>();
-                for (index, value) in values.into_iter().enumerate() {
-                    self.typed_array_set(p, this, target + index, value)?;
+                let count = end.saturating_sub(start).min(length - target);
+                if count > 0 {
+                    self.typed_array_validate_current_write(p, this)?;
+                    let current_length = self.typed_array_length(this).unwrap_or_default();
+                    let count = count
+                        .min(current_length.saturating_sub(target))
+                        .min(current_length.saturating_sub(start));
+                    let (buffer, offset, width) = match self.heap.get(this) {
+                        Some(Cell::TypedArray { buffer, offset, kind, .. }) => {
+                            (*buffer, *offset, kind.width())
+                        }
+                        _ => unreachable!("typed array receiver was validated"),
+                    };
+                    let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
+                        unreachable!("typed array backing buffer was validated");
+                    };
+                    let from = offset + start * width;
+                    let to = offset + target * width;
+                    // Copy backing bytes directly to preserve NaN payloads and overlap.
+                    if count > 0 {
+                        Rc::make_mut(bytes).copy_within(from..from + count * width, to);
+                    }
                 }
                 Ok(this)
             }
