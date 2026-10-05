@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "c0c6af5247eb45c0d87ecec5a4f9617e666f571c",
+  "qualification": "Isolated public-key projection and integrity operations; pending lexical-this, host, Promise and Wasm changes excluded. Final named-prefix build qualified against the original matching before reports.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/object_integrity.rs": "b5df2e5a727e0ba4936ad8dbbc583df45d3dedc30f3e9f2d311ddbf0340c62f7",
+    "crates/quench-runtime-next/src/vm/object_symbols.rs": "9f9724c21465105941a7fcb81fb856c9546f4b873f4abe9cae9c39bd83b33ba1"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "Extract the existing ordered/live/public named-key projection from ordinary reflection into own_named_keys. Reflection, integrity mutation and ordinary integrity queries share it. The storage prefix has a named owner in that module.",
+    "invariant": "Seal/freeze restrict published own properties, leaving hidden private fields/methods/accessors outside ordinary descriptor integrity. Existing public-property ordering, indexed metadata and symbol handling remain unchanged.",
+    "scope": "No new object representation, cache, serializer field, dependency, source/fixture branch or duplicate semantic unit tests."
+  },
+  "contract": {
+    "pinned_feature": "nonextensible-applies-to-private",
+    "pinned_private_addition_cases": [
+      "language/statements/class/elements/private-class-field-on-nonextensible-objects.js",
+      "language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js",
+      "staging/sm/PrivateName/modify-non-extensible.js"
+    ],
+    "scope": "The pinned cases explicitly require private addition to non-extensible objects to throw. Preserve that pre-existing contract; this patch fixes mutation of already installed private members under integrity operations.",
+    "modern_ecmascript_reference": "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-privatefieldadd",
+    "modern_difference": "Modern PrivateFieldAdd and Node do not reject ordinary objects merely for non-extensibility. This pinned feature differs; no claim of universal modern ECMAScript/Node parity."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/js-objects.cc": "b9b77eec122059b1408f35cc3122d72e01375a784af4d6cb019ad0df83b00bff",
+    "tests/node/deps/v8/src/runtime/runtime-object.cc": "f1c7654975b4a793639d4db98355a79d2af1ce3cbfb6776f70fea11e2adb71ce"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task12-private-integrity/build.log",
+    "before_binary_sha256": "487df9a4ff2fc2fb162a1bb0b7d87db3e4efa8b9599c77202a27303e257debd3",
+    "after_binary_sha256": "3721ee1f16fbd925700aa5446d2b0afe0443cb855f57ba0a4e82463bc150d5d5",
+    "after_runner_sha256": "8a897c10b1634c2d1060f30d610d656bb5c278fd29bd7a29842503b62195e5e8"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Object, Reflect, class expressions/declarations, staged PrivateName and staged class paths.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 12101,
+    "passed_before": 12100,
+    "passed_after": 12101,
+    "gained": [
+      "staging/sm/PrivateName/modify-non-extensible.js"
+    ],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "object",
+        "total": 3411,
+        "passed_before": 3411,
+        "passed_after": 3411,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-object.json": "7e5c52bf1c5ba411d398d6261e7ce7caf7bac069e7ce71a87285138817ab6e97",
+          "target/iteration/task12-private-integrity/after-object.json": "e96026292d6939502d5c262904e6cb02f21265ed3c204fd5f84291f93550b60a",
+          "target/iteration/task12-private-integrity/compare-object.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "reflect",
+        "total": 153,
+        "passed_before": 153,
+        "passed_after": 153,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-reflect.json": "1dbdd72adb2459faa3aed1b6fe79d283142c34f5de0e0769cfb6005eedfe5ebe",
+          "target/iteration/task12-private-integrity/after-reflect.json": "b1ac69408e6713740c1e357b6c0c9f211b100cb76aa918ebafd967bdd73568ac",
+          "target/iteration/task12-private-integrity/compare-reflect.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "class-expressions",
+        "total": 4059,
+        "passed_before": 4059,
+        "passed_after": 4059,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-class-expressions.json": "9321da6fc08a64e064f944e294a0048ad8bb53f2cdc4e83c3c19a24ddf790e3f",
+          "target/iteration/task12-private-integrity/after-class-expressions.json": "f1af287cff0e63b91316098f90584c4ea1a4f677d88777cd0d1e4ba476f28fbb",
+          "target/iteration/task12-private-integrity/compare-class-expressions.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "class-declarations",
+        "total": 4367,
+        "passed_before": 4367,
+        "passed_after": 4367,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-class-declarations.json": "d41df25e8f6ee156fa43b569a946a67f3109250715b7a11575a8eb94ff7ed332",
+          "target/iteration/task12-private-integrity/after-class-declarations.json": "07b683bb48b16ee25b071b53d98a5aa954e254073e29543a46e1be70676d676b",
+          "target/iteration/task12-private-integrity/compare-class-declarations.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-private",
+        "total": 17,
+        "passed_before": 16,
+        "passed_after": 17,
+        "gained": [
+          "staging/sm/PrivateName/modify-non-extensible.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-staged-private.json": "b6a5cc9869b8cbf8bf4242b9a7c9d511a8e285e40b2aa22ff485cf991b722015",
+          "target/iteration/task12-private-integrity/after-staged-private.json": "58ed5c65c58fa746adc91ea7b70f8d344a43644019e53463cd742039fa4956f4",
+          "target/iteration/task12-private-integrity/compare-staged-private.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-class",
+        "total": 94,
+        "passed_before": 94,
+        "passed_after": 94,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-private-integrity/before-staged-class.json": "bd304817ca667fb8d8aa773666fd450e1394e3e4def2fea5d50d3615e7303cb3",
+          "target/iteration/task12-private-integrity/after-staged-class.json": "3cd0484b242c35120bdf68f004e4a42d19401b5361e33fe60b1569f59f94116c",
+          "target/iteration/task12-private-integrity/compare-staged-class.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "sources": 44,
+    "observations_per_build": 88,
+    "before_matches": 24,
+    "after_matches": 54,
+    "losses": 0,
+    "report": "target/iteration/task12-private-integrity/node-controls.json",
+    "sha256": "155432df954028d48223b1415f6d88f9e33c0043790d1c2a0587d7b5d12eb1d8",
+    "remaining_cases": [
+      "stamp-after-object-preventExtensions",
+      "stamp-array-preventExtensions",
+      "stamp-after-array-preventExtensions",
+      "stamp-after-function-preventExtensions",
+      "stamp-after-proxy-preventExtensions",
+      "stamp-after-object-seal",
+      "stamp-array-seal",
+      "stamp-after-array-seal",
+      "stamp-function-seal",
+      "stamp-after-function-seal",
+      "stamp-after-proxy-seal",
+      "stamp-after-object-freeze",
+      "stamp-after-array-freeze",
+      "stamp-after-function-freeze",
+      "stamp-after-proxy-freeze",
+      "array-descriptor-preventExtensions",
+      "array-descriptor-seal"
+    ],
+    "scope": "Instance/static fields, private accessors/methods, public and symbol descriptors, stamped object/array/function/proxy integrity, addition and repeat-brand checks, proxy effect ordering; normal and generic modes.",
+    "differences": "Remaining 34 observations: 24 addition observations follow the pinned nonextensible-private rule; ten frozen-query observations retain direct Node array/function answers that differ from the ordinary descriptor contract. Array descriptor controls show writable length and successful length changes, with Node direct frozen=true, Node proxy frozen=false, Quench false for both. Zero match losses."
+  },
+  "verification": "Published behavior is covered by the affected pinned suites and external controls; no new duplicate semantic unit tests. Release compile and staged diff checks pass.",
+  "limits": [
+    "No pin, fixture, harness, discovery, exclusion, expectation or deadline changed.",
+    "Bounded affected-stage qualification does not prove complete Test262, Wasm, frozen implemented Node, production single-VM cutover or Stage A completion."
+  ]
+}
