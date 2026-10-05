@@ -178,13 +178,13 @@ impl FunctionCompiler<'_, '_> {
             self.emit_return(value);
         }
     }
-    fn close_active_iterators(&mut self) {
-        if self.iterator_closures.is_empty() {
+    fn close_active_iterators(&mut self, target_depth: usize) {
+        if self.iterator_closures.len() <= target_depth {
             return;
         }
         let start = self.code.len() as u32;
         let close_fn = self.load_name("\0rqj:iterator-close");
-        let iterators = self.iterator_closures.clone();
+        let iterators = self.iterator_closures[target_depth..].to_vec();
         for closure in iterators.into_iter().rev() {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
@@ -193,10 +193,11 @@ impl FunctionCompiler<'_, '_> {
         self.record_iterator_close_exclusion(start);
     }
 
-    fn close_iterators_leaving(&mut self, control_index: usize) {
+    pub(super) fn close_iterators_leaving(&mut self, control_index: usize, iterator_depth: usize) {
         let closures = self
             .iterator_closures
             .iter()
+            .skip(iterator_depth)
             .rev()
             .copied()
             .filter(|closure| closure.control_depth > control_index)
@@ -242,7 +243,11 @@ impl FunctionCompiler<'_, '_> {
         }
     }
     pub(super) fn emit_return(&mut self, value: Register) {
-        self.close_active_iterators();
+        let iterator_depth = self
+            .finally_contexts
+            .last()
+            .map_or(0, |context| context.iterator_depth);
+        self.close_active_iterators(iterator_depth);
         let Some(context) = self.finally_contexts.last() else {
             self.emit(Op::Return, value, 0, 0, 0);
             return;
@@ -461,6 +466,7 @@ impl FunctionCompiler<'_, '_> {
         .then(|| self.hidden_local("\0rqj:for-using-error"));
         if disposal_error.is_some() {
             self.push_disposal_scope();
+            self.push_disposal_context();
         }
         let start = self.code.len() as u32;
         let scoped = match item.init.as_ref() {
@@ -505,23 +511,8 @@ impl FunctionCompiler<'_, '_> {
             self.lexical_scopes.pop();
         }
         if let Some(error_atom) = disposal_error {
-            self.emit_disposal();
-            let normal_exit = self.emit(Op::Jump, 0, 0, 0, 0);
-            let exceptional_target = self.code.len() as u32;
-            let error = self.load_atom(error_atom);
-            self.emit_disposal();
-            self.emit(Op::Throw, error, 0, 0, 0);
-            let end_target = self.code.len() as u32;
-            self.patch_to(normal_exit, end_target);
-            self.handlers.push(crate::bytecode::Handler {
-                start,
-                end,
-                target: exceptional_target,
-                slot: self.local_slot(error_atom),
-                return_target: None,
-                return_slot: None,
-                with_depth: self.with_depth,
-            });
+            let context = self.finally_contexts.pop().expect("for disposal context");
+            self.emit_disposal_scope_exit(start, end, error_atom, Some(context));
             self.pop_disposal_scope();
         }
     }
@@ -607,19 +598,20 @@ impl FunctionCompiler<'_, '_> {
             );
             return;
         };
-        if self.finally_contexts.is_empty() {
-            self.close_iterators_leaving(index);
+        let context_index = self.abrupt_context_index(index);
+        if context_index.is_none() {
+            self.close_iterators_leaving(index, 0);
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
         self.record_finalizer_abrupt_completion();
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        if !self.finally_contexts.is_empty() {
+        if let Some(context_index) = context_index {
             let destination = Rc::new(std::cell::Cell::new(None));
             self.controls[index]
                 .break_destinations
                 .push(destination.clone());
-            let context = self.finally_contexts.last_mut().unwrap();
+            let context = &mut self.finally_contexts[context_index];
             context.abrupt_edges.push(FinallyAbrupt {
                 edge,
                 control: index,
@@ -653,19 +645,20 @@ impl FunctionCompiler<'_, '_> {
             );
             return;
         };
-        if self.finally_contexts.is_empty() {
-            self.close_iterators_leaving(index);
+        let context_index = self.abrupt_context_index(index);
+        if context_index.is_none() {
+            self.close_iterators_leaving(index, 0);
             let target_depth = self.controls[index].with_depth;
             self.emit_with_exits_to(target_depth);
         }
         self.record_finalizer_abrupt_completion();
         let edge = self.emit(Op::Jump, 0, 0, 0, 0);
-        if !self.finally_contexts.is_empty() {
+        if let Some(context_index) = context_index {
             let destination = Rc::new(std::cell::Cell::new(None));
             self.controls[index]
                 .continue_destinations
                 .push(destination.clone());
-            let context = self.finally_contexts.last_mut().unwrap();
+            let context = &mut self.finally_contexts[context_index];
             context.abrupt_edges.push(FinallyAbrupt {
                 edge,
                 control: index,
