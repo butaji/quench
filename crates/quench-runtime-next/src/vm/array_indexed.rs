@@ -256,9 +256,6 @@ impl<H: Host> Vm<H> {
         length: usize,
         typed_array: bool,
     ) -> Result<Value, JsError> {
-        if !typed_array && native == Native::ArrayMap && length > u32::MAX as usize {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(callback) {
             return Err(self.type_error(p, "array callback is not callable".into()));

@@ -1,0 +1,320 @@
+{
+  "schema": 1,
+  "tasks": [
+    "20",
+    "48"
+  ],
+  "source_head": "39177c0f6509ba144f7d19a68d9b0cab6f64123d",
+  "qualification": "Committed shared-VM production runner from task15-local-time-disambiguation; broad pending worktree changes excluded. Runner provenance observes the dirty main checkout, which is not its compiled source.",
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "scope": "Stage 114 only; no full Test262 run",
+  "total": 1482,
+  "passed": 1433,
+  "failed": 49,
+  "jobs": 2,
+  "timeout_ms": 10000,
+  "report": "target/iteration/task20-current-staging/current.json",
+  "report_sha256": "2980f0004e3b485b336b228cbca5ab9901c00965e9075f06e4ec61910ed234cb",
+  "binary_sha256": "91912a142d258185a035d956798f971eba9fcc60e0f5e0fb2a4d24f51b55a080",
+  "remaining_non_pass": [
+    {
+      "outcome": "failed",
+      "path": "staging/explicit-resource-management/async-disposal-from-sync-method-returning-a-promise.js",
+      "reason": "next runtime async: $DONE was not called",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Array/change-array-by-copy-cross-compartment-create.js",
+      "reason": "next runtime: Test262Error: with returned an instance of Array Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Array/from_constructor.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abundefined\u00bb, \u00ab1\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Array/length-01.js",
+      "reason": "next runtime: TypeError: cannot add property to non-extensible object",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Array/species.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab\"get:slice,get:length,get:constructor,c-get:Symbol(Symbol.species),get:0,define:0:1:true:true:true,get:1,define:1:2:true:true:true,get:2,define:2:3:true:true:true,get:3,define:3:4:true:true:true,get:4,define:4:5:true:true:true,\"\u00bb, \u00ab\"get:slice,get:length,get:constructor,c-get:Symbol(Symbol.species),get:0,define:0:1:true:true:true,get:1,define:1:2:true:true:true,get:2,define:2:3:true:true:true,get:3,define:3:4:true:true:true,get:4,define:4:5:true:true:true,set:length:5,\"\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Array/to-length.js",
+      "reason": "next runtime: Test262Error: Expected a RangeError but got a Error",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/ArrayBuffer/slice-species.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abfunction () { [native code] }\u00bb, \u00abclass MyArrayBufferWithSpecies extends ArrayBuffer {\n  get [Symbol.species]() {\n    return MyArrayBufferWithSpecies;\n  }\n}\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-2-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-3-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-4-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-5-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-6-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-7-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/Date/dst-offset-caching-8-of-8.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Error/constructor-ordering.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab0\u00bb, \u00ab1\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Function/bound-length-and-name.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab0\u00bb, \u00ab3\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Function/function-caller-restrictions.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abundefined\u00bb, \u00abnull\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Function/throw-type-error.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abfalse\u00bb, \u00abtrue\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/Math/atanh-approx.js",
+      "reason": "next runtime: Error: got -6.998237084679375, expected a number near -6.998237084679027 (relative error: 392)",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/PrivateName/modify-non-extensible.js",
+      "reason": "next runtime: TypeError: cannot write non-writable property",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/String/replace-math.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+      "reason": "next runtime: TypeError: property descriptor is not an object",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+      "reason": "next runtime: Test262Error: Expected a ExpectedError but got a Error",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/iterator-next-with-detached.js",
+      "reason": "next runtime: TypeError: cannot read properties of undefined",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/seal-and-freeze.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/set-detached.js",
+      "reason": "next runtime: Test262Error: Expected a ExpectedError but got a TypeError",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/set-wrapped.js",
+      "reason": "next runtime: TypeError: cannot read properties of undefined",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/slice-bitwise-same.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab2143289344\u00bb, \u00ab2139095041\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/TypedArray/test-integrity-level.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/class/boundFunctionSubclassing.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abfalse\u00bb, \u00abtrue\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/extensions/arguments-property-access-in-function.js",
+      "reason": "next runtime: TypeError: restricted arguments property",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/extensions/censor-strict-caller.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abundefined\u00bb, \u00abnull\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/extensions/function-caller-skips-eval-frames.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00abundefined\u00bb, \u00abfunction nest() { return eval(\"innermost();\"); }\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/extensions/function-properties.js",
+      "reason": "next runtime: TypeError: restricted arguments property",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/extensions/newer-type-functions-caller-arguments.js",
+      "reason": "next runtime: Test262Error: Expected 'caller' property access to throw on method() {} Expected a TypeError to be thrown but no exception was thrown at all",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab\"object\"\u00bb, \u00ab\"function\"\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/object/toPrimitive.js",
+      "reason": "next runtime: Test262Error: Expected SameValue(\u00ab\"0Mon Oct 05 2026 05:00:09 GMT-0500\"\u00bb, \u00ab1791194409146.964\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "timed_out",
+      "path": "staging/sm/regress/regress-1507322-deep-weakmap.js",
+      "reason": "test timed out after 10000ms",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-571014.js",
+      "reason": "next runtime: Test262Error: Expected a TypeError to be thrown but no exception was thrown at all",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-577648-1.js",
+      "reason": "next runtime: Test262Error: 1 Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-577648-2.js",
+      "reason": "next runtime: Test262Error:  Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-584355.js",
+      "reason": "next runtime: Test262Error:  Expected SameValue(\u00ab\"function f () { ff (); }\"\u00bb, \u00ab\"undefined\"\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-586482-1.js",
+      "reason": "next runtime: Test262Error: ok Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-586482-2.js",
+      "reason": "next runtime: Test262Error: ok Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-586482-3.js",
+      "reason": "next runtime: Test262Error: ok Expected SameValue(\u00abtrue\u00bb, \u00abfalse\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-586482-4.js",
+      "reason": "next runtime: Test262Error: ok Expected SameValue(\u00abfunction() { this.f(); }\u00bb, \u00abundefined\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/sm/regress/regress-602621.js",
+      "reason": "next runtime: Test262Error: function sub-statement must override arguments Expected SameValue(\u00ab\"function\"\u00bb, \u00ab\"object\"\u00bb) to be true",
+      "stage": "114"
+    },
+    {
+      "outcome": "failed",
+      "path": "staging/source-phase-imports/import-source-source-text-module.js",
+      "reason": "next runtime async: Test262Error: Test262Error: Promise should be rejected with SyntaxError in indirect import source Expected a SyntaxError to be thrown asynchronously but no exception was thrown at all",
+      "stage": "114"
+    }
+  ],
+  "limits": [
+    "This supersedes the mixed-revision latest-observation census as the frontier at this revision. Earlier focused qualifications of uncommitted changes do not prove these committed cases pass.",
+    "No pin, fixture, helper, discovery, expectation or production semantics changed for the census.",
+    "Stage A and complete suite qualification remain open."
+  ]
+}
