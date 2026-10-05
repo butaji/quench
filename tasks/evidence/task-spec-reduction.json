@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "kind": "task_spec_reduction",
+  "archive_revision": "c28dae00713ae9defdf6094f1d7a82d64b1d005a",
+  "source_files": {
+    "tasks/08.md": "51cd1d96ababbcfc1053c8b4ae5f2f63ac1aa882965bdcb6b0b50171c190c892",
+    "tasks/10.md": "0d3baf1587468ddd2cc6077f035b6d33abcfb4eba3f37f707b8d00babb936352",
+    "tasks/15.md": "6aff2ac3beebc49a9e3c7a2bce8c00e0404161b15c78b9a70be30a25f8a24f3b",
+    "tasks/20.md": "0ebf23a350a28c935637a2103a3050c47dece6380ff39bb12edb99746b1e5c54",
+    "tasks/37.md": "89203d3a8cd9ac5e78edc868003575e5cab9220161d8ccbf6ef1316923c3ba1b"
+  },
+  "checks": {
+    "local_references": 355,
+    "anchors": 30,
+    "broken_references": []
+  },
+  "contract": "Current outcome, gaps and DoD remain in task specs. Detailed historical progress lives in linked Git history; compact evidence remains available. No queue status or suite input changed."
+}
