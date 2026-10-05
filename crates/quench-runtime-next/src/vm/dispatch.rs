@@ -40,6 +40,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: &mut usize,
     ) -> Result<StepResult, JsError> {
+        self.frames[f].binding_site_pc = Some(*pc as u32);
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
