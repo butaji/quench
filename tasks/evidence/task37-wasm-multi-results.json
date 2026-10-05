@@ -1,0 +1,306 @@
+{
+  "tasks": [
+    "07",
+    "19",
+    "23",
+    "37",
+    "40"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "4c57a3275ce47f4ef2c5b9b2f0f8e8647ed1b08b9e320f96952b374e7b812a24",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "b6f5a1683f49d9aeb9735679e259bec9080df4dcaff37da8c8f21345972f6205",
+    "crates/quench-runtime-next/src/wasm/control.rs": "ca4734d0098b8d43f7da7e3a0a60d7ca9682bd80dc995809fbf75d5c7ec27311",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "1a328919f2913031c9d7cd0f9fb6844eb3a38d2d25d14d84f4d49ab4ba623fe4",
+    "crates/quench-runtime-next/src/api.rs": "26433d9a39ca8d2dcbf9b31d0f6691bfa5124c90bb69504347d4b0552879937b",
+    "crates/quench-wasm/src/shared.rs": "bd93d5028d80521e1aaf34178ee1427a3ed6f68e5892195b011c8747956f115c",
+    "crates/quench-wasm/src/shared_wast.rs": "02cc714e23cfcf5c33a5df84d4bb64818344f5ffba0ab06d5601a76e5a9b1653"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Transport complete scalar Wasm function results through the shared call ABI and heap, including explicit/branched returns, nested calls, raw-bit scalar owners, and early scalar-boundary rejection without guest effects.",
+  "representation": "WasmSignature.results is the canonical ordered result-type vector. Function control labels derive result arity. Multi-result returns use MakeArray/DefineArrayElement and nested calls project via GetIndex, all in the existing interpreter/heap/Value/root vocabulary. The single-Value ABI arity is named in the Wasm owner. Generic raw execution restores active program and feeds scalar or vector boundary decoding; scalar entry points do not allocate a result vector and reject multi-results before entering guest code. No opcode or residual-format change; format remains 46.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-multi-results-runner",
+    "sha256": "dd6a41e4df246651d247cfa913b8097a4ff3d905e73d981a2bc32707d20e2519"
+  },
+  "before_projection": {
+    "path": "target/iteration/task37-wasm-multi-results-before.json",
+    "sha256": "8fbc541fcf640564d79aef9fc5b9163c54c6f5fb9824acca2ec3c54f02864d30"
+  },
+  "before_reports": [
+    {
+      "path": "target/iteration/task37-wasm-constant-after.json",
+      "sha256": "86e6a8ec076d7008fe6199142259777d5f105be5d579e1f57ba91ac838094f72"
+    },
+    {
+      "path": "target/iteration/task37-wasm-multi-results-before-functions.json",
+      "sha256": "a6ed84b6190b61dceee42f59d86515418c3fd1a5902c2e61736cd3fa1c24a124"
+    }
+  ],
+  "after": {
+    "path": "target/iteration/task37-wasm-multi-results-after.json",
+    "sha256": "7cccc4b7775f38f3574eca46e52e1eebe653cf4b7d3b7ba4e43182f2253c183d"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-multi-results-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "regressions": 0,
+  "gains": 89,
+  "gains_by_file": {
+    "crates/quench-wasm-test/testsuite/func.wast": 89
+  },
+  "newly_passing_identities": [
+    "crates/quench-wasm-test/testsuite/func.wast#directive=1",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=2",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=3",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=4",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=5",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=6",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=7",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=8",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=9",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=10",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=11",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=12",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=13",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=14",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=15",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=16",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=17",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=18",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=19",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=20",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=21",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=22",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=23",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=24",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=25",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=26",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=27",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=28",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=29",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=30",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=31",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=32",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=33",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=34",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=35",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=36",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=37",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=38",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=39",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=40",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=41",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=42",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=43",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=44",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=45",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=46",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=47",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=48",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=49",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=50",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=51",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=52",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=53",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=54",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=55",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=56",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=57",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=58",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=59",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=60",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=61",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=62",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=63",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=64",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=65",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=66",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=67",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=68",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=69",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=70",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=71",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=72",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=73",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=74",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=75",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=76",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=77",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=78",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=79",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=80",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=81",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=82",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=83",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=84",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=85",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=86",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=87",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=88",
+    "crates/quench-wasm-test/testsuite/func.wast#directive=89"
+  ],
+  "total": 14461,
+  "passed": 13538,
+  "failed": 923,
+  "inventory_complete": true,
+  "scopes": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/const.wast",
+      "sha256": "b1a378d5b7ddb4d4acb5ae2959ac938dfe0d9e3c2864df457bc098d3f2e00f37"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/func.wast",
+      "sha256": "fb48ac22e13b3f5bd34063e194756af2f558b99d0f6f230e871c0b6d56849497"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast",
+      "sha256": "0899df8c814d953d56a22b04d518fda6c7e6aab5a0d0472367a830e31821ee40"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/return.wast",
+      "sha256": "987f665cbf9be3d240325fcc14bfa449e8fb8ad9e8193afa3aff03ddb33bd7ce"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+    }
+  ],
+  "remaining_failure_clusters": {
+    "unsupported shared Wasm module state, imports or section": 915,
+    "unsupported shared Wasm argument type": 8
+  },
+  "verification": {
+    "runtime_internal": {
+      "passed": 20,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-multi-results-runtime.log",
+        "sha256": "1084738a877266c9d232b7859c7bca66f7cdfa67d0362797e0f370910d8e5296"
+      },
+      "new_test": "serialized_multi_result_bundles_trace_raw_scalars_and_guard_scalar_entry_effects"
+    },
+    "all_runtime_units": {
+      "passed": 469,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-multi-results-all-runtime.log",
+        "sha256": "1eb2b14723a270418505cbcbc4d2fe9c2d66ca6a41d6a10c38c959cead022db9"
+      }
+    },
+    "frontend_units": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-multi-results-frontend.log",
+        "sha256": "0e4e7997c29c28611e7e7e87204e16b9cafdcfdf87321378d7470d1f14e13098"
+      }
+    },
+    "all_targets_with_memory_and_aggregate_features": {
+      "path": "target/iteration/task37-wasm-multi-results-check.log",
+      "sha256": "0f9531a1b7bdabaaed22f05e5c5024dfb4d53566237db68675a68a4a5cf774f3"
+    },
+    "multi_result_controls": {
+      "total": 14,
+      "passed": 14,
+      "before_passed": 7,
+      "before": {
+        "path": "target/iteration/task37-wasm-multi-results-before-controls.json",
+        "sha256": "c7c8efc7b185667a6c88c911c6f7ed28b7506864eba6595b36602d3e7b2122e3"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-multi-results-controls.json",
+        "sha256": "0ef26a80b7d1b1e4c2f329999e3949af737467ca0663ff97292ed1d1be1a446b"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-multi-results-controls.wast",
+        "sha256": "ec86c11bf2a7d99a8d860c87d94e8767502c92d9757d9718e7c88fb4a647407a"
+      }
+    },
+    "node_oracle": {
+      "path": "target/iteration/task37-wasm-multi-results-node.json",
+      "sha256": "5d90d0f7a3322ec3d4d81780e358f5e00139daea855e4ae48eacf9775ad91099"
+    }
+  },
+  "scope_rationale": "The prior 19 scalar/control/global/constant scopes exercise the changed signature and call boundary. func.wast and return.wast directly own function result and return behavior and were frozen with the previous runner before comparison. Disposable controls verify mixed-width order, signed zero, early returns, branches, nested calls, result consumption, void callers and 20-result bundles against Node. Only one new internal regression unit was retained, covering serialization, precise GC ownership, raw tag collisions and no-effect ABI rejection rather than ordinary suite cases.",
+  "limits": [
+    "Typed references/SIMD result values, memories/tables/imports, indirect calls and remaining state/proposals still need shared implementation.",
+    "func.wast is 170/175 and return.wast is 20/84 on this build; the affected scope is not full Wasm closure.",
+    "This is correctness evidence with no performance claim. Stage A and legacy removal remain open; Stage B has not started."
+  ]
+}

@@ -1,0 +1,187 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "7e86b1f03cc9fc9d338deb3ca4b56c654f481894ba4fdd80d406f7efdb7d8850",
+    "crates/quench-runtime-next/src/wasm/element.rs": "cc73b36e6b8dbea71c0e50f8b875be322cf44606e2614ec88c813d3f8adb962e",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "86b48545458fe80ec9e143ad9a52cb274663bbb1b1b3137b1c071cc789240e2f",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "94e6a06e767ce17e9d6e60effb9593a8f357912f52f1d4873d3d4f0a64fb4663",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "1026bb56c24a959aa40e4694da3c26360630bcb66d871dbfe0710c20ae2fc072",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "7ffba27387805108397cfbbbbfb53ebf8d255b725ebebfc236472a11de2e330e",
+    "crates/quench-runtime-next/src/bytecode.rs": "fa11fdda9be423a0af8305e70ad2748e0b18be444ebb7716440eb58324596823",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "401d22d9c35e78a5cf6e9c9a7966db5bc7b8441e5ddcb01407df66009bcc628c"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 65,
+  "obligation": "Execute array.new_data/new_elem/init_data/init_elem in the single VM using existing segment bindings, dropped-state transitions, storage rules and complete pre-write validation.",
+  "representation": "One ArraySegmentKind opcode table derives construction/initialization projections. Data fields project to existing little-endian memory loads and their table-derived widths; element fields retain original reference values. Checked source views borrow/share existing storage without copied lifecycle state. Constructors use one named three-operand register/root window and the shared dense payload size policy. Initializers validate destination/source ranges and reference admission before mutation, with no temporary field vector. Four appended opcodes reuse existing operand models; format65 admits them without changing packed widths. No new heap cell, side map or executor.",
+  "scope": "230 matching previously affected pinned files plus the two explicitly added standalone constructor files, each with a matching before/after report. The latter were absent from the previous affected scope and are now qualified rather than inferred. Groups have disjoint IDs. 49 focused directives and35 Node observations cover all numeric/packed/vector storage, float payload bits, non-defaultable references, dropped/active/declared states, empty boundaries, null/bounds traps with no partial writes, and foreign original graphs. No full Test262 or full Wasm suite, expectations/skips/inventory changes.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/gc/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-bulk-after.json",
+      "sha256": "fd1d9d325030d1135c84aa8e361484febdafd5f8a8020c48f07812297e5abbf4",
+      "binary_sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-segments-after.json",
+      "sha256": "0a95ec0f3fd9b544b1a01158637c41d3f1b19837125ecdf5b42c4ac6c7ae62ab",
+      "binary_sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 62108,
+    "passed": 62243,
+    "failed": 515,
+    "gains": 135,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/array.wast": 27,
+      "crates/quench-wasm-test/testsuite/array_copy.wast": 31,
+      "crates/quench-wasm-test/testsuite/array_init_data.wast": 44,
+      "crates/quench-wasm-test/testsuite/array_init_elem.wast": 33
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "constructors": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-segments-constructors-before.json",
+      "sha256": "36bfccc72336278ba82d55547c918491acd5e7f2b60b9cc76eebe674600b3136",
+      "binary_sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-segments-constructors-after.json",
+      "sha256": "a228c69663c4bcba8184a71b0179256dbfe8ae1406e65718804c5781941b5c42",
+      "binary_sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+    },
+    "files": 2,
+    "total": 52,
+    "before_passed": 0,
+    "passed": 52,
+    "failed": 0,
+    "gains": 52,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/array_new_data.wast": 28,
+      "crates/quench-wasm-test/testsuite/array_new_elem.wast": 24
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "pinned_totals": {
+    "files": 232,
+    "total": 62810,
+    "passed": 62295,
+    "failed": 515,
+    "gains": 187,
+    "regressions": 0
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-segments-controls-before.json",
+      "sha256": "9f64d890fbee64d43e56befd1e61b1610296593f3493dfb0d92b467d601a6176",
+      "binary_sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-segments-controls-after.json",
+      "sha256": "b26a98741f604c5cd817cbbffb5a3a6f60721d12c772e64f12c317c88901cd45",
+      "binary_sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+    },
+    "files": 1,
+    "total": 49,
+    "before_passed": 0,
+    "passed": 49,
+    "failed": 0,
+    "gains": 49,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-array-segments-controls.wast": 49
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-array-segments-runner",
+    "sha256": "2576f8f77cafa8d42e55a380f864a237504e904d5213c0223a2ded829174f985"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-array-segments-runtime.log",
+      "sha256": "039a3b230b3fe77eab8ba6e9ed1a185faa73786456cc40ee20f0936479922a1b",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-array-segments-frontend.log",
+      "sha256": "342581a8080d5aee6d5f6a714df3674c49fa938a0054b994c8b95e911340e57f",
+      "passed": 32
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-array-segments-bytecode.log",
+      "sha256": "92114362a0b14762e455f30c131aa2f1b2a0ace0e3092e46ae4fd000ef99b2f8",
+      "passed": 19
+    },
+    "roots": {
+      "path": "target/iteration/task37-wasm-array-segments-roots.log",
+      "sha256": "130d1ea2f060898d8c4bbb482cf0d43db876e85f593508345f9b67b70b0490b8",
+      "passed": 1
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-array-segments-check.log",
+      "sha256": "81922c47ebd7dc677a933bff4c9ec1026b5164735ceb4d6e712223155670c749",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-array-segments-build.log",
+      "sha256": "702f7d78050e05efc21569971033c16d9749c1b79a40c320623c47069d623941",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-array-segments-oracle.json",
+    "sha256": "03cca9723ae82a49b0503ac5b5c8f4649c540ae654b959f3cd21fae7b625c20e",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 35,
+    "command": [
+      "node",
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors",
+      "target/iteration/task37-wasm-array-segments-oracle.cjs"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-array-segments-a.wat": "837d55d72527b6cae775d107a5407ef8ea9985bd3f822517fdcc2b5c5f80b0d9",
+      "target/iteration/task37-wasm-array-segments-a.wasm": "9a5f854cfefd2ebf7d37f6146e54ee5909a8e85e9baa5321b7deb97deb54a5af",
+      "target/iteration/task37-wasm-array-segments-b.wat": "6d51786a9e3f9f5e1117ecdf456e5192f486e53ea3f7e47b3241ef004c0feade",
+      "target/iteration/task37-wasm-array-segments-b.wasm": "7b02dd2b36dd140e477cc4a729a5743ffb24d0c83501f30f7acfc9eaf221de34",
+      "target/iteration/task37-wasm-array-segments-active.wat": "f9ac1b92615f077c3332ec8efd26abda2dd4bdeef82e192d1959cb5ec107244b",
+      "target/iteration/task37-wasm-array-segments-active.wasm": "13e1451cb9511428363eb72d984bff6a492c5e38a0c04f4eda0225756ba9c748",
+      "target/iteration/task37-wasm-array-segments-oracle.cjs": "c427d472397c0a3696c4a1f191beac822b6766652c1f1ce01e1a800b8591a575"
+    }
+  },
+  "internal_obligation": "Existing constructor-window liveness regression now covers both segment-backed constructors and proves the complete operand window is rooted and only the result is defined. Canonical signature attachment rejects wrong storage kinds and any constructor window count other than ArraySegmentInput::COUNT. Existing serialization/root/lifecycle and bytecode checks pass; no ordinary conformance unit added.",
+  "limits": "Descriptor objects and their initializer operators, shared references/resources, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. Complete Wasm and implemented Node inventories, single-VM production cutover and Stage A closure are not qualified by these affected reports.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 323,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "import module has no valid instance": 10,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefGetDesc { type_index: 1 }": 4,
+    "null reference": 2,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: TryTable { try_table: TryTable { ty: Empty, catches: [] } }": 2
+  }
+}

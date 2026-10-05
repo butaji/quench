@@ -1,0 +1,141 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "4e464140227d7e268f94856aa517cbcf902222f8e5d102b388dd125794e6da7c",
+    "crates/quench-runtime-next/src/wasm/table.rs": "2ae207c1b4cb8c7d20dd902cde25b0900af0081180b2b9186d65c51b48cdd086",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "b6b791409322da6b228ec39357f2c6fc76d941ec972f17ef583d5579f646d429",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "a74375dc7aaf988a1fe5ca226ed64981eda56b46865821e47fc6d6b22e2ce5f8",
+    "crates/quench-runtime-next/src/wasm/types.rs": "3e8237a1c3b7141c49249834bdbba6bd49c399abf1260f8ea6d05afbb594bbf6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6b96e4f90410e9c30591cfe87e4e0b76f4a06389911855a0a1808b3ae2d37689",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "29e239e563cb6010951d981f5755dd636a00844b2a4609e1657c827e8f9b9437",
+    "crates/quench-wasm/src/shared.rs": "19e23a7de70c9d5ac2d8fc61b6cdb47ee12c8a0cb505861b16beada00c33fa7a"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 55,
+  "obligation": "Execute call_ref through the shared call ABI with original callable/program/capture identity; lower every validated ref.null heap type to the uniform runtime null value.",
+  "representation": "call_ref and call_indirect share declared signature/arity projection. Validated call_ref composes the existing WasmRefAsNonNull guard and ordinary Value-reference call; no extra opcode, runtime signature authority/check, forwarding wrapper or retagging. call_indirect retains table-bound lookup/type guards. RefNull heap types remain validation facts; execution has one null Value, as specified. Existing Constant::Null emits that value without pretending to implement non-null GC/concrete values or boundary types. append_constant owns pool index admission for null and scalar projections. Format55 remains unchanged.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-call-ref",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-null"
+  ],
+  "scope": "Previous210 affected files union every pinned file containing call_ref or ref.null:225 exact files. Previous3382 controls plus66 new directives in30 files. No full pinned suite or Test262 replay.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-call-ref-before.json",
+      "sha256": "2dbbf834382146ba389fae00da68df20525ea5a61594a4b13984c294a64b7ccf",
+      "binary_sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-call-ref-after.json",
+      "sha256": "d1433d892857de405ff4a2be5c2fb4bc1da16e30a654cc1b22951c567c469a4e",
+      "binary_sha256": "49de573cb80b362e0b00ace59dac7c8f84fa00e80ac7286132aa8f67126c0357"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-call-ref-controls-before.json",
+      "sha256": "82a536f5162be334480d15d08f35e9645d659dcdec0ad184755274770619c32c",
+      "binary_sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-call-ref-controls.json",
+      "sha256": "57bd8daff2e473ee9a0d3d4d4e7403ab5825480fe8b539cb9ee5d927dbf27b60",
+      "binary_sha256": "49de573cb80b362e0b00ace59dac7c8f84fa00e80ac7286132aa8f67126c0357"
+    }
+  },
+  "results": {
+    "after": {
+      "files": 225,
+      "total": 62590,
+      "passed": 60965,
+      "failed": 1625,
+      "before_passed": 60953,
+      "gains": 12,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/call_ref.wast": 3,
+        "crates/quench-wasm-test/testsuite/unreached-valid.wast": 9
+      },
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-call-ref-after-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "controls": {
+      "files": 30,
+      "total": 3448,
+      "passed": 3448,
+      "failed": 0,
+      "before_passed": 3384,
+      "gains": 64,
+      "gains_by_file": {
+        "target/iteration/task37-wasm-call-ref-controls.wast": 64
+      },
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-call-ref-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-call-ref-runner",
+    "sha256": "49de573cb80b362e0b00ace59dac7c8f84fa00e80ac7286132aa8f67126c0357"
+  },
+  "checks": {
+    "runtime_wasm_internals": 33,
+    "bytecode_internals": 19,
+    "frontend_internals": 31,
+    "profile_feature_all_target_check": "passed",
+    "unit_policy": "Extended existing serialized imported function/capture/root-transfer/GC regression: retain branch/null-guard coverage, then obtain the original callable again via ref.func and call_ref after round-trip and collection. call_ref retains its concrete producer type rather than consuming the block abstract-func projection. No ordinary conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-call-ref-oracle.json",
+    "sha256": "0537c6466ebc680c8af1d40ab2b1d55f84c4173d6dac8bba8f9514fb1ba77b17",
+    "source": "target/iteration/task37-wasm-call-ref-oracle.cjs",
+    "source_sha256": "c68ee88d67a4dd1a693f48754746b81333232bd4b7d4fe81d74cb3e732ff8413",
+    "cases": "target/iteration/task37-wasm-call-ref-oracle-cases.json",
+    "cases_sha256": "a51297b1bdddb6687b5ed39ce4bb4d65b814ee06a9e82eff98977ca527b85433",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 69,
+      "passed": true,
+      "obligations": "exact Wast cases: subtype callable identity, captured globals, two foreign programs, nested calls, prefix operands, recursion, multi-results, void calls and null traps; uniform typed/GC-family null constants"
+    },
+    "scope": "Same exact input/expectation cases as focused Wast:69 value/result-component/trap observations. Derived-as-base calls, captured globals, two foreign programs, nested calls, prefix operands, recursive call_ref, void/multi-results, typed-null/unreachable traps, uniform typed/GC-family null constants. Earlier six callable-type table-call Node discrepancies remain recorded."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-call-ref-controls.wast": "5c52648842050116fc0315060ec2669e8faa39c1805bd78863845f0aa4fa656e",
+    "target/iteration/task37-wasm-call-ref-a.wat": "cdc9fbb490df07e74599cf0587bcc352af02e8d3d829b85d496b279263c1424e",
+    "target/iteration/task37-wasm-call-ref-a.wasm": "8cbc0806fc4e1cf320b7f0183bc46f061c9a9463c96b969bcfe4832fdda1cb88",
+    "target/iteration/task37-wasm-call-ref-b.wat": "ec9dc730d1458e0133bbcea4e6e887114228c7508c9fc189333f2d19fb6f3109",
+    "target/iteration/task37-wasm-call-ref-b.wasm": "af3a0740237ec260fd0d30a319bc41b9b034355a7378b364d3066d322e5487bf",
+    "target/iteration/task37-wasm-call-ref-c.wat": "1517109733067d6757b4a6d6ed30b7fe334b1de72dd115b1aea0e82baf15b66a",
+    "target/iteration/task37-wasm-call-ref-c.wasm": "71c901e165c0d70c2592fcf549b8b665a64f16e943913356e4a7943f620931a4"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-call-ref-build.log": "e9880ec2a7bc8c9707a2c8c678a1cbe82eeca8d98e367b3aa66a01aea86dfa33",
+    "target/iteration/task37-wasm-call-ref-runtime.log": "be8af9340d571c684948722600ca924a467138045142232b29e7e04d1d18cdd0",
+    "target/iteration/task37-wasm-call-ref-bytecode.log": "ec4c138c47f2bc0f4e201a0f6202866b8c49b9c4d4e4e4d75c5feb0efe6b7c52",
+    "target/iteration/task37-wasm-call-ref-frontend.log": "955027410344c38d5195b888a19d71596cea0b7e7f058f0d854aebb4b6201c8a",
+    "target/iteration/task37-wasm-call-ref-check.log": "1b3319576497c1749e9d5618e97f9ea15e560f8343996d3f1a9f76d854b67816",
+    "target/iteration/task37-wasm-call-ref-before.log": "6329b3c8aba673b62773e0fb87ea4f32ad5afccec46447753c31702175852dc5",
+    "target/iteration/task37-wasm-call-ref-after.log": "ffb1d8fbf6a7287dabb67dac2ba86025f17aa8d75f7515835f3aed8047f263f5",
+    "target/iteration/task37-wasm-call-ref-controls.log": "5a39dc628634541459a8d0041fdab7ea2d7a1961e18a0a315c8b17c1edb45c67",
+    "target/iteration/task37-wasm-call-ref-controls-before.log": "776b78d05dc6e785ccad5025d30d5228f4231e38e23bcb2fb846ed21a1adedc8"
+  },
+  "limitations": "Affected pinned gains12:3 call_ref and9 unreached-valid. Broader225-file outcomes60965/62590 include1625 failures, not a global census. Focused controls gain64 and pass3448/3448. Concrete/GC signature/local/resource types, casts/branches, proper tail calls, GC objects, shared resources/exceptions and embedding bridge remain open. Low-level Rust lowering consumes validated bodies; frontend validation proves call_ref compatibility. No full suites or performance measurements; Stage A cutover/cleanup remains open."
+}

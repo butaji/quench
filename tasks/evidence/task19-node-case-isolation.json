@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "kind": "node_isolated_case_boundary",
+  "date": "2026-10-04",
+  "source_revision": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_source": true,
+  "source_files": {
+    "crates/quench-node-test/Cargo.toml": "2a54a777222851ab480f7adc6e87ae0ea12fbbaf33a2c7ec838a73bb10b24d32",
+    "crates/quench-node-test/src/case_process.rs": "b677cd0578e24796d5d685eb0f50dcb3236e010cfe6d34010d0ac03e1ccb3f1b",
+    "crates/quench-node-test/src/reader.rs": "0688bb0f94b4b14aa66d9a3ae1b3aa4901b463c5111b4f75ab23e2645ba91771",
+    "crates/quench-node-test/src/lib.rs": "0bcc3a5abe0cee4c37b59793352fe28037f4749ee497632998a5221f4b8bd6e1",
+    "crates/quench-node-test/src/bin/run-compat.rs": "4c14e03eda44c70e64a52f297e9e195132318fd7efdf26da8b83c9e161df9eb2",
+    "crates/quench-node-test/src/bin/run-parallel.rs": "65ae672d702d930721c07361ab004d94126851fb494d19d15531e68b96714f06"
+  },
+  "binaries": {
+    "target/iteration/task19-isolation-before-run-compat": "ba1c18ae9d084e09ff9c5c0aaa459abebdb5bd057c9cb86ed7e2cc63632a641d",
+    "target/iteration/run-compat": "5a420ae488d1204720dd5b7b142755e4c67426e2dbf45f3c3f79167008c9f972",
+    "target/iteration/run-parallel": "137c54d1db17e272b32ecba88cc768acf487d8ab7f5842c03240df7d89f3d887"
+  },
+  "raw_artifacts": {
+    "target/iteration/task19-isolation-units.log": "11690282083c74e4f5885393c63a888241e3abe14be9f3154f0c0ee9a14acb12",
+    "target/iteration/task19-isolation-clippy.log": "2633978fd0f0fa15af19a28ecf11e4a88ad5fd1cb300f5c978472419f21c1599",
+    "target/iteration/task19-isolation-build.log": "176f3754424a73b9183f6520a5dcd0d2efaf536afb9dbc8b2855331e42e5769c",
+    "target/iteration/task19-isolation-before.json": "ec036d8852e79e330dd99257dad3579622a52ed236fa4e159f84fe58714884a3",
+    "target/iteration/task19-isolation-after.json": "d03e41e8693c4d0aba933d20e6b2ec46219684402fde37abd833e2a5502ca253",
+    "target/iteration/task19-isolation-cli-controls.json": "14bf3f74b564c48a4db9c37ca2639a66bee33627eef58acc67f70bd59cb8b340"
+  },
+  "scope": {
+    "reason": "Both Node runners now use one child-process completion protocol; compare all six reviewed included local cases and retain internal protocol controls. No production semantics changed.",
+    "cases": [
+      {
+        "path": "crates/quench-node-test/node-tests/test-assert.js",
+        "sha256": "abdbd4a951150107ed1b3e79cf7512676dd8c574871897eece2840e58fabaca9",
+        "exit": 1,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-buffer.js",
+        "sha256": "b938f18167bda2b4b1086ce3dde62567f2b88d3956e428c7ac868d53eaee9b9e",
+        "exit": 0,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-events.js",
+        "sha256": "b28edc595758bbec1c36d68a42d5997088c06567fe302a40f42266333d3dd0f6",
+        "exit": 0,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-path.js",
+        "sha256": "d3f37e452511acd7a7d2a9cd9690eac4de62e8cdefb4ea44fb926184d52a10cf",
+        "exit": 0,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-querystring.js",
+        "sha256": "1577798d2efee1255a81fea075411ef443bb102f904103f1a783df466ab52f9f",
+        "exit": 0,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      },
+      {
+        "path": "crates/quench-node-test/node-tests/test-url.js",
+        "sha256": "844f79fedb3cdf67dd55acb8e941ad57dcaf583699325205b473b4a667201152",
+        "exit": 0,
+        "same_exit": true,
+        "same_stdout": true,
+        "same_stderr": true
+      }
+    ]
+  },
+  "checks": {
+    "internal_tests_passed": 8,
+    "internal_tests_failed": 0,
+    "cli_controls_passed": 5,
+    "lost_passes": 0,
+    "crate_only_clippy": "passed",
+    "rustfmt": "passed",
+    "full_suites_run": false
+  },
+  "protocol_obligations": [
+    "one NodeOutcome record separate from guest stdout/stderr",
+    "terminal exit and record must agree before pass",
+    "timeout overrides a prewritten pass",
+    "signal termination remains crash",
+    "missing/malformed records fail closed",
+    "131072 bytes on each output stream cannot deadlock a pipe",
+    "inventory freeze and observation guards precede execution",
+    "fixture argv excludes private worker arguments"
+  ],
+  "qualification_limits": [
+    "Production Node still uses the legacy VM; this is runner-boundary evidence, not shared-VM qualification.",
+    "1570 candidate cases still require implementation membership review; observations still require oracle traces.",
+    "Five affected cases pass and assert remains a failing included case; no fixture, expectation or inventory exclusion changed.",
+    "The complete conformance adapter and final-build provenance qualification remain open."
+  ]
+}

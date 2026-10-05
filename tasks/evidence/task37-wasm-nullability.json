@@ -1,0 +1,139 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/shared.rs": "19e23a7de70c9d5ac2d8fc61b6cdb47ee12c8a0cb505861b16beada00c33fa7a",
+    "crates/quench-runtime-next/src/wasm.rs": "8e82cbc175b2a384da8d6f2a42bfa490eed2886c4a5e96ce041d17c94ed0e107",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "a74375dc7aaf988a1fe5ca226ed64981eda56b46865821e47fc6d6b22e2ce5f8",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "c0712f942078475a30a53c5d65212c159792de9a68b0f52c2fa8e4f4c8d54906",
+    "crates/quench-runtime-next/src/wasm/table.rs": "9eb3330d46887d2927e0b1de607dfcfa5db30f70ac2927a82dc1d444c80b9755",
+    "crates/quench-runtime-next/src/lib.rs": "7a9fd25ebf8223aa409d05e967cda8fae6cc0b82bea3fdd13c9049d5bfac4a0c",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "571519d720be02d0cff8deb7e68c13548a5ce2129e2d913c1177401d78452598",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "b2ca086bc7348aaaa012005c180cc015a60bc3c2d04b89e04fc6ac3feb747435",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "0ea0ad8e08f6bb011615563f0fd0535a60004682b8eacdf275f67a1c7522cfa9"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Preserve abstract function/external reference nullability in signatures, globals/tables, constants, non-defaultable locals and typed embedding/host boundaries.",
+  "representation": "WasmType::Reference owns kind and nullable flag; FUNCREF/EXTERNREF/FUNC/EXTERN are named projections of that representation. Supported parser heap kinds remain function/external, preserving their nullability; concrete/GC/shared kinds are rejected rather than erased. reference_type, is_subtype_of, default_value and WasmValue::fits_type serve the semantic operations. Values retain existing FuncRef/ExternRef Value payloads; null rejection derives from the actual value and expected type. Constant ref.func is statically non-null; expression validation uses subtype compatibility and evaluation checks actual values. Defaultable locals alone receive residual defaults; non-defaultable locals remain in the shared frame uninitialized state until validated assignment. Immutable global import types covary, mutable types remain invariant. Runtime and host argument/result checks share value compatibility plus existing reference ownership validation. No opcode, Value/cell kind, execution core or residual format added.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/instructions.html#valid-local-get",
+    "https://webassembly.github.io/spec/core/exec/modules.html#alloc-local"
+  ],
+  "scope": "Prior exact 210-file affected decoded-module inventory; prior 3289 scalar/vector/resource/call/root directives plus 21 new nullability directives. No full pinned suite or Test262 replay; OXC semantics/dispatch are unchanged.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-callable-types-after.json",
+      "sha256": "9550d1421c0723746ef96fbb391da14867bf74b620dc0b36c6f7225d2e66ff4d",
+      "binary_sha256": "63a0352424db218723001b81710e9383e66ea82f3fa15279a9e4b75486fea3ac"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-nullability-after.json",
+      "sha256": "b9b12da88cae180c4283df52ecee4cd8aa78f6ff15def6d1a47b6077db2aaada",
+      "binary_sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-nullability-controls-before.json",
+      "sha256": "3ae75f0f6dac8b8c5ada6f9073c42aad6994b01ab450659d30ff91cd0302c651",
+      "binary_sha256": "63a0352424db218723001b81710e9383e66ea82f3fa15279a9e4b75486fea3ac"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-nullability-controls.json",
+      "sha256": "33cb0828656aa668c4b7144f190ba5fbfb1a89d77ed092cf029328b35048815f",
+      "binary_sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-nullability-runner",
+    "sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "passed": 60650,
+    "failed": 938,
+    "before_passed": 60643,
+    "gains": 7,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/linking.wast": 7
+    },
+    "regressions": 0,
+    "identical_input_hashes": true,
+    "identical_directive_ids": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 27,
+    "total": 3310,
+    "before_passed": 3290,
+    "before_failed": 20,
+    "passed": 3310,
+    "failed": 0,
+    "gains": 20,
+    "regressions": 0,
+    "new_directives": 21,
+    "obligations": "Non-null abstract func globals/table initializers and parameters; initialized non-defaultable func/extern locals; non-null external parameter/result values; nullable null remains accepted; immutable non-null func global imported as nullable without losing original resource; mutable-kind/type mismatch remains a link error. Previous numeric/resource/identity/ABI controls retain all passes."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "frontend_internal": 31,
+    "profile_feature_all_target_check": "passed",
+    "host_final_recheck": "passed",
+    "internal_obligations": "Existing typed host/root lease regression uses non-null function/external signatures and covers null argument rejection, null host result rejection, stale roots, wrong kind/arity, active program/native/call-root restoration, collection and release. Null-test positions derive from argument values rather than a second argument layout. No ordinary conformance unit is added; existing nullable table/reference ownership controls remain."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-nullability-oracle.json",
+    "sha256": "bb2352ee9305493c9b769b71a5a67aaac779f39ea3f2f88189035ec8fbb0d17b",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 20,
+      "value_checks": 17,
+      "nonnull_null_rejections": 2,
+      "link_errors": 1,
+      "passed": true
+    },
+    "source": "target/iteration/task37-wasm-nullability-oracle.cjs",
+    "source_sha256": "5039c20035fb5e49306260edeb5ea2f3542dbcc41a840d3b2c3d91baaeb0e8e2",
+    "qualification": "All 20 new local Node observations agree: 17 values, two non-null external null-argument TypeErrors and one immutable-to-mutable import LinkError. Earlier six callable-type Node discrepancies remain recorded in task37-wasm-callable-types.json; this does not claim that they disappeared or that all Wasm behavior matches Node."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-nullability-controls.wast": "8010742f15aafcc7300fa048d38b138822daad02bb55a2c2d945cc61b4d06e62",
+    "target/iteration/task37-wasm-nullability-a.wat": "ce1501285f359662ac7f395389c59393454dc4f173ffdc42d3053c20575c81d6",
+    "target/iteration/task37-wasm-nullability-a.wasm": "0181bc658388680b2d6a259bcbe4e8be957ca2e0f1186418fa19c89c5ead6745",
+    "target/iteration/task37-wasm-nullability-b.wat": "19055677383298fc8cda10955551565e24765e7b9bfbf7e83ea2caf4a828aace",
+    "target/iteration/task37-wasm-nullability-b.wasm": "ce54f0bb7b024e31f689cef3c05a41efbcc5400f8c70197471b0e961395cf613",
+    "target/iteration/task37-wasm-nullability-bad.wat": "9cab7bcd8443c3b0904df544984ef99acf508a2c388519d3d566b21d9f60a056",
+    "target/iteration/task37-wasm-nullability-bad.wasm": "3c5cc79320f87ed9e0e1a337a23664d4a3584f6f0186a24646c87c08e0c341f4",
+    "target/iteration/task37-wasm-nullability-oracle-cases.json": "df88304e02d82b411aa7b26b8c0c7dd1d1e2cb3f31000f230012989a45699801"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-nullability-frontend.log": "450f6dbdd51fb4847663d761de2af8af967ea4716a4672833cef4469a02b8c5d",
+    "target/iteration/task37-wasm-nullability-runtime.log": "7ff11a35e1b33e00a4b7a0939a8c578c9dfe9401fe7afac58b4e85c82571131f",
+    "target/iteration/task37-wasm-nullability-check.log": "db7bc04e86eeefbe980906a2a9cb4a820bcc6820f1f185148ebd7aee85227f34",
+    "target/iteration/task37-wasm-nullability-host.log": "bf0be00c776d0345b86fe16bfd06be425838ac0bae581a2e535961e3928251a7",
+    "target/iteration/task37-wasm-nullability-build.log": "56506d27882e8ccf5366fadcde91635a7a3bc0409ba00479858b9df47479f83a",
+    "target/iteration/task37-wasm-nullability-after.log": "a605641af1cb0f2efa4c7e2b565cdd73ea6c3787e5b44bc44bb8285eee42fcef",
+    "target/iteration/task37-wasm-nullability-controls.log": "b66ce32f9bab88b53afa4eca67aaa3cf69bd68e5d735d2929d6ed3319bdffd55",
+    "target/iteration/task37-wasm-nullability-controls-before.log": "a293996e8cdf0ea7afee2bffe2619ed189e48575241a5bab6c8cbcd73bd44700",
+    "target/iteration/task37-wasm-nullability-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-nullability-controls-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "limitations": "Abstract function/external nullability is qualified. Concrete type/GC reference families, canonical type context at value/resource boundaries, ref.as_non_null/typed branches/calls/tail calls, GC objects/operators, shared resources and exceptions remain open. The affected scope still has 938 failures, not a global remaining-failure census. Non-defaultable initialization relies on the existing frontend validator; low-level Rust lowering consumes validated bodies. Stage A cutover/cleanup/full three-suite qualification remains open. No performance claim."
+}

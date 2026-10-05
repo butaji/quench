@@ -1,0 +1,257 @@
+{
+  "task": "07",
+  "cleanup_owner": "86",
+  "obligation": "Finally uses ordinary then reactions plus handler/continuation callbacks. Remove the never-populated second settlement pipeline.",
+  "consumer_audit": "No producer of FinallyReaction or writer of PromiseRecord.finally_reactions existed. Settlement was their only reader; its handlers recursively formed an otherwise unreachable pipeline. Native variants were crate-private heap implementation details, not residual bytecode tags.",
+  "removed": [
+    "PromiseRecord.finally_reactions vector",
+    "FinallyReaction, FinallyJob and FinallyContinuationJob types",
+    "PromiseRuntime.finally_jobs and finally_continuation_jobs tables",
+    "enqueue_finally_continuation and enqueue_promise_finally",
+    "promise_finally_job and promise_finally_continuation_job",
+    "PromiseFinallyJob and PromiseFinallyContinuationJob native variants/registration",
+    "associated GC edge and sweep paths"
+  ],
+  "retained": "PromiseFinallyHandler and PromiseFinallyContinuationHandler through ordinary then/species/resolution/reaction operations",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/heap/cell.rs": "49166a8f6621c2a542485d942e2fd804dacc81fe4960d82d8043cb5ef0602060",
+    "crates/quench-runtime-next/src/vm/builtins.rs": "dcf0ac5155d6b914141a212cd000a4a86b136d097ed7b1db929109dd284785e2",
+    "crates/quench-runtime-next/src/vm/gc.rs": "dba16805893cf5ea7ebc99a7054de2e1439028c27719dd7b6533cef33b27578a",
+    "crates/quench-runtime-next/src/vm/promise.rs": "b2b58eea8d6e53ac23c4534ca79e2cd746b354891e845848a5409aba6bcc7f05",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "51aa1e3f698304891b21f628787cec99bd50b3694cd1f2502a219e325be9f715",
+    "crates/quench-runtime-next/src/vm/promise_state.rs": "27937190b4f18875aeb5d6f3fe29681c9327f6230324d2b2640ff779c0208091"
+  },
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "fixture_content_sha256": "45c36c19207c4e618cc89ceafd9b2b969bd0d0afe4fa4255c08da8db37f2d264",
+  "harness_content_sha256": "ccdcb17a61f58a601c5ee12d0c540ac4c62a687ef4b519e2fad09ab2a12c1cb6",
+  "inventory_sha256": "1d324fb2535f0a2d006d71379d84786f9b96603e4571b8cbb3f9c729771baf43",
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "cpu": "Apple M4",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task07-promise-table-owner-run-stages-next",
+      "sha256": "f92396a50241351b8cd89c9cbb4ebbe01727372f82855ef761c2eb81b375d1cb"
+    },
+    "after": {
+      "path": "target/iteration/task07-finally-pipeline-removal-run-stages-next",
+      "sha256": "6894b8a06d6ddd2352124312545fd5c200e545b743562fa6ed8dd50256b37721"
+    }
+  },
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "scopes": [
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-promise.json",
+      "before_report_sha256": "49cf216786ea216f7c01987ec89e4d4770a25c3b54a4c8cc22374d900b7be85f",
+      "after_report_sha256": "ce14780b8f1b45c523ee2369d2ff8858fdc0a33cb5bf34984ef1c04e77c08366"
+    },
+    {
+      "name": "async-function",
+      "stage": 36,
+      "filter": null,
+      "cases": 18,
+      "before_passed": 18,
+      "after_passed": 18,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-function.json",
+      "before_report_sha256": "c3c2e712dabcb781f32a4db5755c01cdcfbfbfbbad3ba0213a02a255a579a1fd",
+      "after_report_sha256": "7909f891c9ca5f6d205e1b0c327eb4d545b515f7aa17302e7411f55ae5e66802"
+    },
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-generator.json",
+      "before_report_sha256": "731ba23faa2920016b78cdbfa78abeebe8164fa4794f67746cbe8e021dfe339d",
+      "after_report_sha256": "dfb143ae678bdc824b3fc9c72e858f86df7c616c52551181cf9893dbfdb14a82"
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-generator.json",
+      "before_report_sha256": "f4ea91b69b52133c9d616f5c2189e9920304f387d29164c999856b0ee5a87c04",
+      "after_report_sha256": "4d3b4325ca554b7b7fe9363cf4d5d3fc2d433e2f82484e3cd7c195ecc922425b"
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-iterator.json",
+      "before_report_sha256": "e64d0df3c8d7698867f2704fbff7be73493533cdbc86dab642148d79598b6e08",
+      "after_report_sha256": "bd780d3cbec763e7e3d75680f05f8ff061f732b236643c49fbf9e72643446136"
+    },
+    {
+      "name": "disposal",
+      "stage": 34,
+      "filter": null,
+      "cases": 104,
+      "before_passed": 104,
+      "after_passed": 104,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-disposal.json",
+      "before_report_sha256": "da926f3d9c32ff341c75b9a75db1e92cbef9dee743aa936b5ee0ee9889426dc8",
+      "after_report_sha256": "9a0d5fbca71116ab9713f1d82bd0788bc0a26656dd2bc6f4497d8ed5d572106e"
+    },
+    {
+      "name": "import",
+      "stage": 16,
+      "filter": null,
+      "cases": 127,
+      "before_passed": 127,
+      "after_passed": 127,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-import.json",
+      "before_report_sha256": "dbb28d50b50d80f6afd16ca54127acc41bd6c89aa43f8ec4f114c015125cc018",
+      "after_report_sha256": "c23f48de6481ddbc145b46af459a14b6707627c5784c06eaebeedc243dc66c8d"
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-module.json",
+      "before_report_sha256": "1fcba15f568f40cb3251c04b2e55e3e040a0e912fdc247215cd2233395266341",
+      "after_report_sha256": "1cad7ae3d58c3ce884c851dabc0a90e9185cb404924ec87f998abe93fa0b3690"
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-from-sync.json",
+      "before_report_sha256": "b12ebfac08c3f050e963e34aa683fe5301500b076c524b0dc264aea405e9cff1",
+      "after_report_sha256": "eb7ac21caad7e12d5bdb583c80c9afa3d0132e4c6a50372c0d9d387235a389bb"
+    },
+    {
+      "name": "array-from-async",
+      "stage": 31,
+      "filter": "fromAsync/",
+      "cases": 95,
+      "before_passed": 95,
+      "after_passed": 95,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-array-from-async.json",
+      "before_report_sha256": "afb70363717a29c174074b28fb9e12d0a925fac009355b17974d7092fef8317f",
+      "after_report_sha256": "b8d9bddc21829278576ae84f3f80bbd9e01dd95da7509d71a02f6d581f9484ac"
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-dynamic-import.json",
+      "before_report_sha256": "517bfe10b5e155244d613339995c5d5944f95f67ce4401c64e938f65255bade2",
+      "after_report_sha256": "5d3d465b2bc8dbf68ac46e1b2a7ace5a0bcb62e21b53bf0e518c866b8ed3526c"
+    },
+    {
+      "name": "async-arrow",
+      "stage": 10,
+      "filter": "async-arrow-function/",
+      "cases": 60,
+      "before_passed": 60,
+      "after_passed": 60,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-arrow.json",
+      "before_report_sha256": "d020aaa4754b65b57eeaf2656827e447b47f0816404faf840a61ed1a5ac6b2bb",
+      "after_report_sha256": "527b6b998742e663a034ae81f8213203759301c6a96fc010839b33304772624d"
+    },
+    {
+      "name": "async-statements",
+      "stage": 26,
+      "filter": "async-function/",
+      "cases": 74,
+      "before_passed": 74,
+      "after_passed": 74,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-promise-table-owner-after-async-statements.json",
+      "before_report_sha256": "f8d1772cf40106f24c69d66662ab491f000bbd4b56cb511e5ae74f0c5ad6d12a",
+      "after_report_sha256": "22963158c9d29bf6a7387cc119ed560af731c24f25e7c7865fc99f51b026b87a"
+    },
+    {
+      "name": "function-traversal",
+      "stage": 48,
+      "filter": "toString/built-in-function-object.js",
+      "cases": 1,
+      "before_passed": 1,
+      "after_passed": 1,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-finally-pipeline-removal-before-function-traversal.json",
+      "before_report_sha256": "6cd731701d29a7d21382a48f3576ae6027c8941f0b28365aa7ded7f9c6c38311",
+      "after_report_sha256": "9632a60f663b7df2622da7554b95b0e70578927f49ab7bda95436e454a5fc32e"
+    }
+  ],
+  "distinct_cases": 2971,
+  "before_passed": 2970,
+  "after_passed": 2970,
+  "regressions": 0,
+  "remaining": [
+    "built-ins/Promise/allSettledKeyed/result-property-descriptors.js"
+  ],
+  "remaining_owner": "task20-all-settled-keyed-conflict.json",
+  "runtime_library": {
+    "passed": 460,
+    "failed": 0,
+    "ignored": 0
+  },
+  "integration": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0
+  },
+  "feature_check": "passed",
+  "raw_artifact_prefix": "target/iteration/task07-finally-pipeline-removal",
+  "stage_a_closed": false,
+  "node_controls": {
+    "matched": 30,
+    "failed": 0,
+    "modes": [
+      "specialized",
+      "generic"
+    ],
+    "node_version": "v26.10.0",
+    "node_command": "node --jitless --expose-gc -e <gc-capability-adapter-and-control>",
+    "quench_command": "target/iteration/task07-finally-pipeline-removal-control-host <control> [generic]",
+    "controls_sha256": "7de1d0fca459dc517d3d930b6b594330cbc98c01add552e551dcce79cbb17548",
+    "results_sha256": "1534f54c8b16f3e34cf15c15f9f24affe736a59577c54606fcc97067ed000f03",
+    "host_binary_sha256": "ab73441accc3054eb786c2b83dd3fde5a46924db450cb0a60ebc04ff41ac6cca"
+  }
+}

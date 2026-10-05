@@ -1,0 +1,178 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "600e1fb9c0db2bddcad5833d5d7dcc01127ff2e6a42f163884291da29626bd2a",
+    "crates/quench-runtime-next/src/wasm/table.rs": "cec5a588e5dd019137201fd07cbe4b2d5a86144496508b7629585ebc9283021d",
+    "crates/quench-runtime-next/src/lib.rs": "66661402a43d65c5ef1974dd4c713c6b07d359b8bf7871b1983b6dcfebb47421",
+    "crates/quench-runtime-next/src/api.rs": "f435605c1be6d1564406122159a20cd344cc648dc69cc24a614e3f108e32cea5",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "08bd5cddbebe85364222dc9d9c0f9fd2c7f3cb9ea2dca2c0df799e1eef6842cc",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "673b50b261a895dc24aaa8db92a35a7cb091b2c21cd8501144cf52bb824da9bb",
+    "crates/quench-runtime-next/src/vm/error.rs": "40a37a6109fabde80046a2d6bd35d27e2d6643f9201bcb628edcc5d97cd57d03",
+    "crates/quench-wasm/src/shared.rs": "4ec99f8f143ce859a596ccb13025f2e2238440e25951b988841e476d368a37ef",
+    "crates/quench-wasm/src/shared_wast.rs": "57caf750df560fcb8d5c90b78cbe08c5f7317c5b85ec9267678bf71001cd46f2"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 50,
+  "obligation": "Shared-VM table imports and re-exports preserve original resource/capture identity, limit contracts, typed linking errors and observable initialization trap effects.",
+  "representation": "WasmTableInitializer is Reference(WasmReferenceInitializer) or Import(WasmImportName). Table declarations alone own import names/order and expected type/limits; table_imports derives the host projection. Runtime consumes rooted handles, validates external kind, exact reference type and limits against current cell size/original maximum, then inserts the same Value in the captured instance bindings. Re-export projects that Value. No copied table, extra owner map, import opcode or executor. Existing function cells/canonical signature pools retain cross-program captures. Typed WasmLink error payload is separate from traps and unsupported residuals.",
+  "initialization_correction": "Removed all-segment prechecks and early memory data copying. Rooted allocation/table initialization is followed by active elements in declaration order, active data, then start. Each segment checks its own bounds before writes; prior segment effects remain visible after later element/data/start traps. Provisional instance root is released on failure, while installed table function references trace failed-instance captures. All data/element contents are allocated before effects. Future segments remain available after an earlier trap; initialization/drop transitions execute in order. Active data copying reuses wasm_copy_bytes; no second copy operation.",
+  "spec_source": "https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation (active element sequence, then active data, then start)",
+  "fixture_host": "Shared Wast Store constructs the standard spectest table (minimum 10, maximum 20, nullable funcref) through ordinary frontend validation/shared instantiation; no production suite detection or legacy execution.",
+  "scope": "Previous 69-file instantiation/table/reference ratchet plus every top-level pinned Wast file containing an inline or explicit table import; checked multiline forms too. 77 total files, fixed exact input hashes and directive identities. Covers memory/element/start callers because initialization order changed. No full suite.",
+  "qualification": {
+    "files": 77,
+    "total": 24240,
+    "before_passed": 21974,
+    "passed": 22065,
+    "failed": 2175,
+    "gains": 91,
+    "regressions": 0,
+    "complete_workers": true,
+    "exact_case_ids": true,
+    "identical_input_hashes": true,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/elem.wast": 23,
+      "crates/quench-wasm-test/testsuite/imports.wast": 46,
+      "crates/quench-wasm-test/testsuite/imports0.wast": 2,
+      "crates/quench-wasm-test/testsuite/linking.wast": 10,
+      "crates/quench-wasm-test/testsuite/linking0.wast": 2,
+      "crates/quench-wasm-test/testsuite/memory64-imports.wast": 2,
+      "crates/quench-wasm-test/testsuite/table.wast": 1,
+      "crates/quench-wasm-test/testsuite/table_grow.wast": 5
+    }
+  },
+  "completed_file": {
+    "path": "crates/quench-wasm-test/testsuite/table_grow.wast",
+    "passed": 58,
+    "total": 58
+  },
+  "controls": {
+    "controls": {
+      "total": 33,
+      "passed": 33,
+      "failed": 0
+    },
+    "start-controls": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0
+    },
+    "elements-controls": {
+      "total": 31,
+      "passed": 31,
+      "failed": 0
+    },
+    "tables-controls": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0
+    },
+    "table-initializers-controls": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "bulk-controls": {
+      "total": 26,
+      "passed": 26,
+      "failed": 0
+    },
+    "memory-controls": {
+      "total": 423,
+      "passed": 423,
+      "failed": 0
+    }
+  },
+  "checks": {
+    "runtime_affected_internal": 30,
+    "frontend": 39,
+    "control_directives": 574,
+    "all_targets_with_profile_memory_and_aggregate": "passed; legacy compiler warnings remain",
+    "node_oracle": "jitless Node validates table identity, grown minimum/original maximum, re-exports, foreign calls, per-segment prior effects, passive-data/future-element availability, kinds/reference types, and link/trap distinctions. Active-data future access differs as documented."
+  },
+  "unit_test_policy": "One new internal root-transfer test: release exporter/intermediate owners/import handles; final import still owns foreign capture and live global updates; released RootId produces typed link failure without root growth; release final instance then collect owner/table/function cycle. Ordinary fixture results stay in pinned suites and standalone oracle controls.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-table-imports-runner",
+    "sha256": "7e3de576c683d49d93361059f698056a857e6dff7dcecc3120697ac59cb04f64"
+  },
+  "artifacts": {
+    "target/iteration/task37-wasm-table-imports-after.json": "48e5bbe70d27046efb2f04cda2db44a664d421f06bc59cf647a2f348e44aa1a4",
+    "target/iteration/task37-wasm-table-imports-alias.wasm": "ec8828ed8e7dfcd3807c25360c6ce020dbd5717bb7585fe32b2c9a5332d3931f",
+    "target/iteration/task37-wasm-table-imports-alias.wat": "4cf6bb33ca01ecd5bf440272f8a3eb9bc1ed15a514a43a2ffc869b6c2e111ed2",
+    "target/iteration/task37-wasm-table-imports-bad.wasm": "e3570c6fe845c51b7811d8a928a0486efb94e7ff7d3505084d5f44459cd982b5",
+    "target/iteration/task37-wasm-table-imports-bad.wat": "126e5f0555dd36c316f13c57066c7ed44b13f981f26a25896684cde6f6b19e05",
+    "target/iteration/task37-wasm-table-imports-before.json": "79498af221e60040fc1bba5b4623adab6495ced55b8a926b75ee62a15888550b",
+    "target/iteration/task37-wasm-table-imports-build.log": "52d3c365146eb3c9397182bd9db5de8bfa6e919c18bc68d3cbf5229abf375bf2",
+    "target/iteration/task37-wasm-table-imports-bulk-controls.json": "123006f9ae701d55339e57c98492b0023ca26534ab30cbd07a6400cb0a86a8af",
+    "target/iteration/task37-wasm-table-imports-check.log": "4abd7d09db4c5d0054eccd9cda7765b0afd4170da248b1b068b53041aa8e34a5",
+    "target/iteration/task37-wasm-table-imports-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-table-imports-consumer.wasm": "ebb6f10f1d3c6c7d93b9a220845bee3b34570883ebfed830fbe421c36bf3fb1b",
+    "target/iteration/task37-wasm-table-imports-consumer.wat": "2926b8c7127c130a87255d83d063b6fe112c1b4fcd9c889a89f4aac1afa70907",
+    "target/iteration/task37-wasm-table-imports-controls.json": "eadaa94087d007ef1eb8e2a0f33ab807974dfce2ed21706fdd6cd2728475ceba",
+    "target/iteration/task37-wasm-table-imports-controls.wast": "c934619aa68a1ec562395cba3cdba41bad994386bcbd169eec1adebc51bf5d23",
+    "target/iteration/task37-wasm-table-imports-data-trap.wasm": "d7555bfee3ec0434df2d37e786849a3df7eccb5e3624295c2046d0f18ffd9613",
+    "target/iteration/task37-wasm-table-imports-data-trap.wat": "11962f23b3d52bdcdcb9e621f337991df22b223380ab84930ef3017d0a2cec3a",
+    "target/iteration/task37-wasm-table-imports-elements-controls.json": "4ed1903c6cfeb01903dccbdd1e1da5ac96aa046ad91d3170064cbb3ce45a4f63",
+    "target/iteration/task37-wasm-table-imports-escaped-oracle-default.json": "3f232f6f14845d4cf8b4d412964b064a293682ad4fa21f8f58cace80a743d255",
+    "target/iteration/task37-wasm-table-imports-escaped-oracle.cjs": "22c9cef069350527c8543854516c939b8210566abdc93876ca4d6d0bbab6dcda",
+    "target/iteration/task37-wasm-table-imports-escaped-oracle.json": "d70713a288c26922e296fd59789f9a2b75fc42ac1743cdd81ea58eca4db7d8f4",
+    "target/iteration/task37-wasm-table-imports-files.json": "866ddcd3df5dd69706390ae1e6b7236689b13e43c768a0295410fc0b47bf5f5e",
+    "target/iteration/task37-wasm-table-imports-frontend.log": "8dea03e84cc3cc5ef77da03a0ab3d00846e874ebd36935004f1cd3088e4d48d0",
+    "target/iteration/task37-wasm-table-imports-future-data.wasm": "8000b7b9a5cb06b5aab07a20a172e3ae07e752543da482fc5d2e4f7b88b88db1",
+    "target/iteration/task37-wasm-table-imports-future-data.wat": "dfb531245beb482de5b146ef6b96bcb62bb592990df856f24afc53837058c87b",
+    "target/iteration/task37-wasm-table-imports-future-element.wasm": "ab7956c1443a26fd14e84969c26fe08b8ec670980a4861b4b447a496f7bee274",
+    "target/iteration/task37-wasm-table-imports-future-element.wat": "37519680ce527d3a952b0e94629e39de894f513fc5c94548270c4d7a1bdeb732",
+    "target/iteration/task37-wasm-table-imports-future-passive-data.wasm": "a860c9527aacb04ab6456ed90500f8ffbb9c1e530b06e0e72b08cef0fd00014f",
+    "target/iteration/task37-wasm-table-imports-future-passive-data.wat": "9acfe6d2179abd878e078dd35da8660ef09aacaf8e756f5389f4766674166ff0",
+    "target/iteration/task37-wasm-table-imports-kind-mismatch.wasm": "b01d7da60f072bdd14ade967751cf3de2c264a7f3677f70b8cb598e49eaf78ad",
+    "target/iteration/task37-wasm-table-imports-kind-mismatch.wat": "daaf6c1fc370d0fbddc21250ac6cdc3ccb760a47038ea5e44d6171c2c372c321",
+    "target/iteration/task37-wasm-table-imports-max-mismatch.wasm": "3630b7b2c537127b0a5d874a0a8871d3f1e7805875ce4dc541634cbbf9dbc23d",
+    "target/iteration/task37-wasm-table-imports-max-mismatch.wat": "a5aeafe001fd507cbbe8f8e3b196bffdcfeac8b619392210655d8d38e153e0cc",
+    "target/iteration/task37-wasm-table-imports-memory-controls.json": "0bfa1603e9eb684cb580f8aa4db24c2e9e04725d28a8abb6adb03483830a5e6b",
+    "target/iteration/task37-wasm-table-imports-min-mismatch.wasm": "93fda8b3cb7dbe975b5c6200ce95e30270e3e3191f1164a64189c4d6b97d5e7f",
+    "target/iteration/task37-wasm-table-imports-min-mismatch.wat": "89e93ca84d9b3b48cfaece636a26e43a3a41bdc4c399433d2f5f05865212777e",
+    "target/iteration/task37-wasm-table-imports-oracle.cjs": "30c8b57335eb409618c39374ffae0888338570f36f3e4908b94f6c8fdc1984d2",
+    "target/iteration/task37-wasm-table-imports-oracle.json": "8185403a72ab2ad9c13962f379e8cb4dd3edf391f8eb34cf4391be0ab76850fe",
+    "target/iteration/task37-wasm-table-imports-owner.wasm": "978b3e521894297d5e97e5112a253099c86e4b2aac133221810d33dc2a26fdb1",
+    "target/iteration/task37-wasm-table-imports-owner.wat": "c4732bf41ca88c108b848043c5b97391e7667167d1ca652bf9c39a0a26e52d59",
+    "target/iteration/task37-wasm-table-imports-ref-mismatch.wasm": "91af34d0c4a3a3c8fcdf0e5e464c274568c144606677e6f5d90308b8b2d49d9f",
+    "target/iteration/task37-wasm-table-imports-ref-mismatch.wat": "35398520017120e88dd520d8041d6c80f923658d86dc5a88cd34eb54467b46b5",
+    "target/iteration/task37-wasm-table-imports-runtime.log": "c2fa18647716a21e83e32f220de217ce3aab0a1e3fac96bc04d89c7d3206af6c",
+    "target/iteration/task37-wasm-table-imports-start-controls.json": "ad2f545bf13ff20df9521808ed517c3ffb213b94d6291e8e0952fb082685cef8",
+    "target/iteration/task37-wasm-table-imports-start-trap.wasm": "02bab48aec5173e73f483bebdcb686812e8350a905948bffef697f062ff864f8",
+    "target/iteration/task37-wasm-table-imports-start-trap.wat": "4a91e84381c0490b52598c58c0f3cf1ae46117e87ed4cd3d0733fb971244a22a",
+    "target/iteration/task37-wasm-table-imports-table-initializers-controls.json": "da4894f5ba9ebdff70e63e3441ef505bbbce0c762acd20d0a77a11f5084b9f1b",
+    "target/iteration/task37-wasm-table-imports-tables-controls.json": "b5d46c4ccb189caffee39a0e0bde8bed2ea8218b67e97ca5261032af92ab1506",
+    "target/iteration/task37-wasm-table-imports-unbounded-mismatch.wasm": "c708dd6dd049afc5aaff66442e8ab0ac7e082bd3fe1e66e191149e0433f91acf",
+    "target/iteration/task37-wasm-table-imports-unbounded-mismatch.wat": "3d3b5b38f389e2c54ccbcfb7695f8b4ee0621b7e3cd3ec5dcef09d5c4e4860b6",
+    "target/iteration/task37-wasm-table-imports-unbounded.wasm": "1051d831007fb184a39516af1c59aeb345f5a895094d6e92c15be4758f813c39",
+    "target/iteration/task37-wasm-table-imports-unbounded.wat": "242a7c256914b6ef96c3753b27a286064b8667de4571076a652d2a6578a21cf5"
+  },
+  "limitations": [
+    "Function/memory/global imports and imported reference expressions remain unsupported. Memory import ownership must preserve whether a maximum was declared, which current buffer metadata cannot distinguish.",
+    "Concrete typed/GC/non-null function boundary references, table64/shared, SIMD and remaining memory/proposal forms incomplete.",
+    "Whole-module serialization is not implemented; module facts accompany residual.",
+    "Optional profile execution accounting issue from prior table milestone remains open; feature check proves build compatibility only.",
+    "No full pinned Test262/Wasm/implemented Node gate, production cutover/legacy removal or performance claim. Stage A remains open."
+  ],
+  "oracle_difference": {
+    "scenario": "earlier element segment installs a function into an imported table; a later element traps before active data initialization; escaped function executes memory.init on that future active data",
+    "core_spec_result": "88, from the retained active bytes until their own initialization/drop transition",
+    "quench_result": "88; focused control passes",
+    "node_v26_10_0_result": "memory access out of bounds, with both default and Wasm jitless execution",
+    "v8_source": "https://raw.githubusercontent.com/v8/v8/main/src/wasm/wasm-objects.cc (InitDataSegmentArrays initializes active segment length to zero)",
+    "decision": "Preserve core Wasm semantics; record host difference. Pinned inventories/expectations unchanged; no oracle-driven production special case."
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "schema": 1,
+  "task": "21",
+  "mechanism_owner": "43",
+  "kind": "shared_process_uptime_qualification",
+  "timestamp_utc": "2026-10-05T01:28:22.357056+00:00",
+  "git_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "worktree": "uncommitted; actual process binding slice, not host or Stage A closure",
+  "sources": {
+    "crates/quench-runtime-next/src/host.rs": "a5ee856d558d2e9b1f1412ab1bdeb39a802131b4a63429350293ee0c168233b2",
+    "crates/quench-runtime-next/src/api_native.rs": "2fced118a5914ba551d1bd2f185b47ce8a539a8b96d63070e92d221f7deec9e5",
+    "crates/quench-runtime-next/src/api_native_tests.rs": "7fdad513fa40874e56faf76e73fc2989e053effe23d9cbf32b968b96ffa94134",
+    "crates/quench-runtime-next/src/api_embedding.rs": "a75214aa3bb22d3d8f78fa8e72bddf236a3e0d9c4f64589e96c57698b8a9477e",
+    "crates/quench-runtime-next/src/vm.rs": "1854394e42e897c6278b6c4c44e9fbb59892dcd4ce95e5039db3dcb76beedd67",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "5768657468eba5f1438b724a6dc36b63c0010e9600caeb8376908f781540f3f2",
+    "crates/quench-runtime-next/src/vm/host_function.rs": "e92996809cca546cd8f4c749505487da0457bef2885ba888634d8856818660e1",
+    "crates/quench-runtime-next/src/vm/error.rs": "c873f0b9a606543b8e36d6fc89ac93e5b5c3b1e76d3fbefb24dd5baae8ce5d62",
+    "crates/quench-node/src/host.rs": "c41df15ce805458a6fe6a82beee5ae858be152d7cf5966110d6fcd630e777794",
+    "crates/quench-node/src/host/shared_vm.rs": "cb3fad98432fe5061b8050caa2d52b701bc0c8e521ea40b2f2f6ef12e70741fc",
+    "crates/quench-node/src/bin/quench-node-next.rs": "8f5487d6691e27a1046d394d6c24562032dfaf5c48280061ddebad159bc6280b",
+    "crates/quench-node/src/modules/process.rs": "1ae3ac711e4a36818f7f4cb34bf5a37ae978456c323ad2dde68c1258ba1988b8",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "76f2b31015f4b5154ba6d142e8adcbc282996315201215cdf17498cc4ccb93d0",
+    "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
+    "crates/quench-node/src/polyfills/bootstrap/metrics.rs": "0cf2cf92ce1928a50efb260bbac7c32ceb1d1e58fb4b1298e78c28f108886de4"
+  },
+  "binaries": {
+    "target/iteration/task21-real-child/qualified/quench-node": "2a69d520c898977597e8da8268d87845f745eac2f3dd0d703bbf00f915ca6a92",
+    "target/iteration/task21-shared-process/quench-node-qualified": "b814e31054100dc4628ff9d853919ddd00b909d7308d3ac3bd771377ac6e1b9b",
+    "target/iteration/task21-shared-process/quench-node-next-qualified": "b8cc823c103fdca081acce0deeda6715103e070144c766dc30af3043b13a9dd9",
+    "target/iteration/task43-native-host/run-stages-next-qualified": "0b8b346f3a89b3c7719fb730c8cbc18473d5bc54a223336008740b77ee3b6f83",
+    "target/iteration/task21-shared-process/run-stages-next-qualified": "0b8b346f3a89b3c7719fb730c8cbc18473d5bc54a223336008740b77ee3b6f83"
+  },
+  "architecture": [
+    "The existing NodeHost implements the shared Host trait. Node policy/state remains in quench-node; the shared Runtime owns execution.",
+    "Host::initialize runs after intrinsics/native globals and before guest execution, with scoped roots and validated error transfer.",
+    "NativeContext::object_rooted delegates to shared Object.create using the intrinsic realm prototype, without consulting mutable guest Object.",
+    "ProcessState owns one monotonic origin initialized during logical process construction; both adapters call its uptime operation.",
+    "Rust binding records own guest names/arity/callbacks; process property installation derives names from them. The JS uptime fallback and lazy global timer are removed.",
+    "Callback/initializer failures preserve typed error metadata. Guest identities require validated roots; unrooted guest payloads are discarded."
+  ],
+  "checks": [
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::native::tests -- --nocapture",
+      "exit": 0,
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task21-shared-process/native-tests-complete.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::embedding::tests -- --nocapture",
+      "exit": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task21-shared-process/embedding-tests-final.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::root -- --nocapture",
+      "exit": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task21-shared-process/root-tests-final.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::explicit_collection_preserves_runtime_roots -- --nocapture",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task21-shared-process/collection-test-final.log"
+    },
+    {
+      "command": "cargo build --profile iteration -p quench-node --bin quench-node-next --bin quench-node",
+      "exit": 0,
+      "raw": "target/iteration/task21-shared-process/node-build-final.log"
+    },
+    {
+      "command": "cargo build --release -p quench-test262 --bin run-stages-next",
+      "exit": 0,
+      "raw": "target/iteration/task21-shared-process/release-build-final.log"
+    },
+    {
+      "command": "cargo check -p quench-runtime-next --lib --features profile-memory,profile-aggregate",
+      "exit": 0,
+      "raw": "target/iteration/task21-shared-process/features-final.log"
+    }
+  ],
+  "lint_limits": {
+    "runtime": {
+      "exit": 101,
+      "diagnostics": 153,
+      "levels": {
+        "error": 153
+      },
+      "new_api_native_host_file_diagnostics": 0,
+      "owner": "86",
+      "raw": "target/iteration/task21-shared-process/runtime-clippy-final.jsonl",
+      "existing_modified_file_diagnostic": "vm/error.rs:869 needless_borrow is unchanged; visibility/error transfer edits have no diagnostics."
+    },
+    "node": {
+      "exit": 101,
+      "diagnostics": 313,
+      "levels": {
+        "warning": 312,
+        "error": 1
+      },
+      "new_api_native_host_file_diagnostics": 0,
+      "owner": "86",
+      "raw": "target/iteration/task21-shared-process/node-clippy.jsonl",
+      "existing_fatal": "clippy::never_loop in modules/net/pump.rs:903; remaining warnings are not suppressed."
+    }
+  },
+  "node_oracle": {
+    "version": "v26.10.0",
+    "upstream_pin": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "upstream_contract": [
+      "tests/node/src/node.cc:837 initializes node_start_time during process initialization",
+      "tests/node/src/node_process_methods.cc:289-296 computes monotonic uptime",
+      "tests/node/lib/internal/bootstrap/node.js:158 directly installs the native method"
+    ],
+    "observations": {
+      "script_match": true,
+      "module_match": true,
+      "raw": "target/iteration/task21-shared-process/node-observations-final.json",
+      "properties": [
+        "elapsed-before-first-call",
+        "monotonic finite seconds",
+        "detached calls and ignored arguments",
+        "name/length descriptors",
+        "property attributes",
+        "native function text",
+        "function prototype and constructor rejection",
+        "identity and detached invocation after deletion"
+      ]
+    },
+    "legacy_clock_counterexample": {
+      "before_first_call_includes_elapsed_time": false,
+      "after_first_call_includes_elapsed_time": true,
+      "raw": "target/iteration/task21-shared-process/legacy-before.json"
+    },
+    "retained_legacy_gaps": [
+      "Method/property descriptor and native function text differences remain in legacy.",
+      "Legacy CLI cannot execute the top-level-await module control."
+    ],
+    "unchanged_upstream_case": {
+      "fixture": "tests/node/test/parallel/test-process-uptime.js",
+      "fixture_sha256": "d625dd216c8d8b38240629601c08fff69edd6f3abf89ec8fa692ed3ff309fb30",
+      "local_node_exit": 0,
+      "legacy_before_exit": -6,
+      "legacy_after_exit": -6,
+      "shared_exit": 1,
+      "shared_gap": "require/module loader not migrated",
+      "raw": "target/iteration/task21-shared-process/upstream-uptime-final.json",
+      "counts_as_shared_suite_pass": false
+    },
+    "oracle_environment": "A file-scoped CommonJS wrapper loads the unchanged fixture/helper graph, preserving Node script globals despite the repository package type. Initial direct/eval invocations are retained as corrected harness observations."
+  },
+  "internal_obligations": [
+    "Initializer-created objects survive collection before and after installation; temporary roots expire, including across fresh execution.",
+    "Throwing or invalid initialization prevents guest code from running and releases scopes; foreign exception roots reject.",
+    "Typed Wasm trap metadata survives callbacks and initialization, while unrooted guest errors expose no guest identity.",
+    "Existing native re-entry, result/exception retention, foreign/released handles and rooted property/call/write checks remain green."
+  ],
+  "affected_test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage": 48,
+    "filter": "built-ins/Function/prototype/",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "total": 309,
+    "before_passed": 309,
+    "after_passed": 309,
+    "regressions": 0,
+    "before_report": "target/iteration/task43-native-host/after-function-qualified.json",
+    "after_report": "target/iteration/task21-shared-process/after-function-final.json",
+    "compare": "target/iteration/task21-shared-process/compare-function-final.log"
+  },
+  "scope": {
+    "full_suites_run": false,
+    "performance_campaign_run": false,
+    "suite_inputs_expectations_or_inventories_changed": false,
+    "node_inventory_sha256": "6990d2397d7f5d1bd2d3edcf66f45368ed3a74ab76880baf67d2d6b0227c5aa6",
+    "wasm": "No Wasm lowering/resource execution changes; typed error transfer is covered at the host boundary."
+  },
+  "qualification_limits": [
+    "Stage A and tasks 21/43 remain open; production still executes legacy.",
+    "The shared process namespace is partial; process prototype/global accessors, other APIs, module aliases/loaders, Node console formatting and scheduling remain open.",
+    "Existing fixture-helper facsimiles and eager test-temp setup in production require removal or relocation to the runner boundary before closure.",
+    "The upstream uptime case remains a shared failure and a legacy abort; no case is skipped or excluded.",
+    "Workspace lint remains unqualified; task 86 owns remaining runtime/Node diagnostics."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task21-shared-process/native-tests-complete.log": "6a36a9d09ac409b33ab520ee247e2a815b14acf7bd2e8db6b6fadd2310b5b82f",
+    "target/iteration/task21-shared-process/embedding-tests-final.log": "a4147be43b796e2526a25c1ececc50f9e3ef099c118f61fd0b12a09134c1089f",
+    "target/iteration/task21-shared-process/root-tests-final.log": "2a33314f1b36218b44b712b56373193c3c578739d9ff5bccc64e25e4db48cae1",
+    "target/iteration/task21-shared-process/collection-test-final.log": "fbbb106aa9cffea4e7c2dceaff131b1b09adfa41113c41c7b084aeeb2e454476",
+    "target/iteration/task21-shared-process/node-build-final.log": "d7caf5ee71b2efdcece78182e9a6e1f29958f9418ddc533fe89ebaa9db0c34e7",
+    "target/iteration/task21-shared-process/release-build-final.log": "69c7be12fee14ed11b8230b43b692235a5a7c19cc03f61411b507a5a66cecf84",
+    "target/iteration/task21-shared-process/features-final.log": "cd1db1e297cb4c10c84fa565d38ea69681953be638c648117cf52b26f492bb34",
+    "target/iteration/task21-shared-process/node-observations-final.json": "1ab4c8168ee146b7cd8994c8825fdc6ed4992f65f8ad0902d87caed0fa437e12",
+    "target/iteration/task21-shared-process/upstream-uptime-final.json": "8ad96942338e0eabda2ac98059562b5a3be063fecb2851ca76ffa8974e6038c0",
+    "target/iteration/task21-shared-process/uptime-control.cjs": "48f2116b5edc68781dc08208fca578188a5ea50ea98eb32464a7b7c22b250e34",
+    "target/iteration/task21-shared-process/uptime-control.mjs": "1d4abaac19b1dc7551df0100fe7f898cca82bda94f68d84f7e81ee1c90334efa",
+    "target/iteration/task21-shared-process/upstream-commonjs-oracle.cjs": "250eb4b5782ef14cd19f2865f993dc72fc72dfd715da672ded1404db9ab8662f",
+    "target/iteration/task21-shared-process/after-function-final.json": "9378538f2ade2fee33b7c8997cf058e61b1bad92d162652b372654808ae4dfb6",
+    "target/iteration/task21-shared-process/compare-function-final.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task21-shared-process/runtime-clippy-final.jsonl": "3b2c98fed24a021b5bd74d729c17a76abd695749bb81d1c2314f217f7a0d9afd",
+    "target/iteration/task21-shared-process/node-clippy.jsonl": "264c95206a3b0bb9b128fa72966ed96793bea4b76fec31949a7f55a4e3043de8"
+  }
+}

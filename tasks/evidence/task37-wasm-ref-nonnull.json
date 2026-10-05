@@ -1,0 +1,144 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/bytecode.rs": "6b96e4f90410e9c30591cfe87e4e0b76f4a06389911855a0a1808b3ae2d37689",
+    "crates/quench-runtime-next/src/wasm.rs": "b529622a3b0e877cd4465eac3811b840a60ca6484460cea8c3488dfb6ace3828",
+    "crates/quench-runtime-next/src/wasm/table.rs": "8524e45267e0ead0152550bc97273f30837fa75a8ec1ff5f11b0914f1073bb68",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "29e239e563cb6010951d981f5755dd636a00844b2a4609e1657c827e8f9b9437",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "aa1c5bd6838880a1c25a92b86ce595850293949d99ed00cef6d960d11dd893ab"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 55,
+  "obligation": "Execute ref.as_non_null on the shared VM; preserve actual reference identity or produce a typed null-reference trap, including nested calls and observable effects.",
+  "representation": "One throwing unary opcode declared in the existing opcodes! authority derives validation, effects and operand views. Shared lowering reuses the ref.is_null stack projection; the ordinary shared dispatch reads/writes the same Value without allocating or retagging. WasmTrap::NullReference owns the trap description. Residual format55 rejects older binary layouts. No second heap, executor or side map.",
+  "source": "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-as-non-null",
+  "scope": "Previous exact 210-file affected scope, all seven pinned files containing ref.as_non_null, and 28 focused control files; overlapping pinned scopes are not added together.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-nullability-after.json",
+      "sha256": "b9b12da88cae180c4283df52ecee4cd8aa78f6ff15def6d1a47b6077db2aaada",
+      "binary_sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-after.json",
+      "sha256": "6f06a6fdbf1a3ce9b13b777caa04cd71610b57777d11e3a2173ad249f0e5fe78",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-controls-before.json",
+      "sha256": "2837cb0f53df965b9e5277595520edb86c04630db467620205f408c31e72ddbe",
+      "binary_sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-controls.json",
+      "sha256": "3c6a62fbd1f42e795ae70d5dad6c61262cf08c9640c34a32180a911c83f54cc8",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    },
+    "operators_before": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-operators-before.json",
+      "sha256": "26b9c6fccb170a63ad9f4ef66f9e13979787ceba7fade2c49d4018c53a4a4a5e",
+      "binary_sha256": "3c42a3004c1c9b3e3fb1efd0f9fc79e8f4fb9cfe5378df16409fd783d48da277"
+    },
+    "operators": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-operators.json",
+      "sha256": "e11c523da840144b4d02f4d67d8e683ae7ca5c0db111a7cc270a4fcaee0b044b",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    }
+  },
+  "results": {
+    "after": {
+      "files": 210,
+      "total": 61588,
+      "passed": 60650,
+      "failed": 938,
+      "gains": 0,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-nonnull-after-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "controls": {
+      "files": 28,
+      "total": 3330,
+      "passed": 3330,
+      "failed": 0,
+      "gains": 19,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-nonnull-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "operators": {
+      "files": 7,
+      "total": 271,
+      "passed": 142,
+      "failed": 129,
+      "gains": 0,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-nonnull-operators-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-ref-nonnull-runner",
+    "sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+  },
+  "checks": {
+    "runtime_wasm_internals": 33,
+    "bytecode_internals": 19,
+    "frontend_internals": 31,
+    "serialized_import_gc_recheck": 1,
+    "profile_feature_all_target_check": "passed",
+    "unit_policy": "Extended the existing serialized import/captured-instance/root-transfer/GC regression with ref.as_non_null; no ordinary conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-ref-nonnull-oracle.json",
+    "sha256": "7421129de00bd7f43338032e6e34966d856c049b4c0280a6bd1855073fda2a65",
+    "source": "target/iteration/task37-wasm-ref-nonnull-oracle.cjs",
+    "source_sha256": "c088a4ef3921661218cc596af7db4175bed1f9dfd03917cf7cee71367c64551e",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 52,
+      "passed": true,
+      "obligations": "identity, null trap kind, unreachable trap, nested propagation and pre/post-trap side effects"
+    },
+    "scope": "Independent Node observations support the shared Wast identity/null-trap/effect expectations. Extra JavaScript-host payloads (undefined/boolean/string/object/function) are Node-only controls; the shared JS WebAssembly bridge is still open. Earlier six callable-type discrepancies remain recorded; no global Node-parity claim."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-ref-nonnull-controls.wast": "ed6f4a341937aa2386f8d1e3a2475c2f8f93c5a2c724ee66d0e9d08dd99aed4f",
+    "target/iteration/task37-wasm-ref-nonnull-a.wat": "6459d75a0b8f14f378ec416a61dbe9844b1db2c2f774b18eaebede1f8807049a",
+    "target/iteration/task37-wasm-ref-nonnull-a.wasm": "45e6a5f5775f9d44385669ecc2f421d8825e436a57c149bc0fe55a3d5f8629eb"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-ref-nonnull-build.log": "d582dc6028cc6ffd2c677a41a76221a120df88cd063f362272abe1b8d891f331",
+    "target/iteration/task37-wasm-ref-nonnull-runtime.log": "16d63c9df80e103891ac999b3703e90318d44955b4aca4a728e0de0551046d2b",
+    "target/iteration/task37-wasm-ref-nonnull-bytecode.log": "69d5ab26f5bf2174238876270d12be27fd1241e5cc85727be81357540a0f6b19",
+    "target/iteration/task37-wasm-ref-nonnull-frontend.log": "2ba038b5a7084751b0a77fc0c6ecc20b126412e9f37fefd8e801f00cf2abedf2",
+    "target/iteration/task37-wasm-ref-nonnull-ownership.log": "f5565bd924fafc49a0de159103d613e68ce799029958540c126ae059b0950345",
+    "target/iteration/task37-wasm-ref-nonnull-check.log": "be3b4350618be23b99660a0b19af0c052fd5653e46067e9dbbcb0b73195f30d9",
+    "target/iteration/task37-wasm-ref-nonnull-after.log": "23c5e706cf3c5d6ca80869a61e3d033cbbd0d26766b32cac44fb01ec5fd47e7b",
+    "target/iteration/task37-wasm-ref-nonnull-controls.log": "43d98332857cd59e77d6605b96b62c503ed99afd3888cc61e7b6130798c4433e",
+    "target/iteration/task37-wasm-ref-nonnull-controls-before.log": "1635ce16c454a7333b76751e726405db6fc2016597917efba409573a2c381a37",
+    "target/iteration/task37-wasm-ref-nonnull-operators.log": "2a0110d85ce1972435d10804f49da63dda9854163272f2bfe26670e951fa4f7c",
+    "target/iteration/task37-wasm-ref-nonnull-operators-before.log": "25454202f2a934eab94dee0bd7b90a4e0f47fae6491683be691f2f13131138da"
+  },
+  "limitations": "No pinned pass gain: affected 210-file outcomes stay 60650/61588; the seven operator files stay 142/271 because concrete/GC types and related operators remain unsupported. Focused controls gain19 and pass3330/3330. Concrete type contexts, typed calls/branches, proper tail calls, GC/shared resources/exceptions remain open. No full suites or performance measurements; Stage A remains open."
+}

@@ -1,0 +1,61 @@
+{
+  "task": "20",
+  "scope": "Stage 115 only: 22 loose intl402 cases; child stages 95\u2013113 excluded by the existing stage ownership rule. Bounded previously unverified inventory, not a full suite.",
+  "command": "TEST262_TEST_TIMEOUT_MS=10000 TEST262_REPORT=target/iteration/task20-intl-frontier.json target/release/run-stages-next 115 115",
+  "result": {
+    "cases": 22,
+    "passed": 22,
+    "failed": 0,
+    "baseline_passed": 22,
+    "gains": 0,
+    "regressions": 0,
+    "matching_exact_inventory": true,
+    "complete": true
+  },
+  "reports": {
+    "target/iteration/task20-intl-frontier-before.json": "8ae7c74f2fdba84a7a64624ea2fb3a1d93d98dde5e996d6c976424cd75527849",
+    "target/iteration/task20-intl-frontier.json": "9a412a904d57a4a8f48a8fa61a6326bd2616f670f73b66c24881a63794a364fb"
+  },
+  "provenance": {
+    "path": "target/iteration/task20-intl-frontier-provenance.json",
+    "sha256": "fd1e40bf66615a3c4cc9360c5a522902df2db670b612a72b474fcb5e33f35333",
+    "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_clean": true,
+    "runner": {
+      "path": "target/iteration/task20-intl-frontier-run-stages-next",
+      "sha256": "08af672d08da67465a109b5f080a03534a1d65c0b905fcbaff4e0ca6db4f84a0"
+    }
+  },
+  "fixture_hashes": {
+    "tests/test262/test/intl402/constructors-string-and-single-element-array.js": "b978f0a3aa6cfbbb833adb908013eb356aaa548b036bfae995b17bef275b728d",
+    "tests/test262/test/intl402/constructors-taint-Object-prototype-2.js": "8ef202d6c5f278eaacfe0571f273745ccc693bd19566dacc80cc15b34679a203",
+    "tests/test262/test/intl402/constructors-taint-Object-prototype.js": "8d68c8f5a5081f3d6b77d9669095871f9cea403ad08ec2dcd3b9f8944a621b60",
+    "tests/test262/test/intl402/default-locale-is-canonicalized.js": "d9942331b1b0fa51c257b926226334003596bf2deb6f993b7049d0f4bb39df10",
+    "tests/test262/test/intl402/default-locale-is-supported.js": "e75270b02d25cba9a8eaa0d7949a1634772f301712ac572dbdbee1f99f53b94a",
+    "tests/test262/test/intl402/fallback-locales-are-supported.js": "d0c9f62dd91d5add0cbae2774de417e57db55136275b13fc0cc0138751f2b22d",
+    "tests/test262/test/intl402/language-tags-canonicalized.js": "8bb562b65a45bdcce77469396c80ab7555f1e7a07ab157f97e64e49a100fee3c",
+    "tests/test262/test/intl402/language-tags-invalid.js": "6d1ebb52c9f49cdaff794d90b9f76131c87fde9f3e59173700551cee5b4d2396",
+    "tests/test262/test/intl402/language-tags-valid.js": "dbfd0e359907499fd6c2d641120f88f4875d1c4239813abee38cf315699bc529",
+    "tests/test262/test/intl402/language-tags-with-underscore.js": "9faac89efbcf0bd050075436704bb77803b108b95c22666c600ff0ddd32a48ba",
+    "tests/test262/test/intl402/supportedLocalesOf-consistent-with-resolvedOptions.js": "b16bcdf8d2c1bc287b7b4f0499667742b0b7d2cbed62d02a3bd27c68cf28996e",
+    "tests/test262/test/intl402/supportedLocalesOf-default-locale-and-zxx-locale.js": "a310b40f607e030acda9a01538755ea6cfb9605a8385e6ab9854bce89224fc55",
+    "tests/test262/test/intl402/supportedLocalesOf-duplicate-elements-removed.js": "6ce6215b62e6fe48c4873029b5134e867c20f991f6c1b383fe35951346f7bb79",
+    "tests/test262/test/intl402/supportedLocalesOf-empty-and-undefined.js": "4b70d5296f561cd8b47de74ba6caceaca33936f2bde05f7ac4099e3acbcf6e94",
+    "tests/test262/test/intl402/supportedLocalesOf-locales-arg-coered-to-object.js": "89b0bfcdb444656b9231e9b94d3287de6f74c37797090d7d0e17c9788e3c68b9",
+    "tests/test262/test/intl402/supportedLocalesOf-locales-arg-empty-array.js": "6e6a3797be2c5c545edd84b48aae22207b51ca7f2799b19e5cd933ad2dc43cc3",
+    "tests/test262/test/intl402/supportedLocalesOf-returned-array-elements-are-not-frozen.js": "f43edff61eb8587d3346af29ceb62fbe90dc6aeef1e8f358bc040cad77177c22",
+    "tests/test262/test/intl402/supportedLocalesOf-taint-Array-2.js": "3fb58f712509071a146ded5e1e55ded74dd2ec1569fb076ebcd9e059bed769c8",
+    "tests/test262/test/intl402/supportedLocalesOf-taint-Array.js": "72893f29fe77b9cd01139a8ef448f4476d0e9e9b0bed55059d827077a58b998d",
+    "tests/test262/test/intl402/supportedLocalesOf-test-option-localeMatcher.js": "324c8a3981b0148b7ed1b5092ec0e197c31fd67ad8c10d1c7a48bd60d36dc3fd",
+    "tests/test262/test/intl402/supportedLocalesOf-throws-if-element-not-string-or-object.js": "1ab89a19f73ebbbc8803d7d7b25ef2c4d83ab99255b097a13075bdbc446f4192",
+    "tests/test262/test/intl402/supportedLocalesOf-unicode-extensions-ignored.js": "52812fc68445673bf51049bb5dd4d8aa6cc86310ca3189de34fdc117fee464af"
+  },
+  "logs": {
+    "target/iteration/task20-intl-frontier-build.log": "8f7e21cd57da3b82a12b26e76ff74cd1b58d1e5c38351fc22a318d1d3be7c37d",
+    "target/iteration/task20-intl-frontier.log": "d1b3affbe1b65b43c7051e49dd9670fc9fc5c665efc5e8c8b26dbaca0ab8374b",
+    "target/iteration/task20-intl-frontier-before.log": "d1b3affbe1b65b43c7051e49dd9670fc9fc5c665efc5e8c8b26dbaca0ab8374b",
+    "target/iteration/task20-intl-frontier-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "limitations": "No implementation or fixture changes; no full Test262, Wasm, Node or performance run. Stage A remains open, including recorded corpus conflicts and production cutover/cleanup."
+}

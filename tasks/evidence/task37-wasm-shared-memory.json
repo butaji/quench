@@ -1,0 +1,223 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty shared worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/memory.rs": "6ed2a94cd2883f2ff7d717ddd7db100ed17832838baa0cf6dbab47f558c76479",
+    "crates/quench-runtime-next/src/heap/cell.rs": "e98208d6bb0a9fb8dc44e4f30bb61042fc104e199feabd3dc298991ee26c0061",
+    "crates/quench-runtime-next/src/heap.rs": "36cb90426a3fb4f49de9f1b5b9b36744a1eba063d8a128737749eca5b939241f",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "49e45d3c3929d5c5af0e035bb454dde4e9026a6647438a1f5d0cafb77482b3f7",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "5f71fb51c8e79289872bba9cb5a659baba4b22aae309a56941b1d01a8ac8f485",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "1347212032fe2ffafadd499ddc2c768c59bfe7db785539d2b2a30187c5448b8b",
+    "crates/quench-wasm/src/shared.rs": "91e365c103b058b477f6eacdf5536f77fc9b9df91e554874cd80b67be9f490dd",
+    "crates/quench-wasm/src/shared_wast.rs": "169db2ea67acff1a0e1536faaaf883fc928f4cdbd1b8796cd091550434f7fbd0"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 69,
+  "obligation": "Admit shared linear memory declarations/imports with a required maximum and exact sharedness; retain one original synchronized backing store through existing heap ownership, memory operations and growth.",
+  "representation": "Validated MemoryType remains the authority for width, page size, sharedness and limits. The existing WasmMemory cell now owns Arc<MemoryStorage>; one Mutex<Vec<u8>> serves both shared and unshared memories. A read view distinguishes immutable data segments from locked linear memory. Imports retain the original cell; no copied owner, shared flag, executor or identity map is added. Copy handles identical backing and orders distinct backing locks to avoid opposing-copy deadlocks. Growth releases the guard before heap accounting. Standard spectest shared_memory is a real rooted shared memory resource; its private host-resource feature set does not alter guest suite feature policies.",
+  "scope": "92 affected pinned files: memory/address/load/store/align, bulk/data, SIMD memory, imports/exports/linking/start, array data segments and all threads/custom-page-sizes files. This is not a full Wasm run.",
+  "files": {
+    "path": "target/iteration/task37-wasm-shared-memory-files.json",
+    "sha256": "15192f61f1048ce390f4894d5a06daaafbe499b4921425154572103bf457e691"
+  },
+  "qualification": {
+    "total": 14679,
+    "before_passed": 14420,
+    "passed": 14430,
+    "failed": 249,
+    "gains": 10,
+    "regressions": 0,
+    "exact_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-shared-memory-before.json",
+    "sha256": "7f0584580c5de0c0f711847cbcb5d2737221fc6a45e25391d9aee12a2d5db0d6"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-shared-memory-after.json",
+    "sha256": "021002475a5dad8db3b25310305a957972b68515be109cc97a628e91d40d13bc"
+  },
+  "before_runner": {
+    "path": "target/iteration/task37-wasm-descriptor-casts-runner",
+    "sha256": "468184a4515263af1bd6b8454cb256d5a8605490a74f6babe0ca6f495c145ea3"
+  },
+  "after_runner": {
+    "path": "target/iteration/task37-wasm-shared-memory-runner",
+    "sha256": "316c4266ed92109eb1ae3a26a0af78f3eca1a38dc4ec60bbab31d6aa4ea92d4a"
+  },
+  "focused_controls": {
+    "total": 17,
+    "before_passed": 3,
+    "passed": 17,
+    "failed": 0,
+    "gains": 14,
+    "regressions": 0,
+    "exact_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "before": {
+      "path": "target/iteration/task37-wasm-shared-memory-controls-before.json",
+      "sha256": "ab139587315e09e10097372514db9b19770eefd6a702a27c6dc4ad5bc77db822"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-shared-memory-controls-after.json",
+      "sha256": "ec9ad63645c68232bd3acb0220c5522dec320e6d03952ea9ca9b2c79a8c11db7"
+    },
+    "source": {
+      "path": "target/iteration/proposals/threads/task37-shared-memory-controls.wast",
+      "sha256": "0ca1ab3d59588a38ac0cb1f01a16fd55277fc40dd62f2477608992520a4c6fe7"
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-shared-memory-oracle.json",
+    "sha256": "706452916a9e61fcb4a45a067ba530fe60948878c8858904e618fdf5da01990f",
+    "script": {
+      "path": "target/iteration/task37-wasm-shared-memory-oracle.cjs",
+      "sha256": "77c8d2b854445d981f0ece2f404e4d968d3a94ba8cbb2a0556944434d267f232"
+    },
+    "observations": 12,
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "module_inputs": [
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-owner.wat",
+        "sha256": "bbed0c5e0ee551db07f9c03f5bcbea5684e32dfccafb356e0ad8b4a0eb8cd412"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-owner.wasm",
+        "sha256": "09088f62eee1ddd8254a2f9e86b930743c386edcb4ddbe28aeb596f5b407c17c"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-consumer.wat",
+        "sha256": "dfbb6a2c0c3cd5866c57c67246c4ecb9f53b26b08037b73dbf481ee119d69a8d"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-consumer.wasm",
+        "sha256": "cb9e5969056cb0d1c99056dfd66793c2940a5a232ef557ac05fe28b541a4bf33"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-unshared.wat",
+        "sha256": "ce3297e0d8d64f415943fc5aa814bceeee75913558aa5be5c07ab395e830f535"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-unshared.wasm",
+        "sha256": "16dd65238ec26e7166962759e6a681e14234945b38bcd69fc1a7ebace80c5004"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-wrong.wat",
+        "sha256": "0ffb25798a254f6599cc979ca10d37035aa7eb5bddaffe9667e33cfc30ae2b73"
+      },
+      {
+        "path": "target/iteration/task37-wasm-shared-memory-wrong.wasm",
+        "sha256": "730b3f79e11ffa60f9b9420969fb089606b0090144921b96f2c275d36bc85951"
+      }
+    ],
+    "primary_semantics": "https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md"
+  },
+  "javascript": {
+    "total": 255,
+    "before_passed": 255,
+    "passed": 255,
+    "failed": 0,
+    "gains": 0,
+    "regressions": 0,
+    "exact_ids": true,
+    "identical_input_hashes": null,
+    "complete_workers": null,
+    "fixture_content_sha256": "4ec2c00a4ed10b75677d65188e73bd206df5410b39d8d6deab780923e3902784",
+    "harness_content_sha256": "4bad26740650b342a9c0f9d80bd0ebe387b38a4c98f39ab40531b9afce4581a5",
+    "stages": [
+      79,
+      80,
+      81
+    ],
+    "reason": "The heap leaf byte representation and memory profile projections changed; weak ownership/collection stages exercise shared heap callers. JavaScript buffer semantics and dispatcher vocabulary are unchanged.",
+    "before": {
+      "path": "target/iteration/task37-wasm-shared-memory-js-before.json",
+      "sha256": "4b9d7155c5c1acf1068880ad4f1454bbd8b040937a4bed7b82d33f2e79ad4f5e"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-shared-memory-js-after.json",
+      "sha256": "e076a4f8e89daa84db5010c12499bc1cf6b422d88d4c6266b3291934cdd36b4d"
+    },
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-descriptor-casts-js-runner",
+      "sha256": "4ff88488067c848e1b734f8a121bd437d712aeab0b3c38e6b78b0cb226de0672"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-shared-memory-js-runner",
+      "sha256": "ac893ea103e72d35a18231ab1863215c597b8407b042b8f194e32edcc5b1b9a5"
+    },
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_clean": true
+  },
+  "checks": {
+    "internals": {
+      "path": "target/iteration/task37-wasm-shared-memory-internals.log",
+      "sha256": "edd9cbeca18e132c26980d2d954ae681b62cffadb8dd76baffe227647d28d55f",
+      "passed": 36
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-shared-memory-heap.log",
+      "sha256": "7e45b6ed630755d8ea6e8c7e627eb32202b928207ae38a9f05376487fa4bf3dd",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-shared-memory-frontend.log",
+      "sha256": "2c21300c6473a9f94ed3efb32e5e6f9ce819352a50ec08900cc9e73d75015f53",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-shared-memory-check.log",
+      "sha256": "1cb73e7a2630929ce0791b0ea82b418c05773eeea43fcc898d0d9818ecae567b",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-shared-memory-build.log",
+      "sha256": "111aff02e7e26d62dfda48bc1c0b56e525132121941ac956435a763267a67aaf",
+      "passed": null
+    },
+    "js-build": {
+      "path": "target/iteration/task37-wasm-shared-memory-js-build.log",
+      "sha256": "56b7787c5f533eca53eecdf5531d8ec59468874bd6f9500da0ed53e80645ab32",
+      "passed": null
+    }
+  },
+  "comparisons": [
+    {
+      "path": "target/iteration/task37-wasm-shared-memory-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-shared-memory-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-shared-memory-js-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  ],
+  "remaining_failures": {
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: I32AtomicLoad { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }": 243,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: MemoryAtomicNotify { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }": 6
+  },
+  "unit_scope": "Extend the existing memory import/root lifecycle unit to both sharedness variants and pre-effect mismatch rejection. One added internal storage unit checks cross-thread backing ownership, growth visibility, opposing-copy lock order and alias copy; pinned suites cannot observe Rust lock discipline. Ordinary language/API conformance remains in suite/oracle controls.",
+  "limits": "All remaining 249 affected failures are atomic-operator lowering gaps. Atomic load/store/RMW/wait/notify/fence and cross-agent embedding are not implemented or qualified by this slice. No full Test262/Wasm/implemented Node suite or performance campaign ran. Stage A and tasks 23/37/40/86 remain open."
+}

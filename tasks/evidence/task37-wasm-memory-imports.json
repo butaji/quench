@@ -1,0 +1,177 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "5b1d3579b03e11fdb448279d21474dc5948c1f48b3b258b59061d0e316efe3a1",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "3c76077204f8b85afe2ca6c4ffaf964273fe5be784565bee939b81f241ee2abf",
+    "crates/quench-runtime-next/src/wasm/table.rs": "8b8871e319a0ac4637208b16b0331eeb0c3dbcaeb53110cfbf68f7001f7ae4a3",
+    "crates/quench-runtime-next/src/api.rs": "8f01d8b91c5dd503cbc9fb1ec0005e4fe38ad8f68df23b4b4e41cead3167c0c0",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "4870e87a5d2e5626f74fc3421aebfa6397ce5ab23cb483c1609dae16736be2e4",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "ded15720c29ba3ffae898eda3609d4369f91da167b0423b7a19f6b58d7215bce",
+    "crates/quench-runtime-next/src/vm/json.rs": "fe20bcab0604d61b429e93b0362e26c228da497d2bd6a84aaaf27c334f7d50e0",
+    "crates/quench-runtime-next/src/heap.rs": "401479d2eeaff3ba0f5bcab387ec283ae59221035fb36a595093930aeb3a8640",
+    "crates/quench-runtime-next/src/heap/cell.rs": "23ec73a54f07757ef31ae9f8ee386465917032ac692d31f25fbb5517e55d0542",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "44070502e869c99217f9ae8c9291ed7a0cd79a03886c28e8f67835a82d066ece",
+    "crates/quench-wasm/src/shared.rs": "860cebf28cbd33ca73a61ed1d27080d9538711f6195e89bd1ee0e0c19f676e59",
+    "crates/quench-wasm/src/shared_wast.rs": "e1b554e1b35146715a2b443786cca61d951b9b813be6df0feafa616998228f3f"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 50,
+  "obligation": "Memory32 imports share one byte owner and original optional maximum; re-export preserves identity, dynamic size, limits, interleaved declaration order and initialization/trap effects.",
+  "representation": "Cell::WasmMemory owns bytes and optional declared maximum. Imported environments retain that same Value; exports project it. No bytes copies or memory owner map. Growth derives the physical Memory32 cap from the original optional maximum; import_limits_match is shared by table/memory linking. Immutable data retains existing ArrayBuffer cells. Memory read/store/bulk copy/fill/grow use the same dispatch and existing checked-range operations. GC treats memory as a byte leaf, profiling accounts its payload and JSON omits internal cells.",
+  "import_authority": "Each import name owns its validated declaration index, module and export name; memory/table declarations retain the expected resource type. Module.imports derives and sorts those names, preserving interleaved host lookup order. Engine rejects duplicate/gapped index domains. Runtime resolves root handles by declaration index and retains original cells. Shared Wast supplies spectest memory minimum 1 maximum 2 alongside table 10/20 through ordinary frontend/shared instantiation.",
+  "api_change": "WasmMemory adds optional import; owned declarations use None. WasmImportName adds declaration index. Runtime::wasm_memory projects identity, and instantiate_wasm_module_with_imports consumes rooted handles in module.imports order. table_imports remains a derived table-only projection; it does not define mixed import order.",
+  "scope": "Previous 77-file instantiation/table/import ratchet plus every top-level pinned Wast file with an explicit or inline memory import, using multiline-aware matching; 85 files. Includes memory byte/bulk/growth and shared initialization callers. No full suite.",
+  "qualification": {
+    "files": 85,
+    "total": 24392,
+    "before_passed": 22096,
+    "passed": 22357,
+    "failed": 2035,
+    "gains": 261,
+    "regressions": 0,
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/data.wast": 12,
+      "crates/quench-wasm-test/testsuite/data0.wast": 1,
+      "crates/quench-wasm-test/testsuite/data1.wast": 3,
+      "crates/quench-wasm-test/testsuite/imports.wast": 65,
+      "crates/quench-wasm-test/testsuite/imports1.wast": 5,
+      "crates/quench-wasm-test/testsuite/imports2.wast": 18,
+      "crates/quench-wasm-test/testsuite/imports3.wast": 8,
+      "crates/quench-wasm-test/testsuite/imports4.wast": 11,
+      "crates/quench-wasm-test/testsuite/linking.wast": 23,
+      "crates/quench-wasm-test/testsuite/linking0.wast": 1,
+      "crates/quench-wasm-test/testsuite/linking1.wast": 6,
+      "crates/quench-wasm-test/testsuite/linking2.wast": 9,
+      "crates/quench-wasm-test/testsuite/linking3.wast": 7,
+      "crates/quench-wasm-test/testsuite/load1.wast": 16,
+      "crates/quench-wasm-test/testsuite/memory64-imports.wast": 2,
+      "crates/quench-wasm-test/testsuite/memory_grow.wast": 41,
+      "crates/quench-wasm-test/testsuite/memory_size_import.wast": 5,
+      "crates/quench-wasm-test/testsuite/store1.wast": 5,
+      "crates/quench-wasm-test/testsuite/store2.wast": 23
+    }
+  },
+  "new_complete_file": {
+    "path": "crates/quench-wasm-test/testsuite/memory_grow.wast",
+    "passed": 51,
+    "total": 51
+  },
+  "controls": {
+    "controls": {
+      "total": 27,
+      "passed": 27,
+      "failed": 0
+    },
+    "start-controls": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0
+    },
+    "elements-controls": {
+      "total": 31,
+      "passed": 31,
+      "failed": 0
+    },
+    "tables-controls": {
+      "total": 34,
+      "passed": 34,
+      "failed": 0
+    },
+    "table-initializers-controls": {
+      "total": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    "table-imports-controls": {
+      "total": 33,
+      "passed": 33,
+      "failed": 0
+    },
+    "bulk-controls": {
+      "total": 26,
+      "passed": 26,
+      "failed": 0
+    },
+    "memory-controls": {
+      "total": 423,
+      "passed": 423,
+      "failed": 0
+    }
+  },
+  "checks": {
+    "runtime_affected_internal": 31,
+    "frontend": 39,
+    "control_directives": 601,
+    "all_targets_profile_memory_and_aggregate": "passed; legacy compiler warnings remain",
+    "node_oracle": "jitless Node agrees on identity/alias writes/growth, interleaved memory/table imports, grown minimum, original maximum through re-export, absent maximum mismatch, external kinds and table/data/start trap effects"
+  },
+  "unit_test_policy": "One new internal root-transfer test: memory/re-export preserve original cell and maximum, exporter environment can collect independently, final importing owner retains mutable bytes, released RootId is a link failure without root growth, last owner release reclaims cell. Ordinary cases remain suite/oracle fixtures.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-memory-imports-runner",
+    "sha256": "fd1ca4e8b8185de38cb9564a21c950f93be3cb9b000df449bafd96a1c344c9dd"
+  },
+  "artifacts": {
+    "target/iteration/task37-wasm-memory-imports-after.json": "505678e2889429a7b0203d19f87832293a901788b4cec1dbe325298252c74603",
+    "target/iteration/task37-wasm-memory-imports-alias.wasm": "bf5fd9819e7599f0c6e0e197f32129184b3fba06536db97d1fb91b3f903a7cf0",
+    "target/iteration/task37-wasm-memory-imports-alias.wat": "ca0445578bcf2e4e858f0c42967037a475abd49fddecbf3c4ce2721d995d702e",
+    "target/iteration/task37-wasm-memory-imports-bad.wasm": "dda3c7f5f04add46f251cbe8d54a817e7c5baf6903ce65a604421e6e658e2c9d",
+    "target/iteration/task37-wasm-memory-imports-bad.wat": "9084e72933e64132cfca78a5cccefb455b8d47f8f11378fffeed86a85c133ffc",
+    "target/iteration/task37-wasm-memory-imports-before.json": "fdcb1a4c36383c67bbb5906b5801534525783be417dd9433820469c114d8dba9",
+    "target/iteration/task37-wasm-memory-imports-bounded-mismatch.wasm": "30c464b108cf76aa0028684fa36b9822873d1960d99a541c6afe1a057dc1558b",
+    "target/iteration/task37-wasm-memory-imports-bounded-mismatch.wat": "2482d1b9377cc2d5a99344b9687f0888bea76e1671a20e85fc897b6d20058a5a",
+    "target/iteration/task37-wasm-memory-imports-build.log": "c01d63189de044be3b2ee0a92897c22ff7845804e35f966df9ef952fdd5479b3",
+    "target/iteration/task37-wasm-memory-imports-bulk-controls.json": "6ebd2ed3910b38ff937683dd4c0dd88bac2d1f077b67fe9e68cfc7d48364a829",
+    "target/iteration/task37-wasm-memory-imports-check.log": "e57b72db97d4dc1bcd9d490205ea1e6ae65b700ba966a629b81fc5c704f712c6",
+    "target/iteration/task37-wasm-memory-imports-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-memory-imports-consumer.wasm": "3ed1349a5e74d9c5d4e5ac1357fac3a4e37cf61fba3c84345579b5f74ecb3d10",
+    "target/iteration/task37-wasm-memory-imports-consumer.wat": "1cbd6905293eb7850dbf9af70197c6a78555411824118fe09a9aa1164c9c0038",
+    "target/iteration/task37-wasm-memory-imports-controls.json": "18689f1b7901773c3564bad0337548e2d7f23e0af2ad9f8e52b5d31b6775e33d",
+    "target/iteration/task37-wasm-memory-imports-controls.wast": "116a4efefbd83b3bfdf974a164d2e4543e47e73da04787e16f1154830e13f642",
+    "target/iteration/task37-wasm-memory-imports-elements-controls.json": "e1adeb3341ded534efd4df0dd182859a00b96a95fa95c53f8babd00abeacda00",
+    "target/iteration/task37-wasm-memory-imports-files.json": "04ebd33b5fb0198646837ddd548205d9e1591d1ccd82274d07fd58133ac9b521",
+    "target/iteration/task37-wasm-memory-imports-frontend.log": "cd2ffd7c02636f26970a086c4a65b96dbe3d29dcc2a5dcaebdee72f908a7b8b8",
+    "target/iteration/task37-wasm-memory-imports-kind-mismatch.wasm": "9e090a7802af382dcf3069d57167f92f2559a0f639c32da205059cd7a3007a51",
+    "target/iteration/task37-wasm-memory-imports-kind-mismatch.wat": "70481b232bb975d3512dd9fda0d87cffebb4cd57c7ee2232d80010e71f025e99",
+    "target/iteration/task37-wasm-memory-imports-max-mismatch.wasm": "1fe21d6a065392290f15b7fa32ad68f4bce4c802b8abd986acccd5817dd27327",
+    "target/iteration/task37-wasm-memory-imports-max-mismatch.wat": "60467ae01684ce7f10901ccc1cb796de2b8e49416653d6c9a17c9b51638abee8",
+    "target/iteration/task37-wasm-memory-imports-memory-controls.json": "f8a589c3aafc2af9df497845ebacea8ecf304c5c317ef37e8bff2ce6634989b7",
+    "target/iteration/task37-wasm-memory-imports-min-mismatch.wasm": "cf64e3643292d6764d3fbd13c3e7e75327245156866cc97c4bdb683ae599b358",
+    "target/iteration/task37-wasm-memory-imports-min-mismatch.wat": "4f0ac8b68c48337f30990f7746501bb11f5c20dc0a738d5ebb7c5c818ade369a",
+    "target/iteration/task37-wasm-memory-imports-oracle.cjs": "4f34b1852018ee55ca05f20ff65145f98463b4b8e3d596bf5296704e81d33297",
+    "target/iteration/task37-wasm-memory-imports-oracle.json": "11974f5510338aea3f30feaebf68294abc878b05b8a5f69cb26499a0463ddc32",
+    "target/iteration/task37-wasm-memory-imports-owner.wasm": "506745ddfd96020025b16fe1603b72f93c03a0adab219c0bf59c55724a9d243e",
+    "target/iteration/task37-wasm-memory-imports-owner.wat": "ba2782e24da1e2a86dba69f04897b78b3b5883a71449cf57732631a5a3bda852",
+    "target/iteration/task37-wasm-memory-imports-runtime.log": "35a987cfdce539a4f8086786774b46ccae45ec7c868ab541d15c4f72b0567a9d",
+    "target/iteration/task37-wasm-memory-imports-start-controls.json": "26f678cf77b738121b128e1e50e2325168f56f6c6d69a26be7d1c50002779740",
+    "target/iteration/task37-wasm-memory-imports-start-trap.wasm": "da89a3179249cbf8f941e3680380a38d25dcc115b7087960e4b41ae4ad3ee577",
+    "target/iteration/task37-wasm-memory-imports-start-trap.wat": "0d5321e33db3e9f2e591d5b1cc93410e5ba15cf426e657bb0fff2f3acce355ec",
+    "target/iteration/task37-wasm-memory-imports-table-imports-controls.json": "1d1bba1dd3d65bd0016d355287e3bd383e19bbacf24b359a70e214048ff7d5e2",
+    "target/iteration/task37-wasm-memory-imports-table-initializers-controls.json": "c09bd7856e69d66f998427a1e22504205aed7843aa63c221bbfc51632c49491b",
+    "target/iteration/task37-wasm-memory-imports-tables-controls.json": "a62372973611a9de888a91d9e8e17cebaf4a25d3357ba2bf70b4356b3c3ebeb2",
+    "target/iteration/task37-wasm-memory-imports-unbounded.wasm": "aab09f2548108760e2f82821668d2b5c0e68dfe75aff8b7d8c45d908fbc17905",
+    "target/iteration/task37-wasm-memory-imports-unbounded.wat": "79a03859136f722902f9e6e337befd9041bad876e1fc25543aa23f621e45baff"
+  },
+  "limitations": [
+    "Function/global imports, imported reference/global initializers and remaining Wasm proposals incomplete.",
+    "JS ArrayBuffer/typed-array views and complete JS/Wasm host interoperation remain task 40 obligations; memory imports do not close that API gate.",
+    "The prior escaped active-data Node/V8 eager-drop difference remains documented in task37-wasm-table-imports.json; core semantics are preserved.",
+    "Standalone whole-module serialization is not implemented; module facts accompany residual.",
+    "Optional profile execution accounting issue remains open; feature checks prove build compatibility only.",
+    "No complete pinned Test262/Wasm/implemented Node gate, production cutover/legacy cleanup or performance claim. Stage A remains open."
+  ]
+}

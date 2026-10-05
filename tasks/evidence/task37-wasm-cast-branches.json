@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/reference.rs": "97b3f3faba63a6a4bd5b1869cf77dd74d781bfecd33c16a6bdbf6736aea87b86",
+    "crates/quench-runtime-next/src/wasm/control.rs": "757bbabf4ef062d505125ebb72e34eb709b19e37927664d99e19423f7e4e7d67",
+    "crates/quench-runtime-next/src/bytecode.rs": "108904e492e3d8a8bc6bec5de48e409340d339aaef1e0faea0b770e832c3c131",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "fd75c5d2ea82522b36e61aca0fa7cd5c87dc9eea41a1af5df89212f3e1274142"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 58,
+  "obligation": "Execute ordinary br_on_cast, br_on_cast_fail and ref.eq through the single VM, preserving operand payloads, original references and label transfers.",
+  "representation": "Cast branches compose the existing target admission, reference test, optional I32 boolean inversion and shared conditional branch. Both paths carry the original Value, and shared branch projection moves other label arguments. RefEq compares shared Value identities directly and writes I32, with no JS coercion. One opcode is appended and format58 rejects older encodings. No cast predicate, object cell, side map, copied graph or executor is added.",
+  "scope": "230 existing affected pinned files plus42 focused files; no full suite. Focused controls cover successful/failed branches, both fallthroughs, nullable targets, multi-result/discarded operands, equality of wrapped i31 values/nulls and foreign exact/nonexact declaration targets.",
+  "sources": [
+    "https://github.com/WebAssembly/gc/blob/main/proposals/gc/MVP.md",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-eq"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-reference-casts-after.json",
+      "sha256": "7c807e824e5c9f1e66ee9861ca58a568a0a2a66ee8ea67b81596b68d865a997f",
+      "binary_sha256": "cb062d38bffb7d380986a3c70019d9b868676e3a48a3ab47dbd4f0039b1deedd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-cast-branches-after.json",
+      "sha256": "aee6d185ce3e7aef1d974ebc71ce680244f3794a1557b987f666917e5b4ee556",
+      "binary_sha256": "bc02fbf18442cd0788ab2dcfa6e35f8c6188e45e21bda47f79ae72d6693ad490"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61587,
+    "passed": 61623,
+    "failed": 1135,
+    "gains": 36,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/exact-casts.wast": 36
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-cast-branches-controls-before.json",
+      "sha256": "1553bc40c8e99ccaa7331fc1a3783b626af5b80c27ffb229faade1c99392d3e8",
+      "binary_sha256": "cb062d38bffb7d380986a3c70019d9b868676e3a48a3ab47dbd4f0039b1deedd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-cast-branches-controls-after.json",
+      "sha256": "14ad2d4cc7dae19d11e799ee4e48a3c9b0d374ff36be606035da2a53de1d24fd",
+      "binary_sha256": "bc02fbf18442cd0788ab2dcfa6e35f8c6188e45e21bda47f79ae72d6693ad490"
+    },
+    "files": 42,
+    "total": 3710,
+    "before_passed": 3687,
+    "passed": 3710,
+    "failed": 0,
+    "gains": 23,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-cast-branches-controls.wast": 23
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-cast-branches-runner",
+    "sha256": "bc02fbf18442cd0788ab2dcfa6e35f8c6188e45e21bda47f79ae72d6693ad490"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-cast-branches-runtime.log",
+      "sha256": "716fb678c8323ba26f27e33cdfac6a68d3651bc63cb16cc5ca0518af76e73d46",
+      "passed": 33
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-cast-branches-bytecode.log",
+      "sha256": "460ba7a2a49c8f43ab7e37caeedd3cc57b1a6acfabc8eff50a674c7ac445a600",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-cast-branches-frontend.log",
+      "sha256": "abe4b6b00d4090c4f46e0774336167ffd86ade46ec273745860daf9c48aed0ad",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-cast-branches-check.log",
+      "sha256": "2e276a2dbc73e3a285b59ec1eb17d943da55c32abcd12ef7d3724199fd45e275",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-cast-branches-oracle.json",
+    "sha256": "159f91eaa2e917446c540729930f471e38da50917306aba3234f4abfb6c5d7c2",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 22,
+    "input_hashes": {
+      "target/iteration/task37-wasm-cast-branches-b.wat": "7097118908b8bdfdf28bf0e6fa9a27c40fb276f11c1d4f4f6e9e334e197046ad",
+      "target/iteration/task37-wasm-cast-branches-a.wat": "550adc677282b334269aaec6dd5c001fb641667421bd69de54df754901d960f1"
+    }
+  },
+  "internal_obligation": "Retained shared control/serialization, declaration admission, foreign capture/GC, boundary and bytecode checks pass. No duplicate conformance unit added; ordinary branch/equality outcomes are owned by pinned and focused suite controls.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 573,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 1 }": 110,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNew { struct_type_index: 1 }": 108,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 0 }": 101,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-reference-initializer:0..0: unsupported Wasm constant expression operator": 19
+  },
+  "limits": "Struct/array allocation, fields and constant construction remain unsupported, so their equality/branch suite cases cannot yet execute. Descriptor equality casts/branches, external/internal conversion, shared refs/resources, exceptions and JS embedding remain open. Six earlier callable-type Node discrepancies remain recorded. Full-suite qualification, frozen implemented Node inventory, production cutover and Stage A are incomplete."
+}

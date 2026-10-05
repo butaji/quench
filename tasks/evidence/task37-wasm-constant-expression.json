@@ -1,0 +1,190 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/constant.rs": "d1acb58a93f67bf5e422ae2edf275abdfd8f53525f4b208b29dbcc79fbc25757",
+    "crates/quench-runtime-next/src/wasm/integer.rs": "ffa5f2ba202a1469c271c7e56d4c3de12b5fc7b24f573a073941733143b727e7",
+    "crates/quench-runtime-next/src/wasm.rs": "28df6e6ab2e0ff32375ae10068dce238ac547b0a6ca376074c82f9c1bbd371ec",
+    "crates/quench-wasm/src/shared.rs": "98acf320e144fc09fb45e28ab47ec8058680cc8824f44f3fe7ec231aabb63e67"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Fold validated scalar extended-constant initializers using the authoritative runtime integer operations; preserve wrapping arithmetic, known immutable global dependencies, scalar raw bits, and initializer grammar/type/stack boundaries.",
+  "representation": "The shared integer-family declaration derives the allowed constant arithmetic for both widths. Engine.evaluate_wasm_constant_expression folds pure, known initializer facts with those same apply methods. The frontend decodes/validates and supplies the operator stream and known globals; it no longer duplicates initializer scalar dispatch. No second runtime executor, opcode or residual format is introduced.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-constant-runner",
+    "sha256": "430c9b324db94fd6484ea3a31b5e2bc6af55614788c836b3fa18efd90eb461cd"
+  },
+  "before_projection": {
+    "path": "target/iteration/task37-wasm-constant-before.json",
+    "sha256": "26cbc4803054c6793e3a0450becee0ae6c247107571b36f0d8fccb922d3c388f"
+  },
+  "before_reports": [
+    {
+      "path": "target/iteration/task37-wasm-module-after.json",
+      "sha256": "07d1e27f27bbb7cddad76b1d16bca222f4756f3a126d77c5f9dc551a042b0393"
+    },
+    {
+      "path": "target/iteration/task37-wasm-constant-before-const.json",
+      "sha256": "14f85f3099141c71b67cc9112c43a630ba59b0211ad8b6e437ce0a0a44f3077e"
+    }
+  ],
+  "after": {
+    "path": "target/iteration/task37-wasm-constant-after.json",
+    "sha256": "86e6a8ec076d7008fe6199142259777d5f105be5d579e1f57ba91ac838094f72"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-constant-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "all_pinned_outcomes_unchanged": true,
+  "regressions": 0,
+  "total": 14202,
+  "passed": 13348,
+  "failed": 854,
+  "inventory_complete": true,
+  "scopes": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/const.wast",
+      "sha256": "b1a378d5b7ddb4d4acb5ae2959ac938dfe0d9e3c2864df457bc098d3f2e00f37"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast",
+      "sha256": "0899df8c814d953d56a22b04d518fda6c7e6aab5a0d0472367a830e31821ee40"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+    }
+  ],
+  "verification": {
+    "runtime_internal": {
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-constant-runtime.log",
+        "sha256": "dd7fc4c592c3f86d94a6218b6780446b2d08857d7cd2b7338dd489c4669c4c15"
+      }
+    },
+    "frontend_units": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-constant-frontend.log",
+        "sha256": "837b3f513086e13fe8f92a4a41f916f187bfdf4b98f4028fe10d154cb118a186"
+      }
+    },
+    "all_targets_with_memory_and_aggregate_features": {
+      "path": "target/iteration/task37-wasm-constant-check.log",
+      "sha256": "9bc0f51a1696403a2816f8cd2a9ae156167711b08cbcb8f8d55e14df0ec09d87"
+    },
+    "constant_controls": {
+      "total": 30,
+      "passed": 30,
+      "before_passed": 0,
+      "before": {
+        "path": "target/iteration/task37-wasm-constant-before-controls.json",
+        "sha256": "4197d83a2b0ef99b20a4106decf9c41fb3bef6403452081378068dbfd774fcff"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-constant-controls.json",
+        "sha256": "3abc60cd35e8ce19ae24dbab1a247202d8b0c1c2d9778023954c52b4cd2ed911"
+      },
+      "input": {
+        "path": "target/iteration/task37-wasm-constant-controls.wast",
+        "sha256": "6ebf970a029f995f8332e214844defb015e482f654c1d549e2bb794d3ac39424"
+      },
+      "comparison": {
+        "path": "target/iteration/task37-wasm-constant-controls-compare.log",
+        "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+      }
+    },
+    "node_oracle": {
+      "path": "target/iteration/task37-wasm-constant-node.json",
+      "sha256": "11d81013cde743288a9fc84a9376a1f9b3f310f77ac6058d7c46448fe99cafdb"
+    }
+  },
+  "scope_rationale": "The 18 prior scalar/control/global scopes cover the changed module initializer path and shared integer rules; const.wast covers the constant decoding/validation domain. Exact inventories and source hashes match the frozen before reports. Disposable controls exercise six width/operator combinations, signed wrapping and local immutable dependencies with end-to-end export reads against Node. No duplicate suite unit was added.",
+  "limits": [
+    "Imports and their instantiation-time initializer dependencies, references/shared globals, memories/tables, function multi-results and remaining proposals still need shared implementation.",
+    "Only the validated extended-constant integer arithmetic grammar is admitted; general integer/float operations are rejected as initializer expressions.",
+    "The 30 new passing outcomes belong to disposable controls; all pinned outcomes are unchanged.",
+    "This is affected-scope evidence, not full Wasm, Test262 or implemented Node qualification; Stage A remains open."
+  ]
+}

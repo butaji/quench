@@ -1,0 +1,143 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/control.rs": "6291aa20100e989c1e7de85fae669a7b3c059a6782d9fd735e6a3e094f471719",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "ffaad67991468e137e9cd807240829356ca1c482e1ea9cd6fddb95f9c88f5e5e",
+    "crates/quench-runtime-next/src/bytecode.rs": "6b96e4f90410e9c30591cfe87e4e0b76f4a06389911855a0a1808b3ae2d37689",
+    "crates/quench-runtime-next/src/wasm/table.rs": "8524e45267e0ead0152550bc97273f30837fa75a8ec1ff5f11b0914f1073bb68",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "29e239e563cb6010951d981f5755dd636a00844b2a4609e1657c827e8f9b9437"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 55,
+  "obligation": "Execute br_on_null and br_on_non_null through the shared activation/branch vocabulary, preserving edge-specific reference and label payload stack effects.",
+  "representation": "Lowering reserves the original reference before allocating null-test scratch. br_on_null branches without that reference and retains it on fallthrough; br_on_non_null does the reverse. Existing WasmRefIsNull and I32 EqualZero produce the condition. One branch_if domain operation shares conditional transfer with br_if and branch-table arms; branch owns label depth, loop input/block output arity, overlapping payload moves and target patching. No opcode, cell, executor, type authority, wrapper or residual-format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-br-on-null",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-br-on-non-null"
+  ],
+  "scope": "Prior 210 affected pinned files; all seven pinned files containing either branch; previous3330 focused controls plus52 branch directives. Overlapping pinned scopes are not summed.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-ref-nonnull-after.json",
+      "sha256": "6f06a6fdbf1a3ce9b13b777caa04cd71610b57777d11e3a2173ad249f0e5fe78",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-ref-branches-after.json",
+      "sha256": "4f89128f9a216deb28fe8a1670553079dfa6a0a42873b7bc86aa6eecb59a9dca",
+      "binary_sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+    },
+    "controls_before": {
+      "path": "target/iteration/task37-wasm-ref-branches-controls-before.json",
+      "sha256": "727ca3e27fff2ac2293c8b2de2959a4c6be5ae1c90a1f89482edc4ae34b17a84",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-ref-branches-controls.json",
+      "sha256": "8314065d02cec8588ee70a3a8bbd4fd5f183383c63e315f3c9b1f62d722990be",
+      "binary_sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+    },
+    "operators_before": {
+      "path": "target/iteration/task37-wasm-ref-branches-operators-before.json",
+      "sha256": "23c03181b733f8aaa23cb1124350c9a8bc4c9a355f2a3336d497e5153d5d84c5",
+      "binary_sha256": "1c7290ade546917e1b52bebaa055fa6be1b7b6b8a331e515babbcac5ec7679cb"
+    },
+    "operators": {
+      "path": "target/iteration/task37-wasm-ref-branches-operators.json",
+      "sha256": "b52734b131cd201a493e910fe2281c86859952a2adbe9e2aa9e581b9158ea0f6",
+      "binary_sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+    }
+  },
+  "results": {
+    "after": {
+      "files": 210,
+      "total": 61588,
+      "passed": 60650,
+      "failed": 938,
+      "gains": 0,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-branches-after-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "controls": {
+      "files": 29,
+      "total": 3382,
+      "passed": 3382,
+      "failed": 0,
+      "gains": 51,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-branches-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "operators": {
+      "files": 7,
+      "total": 181,
+      "passed": 34,
+      "failed": 147,
+      "gains": 0,
+      "regressions": 0,
+      "exact_matching_inventory": true,
+      "log": "target/iteration/task37-wasm-ref-branches-operators-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-ref-branches-runner",
+    "sha256": "542338ab9f62306c16a8493a12beba12c0c6fca1cea62fd79dafa2a4a7cd57fa"
+  },
+  "checks": {
+    "runtime_wasm_internals": 33,
+    "frontend_internals": 31,
+    "profile_feature_all_target_check": "passed",
+    "unit_policy": "Extended existing serialized imported function/capture/root-transfer/GC regression to take br_on_non_null after binary round-trip and collection; no ordinary conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-ref-branches-oracle.json",
+    "sha256": "be3c590686c77ebe65954412c6ddd4458af9c2926bcb45d8e05602e865213a71",
+    "source": "target/iteration/task37-wasm-ref-branches-oracle.cjs",
+    "source_sha256": "44acef46f8ebed09d8cd1c7086b2f71ef6bb315b8f726c6d10a998f9eccf5c30",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "checks": 61,
+      "passed": true,
+      "obligations": "Both nullness branches, function/block/nested targets, multi-result payload order, loops and dead-code traps; exactly the Wast control inputs."
+    },
+    "scope": "Same null/external inputs and expectations as the focused Wast directives: 61 scalar/result-component/trap observations agree. Includes function/block/nested targets, loop parameters, both fallthrough shapes, I64 boundary multi-result order and reference identity. Earlier six callable-type Node discrepancies remain recorded."
+  },
+  "fixtures": {
+    "target/iteration/task37-wasm-ref-branches-controls.wast": "476fa6919589f9c8339a2dd7ffe387bf12bbd8123d1ac3a1cd7b002f3e59ca8f",
+    "target/iteration/task37-wasm-ref-branches-a.wat": "e2f60870045c9c48b91a7d3b169e810613b11586e37904f98f79ff9c09ed405b",
+    "target/iteration/task37-wasm-ref-branches-a.wasm": "3bcc0ecff0d079777af6958841f731f5de41acde8e0f3ba647e0feed6f8a2ecf"
+  },
+  "logs": {
+    "target/iteration/task37-wasm-ref-branches-build.log": "7651876e9bf0c78833cca7e331e742430e67c8aa3d19631757e34af7f5701584",
+    "target/iteration/task37-wasm-ref-branches-runtime.log": "a7e46a239f2feb87f0e3433601b76ce271858eb8288112f47e453827654a0f8b",
+    "target/iteration/task37-wasm-ref-branches-frontend.log": "f9711bb47ca8442c550245000ba1bcd192545c7032235a923f817f9a8ac8208f",
+    "target/iteration/task37-wasm-ref-branches-check.log": "503408aae78c6220de7e36aaf24feeb229f322e0eaba74cbe4579f493a2ea5d4",
+    "target/iteration/task37-wasm-ref-branches-after.log": "9fef124085efb2933286a61396ac6b3ab399ca4b0f520d8afc9a4b317ca4c395",
+    "target/iteration/task37-wasm-ref-branches-controls.log": "99f7dc4bfbf228a70e9682871f8a621629f924035fda432f469575bd455cb580",
+    "target/iteration/task37-wasm-ref-branches-controls-before.log": "aea856d0191e1f8ec5c2ce814bf8114264c6b0e8243b2026693b9fffcf9d30a5",
+    "target/iteration/task37-wasm-ref-branches-operators.log": "d77799be68745412a26a1fa8ff0489d28a5d68f690a4fd9a05306b840ae52ce3",
+    "target/iteration/task37-wasm-ref-branches-operators-before.log": "9e57b216d11e475561769234e58d10760d278e99c548623f69cb219067b22a33"
+  },
+  "limitations": "No pinned pass gain: 210-file scope stays60650/61588 and seven branch files stay34/181 due to unsupported concrete/GC types and typed calls. Focused controls gain51 and pass3382/3382. Concrete type contexts, typed calls/cast branches, proper tail calls, GC/shared resources/exceptions remain open. No full suites or performance measurements; production cutover/cleanup and Stage A remain open."
+}

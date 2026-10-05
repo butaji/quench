@@ -1,0 +1,294 @@
+{
+  "tasks": [
+    "23",
+    "37"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "obligation": "Resolve the anonymous unsupported-state cluster into actual module declarations, section combinations and function/operator requirements before porting instance state.",
+  "source_report": {
+    "path": "target/iteration/task37-wasm-constant-after.json",
+    "sha256": "86e6a8ec076d7008fe6199142259777d5f105be5d579e1f57ba91ac838094f72"
+  },
+  "tool_source": {
+    "path": "target/iteration/task37-wasm-state-census.rs",
+    "sha256": "9d2dbb3b401fe6901693387006039bc6b4511c22df1a56a17f23020015899de3"
+  },
+  "tool_binary": {
+    "path": "target/iteration/task37-wasm-state-census",
+    "sha256": "f469a55442ece4f6929452feb3794aed2c3d581ad639b893cd80bb60f5db7fc8"
+  },
+  "command": {
+    "path": "target/iteration/task37-wasm-state-census-command.json",
+    "sha256": "b7af98877979c2cc89fbef5133e4577be58e4d326182e1532ef7f3b74707eebb"
+  },
+  "libraries": {
+    "wast": {
+      "path": "target/debug/deps/libwast-276c3bade6c715ff.rlib",
+      "sha256": "cdd3630c2a8c13d6cef0dc463427bd5712375eec920e3b056b93d85927b5a52b"
+    },
+    "wasmparser": {
+      "path": "target/debug/deps/libwasmparser-98226fb1656003d4.rlib",
+      "sha256": "a4a63d1585da190887289f8c63eca3ab145b82f2ca100d321b604211fa40b229"
+    }
+  },
+  "raw_data": {
+    "path": "target/iteration/task37-wasm-state-census.json",
+    "sha256": "9b08e75383414ff35a5bc300d69448979079c0d75663f0cf2f4f8fda16e72581"
+  },
+  "scope_files": 19,
+  "scanned_positive_modules": 430,
+  "blocked_positive_declarations": 12,
+  "blocked_section_combinations": [
+    {
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "modules": 8
+    },
+    {
+      "sections": [
+        "elements",
+        "imports",
+        "memories",
+        "tables"
+      ],
+      "modules": 1
+    },
+    {
+      "sections": [
+        "imports"
+      ],
+      "modules": 1
+    },
+    {
+      "sections": [
+        "data",
+        "elements",
+        "imports",
+        "memories",
+        "tables"
+      ],
+      "modules": 1
+    },
+    {
+      "sections": [
+        "tables"
+      ],
+      "modules": 1
+    }
+  ],
+  "blocked_multi_result_modules": 5,
+  "blocked_multi_result_functions": 18,
+  "state_operator_counts": {
+    "BrTable": 114,
+    "CallIndirect": 33,
+    "I32Load": 8,
+    "I32Store": 14,
+    "MemoryGrow": 9,
+    "Select": 88,
+    "F32Load": 2,
+    "F64Store": 2,
+    "I32Store8": 3,
+    "I64Load8S": 2,
+    "I64Store": 3,
+    "I64Store16": 3,
+    "I32Load8S": 1,
+    "I32Store16": 1,
+    "RefFunc": 2,
+    "RefNull": 2,
+    "TableGet": 5,
+    "TypedSelect": 12
+  },
+  "blocked_declarations": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/block.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 1,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/br.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 2,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/call.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 11,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/global.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "imports",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast#directive=85",
+      "file": "crates/quench-wasm-test/testsuite/global.wast",
+      "directive_index": 85,
+      "line": 381,
+      "sections": [
+        "imports"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/global.wast#directive=113",
+      "file": "crates/quench-wasm-test/testsuite/global.wast",
+      "directive_index": 113,
+      "line": 634,
+      "sections": [
+        "data",
+        "elements",
+        "imports",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/if.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 3,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/loop.wast",
+      "directive_index": 0,
+      "line": 3,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 1,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast#directive=0",
+      "file": "crates/quench-wasm-test/testsuite/select.wast",
+      "directive_index": 0,
+      "line": 1,
+      "sections": [
+        "elements",
+        "memories",
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast#directive=156",
+      "file": "crates/quench-wasm-test/testsuite/select.wast",
+      "directive_index": 156,
+      "line": 579,
+      "sections": [
+        "tables"
+      ],
+      "multi_result_functions": 0,
+      "outcome": "failed",
+      "got": "unsupported shared Wasm module state, imports or section"
+    }
+  ],
+  "decisions": [
+    "Implement function multi-result transport through the shared activation/value/heap path; five blocked positive modules need 18 such functions.",
+    "Port default linear-memory/table state with active element/data initialization and typed indirect calls as one coherent instance-lifecycle slice. Ten blocked modules jointly declare elements, memories and tables.",
+    "Use exact failure ownership and paired affected reports; accepting declarations alone does not close execution or suite gates.",
+    "Keep scalar import linking and remaining reference/value/proposal work explicit; do not modify pins, fixtures or scores."
+  ],
+  "verification": {
+    "parser_exit": 0,
+    "all_module_directive_ids_match_source_report": true,
+    "all_module_lines_match_source_report": true,
+    "all_input_hashes_match": true,
+    "suite_clean": true
+  },
+  "limits": [
+    "Read-only diagnosis of the existing 19-file affected scope; no new suite execution or implementation completion claim.",
+    "Positive module declarations and definitions only; negative assertion modules are not part of the declaration census.",
+    "Operator counts include every body in each blocked module, including calls/functions not currently reached. Counts guide required coverage and do not imply runtime heat.",
+    "The 846 failed state/import outcomes are a report cluster; this census does not assert a per-action owner mapping for all of them.",
+    "Stage A remains open; this is not performance work or an additional architecture gate."
+  ]
+}

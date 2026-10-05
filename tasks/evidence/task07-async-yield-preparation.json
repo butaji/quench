@@ -1,0 +1,198 @@
+{
+  "task": "07",
+  "semantic_owner": "20",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "content_hash_algorithm": "Sorted repository-relative path UTF-8, NUL, file bytes, NUL; SHA-256.",
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "obligation": "Normal async yield performs Await preparation in the active generator frame, preserving its error handlers. Async delegated values retain their distinct unawaited semantics.",
+  "representation": "Reuse promise_for_value for the active Op::Yield when is_async. async_generator_yield consumes the prepared intrinsic Promise; synchronous and delegated yields retain their existing branches.",
+  "specification": [
+    "https://tc39.es/ecma262/multipage/control-abstraction-objects.html#sec-yield",
+    "https://tc39.es/ecma262/multipage/ecmascript-language-functions-and-classes.html#sec-generator-function-definitions-runtime-semantics-evaluation"
+  ],
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "cbdc3e6ed3fd6a0f975523a440fbc38b8a3563798275995907154bb1455a4295",
+    "crates/quench-runtime-next/src/vm/generator.rs": "13cf0b5bc2281def96ec0f038e04e56cd1c6bd19bf39848d5d5c51a0be87bbac"
+  },
+  "affected_fixture_content_sha256": "4f228ccc4ee2b0d3816d80fa4be386c83d46d1054814382ce9766c1fe1eb4e5b",
+  "harness_content_sha256": "40b587274265218d1cffa27dd83c55046e0bdca1ddc67118f24ebf63362e975a",
+  "inventory_sha256": "80385c0f324b5fa919b345dcb47df04e043994631959ea23897addbbc937084d",
+  "runners": {
+    "before": {
+      "path": "target/iteration/task07-continuation-owner-run-stages-next",
+      "sha256": "7b6fb6c1b7d28d43da13febb0cc5adc353b17e730e6377bfc63e638329d2afdf"
+    },
+    "after": {
+      "path": "target/iteration/task07-async-yield-preparation-run-stages-next",
+      "sha256": "069908d4a6287081eb3ca107f4acabfe831041c81082951095da0733d625d764"
+    }
+  },
+  "scopes": [
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-generator.json",
+      "before_sha256": "d4f16aca1a6e3fe5f3eff675240d8fe6f0a8098a9d46b5664da27f8f70c27a42",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-generator.json",
+      "after_sha256": "2766bae52364bcc0b40bf1796843aaa249c6bb3be5d9337f06655d8c347bf387",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-generator.log"
+    },
+    {
+      "name": "async-generator-function",
+      "stage": 37,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-generator-function.json",
+      "before_sha256": "ab914bfc53a1a53564950643f884f43a8b6c202ecb93e92a082b21724492965c",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-generator-function.json",
+      "after_sha256": "84a6214292df0fc5419d980e1921a192620face47b0122c59bf040bcb887eb08",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-generator-function.log"
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-generator.json",
+      "before_sha256": "cb40de6ac567992e2df02cad23e05baf07b00941fff61831f9fed58277dac93e",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-generator.json",
+      "after_sha256": "fcd6afd9a8800528ecd18d64f163151dc752e514e83c115598030e1a19dd3b24",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-generator.log"
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-iterator.json",
+      "before_sha256": "963cae98ee1dbf6ef6264990994718eac5da2ab2077c19c71a1a1d76b800335c",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-iterator.json",
+      "after_sha256": "6ad0ed1644c15be12f0235d3d83b7cfdfe086fa400deac9dc9d2d6edc8e767df",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-iterator.log"
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-from-sync.json",
+      "before_sha256": "90b4b6493fcd477f56547c5dbedecdce0ac4fc6e4c844eda5d483cbf54ee699a",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-from-sync.json",
+      "after_sha256": "6a97a31d6c50eff30a5a4132d5054b21b9a8ec52e12ac62298f1a0684d7db5a5",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-from-sync.log"
+    },
+    {
+      "name": "async-generator-expressions",
+      "stage": 10,
+      "filter": "async-generator",
+      "cases": 663,
+      "before_passed": 663,
+      "after_passed": 663,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-generator-expressions.json",
+      "before_sha256": "ea5a8cf41e112f6bf8a861a14f6744aa1a94a2056090af6c6f8506977e468d17",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-generator-expressions.json",
+      "after_sha256": "a35c0cba616bbe56f0e51a0d49c5325d8d10f20d7c0f6c56ea22f33d5d01a296",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-generator-expressions.log"
+    },
+    {
+      "name": "async-generator-statements",
+      "stage": 26,
+      "filter": "async-generator",
+      "cases": 357,
+      "before_passed": 357,
+      "after_passed": 357,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-async-generator-statements.json",
+      "before_sha256": "2f4ceb7b7572410738cd8cc7faa11c610510cf105a3a4e18742ca3ac8cc44dee",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-async-generator-statements.json",
+      "after_sha256": "7b6b51f0dd2856d88ab0ae24e9195acade11ea6f60393dfe3858ff8de2bd5eed",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-async-generator-statements.log"
+    },
+    {
+      "name": "yield-expressions",
+      "stage": 10,
+      "filter": "yield/",
+      "cases": 63,
+      "before_passed": 63,
+      "after_passed": 63,
+      "regressions": 0,
+      "before_report": "target/iteration/task07-async-yield-preparation-before-yield-expressions.json",
+      "before_sha256": "9440a23a90b8f2200161b8765d086ef3836685def478281efba9bbbc7117a282",
+      "after_report": "target/iteration/task07-async-yield-preparation-after-yield-expressions.json",
+      "after_sha256": "13b0f9540bda71aa420f2adcda72a8baafe3e9d28ca8d3e4bfc866f776a11e2f",
+      "compare_log": "target/iteration/task07-async-yield-preparation-compare-yield-expressions.log"
+    }
+  ],
+  "total": 1266,
+  "passed": 1266,
+  "regressions": 0,
+  "units": {
+    "library_passed": 461,
+    "integration_passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task07-async-yield-preparation-units.log",
+    "sha256": "cdaa7653ac9dfcf80b30fb4f1de27a85b1fd9366f755ed0e21d308e2eac93631"
+  },
+  "features": {
+    "passed": true,
+    "log": "target/iteration/task07-async-yield-preparation-features.log",
+    "sha256": "30c0c5f8f88d00d1cf2fee12fcd0acdb3054d63671f6939130071b53704f7674"
+  },
+  "node_controls": {
+    "cases": 30,
+    "comparisons": 60,
+    "matches": 60,
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "node_version": "v26.10.0",
+    "oracle_command": "node --jitless --expose-gc -e <print/$262 setup + source>",
+    "sources": "target/iteration/task07-async-yield-preparation-node-controls.json",
+    "sources_sha256": "01ad8aeb65fe07c92310c67e8b906b104a4178ff30d614947526bef793d7898a",
+    "results": "target/iteration/task07-async-yield-preparation-node-results.json",
+    "results_sha256": "50566a97efe7db93dbeb4c468ca765e66b4fa1e183929ec434e867da2b7036b0",
+    "host": "target/iteration/task07-async-yield-preparation-control-host",
+    "host_sha256": "059f00492abc6e7d0b08c3af1543b26c804206628b1c7d710a42ac999a49d3dd"
+  },
+  "before_diagnostic": {
+    "path": "target/iteration/task07-async-yield-constructor-gap.json",
+    "sha256": "b533fbffc6222a57664466772adeae759ea911617ad64df3091e1b488da6c59c",
+    "node_stdout": "returned\n{\"value\":49,\"done\":false}\n",
+    "quench_stdout": "sync:49\n",
+    "closed_by": "yield-constructor-caught control now matches Node in both modes"
+  },
+  "scope_rationale": "Both initial and resumed async generators use this preparation boundary. Check async generator declaration/expression/method fixtures and dynamically constructed generators, synchronous generators and yield expressions, async iterator helpers/adaptation, and Node forced-GC/queued/finally/abrupt/delegated controls. Previous Await/ownership controls are rerun against the new build.",
+  "limits": "This closes normal async yield Promise preparation, not the entire suspension/host-job audit or Stage A. No full suite run or performance claim."
+}

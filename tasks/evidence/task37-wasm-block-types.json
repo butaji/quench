@@ -1,0 +1,112 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/control.rs": "c86cead35eb479b6e15167eb83caf58130a352d85f71fd222a42711bec1cc3fa",
+    "crates/quench-runtime-next/src/wasm/types.rs": "3e8237a1c3b7141c49249834bdbba6bd49c399abf1260f8ea6d05afbb594bbf6",
+    "crates/quench-runtime-next/src/wasm.rs": "ad74a1cc82bf4e729cbc29f0221b680cbe85f52d03ea33af01cd9a0bd8962a98",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "c8cfa7711e8e65afa718156cde1773aec45e9b9a08c0017d39193fc7b147cb81",
+    "crates/quench-wasm/src/shared.rs": "6a089ba0375e40287fa7e8bcc8e9393c391da0747581f6a8f881330197c96f6f"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Allow all validated block value types; control lowering needs arity, not machine ABI value admission.",
+  "representation": "BlockType::Type contributes one result. Indexed block types derive parameter/result arities from the retained declaration graph. Remove the machine-boundary conversion filter from both forms. Existing shared moves, branch patching, stack/layout checks and reachability own execution. No type erasure at runtime callable/resource boundaries, new metadata, opcode, executor or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/instructions.html#valid-block",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-block"
+  ],
+  "scope": "230 affected pinned files, including block/loop/if/br/br_if/br_table/select and local owners;33 focused files. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-block-types-before.json",
+        "sha256": "3927bb93b0b7012001bfba365d73cf78cfaa6c5e637640aedc7b65e1623b5e3d",
+        "binary_sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-block-types-after.json",
+        "sha256": "f6cabc1b48246b5ac8a957e41f834fb3bf4e983829b04cf27eb4bf0aa53a4567",
+        "binary_sha256": "43cdc77df6d8ee8d82464362c2b657e154de3dbf6b39a8bfaa169f01a90c7654"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-block-types-controls-before.json",
+        "sha256": "056452c7feee6720db6b1b9bf9030418929b0da5699a462e15488e26927440ed",
+        "binary_sha256": "fcc1c5d93e181c0a8ef88d34726e3432665a1f2c05e6b9a1e7bf691ec0184dac"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-block-types-controls-after.json",
+        "sha256": "3687af07abf32c30ba83876b00278c1fd85a3844836807a771403ab938dc84f0",
+        "binary_sha256": "43cdc77df6d8ee8d82464362c2b657e154de3dbf6b39a8bfaa169f01a90c7654"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 230,
+      "total": 62758,
+      "before_passed": 61082,
+      "passed": 61082,
+      "failed": 1676,
+      "gains": 0,
+      "regressions": 0,
+      "same_ids_and_input_hashes": true,
+      "all_workers_completed": true
+    },
+    "controls": {
+      "files": 33,
+      "total": 3528,
+      "before_passed": 3519,
+      "passed": 3528,
+      "failed": 0,
+      "gains": 9,
+      "regressions": 0,
+      "same_ids_and_input_hashes": true,
+      "all_workers_completed": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-block-types-runner",
+    "sha256": "43cdc77df6d8ee8d82464362c2b657e154de3dbf6b39a8bfaa169f01a90c7654"
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-block-types-oracle.json",
+    "sha256": "1e01b2bbf292cdb00f69ed64f987387475670bf4556b7740bfd95187e3b875f9",
+    "wat_sha256": "1e7c3b9af197ac34817f6e1f53aaa3657e5a98ad23ab75fb82043abc78c5289a",
+    "wasm_sha256": "a483088479100dc65cf6a5acc55bd70eac7cd9275a8ac45457079a7624ea5af1",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "observations": 9,
+    "matched": 9
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-block-types-runtime.log",
+      "sha256": "75f4396b16931e63576b723270ddfb67c5fb8466596eca548ca90dbe39f33bea",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-block-types-frontend.log",
+      "sha256": "79a6f156fde8b7c42c2ece08e817212212ca37544ff99539ae2aefd5366236ef",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-block-types-check.log",
+      "sha256": "2e1538c5af9849c3c93657537a4c73fe88f739ad2b65381a426a3ce0e3e37aa2",
+      "passed": null
+    }
+  },
+  "limits": "Pinned counts unchanged: broad modules still blocked on concrete/GC callable/resource boundary types and GC operators. Nine focused assertions gain. Earlier six subtype table-call Node discrepancies remain in previous evidence. Stage A remains open."
+}

@@ -1,0 +1,352 @@
+{
+  "schema": 1,
+  "qualification": "affected Node host boundary; legacy execution, not final Stage A qualification",
+  "head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "node": "v26.10.0",
+  "host": "Darwin arm64",
+  "changes": [
+    "File/eval entries compose the canonical existing script installer rather than installing a bare executable name.",
+    "Ordinary output no longer diverts file-backed children to source parsing; remove the hard-coded JSON.stringify(process.execArgv) shortcut and its source-branch discriminator.",
+    "Direct, shell, and spawnSync boundaries execute the requested command without substituting diagnostic launchers.",
+    "CLI completion preserves RunOutcome exit status for both file and eval.",
+    "process.exitCode and process.exit share safe-integer validation, signed 32-bit field storage and coded errors; an unset field reads undefined. Remove the unused saturating value_to_i32 helper."
+  ],
+  "sources": {
+    "crates/quench-node/src/main.rs": "cc46369971d4e8055c49e1e411528aced4f3087874d6ae77988a49cf98ca44c8",
+    "crates/quench-node/src/run.rs": "ff7bcefa6786374e2dbb8da6599e73725a708318c0839f6a6348574735c83964",
+    "crates/quench-node/src/dispatch_handlers.rs": "ba5512048ea5b696436835ce8a1537e58ad0576915cd17a8ffd79571030d61fe",
+    "crates/quench-node/src/modules/process.rs": "442f439fce4e059ce2c8013e921c6713de65d14a2ac6a764cbfbd5b0131e5385",
+    "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+    "crates/quench-node/src/host.rs": "f2a5ae0685cf01d55690693f53d30a7d5b57c31916f2587f628dd38b4ef5c1ed"
+  },
+  "before_sources": {
+    "target/iteration/task21-real-child/dispatch-before.rs": "ede3a8bcf4a0c4dda4a635d87042aa76ef535eaeae0e44ccda40d44c37876e40",
+    "target/iteration/task21-real-child/process-before.rs": "44b97f92f3ace69efbb3ead407970340129b74c911b932ba38735a360cef8ee6",
+    "target/iteration/task21-real-child/main-before.rs": "d38623220dc4751b3dff11d71b0354d585402a3fdf05b1c9e827b78fdeb519cf",
+    "target/iteration/task21-real-child/run-before.rs": "b3947c62084af744510d8978e99740a90980e787f026cf799219810d42ba29a4",
+    "target/iteration/task21-real-child/child-process-before.rs": "ff9e9e46f817b4be2cd8355a209273e4a96f28292efcc665981e918b18a9b6c5"
+  },
+  "upstream_sources": {
+    "tests/node/lib/child_process.js": "fc85eea664a8db6e5492850961f9b2b84d553dde0217978ec60f304a0cd23585",
+    "tests/node/lib/internal/process/per_thread.js": "f3bca509ca9ae6be403fcbc0133c45760c6cc76f21f890c8f494f2934efc9e7b",
+    "tests/node/lib/internal/bootstrap/node.js": "02a0489fb6713fc59e8fc95582ebd44a50b0f4c4a48d6e1c7879724ac6b93332",
+    "tests/node/lib/internal/validators.js": "dd61b9cb7af5c18b46f2029c2f06b0fc2638d1cd870fe65934966e840e88e1c2",
+    "tests/node/test/parallel/test-process-exit-code-validation.js": "89da3f7c2ae0c10cc7825c0238e70cd6ed11fb02ff33d7194e7d5f0d1c44b7db"
+  },
+  "binaries": {
+    "target/iteration/task21-real-child/before-quench-node": "18ee8fc53d30470994efb0939f9eedb06a933ec4dfc37e376defe6e744503f7f",
+    "target/iteration/task21-real-child/before-run-compat": "9ea4e739f8a50521fba483df9cb2f04bbd50308e961b13d45787bb485e740e57",
+    "target/iteration/task21-real-child/qualified/quench-node": "2a69d520c898977597e8da8268d87845f745eac2f3dd0d703bbf00f915ca6a92",
+    "target/iteration/task21-real-child/qualified/run-compat": "d307e1ff65831a6e92b3859a789c52068bda5019c0284ad5e5ff862d8d9ddee4"
+  },
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "6990d2397d7f5d1bd2d3edcf66f45368ed3a74ab76880baf67d2d6b0227c5aa6",
+    "state": "input_sources_classified_capability_audit_pending",
+    "included": 21,
+    "pending": 1555,
+    "new_included_case": "crates/quench-node-test/node-tests/test-child-process.js",
+    "inclusion_basis": "existing Rust capability owners and behavioral obligations; outcomes do not define membership"
+  },
+  "affected_cases": {
+    "total": 23,
+    "before_passed": 16,
+    "after_passed": 16,
+    "lost_passes": [],
+    "cases": [
+      {
+        "path": "crates/quench-node-test/node-tests/test-child-process.js",
+        "sha256": "2734c9a913310398810188e10e9a701a59afb911a73ecca5bfae4a64b9dc8609",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2806/child-process-kill-state.js",
+        "sha256": "cc7a82050cf4996a3d3b80c2322986275f835a94adfa42d15fa0e9421eb9bafd",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2807/child-process-constructor.js",
+        "sha256": "d45eafad58930ca0e7093ed42e28e69318377e4dfe3b52ace367bdca7d5d53ff",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2808/child-process-cwd.js",
+        "sha256": "d3affb950b918e52ddba06979dcb841d1552069b67ca1713ecca29754c8c08cd",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2809/child-process-default-env.js",
+        "sha256": "66dbb7ad2e8f7517f531ddf20c03b330ffdfaa4cdcba4308bcf052539cc01550",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2810/child-process-exec-output.js",
+        "sha256": "f6d442fded2b90df4e5dd79057fb39c0a502bfa6b2594692a539870e4ece953d",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2811/child-process-exec-stream-data.js",
+        "sha256": "8fc7360d3d1a91c47c620091c1b351e2ec0b4dfa2a5ebcdce537cb442b45ea19",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2812/child-process-execfile-handle.js",
+        "sha256": "8160c01cf2f9249acf61bbd0fba6933f28a88e8bd9453b4e5d18f55173d0ff58",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2817/execfile-promisify-abort.js",
+        "sha256": "0c968f4c155d39e7d578b26db59b387749165992e74f85e3367668818472b346",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2820/exec-error-identity.js",
+        "sha256": "ce21a3c1f459d82d48023088b68cfc000d0f8efaf7f4e082b9ab015c7417f30e",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2821/exec-cwd.js",
+        "sha256": "91f5cbb00e198b645c541a9f92af02be12106f51d538f06fc05807baa1b6ebf8",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2827/child-process-kill-zero.js",
+        "sha256": "8884abb462ccff36a7f5cab2de365705d514aaa7cbafb6f3dddab63bf2f1d614",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2828/child-process-shell-shapes.js",
+        "sha256": "d06df3941b559b5ff51e4aa551e41a33de0f04c32b69bd8fb0e8d3169aa0c748",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2829/child-process-argv0.js",
+        "sha256": "6fcf0ee375a52b6510f81f6d87a0d96c3af7575b5bf8a35c3b242dca8918d90f",
+        "before_exit": 1,
+        "after_exit": 1,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "fail",
+        "after_outcome": "fail"
+      },
+      {
+        "path": "tests/node-compat/stage-2830/spawnsync-env-child.js",
+        "sha256": "c39af8a3f52fd922ddb4e0fe24faa460cb6aeea0e16ab4f2c407fff31c1bbf42",
+        "before_exit": 1,
+        "after_exit": 1,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "fail",
+        "after_outcome": "fail"
+      },
+      {
+        "path": "tests/node-compat/stage-2833/spawn-validation.js",
+        "sha256": "1908c1cb2bbf8dfe57049e0aafc0f64668b563c24d8b9ad88f28323bc6ef500b",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2917/child-process-print-eval.js",
+        "sha256": "6f48628630465336cfc689365d14b15e8229bf6bc393feee91cfa8df6c43c639",
+        "before_exit": -6,
+        "after_exit": -6,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": null,
+        "after_outcome": null
+      },
+      {
+        "path": "tests/node-compat/stage-2918/child-process-instance.js",
+        "sha256": "a12df1ea82a14d01ae4bfe194b1149ea308c07022033e6b799e2f11f01047909",
+        "before_exit": 1,
+        "after_exit": 1,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "fail",
+        "after_outcome": "fail"
+      },
+      {
+        "path": "tests/node-compat/stage-2921/exec-invalid-promisified.js",
+        "sha256": "bc2dc4b2afc9609dcbcbaf2eb95dcd8b5554e6d69f67060ddb637228ba9cb634",
+        "before_exit": -6,
+        "after_exit": -6,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": null,
+        "after_outcome": null
+      },
+      {
+        "path": "tests/node-compat/stage-2921/exec-promise-child.js",
+        "sha256": "db99eb4e8bf18b1b684a3d5b081cec8d9f089946f5285a25bbdc3b677a9240a9",
+        "before_exit": -6,
+        "after_exit": -6,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": null,
+        "after_outcome": null
+      },
+      {
+        "path": "tests/node-compat/stage-2510/process-exit-code-cases.js",
+        "sha256": "109d942166a1e5a13ed187c547bfc742aaf8aba0929577dd188ed2e085ed932a",
+        "before_exit": -6,
+        "after_exit": -6,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": null,
+        "after_outcome": null
+      },
+      {
+        "path": "tests/node-compat/stage-2512/process-exit-recursion.js",
+        "sha256": "75d617969dae415aec118ed30d461e853e27b0fa61487a93701ee9b864da89a9",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      },
+      {
+        "path": "tests/node-compat/stage-2516/process-exit-beforeexit.js",
+        "sha256": "7021a385434fc1b5ce7b225e2abc6bc2b14922e1e05cdcff3ee0908453d9d809",
+        "before_exit": 0,
+        "after_exit": 0,
+        "before_timed_out": false,
+        "after_timed_out": false,
+        "before_outcome": "pass",
+        "after_outcome": "pass"
+      }
+    ]
+  },
+  "reviewed_cases": {
+    "total": 21,
+    "completed_diagnostic_passes": 20,
+    "lost_prior_passes": [],
+    "observation_cases_not_qualified_by_exit_zero": true
+  },
+  "node_oracle": {
+    "child_controls": 8,
+    "exit_controls": 12,
+    "validation_controls": 19,
+    "exact_matches": 39,
+    "fields": [
+      "values",
+      "error names/codes/messages",
+      "stdout bytes",
+      "stderr bytes",
+      "exit status",
+      "file effects"
+    ],
+    "local_child_case_exact": true
+  },
+  "verification": {
+    "runner_internal_tests": 6,
+    "new_unit_tests": 0,
+    "full_suites_run": false,
+    "performance_claims": false,
+    "commands": [
+      "cargo build -p quench-node --bin quench-node -p quench-node-test --bin run-compat",
+      "QUENCH_CHILD_RUNNER=1 <frozen run-compat> --case-worker <unchanged input> <separate result>",
+      "<frozen quench-node> <control parent or file>",
+      "<frozen quench-node> -e <identical Node control source>",
+      "cargo test -p quench-node-test --lib",
+      "cargo clippy -p quench-node-test --lib --bins --no-deps -- -D warnings",
+      "rustfmt --check --edition 2021 --config skip_children=true <affected Rust files>"
+    ],
+    "case_process_deadline_seconds": 30,
+    "runner_clippy": "passed; runner crate only, not whole-workspace lint",
+    "format": "passed",
+    "queue_coherence": "passed"
+  },
+  "counterexamples": [
+    "The first child routing trial still failed: bare file-entry process.execPath was not executable. Both entries now use the existing canonical installer.",
+    "An intermediate qualified build timed out in execFile handle/abort cases; a native stack sample identified shell command replacement with the diagnostic runner. Removing that duplicate launcher selection restores both passes.",
+    "Expanded exit controls found a 0..255 setter restriction and an unset-field value of zero. Unified Node validation/storage closes both gaps, including grouped out-of-range errors."
+  ],
+  "remaining_gaps": [
+    "Production Node still runs legacy; tasks 43/21 must migrate the implemented host APIs before cutover.",
+    "Source-derived IPC/stdin/timer child behavior and other command/fixture simulation remain in dispatch_handlers.rs; these results do not qualify those paths.",
+    "Seven affected cases remain nonpassing, including the unchanged native parser abort in process-exit-code-cases.js. Missing records/timeouts/crashes are failures.",
+    "The existing local assert conflict and console observation mismatch remain open.",
+    "The implemented inventory is not frozen; the other 1555 candidates still need ownership/oracle review."
+  ],
+  "raw_evidence": "target/iteration/task21-real-child",
+  "qualified_sources": {
+    "crates/quench-node/src/main.rs": "cc46369971d4e8055c49e1e411528aced4f3087874d6ae77988a49cf98ca44c8",
+    "crates/quench-node/src/run.rs": "ff7bcefa6786374e2dbb8da6599e73725a708318c0839f6a6348574735c83964",
+    "crates/quench-node/src/dispatch_handlers.rs": "c330bb0946c86d6784d54875ee4a62db3b82a13abddde927f3473c29f9f99647",
+    "crates/quench-node/src/modules/process.rs": "442f439fce4e059ce2c8013e921c6713de65d14a2ac6a764cbfbd5b0131e5385",
+    "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+    "crates/quench-node/src/host.rs": "f2a5ae0685cf01d55690693f53d30a7d5b57c31916f2587f628dd38b4ef5c1ed"
+  },
+  "post_qualification_changes": "Only the child-boundary explanatory comment was corrected after the frozen binaries passed; no executable logic changed."
+}

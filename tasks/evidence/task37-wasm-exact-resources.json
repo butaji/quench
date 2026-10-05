@@ -1,0 +1,145 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "a76d38582cebc44af921584ddc198573f1504137a15632826f18f1aad85afd25",
+    "crates/quench-runtime-next/src/wasm/types.rs": "aef5cb8de82c4a1bd03272ce57d1b4210c9b39fc5879936060e98c59dfdf5a88",
+    "crates/quench-runtime-next/src/wasm/table.rs": "12454a9ee742b7a815d5f3e125fa6e6986c0aac026fac056d86482d473008c5e",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "522f3ac8df8fe234396bb5857a0bb975532cd1bca776688c31da08645817aa3f",
+    "crates/quench-wasm/src/shared.rs": "a4ff8dd13beb1453f810127f1bb11d8c81700216c2e066cf7c79fa6913695f97"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Exact function-resource matching and declaration-aware table/element initializer expressions.",
+  "representation": "The shared graph matcher compares exact source/target declarations by equivalence, exact-to-concrete by declared ancestry and rejects concrete-to-exact. Existing global/table cells preserve original graph ownership. Admission now permits exact function globals/tables/elements. General table/element initializer expressions project their expected type through that graph and use the existing full initializer validation/evaluation; imported global.get preserves the original function and capture. No new cell, side map, opcode, executor or format change.",
+  "sources": [
+    "https://github.com/bytecodealliance/wasm-tools/blob/0285a4680738439cb884d2674bec8be1e8beac5c/crates/wasmparser/src/validator/types.rs"
+  ],
+  "scope": "230 affected pinned files plus37 focused files; the new focused Wast uses the existing custom-descriptors proposal feature scope. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-exact-resources-before.json",
+        "sha256": "20cf6bed53a6a10d4a5c9395ef3af9cee97c45b208e1b0c186ca015472094276",
+        "binary_sha256": "69398940610d2260245e50f087df1420ecc36577440be1daed546d43257d12c8"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-exact-resources-after.json",
+        "sha256": "7184a65b18a83f71750c5e9bb40effa5c3fe10d79bf1caecac885f240838e3e3",
+        "binary_sha256": "9834828f8c3a91822203941f71e09142db81070684de0b45c46d7d33326bf017"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-exact-resources-controls-before.json",
+        "sha256": "dee514357ae76fdb4b07eb8bbcdbfd89bc16b8eba17380756c447c80adc066a1",
+        "binary_sha256": "69398940610d2260245e50f087df1420ecc36577440be1daed546d43257d12c8"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-exact-resources-controls-after.json",
+        "sha256": "d2dc8f928cae9d16168b504e9d1889d4c60b3652c876d284aa645203b077daa8",
+        "binary_sha256": "9834828f8c3a91822203941f71e09142db81070684de0b45c46d7d33326bf017"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 230,
+      "total": 62758,
+      "before_passed": 61487,
+      "passed": 61493,
+      "failed": 1265,
+      "gains": 6,
+      "gains_by_file": {
+        "crates/quench-wasm-test/testsuite/table.wast": 6
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 37,
+      "total": 3585,
+      "before_passed": 3569,
+      "passed": 3585,
+      "failed": 0,
+      "gains": 16,
+      "gains_by_file": {
+        "target/iteration/proposals/custom-descriptors/task37-wasm-exact-resources-controls.wast": 16
+      },
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-exact-resources-runner",
+    "sha256": "9834828f8c3a91822203941f71e09142db81070684de0b45c46d7d33326bf017"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-exact-resources-runtime.log",
+      "sha256": "0a5484d2ce4464aefcec9d937accc6db1483c85c931e6a9fb0beb04e8b875e92",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-exact-resources-frontend.log",
+      "sha256": "67e6db3bb56394dd606c32ec33ca2aa97c2068b6a76664cc007c41fbb0a0a4bd",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-exact-resources-check.log",
+      "sha256": "4cfb77e42584da4a3c7733354bc1fc220c95b5f2bce16d2eca6da216dc98e293",
+      "passed": null
+    }
+  },
+  "limits": "Other GC/shared callable/resource families, casts, exceptions and JS embedding adapters remain open. Most previous exact-global failures now stop at unsupported GC global types; this does not claim all exact-reference proposal support. Earlier six subtype table-call Node discrepancies remain. This affected scope does not close a full suite or Stage A.",
+  "internal_obligation": "Existing serialized import/capture/root-transfer/GC unit now uses exact globals; original foreign identity/capture survives collection. No ordinary conformance unit added.",
+  "oracle": {
+    "path": "target/iteration/task37-wasm-exact-resources-oracle.json",
+    "sha256": "d5765aa552f365c1d9fd0dac5498d3859273ea5aca8b9bfca0d257b893bbed74",
+    "input_hashes": {
+      "target/iteration/task37-wasm-exact-resources-a.wat": "4d9838166ab2fbb05c043f95d97bcb567696bdf47309a21eb4d6e6cc3e25c563",
+      "target/iteration/task37-wasm-exact-resources-a.wasm": "9193129e3b5931f783b8642184fd6f47f5fc7a721bc61e712771ffbd6e7744cc",
+      "target/iteration/task37-wasm-exact-resources-b.wat": "046399ead8fbcd8874bcac327690e434de35b724b682786a060a757819443668",
+      "target/iteration/task37-wasm-exact-resources-b.wasm": "ff41422fcdbfdee5c5be5c75de177299c9f149d055c07ff159d0cd5ab4a571bc",
+      "target/iteration/task37-wasm-exact-resources-c.wat": "f67aff90491a3a91263cecac28bd98fb2e30e12eac55c204f168093a9c14cff1",
+      "target/iteration/task37-wasm-exact-resources-c.wasm": "4597e5ced50a8c5d2edfc9c58b862446d8426c26229c5f12ae1dbf066f7e15b7",
+      "target/iteration/task37-wasm-exact-resources-bad-child.wat": "0943fbd044a910262a4f6fbcd55ac6419fea22d3c9959c80dac70c4f35d91ca2",
+      "target/iteration/task37-wasm-exact-resources-bad-child.wasm": "e957b544f24496d9de425df0db633c1d517397f657f43a837247ef4e7665cc03",
+      "target/iteration/task37-wasm-exact-resources-bad-wide.wat": "b1bba1da62ad507b94bd01d4c689b19e7bcbe9dbb781c89a45b041aa33c323c9",
+      "target/iteration/task37-wasm-exact-resources-bad-wide.wasm": "bd377d7d1fac0d8292983b32f8b2ad3c89e1c8313e8c2e9c5a27d6062f67d2a1"
+    },
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 11
+  },
+  "validator_source": {
+    "version": "0.247.0",
+    "commit": "0285a4680738439cb884d2674bec8be1e8beac5c",
+    "path": "/Users/admin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmparser-0.247.0/src/validator/types.rs",
+    "sha256": "802c04e769e01dd028803a22d0c07e0bca91781036f8cb38c36701841db7f62d",
+    "rules": "Exact/Exact compares canonical type IDs; Exact/Concrete uses declared subtyping; Concrete/Exact is false."
+  },
+  "next_gap_evidence": {
+    "affected_only": true,
+    "report": "target/iteration/task37-wasm-exact-resources-after.json",
+    "first_failures": {
+      "unsupported shared Wasm: unsupported Wasm global type": 623,
+      "unsupported shared Wasm: wasm-instance:0..0: unsupported Wasm table declaration": 319,
+      "unsupported shared Wasm module state, imports or section": 117,
+      "unsupported shared Wasm: unsupported Wasm reference initializer type": 61
+    }
+  }
+}

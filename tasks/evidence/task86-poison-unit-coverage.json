@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "tasks": [
+    "86",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/api.rs": "914ed54447944412409ceb4db930e3c8c3a0895671a7a207daa474c6bba6953d"
+  },
+  "removed": [
+    {
+      "file": "crates/quench-runtime-next/src/api.rs",
+      "unit": "regression_function_prototype_poison_accessors_share_realm_intrinsic",
+      "reason": "Only observable getter/setter identity and ThrowTypeError behavior are asserted. Pinned Test262 owns these conformance obligations; a regression name and execution-mode replay add no distinct internal or uncovered scenario.",
+      "coverage_owners": {
+        "tests/test262/test/built-ins/Function/prototype/caller-arguments/accessor-properties.js": "b49c8dba597f59dcd545ded2c72688d6005704c9d5ecca51ba347c5cf1ad3802",
+        "tests/test262/test/built-ins/Function/prototype/caller/prop-desc.js": "0a3459f65c0c95b8ae9c6d1c8fcaebffa14677645b561567c9b193670d6a1d3c",
+        "tests/test262/test/built-ins/Function/prototype/arguments/prop-desc.js": "16a857d6c62738813f257237e97ea32ceabdaf0b9a34e209cbd6a3fdfcadd183",
+        "tests/test262/test/built-ins/ThrowTypeError/unique-per-realm-function-proto.js": "c23a65bd4316cd9944daaef3ede08f09b81dd62da389f0a7f8522e756b22ad8b",
+        "tests/test262/test/built-ins/ThrowTypeError/distinct-cross-realm.js": "7a8c4f7ed4dd85e5fb8393cc1c8841999e1ed366f6311ce0f027fecc4bc3890e"
+      }
+    }
+  ],
+  "production_semantic_changes": false,
+  "runner": {
+    "binary": "target/iteration/task20-staging-promise-frontier-runner",
+    "sha256": "42fee9d97aa15653033c49adad3daeeaf1e7192d32a003bc8816de10f59a769e",
+    "reuse_reason": "Removal is confined to cfg(test); no production source was changed by this audit."
+  },
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "input_inventory": {
+    "cases": 323,
+    "path_sha256_mapping_sha256": "9d8266b589f09473da9e85ba60b639bcf1d219bcccf45b226dc5115d52ba18f5"
+  },
+  "affected_qualification": [
+    {
+      "stages": {
+        "48": {
+          "failed": 0,
+          "passed": 309,
+          "total": 309
+        }
+      },
+      "before": "target/iteration/task86-poison-unit-before.json",
+      "after": "target/iteration/task86-poison-unit-after.json",
+      "total": 309,
+      "before_passed": 309,
+      "passed": 309,
+      "gains": 0,
+      "regressions": 0,
+      "exact_ids_match": true,
+      "log": "target/iteration/task86-poison-unit-comparison.log"
+    },
+    {
+      "stages": {
+        "75": {
+          "failed": 0,
+          "passed": 14,
+          "total": 14
+        }
+      },
+      "before": "target/iteration/task86-poison-thrower-before.json",
+      "after": "target/iteration/task86-poison-thrower-after.json",
+      "total": 14,
+      "before_passed": 14,
+      "passed": 14,
+      "gains": 0,
+      "regressions": 0,
+      "exact_ids_match": true,
+      "log": "target/iteration/task86-poison-thrower-comparison.log"
+    }
+  ],
+  "reports": {
+    "target/iteration/task86-poison-unit-before.json": "2b20505a03b2d7eaa4337fa7579e81f358f2bf084cfd3f2e60f069140f124059",
+    "target/iteration/task86-poison-unit-after.json": "2b20505a03b2d7eaa4337fa7579e81f358f2bf084cfd3f2e60f069140f124059",
+    "target/iteration/task86-poison-unit-comparison.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task86-poison-thrower-before.json": "3786e84a208f61fd8fe927ee61bd540350d5a80fcd3f3a02492c649968e99a41",
+    "target/iteration/task86-poison-thrower-after.json": "3786e84a208f61fd8fe927ee61bd540350d5a80fcd3f3a02492c649968e99a41",
+    "target/iteration/task86-poison-thrower-comparison.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "internal": {
+    "command": "cargo test -p quench-runtime-next --lib regression_super_constructor_resolution_survives_residual_round_trip",
+    "passed": 1,
+    "failed": 0,
+    "ignored": 0,
+    "obligation": "Retained residual serialization/constructor-resolution internal check; the test target builds after deleting the duplicate.",
+    "log": "target/iteration/task86-poison-unit-internal.log",
+    "log_sha256": "803e0aa3645fbc9022b492a6ee347ca686833b26297451abc15b5be3b5410299"
+  },
+  "limits": [
+    "This removes one identified duplicate, not every duplicate in the workspace.",
+    "No suite input, expectation, inventory or skip changed.",
+    "No full Test262, Node or Wasm suite or benchmark ran.",
+    "Stage A and the repository-wide cleanup audit remain open."
+  ]
+}

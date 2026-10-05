@@ -1,0 +1,139 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "56ffb73b3f76bb2861d7fb8aebe1274398092a61fc7b57f7f3a97eace8ade2a7",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "42000408230bcef709c806e6d20fb923e987a00e2cef3935a109c716a747eede",
+    "crates/quench-runtime-next/src/bytecode.rs": "1b696cfa4f0819058b6e9fecbe7a54ffdc5da0be0e9a8766bcc5648a29751768",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "3ad58ae805a4258c6a7f15b577a1cbe073725d5cfc02dd08c2e9a38c12aa0c3c"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 64,
+  "obligation": "Execute array.fill/copy in the single VM, with packed normalization, graph-aware source covariance, overlap semantics and complete pre-write traps.",
+  "representation": "One original graph-owned array field/storage projection serves length, fill and copy. Storage subtype is shared by lowering and live cross-owner checks. Fill normalizes once through existing storage semantics. Both ranges are checked through the shared range owner before mutation. Self-copy uses in-place overlap semantics; distinct owners copy directly without a temporary vector or collector re-entry. Two opcodes reuse the existing register-pair operand/root representation. Format64 admits the appended vocabulary without changing packed widths. No cell, side map, executor or duplicate conformance unit.",
+  "scope": "230 matching affected pinned files, 30 focused directives and19 Node observations. Focused scope includes packed truncation, both overlap directions, immutable sources, empty boundary slices, unsigned bounds/null traps without partial writes, subtype reference copies, copied payload survival after source release and50000 allocations, and imported mutations/copies across shifted original graphs. Copy pinned cases remain masked by unported segment-backed constructors; no complete copy suite claim. No full Test262 or full Wasm suite, expectations/skips/inventory changes.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/gc/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-external-conversions-after.json",
+      "sha256": "3e7f58a807dc48c5c80466ff28c0f78797386ea3cb40972745bd9facdccd4b0f",
+      "binary_sha256": "065e22041cd73c43f01266143df7137c9f9b58a518707f0d9381a5d5c992e441"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-bulk-after.json",
+      "sha256": "fd1d9d325030d1135c84aa8e361484febdafd5f8a8020c48f07812297e5abbf4",
+      "binary_sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 62082,
+    "passed": 62108,
+    "failed": 650,
+    "gains": 26,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/array_fill.wast": 26
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-bulk-controls-before.json",
+      "sha256": "52bb1276309898ac7ef3fcce1f0aec0d2d34890883f2ca3abf4b65d5ee6fae13",
+      "binary_sha256": "065e22041cd73c43f01266143df7137c9f9b58a518707f0d9381a5d5c992e441"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-bulk-controls-after.json",
+      "sha256": "1faabde2986d4f6187928e00a747c3dd4ba602c5b23af8875706cbd2dc488f0a",
+      "binary_sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+    },
+    "files": 1,
+    "total": 30,
+    "before_passed": 2,
+    "passed": 30,
+    "failed": 0,
+    "gains": 28,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-array-bulk-controls.wast": 28
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-array-bulk-runner",
+    "sha256": "4169eb7c0585382d243819bd5f996becaa0154ad8da55ada608d6a7c912ba9cd"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-array-bulk-runtime.log",
+      "sha256": "fb55d78bc04a44cabc4b765fd73fb83cea47e07cf6717d3a457fe50e35652751",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-array-bulk-frontend.log",
+      "sha256": "8180a58778fc1c3de51f03f9ea727f84dd4480e033687d8c07ae6714cc69c401",
+      "passed": 32
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-array-bulk-bytecode.log",
+      "sha256": "c5b31bb607155dd6514cb09d80d81b321991651395e46860c25480c518d5865e",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-array-bulk-check.log",
+      "sha256": "9f6c1d1d2ed4066940253d38bd382cf4bfc63ca907d0b423934e6fdd1c2ae7ae",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-array-bulk-build.log",
+      "sha256": "d1e1576b6ecdf416e19ecf6036aeb1408735530de354ab260f84db8b9a416c78",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-array-bulk-oracle.json",
+    "sha256": "2c8c72096ba27dfce168f0b44196c029fad1279cbee4b8e44671b848b643220f",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 19,
+    "command": [
+      "node",
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors",
+      "target/iteration/task37-wasm-array-bulk-oracle.cjs"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-array-bulk-a.wat": "ab11da84f107bc613393f87f76ea47f879324bf3dc22dfb507b10d439fe9fafc",
+      "target/iteration/task37-wasm-array-bulk-a.wasm": "4b5469961cb884b60fdfaed236034aaa6909f8c2a35fa06308d5d9d1c82f704f",
+      "target/iteration/task37-wasm-array-bulk-b.wat": "79e0910752517b1370231080c0e7653d73ddc5b250dda527295ff1958300728d",
+      "target/iteration/task37-wasm-array-bulk-b.wasm": "2dacd63f96aedb45ab5abbfe3c9ac0db0609fc7dccd935cdb3c4dd90d69cb2cd",
+      "target/iteration/task37-wasm-array-bulk-oracle.cjs": "e26be93c98f97830b1e17968774ab09670685fff5a044193363e16a60c3fb72d"
+    }
+  },
+  "limits": "Data/element-backed array construction and initialization, descriptor objects, shared references/resources, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. Complete Wasm and implemented Node inventories, single-VM production cutover and Stage A closure are not qualified by affected reports.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 323,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitElem { array_type_index: 0, array_elem_index: 0 }": 33,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewData { array_type_index: 1, array_data_index: 0 }": 31,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitData { array_type_index: 1, array_data_index: 0 }": 31,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewData { array_type_index: 0, array_data_index: 0 }": 14
+  }
+}

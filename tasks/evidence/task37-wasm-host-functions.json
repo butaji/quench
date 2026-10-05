@@ -1,0 +1,182 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/lib.rs": "e3ddd45e1f0d4ff29cd0035e7748d6d91ca33d01c9eac1ec19c28e547e2192da",
+    "crates/quench-runtime-next/src/host.rs": "2bd53a3540f8fea189e057a4f9514b084bf4bef00baba923b58e170055e404b2",
+    "crates/quench-runtime-next/src/api.rs": "62cc303e7de0fe554584adcf2d6bcc0bd0b817003e83ce677f4a50efc3ef8360",
+    "crates/quench-runtime-next/src/heap.rs": "c6ebaed3028b12dd531f787e3b87f22e538f304b6cdf34273d74a04ed10e4884",
+    "crates/quench-runtime-next/src/heap/cell.rs": "83a0318bb4c2047a278232e65bcf17d24321c89084e38e76f6ee06179aa37a6d",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "b5016d0d87809af78d1d4e57bf53a5f0a5f3a25c2ef8a5a40262e75818307d73",
+    "crates/quench-runtime-next/src/vm.rs": "1c4ccefa57d4adfed50d023419facf63a4fc76023997f1dd5b58114d8dedb658",
+    "crates/quench-runtime-next/src/vm/operations.rs": "ccd2f9887821f7a1cdeb6d2ac57e415ed877244afccdb2872a72962ac1d332ef",
+    "crates/quench-runtime-next/src/vm/json.rs": "cde2e17ce4dda2c03a98afecfe867d0ab71d7e77719a73e7fa7f7ea04a873523",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "1ab87d9a23873c33658e6ed33715173797b46e617b7f831769ec52febd51ceee",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "eb74cb9bed2b1e700688cfa363ce706c29bc1cbf888e10b2bbf451109d2702c1",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "1c36bf41d28e836097f5d55f97b87d7e6e78469acac97fd2050802c365068c5d",
+    "crates/quench-wasm/src/shared_wast.rs": "31c9cf89e509dacbb6c8789af4d5123f6a04c33c6b9498655d0fb7295a2ff7ee"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 52,
+  "obligation": "Typed Rust embedding functions and standard spectest prints link, retain original callable identity and execute real effects through the ordinary shared native call boundary. Scalar bits and reference-root leases preserve the typed ABI.",
+  "representation": "Native::WasmHost uses the existing function/native environment lifecycle. A traced metadata cell owns immutable operation ID and Rc signature; no identity side map, forwarding body or second executor. One wasm_callable_signature projection owns structural linking, function-reference admission and indirect-call matching. Host::call_wasm transports bit-exact scalars and borrowed generation-checked reference roots; leases release after result conversion on success and all callback/protocol failures. Returned references require live runtime ownership and declared kind/type. Direct provider and imported calls use ordinary guarded Native calls and shared result decoding. Runtime initialization precedes first host-root publication. Spectest provider facts are one static table; export bindings distinguish module indices and persistent host roots. Heap metadata accounting reuses the existing payload owner.",
+  "scope": "Previous 128-file global/import/reference/instantiation ratchet plus all top-level pinned Wast files mentioning standard print functions: 129 files. Matching frozen baseline/current binary inventories, source hashes and 60-second file deadlines cover native imports, starts, linking, refs, tables and scalar/bulk callers. No full suite or Test262 run: production JS entry and existing native tags/semantics are unchanged; new host installation is explicit.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-host-functions-files.json",
+    "sha256": "145fc499de44461e66433fe2c22a933081cf6d9e08bc6f80837044256a688e53"
+  },
+  "qualification": {
+    "files": 129,
+    "total": 30926,
+    "before_passed": 28867,
+    "passed": 28884,
+    "failed": 2042,
+    "gains": 17,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/func_ptrs.wast": 5,
+      "crates/quench-wasm-test/testsuite/imports.wast": 4,
+      "crates/quench-wasm-test/testsuite/linking.wast": 2,
+      "crates/quench-wasm-test/testsuite/names.wast": 2,
+      "crates/quench-wasm-test/testsuite/start.wast": 3,
+      "crates/quench-wasm-test/testsuite/token.wast": 1
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 13,
+    "total": 712,
+    "passed": 712,
+    "failed": 0,
+    "new_host_directives": 14,
+    "same_runner": true
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "heap_related": 21,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "One new internal test verifies roots created before first instantiation, native identity/descriptor retention through imports and GC, bit-exact scalar/multi-result/reference ABI, expiration of temporary reference handles, stale-root/wrong-type/wrong-arity/embedding-error failure without root growth, native/program/call-root restoration, successful recovery and final descriptor/payload reclamation. Pinned suites cannot exercise malformed Rust embedding protocols or root lease ownership. No duplicated conformance unit."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-host-functions-oracle.json",
+    "source": "target/iteration/task37-wasm-host-functions-oracle.cjs",
+    "sha256": "d2e1be5ae3bfcac56fb953623b1717d9a79edd9de1c8705dd979bbead6615369",
+    "source_sha256": "e4d85d49179628371ad78695e07e994946b4b7a1ac26f399debbd7a035814439",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 2,
+      "matched_effects": 12,
+      "trace": [
+        "print()",
+        "print_i32(-2)",
+        "print_i64(-9223372036854775808)",
+        "print_f32(-0)",
+        "print_f64(1.5)",
+        "print_i32_f32(3, 2.5)",
+        "print_f64_f64(-0, 4.5)",
+        "print_i32(71)",
+        "print_i32(72)",
+        "print_i32(73)",
+        "print_i32(74)",
+        "print_i32(75)"
+      ],
+      "checks": "typed scalar host arguments, direct and indirect calls, native start effects, global/table reference identity, reexports and indirect signature trap; exact host trace matches shared worker stdout"
+    },
+    "qualification_limit": "Two Node modules plus direct provider invocation establish 12 exact host print effects matching recorded shared-worker stdout. Covers all standard scalar print signatures, starts, direct/indirect calls, global/table identities, reexports and indirect type trap. Wast/internal controls qualify typed Rust signature mismatch and malformed callback/root protocols. Installed JS WebAssembly host API adapters and embedding re-entry remain unqualified.",
+    "module_inputs": {
+      "target/iteration/task37-wasm-host-functions-oracle-0.wasm": "496b6e49c0145571cc51274b67d23978b6a4d7c2e70cc6d760c404fb1780f07d",
+      "target/iteration/task37-wasm-host-functions-oracle-0.wat": "578d8455bca4ca14e22088c12b88fff6422c7a43abfcd8eeda4130a591c3bbee",
+      "target/iteration/task37-wasm-host-functions-oracle-1.wasm": "db8a9c218d6bd2af3fdd507df4b333c7c5068e43bfaae1d7eca05c5dbedcc101",
+      "target/iteration/task37-wasm-host-functions-oracle-1.wat": "0cde1beb83610d9d66fb6ce34ed0b161d56682b3b772daaa5d347c7666d6385d"
+    }
+  },
+  "specification": {
+    "constant_expressions": "https://webassembly.github.io/spec/core/valid/instructions.html#constant-expressions",
+    "execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "instantiation": "https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-host-functions-before.json",
+      "sha256": "aa15372b783d67cb380c785f9d3b9ecb3693e6748c17da342a89117023d2c7ca",
+      "binary_sha256": "13f85b1171b7b64ec8b1d92ba4c77d89f958deb3ec3123454fc32be883fcce41",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-host-functions-after.json",
+      "sha256": "726435b0ca4ad9175c41c2f0dabab764a4234348330ccca5e28c19b49b02a0c4",
+      "binary_sha256": "9f11c91c1fb7f1f76e710855d358a8844f6322c737e6cb054ad0c2415c03889d",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-host-functions-controls.json",
+      "sha256": "dce87624e3619f58c90ee202cbe768ae1f95aa3b5ad0f76b8c50bf5bfe2600f1",
+      "binary_sha256": "9f11c91c1fb7f1f76e710855d358a8844f6322c737e6cb054ad0c2415c03889d",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-host-functions-runner",
+    "sha256": "9f11c91c1fb7f1f76e710855d358a8844f6322c737e6cb054ad0c2415c03889d"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-host-functions-runtime.log",
+      "sha256": "d41c63b8dd76435061f612b221cb8c30c6d33f598b318623b41f5882afd36f54"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-host-functions-frontend.log",
+      "sha256": "ba3f69cf4d8a2b35030e5224c3aef3b2b4e5eeb02b9595be72366856ddeccdd1"
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-host-functions-heap.log",
+      "sha256": "8c142cc224a9b76fd7b3eadf7b63e989e4f138f91f099490bde5948727ebc69b"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-host-functions-build.log",
+      "sha256": "4fdb3797d78c32d08e301a488741b2a2b6b0b22c3454745122be75593708e68b"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-host-functions-check.log",
+      "sha256": "3e2481f709198a9ccd00707a26269e148ae89e599a9b760c40cc71500f0bbdce"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-host-functions-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-host-functions-after.log",
+      "sha256": "63e199cdc5eafc65ddce582c08ecfbd4853bfc598138588a4094a3ca531be241"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-host-functions-before.log",
+      "sha256": "60cec2eeeb198d4873b19d9764d9236c52ab05931edaa9cc9e731e069db1502e"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-host-functions-controls.log",
+      "sha256": "618a58a35699c76074ccd01137ac60d1c89abcd8e238da6df77f886d8b62af43"
+    }
+  },
+  "remaining": "JS/Wasm callable adapters, host memory views and embedding re-entry; concrete typed/GC/non-null boundaries, SIMD and remaining memory/table/proposal paths. Complete three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution or performance claim."
+}

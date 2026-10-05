@@ -1,0 +1,89 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "2eb7d06954262d33a70347f0614eb63be0065a384a9ed907ef59417f7d2f1a28",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "5e27a0f3131652f2b354caa24e04f111674aecb80269243b6385bce7ff8a907a",
+    "crates/quench-wasm/src/shared.rs": "5ae5edf633f66e60187245ae7ea3aeefd750cd3fd7ee7b0e595efa5d9d41dc30",
+    "crates/quench-wasm/src/shared_wast.rs": "3d6ee1742e03b9768b6821342a34c63e1eb4c7f916729c5ea7934aa1719019be"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 50,
+  "obligation": "Execute validated start functions once at shared-VM instantiation, after active segments, before publication; preserve traps, provisional-root cleanup and caller ownership.",
+  "authority": "WasmModule.start is the optional function index; with_start checks its domain and [] -> [] signature against the canonical pool. No execution flag, second interpreter or duplicated call ABI. Each instantiation initializes active segments then invokes the start using the existing call_user boundary. Error releases the provisional environment root; success publishes the rooted instance. Unbound APIs reject start-bearing modules. Wast preparation instantiates these modules immediately.",
+  "scope": "Previous 65-file element/indirect-call ratchet plus every top-level pinned Wast file declaring a start section (deduplicated to 69). This checks shared instantiation callers and new eager start paths; no full suite run.",
+  "qualification": {
+    "files": 69,
+    "total": 23715,
+    "before_passed": 21762,
+    "passed": 21784,
+    "failed": 1931,
+    "gains": 22,
+    "regressions": 0,
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_worker_reports": true,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/start.wast": 13,
+      "crates/quench-wasm-test/testsuite/start0.wast": 9
+    }
+  },
+  "start_files": {
+    "start.wast": {
+      "total": 20,
+      "passed": 17
+    },
+    "start0.wast": {
+      "total": 9,
+      "passed": 9
+    }
+  },
+  "checks": {
+    "affected_runtime_internal_tests": 29,
+    "frontend_tests": 39,
+    "ordering_and_lifecycle_controls": 7,
+    "feature_enabled_all_targets_check": "passed; legacy compiler warnings remain",
+    "node_oracle": "active data and elements precede start; one start per instance; invokes do not repeat it; independent instance state"
+  },
+  "unit_test_policy": {
+    "removed": "obsolete unsupported-start expectation inside existing frontend boundary test",
+    "retained": "failed_start_releases_instance_root_and_restores_shared_activation_owner checks host-root survival, provisional-root release, restored program/frames after traps and API rejection of effect bypass; these internals are absent from suite observations"
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-start-runner",
+    "sha256": "08b8d3da208165eb024f6fa7e5560162af4f1c2a3951d31168571f3c5d596166"
+  },
+  "artifacts": {
+    "target/iteration/task37-wasm-start-before.json": "bcacca97283ced0ea97d22fb168ff454a5bc1645df9e04a6da70ce04005ae989",
+    "target/iteration/task37-wasm-start-after.json": "886cdd105ab114a51515f669493ef14cc75dcfd162dadcd3b87e5713b915b551",
+    "target/iteration/task37-wasm-start-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task37-wasm-start-files.json": "e39a8d1b5cf5284267016dbd3c89edf947d64747139a38825d18c1904abf8d2c",
+    "target/iteration/task37-wasm-start-build.log": "812aa7caf450fdfd29467447223b90dde2accc9e50e230c25ea28cabaee413c6",
+    "target/iteration/task37-wasm-start-check.log": "8c4300300c233139c565f5f4f0233e1f4d2154cc6fbc69ef115876146b37281b",
+    "target/iteration/task37-wasm-start-runtime.log": "74107135a294649d531d8577c9c261af54bf1585580ae478b629416e759cfc11",
+    "target/iteration/task37-wasm-start-frontend.log": "f370dc67e45a3359c6073a6337d57c5e490fbf88eea3a42785d0d8241e73bdf7",
+    "target/iteration/task37-wasm-start-controls.wast": "8d39c1e7b51a9696286314020d4090a4f9bb85e614079d00025fd70bcad126e1",
+    "target/iteration/task37-wasm-start-controls.json": "0ae37543ba5c7b6d950ce662e0adf32332a35247cb0009fb4cfeaa5842890b05",
+    "target/iteration/task37-wasm-start-oracle.wat": "e335c22e0638f13a4f134f01fc732d481a0fe7a8e25ab547b60cbc11a71b7c1b",
+    "target/iteration/task37-wasm-start-oracle.wasm": "6f2a4b74603d1ce637d1cbfdf032e61424f7352511b2bd288500de50d081cff8",
+    "target/iteration/task37-wasm-start-oracle.cjs": "54c51d6a2f1a2065f10957d092963ab7d1358ba17fc5dd9a3d73428186915f4f",
+    "target/iteration/task37-wasm-start-oracle.json": "c2c766ae789396eef3a28297b26477ebb19c85be7c0557248194f4ed29063eac"
+  },
+  "limitations": [
+    "Three start.wast cases still require imports.",
+    "Imports and remaining Wasm proposals still incomplete.",
+    "Module start metadata, like other module facts, is supplied alongside the residual; standalone whole-module serialization is not implemented.",
+    "Optional profile execution accounting issue from table qualification remains open; this check proves build compatibility only.",
+    "No full Test262/Wasm/Node qualification, legacy cutover or performance claim; Stage A remains open."
+  ]
+}

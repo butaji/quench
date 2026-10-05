@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "tasks": [
+    "19",
+    "21",
+    "22",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "6b0d9595222d8b2be705ab0a2d08598cc65cdbc924d8486bfd0ca89600615c20",
+    "state": "input_sources_classified_capability_audit_pending",
+    "inputs": 1589,
+    "case_candidates": 1576,
+    "roles": {
+      "assertion_case": 1556,
+      "module": 5,
+      "package_metadata": 4,
+      "observation_case": 20,
+      "child_process": 1,
+      "documentation": 2,
+      "inventory_manifest": 1
+    },
+    "sources": [
+      {
+        "source": {
+          "kind": "tracked_inputs",
+          "root": "tests/node-compat"
+        },
+        "inputs": 865,
+        "roles": {
+          "assertion_case": 858,
+          "module": 2,
+          "package_metadata": 1,
+          "observation_case": 3,
+          "child_process": 1
+        }
+      },
+      {
+        "source": {
+          "kind": "tracked_inputs",
+          "root": "crates/quench-node-test/node-tests"
+        },
+        "inputs": 54,
+        "roles": {
+          "documentation": 2,
+          "module": 3,
+          "package_metadata": 3,
+          "inventory_manifest": 1,
+          "assertion_case": 44,
+          "observation_case": 1
+        }
+      },
+      {
+        "source": {
+          "kind": "manifest",
+          "root": "tests/node/test/parallel",
+          "manifest": "crates/quench-node-test/node-tests/parallel.txt"
+        },
+        "inputs": 670,
+        "roles": {
+          "assertion_case": 654,
+          "observation_case": 16
+        }
+      }
+    ],
+    "upstream": {
+      "root": "tests/node",
+      "revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+    },
+    "membership_frozen": false
+  },
+  "source_sha256": {
+    "tools/check-task-coherence.mjs": "e77370c6442ee03945d636a942e9cebf39bbfea1e97c1884f220bcbf3834798d",
+    "crates/quench-node-test/src/bin/run-parallel.rs": "822b00384e84357b908b7131e7d1199a5c4c41ba4f9d2ce17d89ca67c1608bbd"
+  },
+  "obligation": "The Node compatibility audit must include existing local fixtures and the curated upstream manifest, not only tests/node-compat. Manifest membership remains the existing authored list; no new upstream cases were selected and no outcomes determine membership.",
+  "representation": "Inventory sources declare input discovery once. The coherence checker derives the expected paths from tracked trees and the existing manifest, then checks roles, hashes, support consumers and upstream revision. Package helpers, docs and the manifest are non-case inputs. Lexical assertion classification locates review obligations, not implementation proof.",
+  "verification": {
+    "coherence": "node tools/check-task-coherence.mjs passed",
+    "format": "deno fmt tools/check-task-coherence.mjs; rustfmt --edition 2021 --config skip_children=true crates/quench-node-test/src/bin/run-parallel.rs",
+    "internal": {
+      "command": "cargo test -p quench-node-test --lib --bin run-parallel",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "log": "target/iteration/task19-node-source-manifest-tests.log",
+      "log_sha256": "c769128f73599d5718f05beb40e49435d35fb27999801840a97204bb5b8cb2b4",
+      "obligation": "Existing manifest guard extended to reject absolute/parent paths; one named timeout owns all default manifest/triage deadlines."
+    },
+    "corruption_controls": {
+      "report": "target/iteration/task19-node-source-manifest-controls.json",
+      "sha256": "f007c78ee5477473a4441b6f66754dd4c09bc39c18b50217dcce69eac9d2c49d",
+      "rejected": 6,
+      "controls": [
+        "omitted_parallel",
+        "omitted_local",
+        "changed_parallel_hash",
+        "missing_manifest_role",
+        "changed_upstream_revision",
+        "unknown_support_consumer"
+      ],
+      "worktree_inputs_mutated": false
+    }
+  },
+  "limits": [
+    "Implementation ownership review is still required before freezing implemented-case membership.",
+    "20 observation candidates need exact local-Node traces; bare exit zero is insufficient.",
+    "The existing runner still discovers package helpers recursively and needs inventory-driven case selection before final gate qualification.",
+    "Production Node remains legacy and quench-node-next does not install the Node host.",
+    "No full suite or benchmark ran; Stage A remains open."
+  ]
+}

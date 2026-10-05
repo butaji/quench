@@ -1,0 +1,127 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "obligation": "Keep binary decoding/validation separate from shared-VM type admission; census first observed blockers before extending reference and recursive type semantics.",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/shared.rs": "43074a1e08136ea07b5bcdb2ef1b26e85f4906bbc304fe6efafb3b806fc5421e",
+    "crates/quench-wasm/src/shared_wast.rs": "e1c0e32fee252c3ee6ec5c5c9a48e21cdc16fa79d823d7cf602518c29121ad95",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "cdd7ee9f2a0ede600ac4fa19437adde41f17b70104f0b92e81f98d2567acb6e0",
+    "crates/quench-runtime-next/src/wasm/table.rs": "4bdce8c86b00c61a550386f82697be46cb66fd9fe74fe219d7d7ab9d2ede527c",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "8a1fedf91a4c6da5a8c9fa24bdc9a19110ffec65db1414fa461620abcf1d8449",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "85fd9d8dd1a54cc72a0199ff822900ac40f5278c016848cdaf45a54014992b55",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "0516d20ce72c2b5d03621be8490861ec115d201a62e1d82cf7e7c1c6bb44f8da"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "profile": "debug",
+  "residual_format": 54,
+  "scope": "Reuse the previous 210-file affected inventory: shared type-section admission is exercised by every decoded module. No complete pinned suite replay or global remaining-failure count is claimed.",
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-wide-arithmetic-after.json",
+      "sha256": "9307ca82d645b24bc006eb9196e8fe9085302cf576b4535649472994ca57fb9b",
+      "binary_sha256": "0b8501af233af817c05223f1e146c68dc1c61c971531d4d32e008e0576f886ad"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-type-admission-after.json",
+      "sha256": "05c77186baf2a01a5ca57b66311560bada93498ef8f20ca30166219c6f2828a7",
+      "binary_sha256": "f80df65b5eb4e92086cee6b0bc9790cf5c879a940f7c80db85aa3a57b2db32a4"
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-type-admission-runner",
+    "sha256": "f80df65b5eb4e92086cee6b0bc9790cf5c879a940f7c80db85aa3a57b2db32a4"
+  },
+  "qualification": {
+    "files": 210,
+    "total": 61588,
+    "passed": 60619,
+    "failed": 969,
+    "gains": 0,
+    "regressions": 0,
+    "identical_input_hashes": true,
+    "identical_directive_ids": true,
+    "complete_workers": true,
+    "reclassified_diagnostics": 218
+  },
+  "checks": {
+    "frontend_internal": 29,
+    "failed": 0,
+    "ignored": 0,
+    "boundary_obligation": "Existing typed-entry admission test now distinguishes validated GC/subtype/recursive declarations from parse errors. No ordinary conformance unit added."
+  },
+  "failure_diagnostics": {
+    "unsupported shared Wasm: unsupported Wasm value type": 416,
+    "unsupported shared Wasm: unsupported Wasm reference initializer type": 223,
+    "unsupported shared Wasm: shared Wasm GC types": 154,
+    "unsupported shared Wasm: shared Wasm recursive groups and subtyping": 64,
+    "unsupported shared Wasm module state, imports or section": 61,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "import module has no valid instance": 10,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported Wasm table declaration": 6,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: CallRef { type_index: 0 }": 3,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ReturnCallRef { type_index: 0 }": 3,
+    "unsupported shared Wasm argument type": 2,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ReturnCallIndirect { type_index: 0, table_index: 0 }": 2,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: TryTable { try_table: TryTable { ty: Empty, catches: [] } }": 2
+  },
+  "failures_by_file": {
+    "crates/quench-wasm-test/testsuite/br_table.wast": 162,
+    "crates/quench-wasm-test/testsuite/i31.wast": 71,
+    "crates/quench-wasm-test/testsuite/ref_test.wast": 71,
+    "crates/quench-wasm-test/testsuite/try_table.wast": 55,
+    "crates/quench-wasm-test/testsuite/return_call_indirect.wast": 53,
+    "crates/quench-wasm-test/testsuite/type-subtyping.wast": 53,
+    "crates/quench-wasm-test/testsuite/array.wast": 45,
+    "crates/quench-wasm-test/testsuite/array_init_data.wast": 44,
+    "crates/quench-wasm-test/testsuite/return_call_ref.wast": 36,
+    "crates/quench-wasm-test/testsuite/return_call.wast": 35,
+    "crates/quench-wasm-test/testsuite/ref_null.wast": 34,
+    "crates/quench-wasm-test/testsuite/array_init_elem.wast": 33,
+    "crates/quench-wasm-test/testsuite/array_copy.wast": 31,
+    "crates/quench-wasm-test/testsuite/linking.wast": 30,
+    "crates/quench-wasm-test/testsuite/call_ref.wast": 28,
+    "crates/quench-wasm-test/testsuite/array_fill.wast": 27,
+    "crates/quench-wasm-test/testsuite/instance.wast": 21,
+    "crates/quench-wasm-test/testsuite/struct.wast": 21,
+    "crates/quench-wasm-test/testsuite/imports.wast": 20,
+    "crates/quench-wasm-test/testsuite/ref_is_null.wast": 19,
+    "crates/quench-wasm-test/testsuite/extern.wast": 18,
+    "crates/quench-wasm-test/testsuite/type-rec.wast": 14,
+    "crates/quench-wasm-test/testsuite/type-equivalence.wast": 12,
+    "crates/quench-wasm-test/testsuite/br_on_non_null.wast": 10,
+    "crates/quench-wasm-test/testsuite/table.wast": 9,
+    "crates/quench-wasm-test/testsuite/br_on_null.wast": 8,
+    "crates/quench-wasm-test/testsuite/ref_as_non_null.wast": 5,
+    "crates/quench-wasm-test/testsuite/table_init.wast": 2,
+    "crates/quench-wasm-test/testsuite/table_init64.wast": 2
+  },
+  "next_work": [
+    {
+      "owner": "crates/quench-runtime-next/src/wasm/scalar.rs; crates/quench-wasm/src/shared.rs",
+      "decision": "One authoritative recursive type graph retaining group boundaries, finality, supertypes, heap kinds and nullability; derive signatures and link/indirect-call compatibility from it. Preserve cross-module canonical equivalence, not module-local type-index equality."
+    },
+    {
+      "owner": "crates/quench-runtime-next/src/wasm/constant.rs; wasm/table.rs; vm/wasm.rs; vm/wasm_table.rs",
+      "decision": "Route reference constants, defaultability, globals/tables, typed arguments/results and guards through that type authority. Do not erase concrete or non-null types into nullable FuncRef/ExternRef."
+    },
+    {
+      "owner": "crates/quench-runtime-next/src/wasm.rs; wasm/control.rs; wasm/table.rs; vm/dispatch.rs",
+      "decision": "Then implement call_ref, return_call variants and reference branches with the shared activation/call ABI. Tail calls must replace activations, including cross-instance calls; ordinary recursive call plus return is insufficient."
+    }
+  ],
+  "limitations": "Failure diagnostics are first-observed admission barriers, often propagated to many invokes. Counts are not independent missing mechanisms, nor proof that masked operators already work. Of 969 failures in this affected scope, 857 stop at value/reference-initializer/recursive/GC type admission. Tag/import/state and continuation support still need separate implementation. Stage A remains open.",
+  "logs": {
+    "target/iteration/task37-wasm-type-admission-frontend.log": "d1ed6ba28a6f997fb3b77c6359d76def63eedc4e5c99ba1b28db038ff2d8cc1f",
+    "target/iteration/task37-wasm-type-admission-build.log": "40e57aa996f6f606d4d74dea3ea7ec243be48f8604ee3a9a68a3acc810f56f4b",
+    "target/iteration/task37-wasm-type-admission-after.log": "a218df675edbd443696991068e1bb09302558f143d2f83f19c69b6825313df84",
+    "target/iteration/task37-wasm-type-admission-compare.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  }
+}

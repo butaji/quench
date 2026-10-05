@@ -1,0 +1,181 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/simd.rs": "5c8b5945496d99762e0978b7f38f82d58b9016a99051de80d34902182863a4a5",
+    "crates/quench-runtime-next/src/wasm/float.rs": "92097185c57bc2140130c410ad63cf821d5cbdb6390566f94c1b36332f73d091",
+    "crates/quench-runtime-next/src/wasm/numeric.rs": "94218b258d3fe873fd4ae0da0863d4bdf2b573bd65e338a87a3f61d03f8b16da",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "481cee76d5344cd1c4cc014a6dabce6481961f6077365e421b68cc6ecd21a972"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Execute F32x4/F64x2 arithmetic, comparisons, rounding and pseudo-extrema through the existing shared V128/operator path while preserving scalar semantics and operand bits.",
+  "representation": "A flat Rust macro table is the one authority for SIMD operator/operand/lane facts. The original 27 selectors retain their order; 42 float operators append after them. Existing scalar F32/F64 binary/unary rules project over raw vector lanes, including NaN, signed-zero and rounding semantics. Scalar comparison results expand into full-width all-one/zero lane masks. Pseudo-min/max reuse scalar comparisons for selection but return original operand bits, retaining the first operand for ties/unordered comparisons as the core contract requires. One bounded map_lanes operation reassembles little-endian vector bits. Existing constant/cell/signature/call/GC/host ownership and shared dispatch are unchanged; no new executor, cells, opcodes or residual format. Residual format54 and previous selector meanings remain stable.",
+  "scope": "The existing 209-file V128/resource/host/lifecycle inventory, including every top-level source containing v128; exact frozen-baseline/current hashes/directive IDs with completed 60-second workers. All floating SIMD files and earlier scalar/resource/callers are included. No full Test262, Wasm, Node compat or performance campaign. A first observation was rejected because its runner changed while a build finished; only completed final-binary reports qualify this change.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-simd-float-files.json",
+    "sha256": "02f701595425dc034e5a79f6a285e4daff3377a8c887e6c5279f035f1779317a"
+  },
+  "qualification": {
+    "files": 209,
+    "total": 61479,
+    "before_passed": 36873,
+    "passed": 55391,
+    "failed": 6088,
+    "gains": 18518,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/simd_f32x4.wast": 772,
+      "crates/quench-wasm-test/testsuite/simd_f32x4_arith.wast": 1803,
+      "crates/quench-wasm-test/testsuite/simd_f32x4_cmp.wast": 2582,
+      "crates/quench-wasm-test/testsuite/simd_f32x4_pmin_pmax.wast": 3872,
+      "crates/quench-wasm-test/testsuite/simd_f32x4_rounding.wast": 176,
+      "crates/quench-wasm-test/testsuite/simd_f64x2.wast": 793,
+      "crates/quench-wasm-test/testsuite/simd_f64x2_arith.wast": 1806,
+      "crates/quench-wasm-test/testsuite/simd_f64x2_cmp.wast": 2660,
+      "crates/quench-wasm-test/testsuite/simd_f64x2_pmin_pmax.wast": 3872,
+      "crates/quench-wasm-test/testsuite/simd_f64x2_rounding.wast": 176,
+      "crates/quench-wasm-test/testsuite/simd_load.wast": 6
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 18,
+    "total": 898,
+    "passed": 898,
+    "failed": 0,
+    "new_float_directives": 87,
+    "same_runner": true,
+    "obligations": "All 42 F32x4/F64x2 operators; ordinary arithmetic/comparison masks, NaN operand order, pseudo-versus-standard signed-zero extrema and ties-even/ceil/floor/trunc signed-zero/halfway cases. All previous 811 controls retained."
+  },
+  "checks": {
+    "wasm_internal": 35,
+    "bytecode_internal": 19,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Existing typed ABI, serialized payload/root/GC, host callback/native guard and malformed bytecode-domain checks pass. No representation/lifecycle change or new unit test; floating conformance is exercised through pinned and focused Wast/Node cases."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-simd-float-oracle.json",
+    "source": "target/iteration/task37-wasm-simd-float-oracle.cjs",
+    "sha256": "4322e3d24059f047c1b2e004eb14bfb8e0ff18bbe3e7c7d3b26ed5274ec8b6b9",
+    "source_sha256": "1947799d9bb83a86713833772358d7286df13f58e59ea21f7c083b0d285180fe",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 1,
+      "operators": 42,
+      "checks": 86,
+      "qualification": "Exact shared-Wast module/cases. F32x4 and F64x2 arithmetic, comparison masks, unary/rounding, pseudo-extrema operand order, quiet NaN payload selection and signed-zero ties observed as integer bits."
+    },
+    "qualification_limit": "One exact module shared with Wast controls, 42 operators and 86 matching integer-bit observations with local Node JITs disabled. Fixture expected I64/unsigned values are hexadecimal strings, preserving every bit through JSON/BigInt. Pinned vector patterns cover arithmetic NaNs and heterogeneous lanes. Does not qualify integer SIMD, conversions, relaxed operators or extended/lane memory forms.",
+    "cases": {
+      "path": "target/iteration/task37-wasm-simd-float-oracle-cases.json",
+      "sha256": "cd8890b45f5594de42a2c9db9f73ff05484a46f14464c865445482818c6463c8"
+    },
+    "fixture_generator": {
+      "path": "target/iteration/task37-wasm-simd-float-controls.py",
+      "sha256": "6877b2ffb550510a6eb09be2cb08ac3394aeb0a8204af1665c065ae7613444b6"
+    },
+    "module_inputs": {
+      "target/iteration/task37-wasm-simd-float-oracle.wasm": "055292ce627e0b1db760fad69813e1a38e85d2f9db1b7fd43825e88e627ec1f1",
+      "target/iteration/task37-wasm-simd-float-oracle.wat": "0720d16c90c3f91a9fa2412dc59d927e21506d90cfb351186306bb68f84e9dbd"
+    }
+  },
+  "specification": {
+    "vector_execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "vector_numerics": "https://webassembly.github.io/spec/core/exec/numerics.html",
+    "pseudo_minimum": "https://webassembly.github.io/spec/core/exec/numerics.html#op-fpmin",
+    "pseudo_maximum": "https://webassembly.github.io/spec/core/exec/numerics.html#op-fpmax"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-float-before.json",
+      "sha256": "c04eeda1a3f41add0580fd46b757b5c2371c779ae453ac1565c70779417b8c66",
+      "binary_sha256": "1b872c10d8fc1c07034ad34eeec485162320c35aebb62c270b8e4c78ac5bc43b",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-float-after.json",
+      "sha256": "5341387c522b26d1c3854a5c05309a66cd4190981205c834cb236c98a56d87f6",
+      "binary_sha256": "170338eb1ec0e2fd61a78893247fd5fe23f740cf95e27a0ba4fa3685f58be84d",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-float-controls.json",
+      "sha256": "2c1fcd54471a3807bde6e6c52b2c9f765659b0132e481ce0ef366c71ae1f8617",
+      "binary_sha256": "170338eb1ec0e2fd61a78893247fd5fe23f740cf95e27a0ba4fa3685f58be84d",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-simd-float-runner",
+    "sha256": "170338eb1ec0e2fd61a78893247fd5fe23f740cf95e27a0ba4fa3685f58be84d"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-simd-float-runtime.log",
+      "sha256": "a052cf2d8c22eee36850c456a60a382a4aa38036f9312df8a5de710bb4fbf78c"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-simd-float-frontend.log",
+      "sha256": "97f03bbc25edbc012028c0cea2e63951df47affdd8503db13b3afcb21d63e30e"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-simd-float-bytecode.log",
+      "sha256": "79802516f42f939ceac0fee4cddf7636456aaeff4686040a17de2c5bdeaca450"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-simd-float-build.log",
+      "sha256": "2c6b0312b0eebe35d82f518f7cd06fb99d00f6d6dfe3cb37eadccf8a27fc49ba"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-simd-float-check.log",
+      "sha256": "54acbb9ce6fc401bb0678daff4afc02861ef88b379a94d402a788ca118bd80db"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-simd-float-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-float-after.log",
+      "sha256": "467ee0e372e0b4d7fdd0a2dfa4cad6a94c4bbe832eaf2ff4752754edfb396bd2"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-float-before.log",
+      "sha256": "976631471881e266b21c931a29d947b02b806363b8743d7a28e9414d51a0b351"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-float-controls.log",
+      "sha256": "ccb2b69e4aa6c17ac80d10581e570c82095474922793f7f24086791b6e82bed3"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-simd-float-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "SIMD integer arithmetic/comparison, conversions and relaxed forms; extended/splat/zero/lane vector memory forms; concrete typed/GC/non-null references, shared resources/threads, remaining proposals, JS/Wasm adapters and embedding reentry. Three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution, code-generation speed or RSS claim."
+}

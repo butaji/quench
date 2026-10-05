@@ -1,0 +1,83 @@
+{
+  "tasks": [
+    "19",
+    "21",
+    "22",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "tools/diff-next.mjs": "05b56dc6bde7444efdbab403e901ef55451da989e98e198fabb4a4668128ed77",
+    "tools/run-all-next.mjs": "55b4e6634ad08535fd8d879d8087c1e2bdfd67ac863e12a1c4313980534df2cd",
+    "crates/quench-node/src/bin/quench-node-next.rs": "9699823d465ac7d33b2669f3d101075b55ffcd15b423564ee2c69963df842605",
+    "crates/quench-node/src/run.rs": "3d0e4d75815b4b4ac0ade9a4d865697f1e32b04280efe6cfd52874b90bc4f88b"
+  },
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "node": "v26.10.0",
+  "obligation": "Incomplete process observations cannot qualify differential agreement or a Node inventory. Matching completed nonzero exits remain comparable; timeouts, signals, missing executables and missing statuses fail closed.",
+  "representation": "One completed predicate and one matches operation own differential equality. Engine roles locate oracle/specialized/generic results by label; completion and inventory_complete are derived from raw records. The directory runner counts any incomplete observation as a mismatch, preserving every discovered file and raw outcome.",
+  "verification": {
+    "self_test": "node tools/diff-next.mjs --self-test passed",
+    "syntax": "node --check on both scripts passed",
+    "format": "deno fmt --check on both scripts passed",
+    "controls": [
+      {
+        "control": "missing",
+        "deadline_ms": 3000,
+        "exit": 1,
+        "inventory_complete": false,
+        "mismatches": 1,
+        "old_policy_would_accept": true,
+        "report": "target/iteration/task19-node-verifier-controls/missing.json",
+        "sha256": "28143475d0e35125010e3e013a993511e62d0e022abb381f55001043056312fb"
+      },
+      {
+        "control": "timeout",
+        "deadline_ms": 100,
+        "exit": 1,
+        "inventory_complete": false,
+        "mismatches": 1,
+        "old_policy_would_accept": true,
+        "report": "target/iteration/task19-node-verifier-controls/timeout.json",
+        "sha256": "1644e078fea9ef3a4bcc041fa3df082bc7a2e48a0b4c067e1cd18fe76b9b34fa"
+      },
+      {
+        "control": "signal",
+        "deadline_ms": 3000,
+        "exit": 1,
+        "inventory_complete": false,
+        "mismatches": 1,
+        "old_policy_would_accept": true,
+        "report": "target/iteration/task19-node-verifier-controls/signal.json",
+        "sha256": "dd3cfcac703d244a709279e869e418b307f5f25326a9fb10e5ace978c30d42a6"
+      },
+      {
+        "control": "exit-seven",
+        "deadline_ms": 3000,
+        "exit": 0,
+        "inventory_complete": true,
+        "mismatches": 0,
+        "old_policy_would_accept": true,
+        "report": "target/iteration/task19-node-verifier-controls/exit-seven.json",
+        "sha256": "a911ab09cd3e4d7ae58a0f6b169b69f3246a84a8c5c0ebc667e3404cb5f9a217"
+      }
+    ],
+    "counterexample": "The former observable-only policy would accept each of these four sets of equal raw outcomes; only the completed exit-seven case now qualifies. Controls use mock executables under target/iteration, not production compatibility results."
+  },
+  "candidate_inventory": {
+    "path": "target/iteration/task19-node-tracked-candidates.json",
+    "sha256": "a19db04053cf73b3fb0069b0b840a1a07f2dd0cc1733fc48a579d4876e74ea7f",
+    "tracked_files": 865,
+    "javascript_files": 855,
+    "module_files": 8,
+    "support_data_files": 2,
+    "classification": "Unclassified candidate/support files, not frozen implemented cases. Companion helper modules such as stage-2235/local-buffer-module.js cannot become standalone success evidence merely because execution exits zero."
+  },
+  "audit": {
+    "baseline": "No target/rewrite-baseline artifact or reusable tracked Node compatibility outcome report was found in the current target tree. Tracked paths/source hashes alone do not establish implementation coverage.",
+    "development_entry": "quench-node-next uses rqj::Runtime<SystemHost> with ExecutionRequest::script. It does not call the Node host run_script pipeline, install Node APIs, or pump the Node event loop. The directory comparator defaults to quench-next and validates process observations only. Existing smoke claims are JavaScript controls, not implemented Node migration proof.",
+    "production_host": "quench-node/src/run.rs still imports legacy quench_runtime value, realm and VmContext/execute APIs. Task 43 and the Node capability migration remain unfinished."
+  },
+  "remaining": "Classify entry cases and support inputs, obtain complete observed legacy-versus-Node baseline evidence at the inventory/gate boundary, freeze implemented membership before shared migration closure, route the existing Node host through the shared VM, and verify every frozen case without shrinking it. Tasks 19/21/22 and Stage A remain open; no conformance suites or performance campaign were run."
+}

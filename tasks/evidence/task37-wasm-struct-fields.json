@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "1704b22dc564706b2f879b046e80296db322a471357cd90165ec77b121f25a8f",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "341fd4922bdaebe41254a621128595092404b769ff97f1173523b49dcb2ba4ac",
+    "crates/quench-runtime-next/src/wasm.rs": "a23f53d86131d44825b506beeb4069df142c7fea48175fdac618ef0c1ab0b068",
+    "crates/quench-runtime-next/src/bytecode.rs": "6e858ecd359df36492c167e2b066d93506f3f8ff29e194eb98a3e842bc95fe50",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "38242a2ac3cd6b7b2acef868369b902401456bebdc1bb235f2c36e7be0d9e925",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "cd11711f0200afc556a02cbf5a990177afabdb07a2c1e37b92b34c8ec57f510b",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "39e21b472ceab0d5cbc31c539cd881c6a0ba8dc5cda356a8f94da3d2ad234514"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 60,
+  "obligation": "Execute unshared struct.get, struct.get_s, struct.get_u and struct.set through the single VM, preserving packed storage, field identity, mutability and null traps.",
+  "representation": "The validator resolves static source types and subtype prefixes preserve packed storage/mutable-field invariance. Residual instructions retain only the field index; the original live object declaration owns layout. One StructFieldAccess domain maps access to opcodes and checks admissible storage/mutability. Construction and mutation share wasm_storage_value for packed truncation and typed reference/scalar validation. Reads preserve Values or sign-extend packed integers. Four appended opcodes use existing registers and heap; no extra cells, side maps or copied layouts.",
+  "scope": "230 matching affected pinned files and45 focused files. New15-directive controls cover signed/unsigned i8/i16 values and truncation, immutable f32 negative zero, i64 minimum, reference identity and retention across50000 allocations, field index300, shifted equivalent foreign declarations, null traps and operand side effects before a null setter trap. No full suite.",
+  "sources": [
+    "https://github.com/WebAssembly/gc/blob/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-gc-result-protocol-after.json",
+      "sha256": "a7487df0e39db1816853289f20d0e2b9110b4c33d6d8ef3ca0a917403b56332d",
+      "binary_sha256": "34d12ba0419a67775ab7c84c4ae739cc5c81495d04e257b633826933e46ea6bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-struct-fields-after.json",
+      "sha256": "8e2d8747c3fbe7c85a5044e6c485f3cd66faea8f917c0035c77f9d4052456777",
+      "binary_sha256": "1a6cb053f7c8c0869635a143d4bd922a9ee2500cc9e9b1b09b270f789327cacd"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61641,
+    "passed": 61643,
+    "failed": 1115,
+    "gains": 2,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/struct.wast": 2
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-struct-fields-controls-before.json",
+      "sha256": "a7b0bdaf2490d09b0dd05cb4131c119733d03bdc5d1f10b8a27fd751beb6d5d0",
+      "binary_sha256": "34d12ba0419a67775ab7c84c4ae739cc5c81495d04e257b633826933e46ea6bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-struct-fields-controls-after.json",
+      "sha256": "4adce10f17828d2c4facc6bf45138d8e89cea1e08d20d27cf14cab76ecf8d4d8",
+      "binary_sha256": "1a6cb053f7c8c0869635a143d4bd922a9ee2500cc9e9b1b09b270f789327cacd"
+    },
+    "files": 45,
+    "total": 3745,
+    "before_passed": 3732,
+    "passed": 3745,
+    "failed": 0,
+    "gains": 13,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-struct-fields-controls.wast": 13
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-struct-fields-runner",
+    "sha256": "1a6cb053f7c8c0869635a143d4bd922a9ee2500cc9e9b1b09b270f789327cacd"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-struct-fields-runtime.log",
+      "sha256": "3bcd33c3c6250dc2c7af4e5368b4206896870f4d1b0eeb6fe280e05396cbda1c",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-struct-fields-frontend.log",
+      "sha256": "a296797f9a7cdebe229bfc84a819ee7526c1f3dec617749c936b6d951c893ca0",
+      "passed": 32
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-struct-fields-bytecode.log",
+      "sha256": "fe7a0a85dd616b0729447b71479788b67bdcab4efe064b21b18784571ed296aa",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-struct-fields-check.log",
+      "sha256": "0d16492057602aa38086511f1b1e01784b9341ead710f9ece9f7dc67d6d4eead",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-struct-fields-oracle.json",
+    "sha256": "26fc10d34936cb6c0feec3d8897ec7e394eabb776d6c783f03bacd7b7f1501cd",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 21,
+    "input_hashes": {
+      "target/iteration/task37-wasm-struct-fields-a.wat": "9ab8e6aa1dea052b45e8b8860d5a3319fee05197b3bb56ad19170e9e518b8072",
+      "target/iteration/task37-wasm-struct-fields-a.wasm": "cb086649f8f5742539521a134d84ba80b41df25ad535b98d0438e383fd05cdb8",
+      "target/iteration/task37-wasm-struct-fields-b.wat": "bd8ae9484fbc1157f770620ce562aa546b3c516df179bcd3182a54d818e8ffb2",
+      "target/iteration/task37-wasm-struct-fields-b.wasm": "044491f22e82a3d2d7aaca7467a91384e15d19f6641a9bc2659d00fe55cce168"
+    }
+  },
+  "internal_obligation": "Existing shared declaration, serialization, root/GC, runtime boundary, bytecode and frontend internal checks pass. No duplicate conformance unit added; ordinary field outcomes are owned by pinned/focused Wast and the local Node oracle.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 573,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewDefault { array_type_index: 2 }": 193,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNew { array_type_index: 2 }": 108,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-reference-initializer:0..0: unsupported Wasm constant expression operator": 19,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayNewData { array_type_index: 0, array_data_index: 0 }": 14
+  },
+  "limits": "Struct constant construction and arrays remain unimplemented. Descriptor objects, shared references/resources, external/internal conversions, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. Affected checks do not qualify the full pinned suite, frozen implemented Node inventory, production cutover or Stage A."
+}

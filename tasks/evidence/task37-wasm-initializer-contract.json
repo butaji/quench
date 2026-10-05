@@ -1,0 +1,95 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_dirty": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/constant.rs": "18d98996f5dc64860a0de67255fa3a6a8872f033e5c2a6baeb4eed656349cfe7",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "f80199165074922fb52fee18df2e7a0a048d786e30374b1ba5a5c01e953a8731",
+    "crates/quench-runtime-next/src/wasm.rs": "262bb1d8d9992db6935a9e527a1c36666921b727b6a69af0056e814d041cc7ec"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Preserve the initializer declaration result contract through static folding before concrete global admission.",
+  "representation": "WasmConstantExpression owns one expected type independently of Known/Dependent execution views. Dependent operators no longer store that type. Folding preserves the original expected type rather than reconstructing it from the physical WasmValue. Literal embedding constructors still derive their exact initial type from the literal. Global type projections use the expression contract; validation/evaluation use the same owner. No new runtime representation, opcode, executor or format change.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/valid/matching.html#match-reftype"
+  ],
+  "scope": "Affected initializer/global/element/data/linking/type files plus35 focused control files. No full suite.",
+  "reports": {
+    "affected": {
+      "before": {
+        "path": "target/iteration/task37-wasm-initializer-contract-before.json",
+        "sha256": "0b0868982d290b24f161d0a0b019fe69c41c8bb26211693ee9835d028e7d5c7a",
+        "binary_sha256": "7afebc939c5088902353ea1e8eb78d30b300094fc053ceaa0675abef36eea042"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-initializer-contract-after.json",
+        "sha256": "b23c4ca0e228905ea76307c10948a69681dccd1703b0dbcc4d7c6517a8bbf8ef",
+        "binary_sha256": "fe6e06b753f29d4f939ddd2155176909dc0e2ec49d62886c758577c49bc6b58c"
+      }
+    },
+    "controls": {
+      "before": {
+        "path": "target/iteration/task37-wasm-initializer-contract-controls-before.json",
+        "sha256": "51a6fa18d8e7cc2dcbff56ad9d8a808506c735a1ff62ec9bd5cee679bebfb41a",
+        "binary_sha256": "7afebc939c5088902353ea1e8eb78d30b300094fc053ceaa0675abef36eea042"
+      },
+      "after": {
+        "path": "target/iteration/task37-wasm-initializer-contract-controls-after.json",
+        "sha256": "3301b4277ae78554249d4b077ce9f157595ad69fd07da3aa4f616fde6242c428",
+        "binary_sha256": "fe6e06b753f29d4f939ddd2155176909dc0e2ec49d62886c758577c49bc6b58c"
+      }
+    }
+  },
+  "results": {
+    "affected": {
+      "files": 12,
+      "total": 2340,
+      "before_passed": 2284,
+      "passed": 2284,
+      "failed": 56,
+      "gains": 0,
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    },
+    "controls": {
+      "files": 35,
+      "total": 3553,
+      "before_passed": 3553,
+      "passed": 3553,
+      "failed": 0,
+      "gains": 0,
+      "regressions": 0,
+      "all_workers_completed": true,
+      "same_ids_and_input_hashes": true
+    }
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-initializer-contract-runner",
+    "sha256": "fe6e06b753f29d4f939ddd2155176909dc0e2ec49d62886c758577c49bc6b58c"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-initializer-contract-runtime.log",
+      "sha256": "56d2e73304348683c023764059039ab5b177fda829be6a7521606856437a5c19",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-initializer-contract-frontend.log",
+      "sha256": "6174c8f51525e00d590ca6d4a4785c890ee5f3db79a16553cc16e95b83e572e0",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-initializer-contract-check.log",
+      "sha256": "0096fcfbab2f519f564af5c1e0c58f30689e340e68f87e49468906b3b2cfbcde",
+      "passed": null
+    }
+  },
+  "limits": "This preserves the type fact needed by concrete globals; concrete global admission, owning-cell graph context and graph-aware initializer/link/read checks are still pending. No new pinned gains or Stage A closure is claimed.",
+  "internal_obligation": "Retained initializer-function index, imported-global dependency, static integer folding and ABI/root checks pass. No ordinary conformance unit added."
+}

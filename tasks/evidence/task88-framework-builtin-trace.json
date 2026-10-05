@@ -1,0 +1,848 @@
+{
+  "schema": 1,
+  "tasks": [
+    "88",
+    "89"
+  ],
+  "scope": "Measured Node surface of pinned real web frameworks and the frozen tasks/node-framework-inventory.json derived from it. Scenario sources: tests/frameworks.",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "host": "Darwin arm64",
+  "cpu": "Apple M4",
+  "oracle_node": "v26.10.0",
+  "scenario_sha256": {
+    "tests/frameworks/README.md": "642802b0b7dc17f4a3abd6fb00673482b1ec5ac157d11bc69c46f0c29953639b",
+    "tests/frameworks/driver.cjs": "6b7b19dbc22fc96f434f59e16ab687a7948d49a67a22b45e04b78556a8cca994",
+    "tests/frameworks/next-app/app/echo/route.js": "d4229dc441d3019109d10cf8c3229a16e58fb3b5fd14262b05d934dc77c43163",
+    "tests/frameworks/next-app/app/layout.js": "f0f1eb8954bc906a40d54277a13fb0b8556a1f88ede5d8b361fbc535cae9b925",
+    "tests/frameworks/next-app/app/page.js": "39eb2eae579f11cc3a26e203014524331a12389e5df10c8460faac587f2d1467",
+    "tests/frameworks/next-app/app/stream/route.js": "ec69ff3ece33e03e24cf132e31e61adff70dad77f43350c4b7de90292c673c6b",
+    "tests/frameworks/next-app/next.config.js": "c4dfdc2c3abf758471da3ff5e1414117d9eacf86bd50e6ec8e19531b0e87694c",
+    "tests/frameworks/next-app/package.json": "5db90e883b49ca954225c11306451bd5a6b5de351dbea791d47b9deaee5c9ca3",
+    "tests/frameworks/next-app/public/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce",
+    "tests/frameworks/package-lock.json": "80d0926dc5cbf7c2a03b9b1ea0b08bf394644c6db1114d414ac368646b49bbbf",
+    "tests/frameworks/package.json": "8f3e71e994ecc09ec451f473fd53e2d8d4d78b60654a4848a5b2587bfa883944",
+    "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce",
+    "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+    "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+    "tests/frameworks/scenarios/h3.cjs": "8094b2935a0e09d66aa4a99b48c6ae6935c4a888185e18f014dd59c5792613eb",
+    "tests/frameworks/scenarios/hono.cjs": "e97796f99cb108fe97a2390aa5907f1bc51739062bde9d80c8763a7189241b97",
+    "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+    "tests/frameworks/scenarios/nest.cjs": "ac3da67c21308d17b7e75eb08184d1a3daa9aeccd5e53f06e1c57e01b915bc43",
+    "tests/frameworks/scenarios/next.cjs": "b71dd1427a79ff090f47fa54d13e6b875961e284254df160cb2a31c20851c35e",
+    "tests/frameworks/trace/calls.cjs": "454ea8461b97f6f32f32d6d0f6796bc82442fd218d18fe8a4c572d36d0855c68",
+    "tests/frameworks/trace/requests.cjs": "b117461a91915028c6b6dfa428a7d70480be7353f00242a45dc7fc28b415e27f"
+  },
+  "scenario_statuses_on_oracle": {
+    "express": "200,200,200,200,404",
+    "koa": "200,200,200,200,404",
+    "fastify": "200,200,200,200,404",
+    "hono": "200,200,200,200,404",
+    "nest": "200,201,200,200,404",
+    "h3": "200,200,200,200,404",
+    "next": "200,200,200,200,404"
+  },
+  "frameworks": {
+    "express": {
+      "builtin_requests": {
+        "async_hooks": [
+          "on-finished",
+          "raw-body"
+        ],
+        "buffer": [
+          "express",
+          "safer-buffer"
+        ],
+        "crypto": [
+          "cookie-signature",
+          "etag"
+        ],
+        "events": [
+          "express"
+        ],
+        "fs": [
+          "etag",
+          "express",
+          "send"
+        ],
+        "http": [
+          "express",
+          "router"
+        ],
+        "net": [
+          "express"
+        ],
+        "os": [
+          "supports-color"
+        ],
+        "path": [
+          "depd",
+          "express",
+          "mime-types",
+          "send",
+          "serve-static"
+        ],
+        "querystring": [
+          "express"
+        ],
+        "stream": [
+          "iconv-lite",
+          "send"
+        ],
+        "string_decoder": [
+          "iconv-lite"
+        ],
+        "tty": [
+          "debug",
+          "supports-color"
+        ],
+        "url": [
+          "parseurl",
+          "serve-static"
+        ],
+        "util": [
+          "debug",
+          "inherits",
+          "object-inspect",
+          "send"
+        ],
+        "zlib": [
+          "body-parser"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "async_hooks": [
+          "AsyncResource#runInAsyncScope"
+        ],
+        "crypto": [
+          "Hash#digest",
+          "Hash#update",
+          "createHash"
+        ],
+        "events": [
+          "events#emit",
+          "events#listenerCount",
+          "events#on",
+          "events#once",
+          "events#removeListener"
+        ],
+        "fs": [
+          "createReadStream",
+          "stat"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#getHeader",
+          "OutgoingMessage#removeHeader",
+          "OutgoingMessage#setHeader",
+          "Server#close",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "extname",
+          "join",
+          "normalize",
+          "resolve"
+        ],
+        "string_decoder": [
+          "StringDecoder#end",
+          "StringDecoder#write"
+        ],
+        "tty": [
+          "isatty"
+        ],
+        "util": [
+          "deprecate",
+          "inherits"
+        ]
+      }
+    },
+    "koa": {
+      "builtin_requests": {
+        "assert": [
+          "koa"
+        ],
+        "async_hooks": [
+          "koa",
+          "on-finished"
+        ],
+        "crypto": [
+          "keygrip",
+          "tsscmp"
+        ],
+        "events": [
+          "depd",
+          "destroy",
+          "koa"
+        ],
+        "fs": [
+          "destroy"
+        ],
+        "http": [
+          "cookies",
+          "koa"
+        ],
+        "net": [
+          "koa"
+        ],
+        "path": [
+          "content-disposition",
+          "depd",
+          "koa",
+          "mime-types"
+        ],
+        "stream": [
+          "destroy",
+          "koa"
+        ],
+        "url": [
+          "koa",
+          "parseurl"
+        ],
+        "util": [
+          "inherits",
+          "koa"
+        ],
+        "v8": [
+          "koa"
+        ],
+        "zlib": [
+          "destroy"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "async_hooks": [
+          "AsyncResource#runInAsyncScope"
+        ],
+        "buffer": [
+          "Buffer#toString"
+        ],
+        "events": [
+          "events#listenerCount",
+          "events#on",
+          "events#removeListener"
+        ],
+        "fs": [
+          "createReadStream"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#getHeader",
+          "OutgoingMessage#hasHeader",
+          "OutgoingMessage#removeHeader",
+          "OutgoingMessage#setHeader",
+          "Server#close",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "extname",
+          "join"
+        ],
+        "util": [
+          "debuglog",
+          "inherits"
+        ]
+      }
+    },
+    "fastify": {
+      "builtin_requests": {
+        "assert": [
+          "fastify",
+          "find-my-way"
+        ],
+        "async_hooks": [
+          "fastify"
+        ],
+        "diagnostics_channel": [
+          "fastify"
+        ],
+        "dns": [
+          "fastify"
+        ],
+        "events": [
+          "avvio"
+        ],
+        "http": [
+          "fastify"
+        ],
+        "http2": [
+          "fastify"
+        ],
+        "https": [
+          "fastify"
+        ],
+        "os": [
+          "fastify"
+        ],
+        "perf_hooks": [
+          "fastify"
+        ],
+        "stream": [
+          "fastify"
+        ],
+        "util": [
+          "@fastify/error",
+          "avvio",
+          "process-warning"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "async_hooks": [
+          "AsyncResource#emitDestroy",
+          "AsyncResource#runInAsyncScope"
+        ],
+        "diagnostics_channel": [
+          "channel",
+          "tracingChannel"
+        ],
+        "dns": [
+          "lookup"
+        ],
+        "events": [
+          "events#emit",
+          "events#on",
+          "events#once",
+          "events#removeListener",
+          "events#setMaxListeners"
+        ],
+        "fs": [
+          "createReadStream"
+        ],
+        "global": [
+          "queueMicrotask",
+          "setTimeout"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#getHeader",
+          "OutgoingMessage#setHeader",
+          "Server#close",
+          "Server#setTimeout",
+          "ServerResponse#writeHead",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "join"
+        ],
+        "util": [
+          "debuglog",
+          "inherits"
+        ]
+      }
+    },
+    "hono": {
+      "builtin_requests": {
+        "fs": [
+          "@hono/node-server"
+        ],
+        "http": [
+          "@hono/node-server"
+        ],
+        "http2": [
+          "@hono/node-server"
+        ],
+        "path": [
+          "@hono/node-server"
+        ],
+        "process": [
+          "@hono/node-server"
+        ],
+        "stream": [
+          "@hono/node-server"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "events": [
+          "events#off",
+          "events#on"
+        ],
+        "fs": [
+          "createReadStream",
+          "existsSync",
+          "statSync"
+        ],
+        "global": [
+          "Headers#has",
+          "Headers#set",
+          "queueMicrotask"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#flushHeaders",
+          "OutgoingMessage#hasHeader",
+          "OutgoingMessage#write",
+          "Server#close",
+          "ServerResponse#writeHead",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "join",
+          "relative"
+        ],
+        "stream/web": [
+          "ReadableStream#getReader",
+          "ReadableStreamDefaultController#close",
+          "ReadableStreamDefaultController#enqueue",
+          "ReadableStreamDefaultReader#read"
+        ],
+        "util": [
+          "TextDecoder#decode",
+          "TextEncoder#encode"
+        ]
+      }
+    },
+    "nest": {
+      "builtin_requests": {
+        "async_hooks": [
+          "@nestjs/core",
+          "multer",
+          "on-finished",
+          "raw-body"
+        ],
+        "buffer": [
+          "express",
+          "safer-buffer"
+        ],
+        "crypto": [
+          "@nestjs/core",
+          "cookie-signature",
+          "etag",
+          "multer"
+        ],
+        "events": [
+          "express",
+          "multer"
+        ],
+        "fs": [
+          "etag",
+          "express",
+          "multer",
+          "send"
+        ],
+        "http": [
+          "@nestjs/platform-express",
+          "express",
+          "router"
+        ],
+        "https": [
+          "@nestjs/platform-express"
+        ],
+        "module": [
+          "@nestjs/common"
+        ],
+        "net": [
+          "express"
+        ],
+        "os": [
+          "@nestjs/core",
+          "multer",
+          "supports-color"
+        ],
+        "path": [
+          "depd",
+          "express",
+          "mime-types",
+          "multer",
+          "send",
+          "serve-static"
+        ],
+        "perf_hooks": [
+          "@nestjs/core"
+        ],
+        "querystring": [
+          "express"
+        ],
+        "stream": [
+          "@nestjs/common",
+          "@nestjs/core",
+          "busboy",
+          "iconv-lite",
+          "multer",
+          "send"
+        ],
+        "string_decoder": [
+          "iconv-lite"
+        ],
+        "tty": [
+          "debug",
+          "supports-color"
+        ],
+        "url": [
+          "parseurl",
+          "serve-static"
+        ],
+        "util": [
+          "@nestjs/common",
+          "debug",
+          "inherits",
+          "multer",
+          "object-inspect",
+          "send"
+        ],
+        "zlib": [
+          "body-parser"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "async_hooks": [
+          "AsyncResource#runInAsyncScope"
+        ],
+        "crypto": [
+          "Hash#digest",
+          "Hash#update",
+          "createHash"
+        ],
+        "events": [
+          "events#emit",
+          "events#on",
+          "events#once",
+          "events#removeListener"
+        ],
+        "fs": [
+          "createReadStream",
+          "stat"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#getHeader",
+          "OutgoingMessage#setHeader",
+          "Server#close",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "extname",
+          "isAbsolute",
+          "join",
+          "normalize",
+          "resolve"
+        ],
+        "perf_hooks": [
+          "Performance#now"
+        ],
+        "string_decoder": [
+          "StringDecoder#end",
+          "StringDecoder#write"
+        ],
+        "tty": [
+          "isatty"
+        ],
+        "util": [
+          "deprecate",
+          "inherits"
+        ],
+        "util/types": [
+          "isUint8Array"
+        ]
+      }
+    },
+    "h3": {
+      "builtin_requests": {
+        "http": [
+          "srvx"
+        ],
+        "http2": [
+          "srvx"
+        ],
+        "https": [
+          "srvx"
+        ],
+        "stream": [
+          "srvx"
+        ],
+        "stream/promises": [
+          "srvx"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "buffer": [
+          "Buffer#toString"
+        ],
+        "events": [
+          "events#off",
+          "events#on",
+          "events#once"
+        ],
+        "fs": [
+          "readFileSync"
+        ],
+        "global": [
+          "Headers#entries"
+        ],
+        "http": [
+          "OutgoingMessage#end",
+          "OutgoingMessage#write",
+          "Server#close",
+          "ServerResponse#writeHead",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "path": [
+          "join"
+        ],
+        "stream/web": [
+          "ReadableStream#getReader",
+          "ReadableStreamDefaultController#close",
+          "ReadableStreamDefaultController#enqueue",
+          "ReadableStreamDefaultReader#read"
+        ],
+        "util": [
+          "TextEncoder#encode"
+        ]
+      }
+    },
+    "next": {
+      "builtin_requests": {
+        "async_hooks": [
+          "next"
+        ],
+        "buffer": [
+          "next"
+        ],
+        "child_process": [
+          "next"
+        ],
+        "crypto": [
+          "@next/env",
+          "next"
+        ],
+        "dns/promises": [
+          "next"
+        ],
+        "events": [
+          "next"
+        ],
+        "fs": [
+          "@next/env",
+          "next"
+        ],
+        "fs/promises": [
+          "next"
+        ],
+        "http": [
+          "next"
+        ],
+        "https": [
+          "next"
+        ],
+        "inspector": [
+          "next"
+        ],
+        "module": [
+          "next"
+        ],
+        "os": [
+          "@next/env",
+          "next"
+        ],
+        "path": [
+          "@next/env",
+          "file:",
+          "next"
+        ],
+        "process": [
+          "next"
+        ],
+        "querystring": [
+          "next"
+        ],
+        "stream": [
+          "next"
+        ],
+        "timers": [
+          "next"
+        ],
+        "timers/promises": [
+          "next"
+        ],
+        "tty": [
+          "next"
+        ],
+        "url": [
+          "next"
+        ],
+        "util": [
+          "next"
+        ],
+        "v8": [
+          "next"
+        ],
+        "vm": [
+          "next"
+        ],
+        "zlib": [
+          "next"
+        ]
+      },
+      "calls_from_framework_or_scenario": {
+        "async_hooks": [
+          "AsyncResource#runInAsyncScope"
+        ],
+        "buffer": [
+          "Buffer#indexOf",
+          "Buffer#slice",
+          "Buffer#toString",
+          "isUtf8"
+        ],
+        "console": [
+          "createTask",
+          "error",
+          "log"
+        ],
+        "crypto": [
+          "Hash#digest",
+          "Hash#update",
+          "createHash",
+          "randomBytes",
+          "randomFillSync"
+        ],
+        "events": [
+          "events#addListener",
+          "events#emit",
+          "events#listeners",
+          "events#off",
+          "events#on",
+          "events#once",
+          "events#removeAllListeners",
+          "events#removeListener"
+        ],
+        "fs": [
+          "Dirent#isDirectory",
+          "Dirent#isSymbolicLink",
+          "createReadStream",
+          "existsSync",
+          "readFileSync",
+          "stat",
+          "statSync"
+        ],
+        "fs/promises": [
+          "readFile",
+          "readdir",
+          "stat"
+        ],
+        "global": [
+          "AbortController#abort",
+          "Headers#append",
+          "Headers#entries",
+          "Headers#forEach",
+          "Headers#get",
+          "Headers#getSetCookie",
+          "Headers#has",
+          "Request#json",
+          "queueMicrotask",
+          "setImmediate",
+          "structuredClone"
+        ],
+        "http": [
+          "OutgoingMessage#appendHeader",
+          "OutgoingMessage#end",
+          "OutgoingMessage#flushHeaders",
+          "OutgoingMessage#getHeader",
+          "OutgoingMessage#removeHeader",
+          "OutgoingMessage#setHeader",
+          "OutgoingMessage#write",
+          "Server#close",
+          "Server#closeAllConnections",
+          "ServerResponse#_implicitHeader",
+          "ServerResponse#writeHead",
+          "createServer"
+        ],
+        "net": [
+          "Server#address",
+          "Server#listen"
+        ],
+        "os": [
+          "cpus",
+          "homedir"
+        ],
+        "path": [
+          "basename",
+          "dirname",
+          "isAbsolute",
+          "join",
+          "normalize",
+          "parse",
+          "relative",
+          "resolve"
+        ],
+        "perf_hooks": [
+          "Performance#now"
+        ],
+        "stream/web": [
+          "ReadableStream#pipeTo",
+          "ReadableStreamDefaultController#close",
+          "ReadableStreamDefaultController#enqueue"
+        ],
+        "tty": [
+          "isatty"
+        ],
+        "url": [
+          "URL#toString",
+          "URLSearchParams#entries",
+          "URLSearchParams#keys",
+          "URLSearchParams#toString",
+          "pathToFileURL"
+        ],
+        "util": [
+          "TextDecoder#decode",
+          "TextEncoder#encode",
+          "TextEncoder#encodeInto",
+          "inherits",
+          "promisify"
+        ],
+        "vm": [
+          "runInNewContext"
+        ]
+      }
+    }
+  },
+  "method": {
+    "requests": "tests/frameworks/trace/requests.cjs: module.registerHooks resolve hook records builtin specifiers requested from node_modules parents.",
+    "calls": "tests/frameworks/trace/calls.cjs: wraps public builtin exports, exported-class prototype methods and web-global prototypes; counts a call only when the immediate caller is framework code (node_modules, next-app/.next) or the scenario. Class constructors and static methods are not wrapped, so the call view under-reports (e.g. Readable.from, new Response).",
+    "oracle": "node <// Flags:> test/parallel/<fixture> from a byte-identical copy of tests/node/test outside quench-v2 (the root package.json declares type=module, which changes .js fixtures to ESM); NODE_TEST_DIR per fixture; TEST_THREAD_ID per worker; 90 s timeout"
+  },
+  "inventory": {
+    "path": "tasks/node-framework-inventory.json",
+    "sha256": "2f03a90ec35862dfb94abaf2bd3a797df9347d891d9d96f988204b513e35be7c",
+    "totals": {
+      "required": 2660,
+      "excluded": 233,
+      "pending_oracle": 97
+    },
+    "required_already_in_parallel_manifest": 480,
+    "parallel_manifest_outside_inventory": 106
+  },
+  "quench_node_review": {
+    "repository": "https://github.com/butaji/quench-node",
+    "head": "a1cd68ea (2026-08-18)",
+    "findings": [
+      "Its application gates were Ajv, debug, Chalk, ms, Prettier and process.argv0 (stages 2047 2069 2080 2081 2104 2251); no web framework was gated.",
+      "examples/hono-json.cjs loads the real hono package but bypasses @hono/node-server by calling app.fetch(new Request(...)) inside a node:http handler.",
+      "bench/01-nextjs measures synthetic workloads (reading page.tsx, JSON, string HTML); it never starts a Next.js server.",
+      "Its manifest classified upstream test/parallel and test/es-module fixtures per stage but committed no per-fixture outcome report.",
+      "quench-v2 inherited Rust facsimiles for ajv/chalk/prettier (crates/quench-node/src/modules/npm.rs) that resolve before node_modules."
+    ]
+  }
+}

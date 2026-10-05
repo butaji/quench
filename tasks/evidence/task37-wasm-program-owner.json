@@ -1,0 +1,151 @@
+{
+  "tasks": [
+    "07",
+    "37",
+    "40",
+    "19"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "4d678d3643ea21fb4811910a92dc1eb6397a2957ef1434980ceb743b9763e4df",
+    "crates/quench-runtime-next/src/vm.rs": "0e32f84cc986582b32650cb3005f0c74813622c991228e6e56da611ab4f75301",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "b81cca49dc3f70328fb341aea4c82b23ce29b98cc8aa37a1a2583d70a96c2db5",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "7aa32a6dae8f271439ba46665ea76ad88094a80811ccff30d333780806bc1dfa",
+    "crates/quench-runtime-next/src/api.rs": "9a5519588cdd42321035a14fbd1960034133b4ff271290a916bc2ac87c1e502d",
+    "crates/quench-wasm/src/shared_wast.rs": "4fe152e3f926806da6e24be8f31bb579ec1a56f348f2d67d29b5467750d82215"
+  },
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Preserve one VM heap and host roots across typed Wasm invocations; share one residual and canonical signature table across module entries; restore active program after success or trap.",
+  "representation": "Rc residual and signature table own a lowered module. WasmFunction selects a typed entry. ProgramStore registers residual Rc identity once and owns its materialized constants. Script instances retain one lowered residual and decoded export indices; aliases share the instance. JS execution retains its deliberate reset contract.",
+  "runner": {
+    "path": "target/iteration/task37-wasm-program-owner-runner",
+    "sha256": "c2c9fe3de2252c43715a3bb1eba8c9c1ee7f9329ea79fae2f8fb6953e393133e"
+  },
+  "before": {
+    "path": "target/iteration/task19-shared-wast-after.json",
+    "sha256": "8220d6ff2660a049beef10059d5e6c2e58126f8e165b4ebf8a7ac48d8e91775c"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-program-owner-after.json",
+    "sha256": "27d3d75e4cbd2e540078dee5dfee4e0b555152d41b9c97dd4cff65aebdb9d063"
+  },
+  "comparison": {
+    "path": "target/iteration/task37-wasm-program-owner-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "exact_inventory_match": true,
+  "input_hashes_match": true,
+  "all_outcomes_unchanged": true,
+  "regressions": 0,
+  "inventory_complete": true,
+  "total": 13300,
+  "passed": 12516,
+  "failed": 784,
+  "scopes": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a"
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836"
+    }
+  ],
+  "scope_rationale": "All 17 previously qualified affected scalar/control scripts exercise the shared Wasm invocation and instance/export path. Runtime units additionally cover JS initialization, explicit host roots, collection, constant owners and trap unwind. No suite inputs or expectations changed.",
+  "verification": {
+    "runtime_units": {
+      "passed": 466,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-program-owner-runtime.log",
+        "sha256": "5386fd37f166b180b66104cfe02031a3ae13be7a44daa05eb95168688a20b346"
+      }
+    },
+    "frontend_units": {
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "log": {
+        "path": "target/iteration/task37-wasm-program-owner-frontend.log",
+        "sha256": "f1677efcf3631fe908dda29fd383ba3bf3e10faf32e48ac862b38cfa7d0791a3"
+      }
+    },
+    "all_targets": {
+      "path": "target/iteration/task37-wasm-program-owner-check.log",
+      "sha256": "1fbd16332527d22b98787de1a7115f46f6bbee1d31dc92c65ee7bb70ec341659"
+    },
+    "internal_controls": [
+      "wasm_entry_views_preserve_js_roots_and_restore_program_after_traps",
+      "wasm_program_constants_remain_owned_across_registration_and_collection"
+    ]
+  },
+  "limitations": [
+    "Module state/imports, non-scalar boundary and remaining operators still need shared implementation.",
+    "This affected-scope result is not complete pinned Wasm, Test262 or Node qualification.",
+    "Legacy removal and Stage A final verification remain open; Stage B has not started."
+  ]
+}

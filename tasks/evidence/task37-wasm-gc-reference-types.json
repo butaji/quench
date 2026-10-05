@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "c89944ab90dfed555c3e0fc15bb8e774a732e56c316977c98672b0c1045f44cf",
+    "crates/quench-runtime-next/src/wasm/types.rs": "a381bdb5c82789ff1d204320c5365625f51e5f5cd212eb44bf747a343ca7e0a3",
+    "crates/quench-runtime-next/src/wasm/table.rs": "bbaef0d6dbbed6ae4432b8ae359ca0a678566e48b267e537a9ba3ce27f94b5bd",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "fcf43186912ac4bd5083ef2c9e95c752ed582bafe3beff373f36fb9d14ce89e3",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "cde51db57714c1535a478dc8527c6511a54a30b5c1f4b5827a0a83b41d5c7f88",
+    "crates/quench-runtime-next/src/host.rs": "44eed6654c2f28e77259892f2b919044c360636eca2a9877e85fb5810ec11a9d",
+    "crates/quench-wasm/src/wast_exec.rs": "4ec83874cfeb2fc0053e5cbb01c7cae324fc930e4e7a60aeaa03ce0b42eee2f5",
+    "crates/quench-wasm/src/shared.rs": "5c9be032f4ca682bf696523b23ef6e7e38914442bb83442054d5349de316d975"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 55,
+  "obligation": "Admit unshared abstract and defined GC reference types through the existing callable/global/table boundaries, preserving nullability, exactness and declaration ownership.",
+  "representation": "WasmTypes owns the supported subtype rules. Ownerless checks use the same matcher with an empty graph; the old table-only subtype helper is removed. Defined structs/arrays retain module index and exactness in the existing WasmType projection. GcRef transports ordinary VM values through existing roots and host leases; currently only null GC values execute. No GC object cell, side map, opcode, second executor or format change.",
+  "scope": "230 existing affected pinned files and39 focused files; not the full suite. Type admission affects globals, tables, initializers, imported resources, callable and host boundaries. Existing focused controls cover prior shared paths; new Wast covers abstract/bottom/defined/exact null refs and import variance.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-exact-resources-after.json",
+      "sha256": "7184a65b18a83f71750c5e9bb40effa5c3fe10d79bf1caecac885f240838e3e3",
+      "binary_sha256": "9834828f8c3a91822203941f71e09142db81070684de0b45c46d7d33326bf017"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-after.json",
+      "sha256": "e3677e49f632dfcca8c61bcdd823a7ac392f0890e8f765d9e8d2bb09e9f9bf54",
+      "binary_sha256": "ebc550eb96c589b83d871ff1d41d24d034be67ea2c94d9b50208fcce42076e56"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61493,
+    "passed": 61494,
+    "failed": 1264,
+    "gains": 1,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/exact.wast": 1
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-controls-before.json",
+      "sha256": "664b99be17a96a845772019f05da6527cddbe0532d284667a3fb6b20e6ea75e4",
+      "binary_sha256": "9834828f8c3a91822203941f71e09142db81070684de0b45c46d7d33326bf017"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-controls-after.json",
+      "sha256": "a88172f2cce69901eb77c13e53a81c1df9bd6d44b273c50ab86133ddd86369a3",
+      "binary_sha256": "ebc550eb96c589b83d871ff1d41d24d034be67ea2c94d9b50208fcce42076e56"
+    },
+    "files": 39,
+    "total": 3638,
+    "before_passed": 3585,
+    "passed": 3638,
+    "failed": 0,
+    "gains": 53,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-gc-reference-types-exact.wast": 9,
+      "target/iteration/task37-wasm-gc-reference-types-controls.wast": 44
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-gc-reference-types-runner",
+    "sha256": "ebc550eb96c589b83d871ff1d41d24d034be67ea2c94d9b50208fcce42076e56"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-runtime.log",
+      "sha256": "4ee97a088559c33214d6e1beb0540095c78699f2fb3fcecc9f9e9c4dfdd12611",
+      "passed": 33
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-frontend.log",
+      "sha256": "4b7eece177144edbf3e13fcf32dcb514eb3ad663649a3123016c21eafa038a4c",
+      "passed": 31
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-bytecode.log",
+      "sha256": "2cc668d54addf9be4ea9854a5256dd3aacd7126233ce7367d979a6be7dc62780",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-check.log",
+      "sha256": "fa15572a5c31695662790256e66943c81cd1847df147fe9c309cb2490b05f79d",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-gc-reference-types-oracle.json",
+    "sha256": "790aef708a0753c8ddd7d39deb1d0a7df71018543dfc8775588a2394bb7f57c2",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 46,
+    "input_hashes": {
+      "target/iteration/task37-wasm-gc-reference-types-bad-child.wat": "d91412e91837a8ecbc1e78c08cce81873325d360983ae55bf842cc307b0323c5",
+      "target/iteration/task37-wasm-gc-reference-types-a.wat": "3e104feaf6fb5f12010da45b957b8d15d590d169d7af3cf55ab6abe00a64aca8",
+      "target/iteration/task37-wasm-gc-reference-types-bad-table.wat": "a27bd6d0f94d72c6e8a462636f9b4c1c515a7cca6fe36c8c13435f10f4d77aee",
+      "target/iteration/task37-wasm-gc-reference-types-abstract.wat": "951f32098624b70f69f3100c279df7bec691032a354a830240283988175b3ac6",
+      "target/iteration/task37-wasm-gc-reference-types-b.wat": "938bef4c6841cf7af2aa1554b6f96d65b3d1be5ea01dc98fecc1300fa1ad3fbe",
+      "target/iteration/task37-wasm-gc-reference-types-bad-mut.wat": "159fdda0e0950889ed69f98575c7bec0adde8a7e1c0714f5e83ddf164928b7fd",
+      "target/iteration/task37-wasm-gc-reference-types-import.wat": "bcf147f77efe006367e44eb998126867e41cf7c34d302f3b46d1b5e8e848773d",
+      "target/iteration/task37-wasm-gc-reference-types-exact.wat": "953189ed29037863cabc4174b47aa4d6566e494d92c07a485ef0121973bdfd6d",
+      "target/iteration/task37-wasm-gc-reference-types-bad-wide.wat": "208bf0a80ed4a4b0b32f63aa9c3910692bc514edce190d410736ff53c6bde3fa"
+    }
+  },
+  "validator_source": {
+    "path": "/Users/admin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmparser-0.247.0/src/validator/types.rs",
+    "sha256": "802c04e769e01dd028803a22d0c07e0bca91781036f8cb38c36701841db7f62d"
+  },
+  "internal_obligation": "Existing host lease/guard/release test now includes a nullable GC reference and rejects an extern-family substitute in ordinary and tail calls. Removed obsolete frontend unsupported-GC-signature assertion; no conformance unit added.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 602,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefI31": 301,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: wasm-reference-initializer:0..0: unsupported Wasm constant expression operator": 61,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefCastNullable { hty: Exact(Module(0)) }": 36,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 0 }": 18
+  },
+  "limits": "GC object constructors/constants, i31 values, casts and remaining GC operators are not implemented. Shared refs/resources, exceptions and JS embedding remain open. Earlier six function-subtype Node discrepancies remain recorded. Production cutover, frozen implemented Node inventory, full-suite and Stage A qualification are incomplete."
+}

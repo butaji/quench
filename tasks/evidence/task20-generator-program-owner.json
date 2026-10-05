@@ -1,0 +1,325 @@
+{
+  "task": "20",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "profile": "release",
+  "timeout_ms": 10000,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "commands": {
+    "suite": "TEST262_REPORT=<report> TEST262_TEST_TIMEOUT_MS=10000 <runner> <stage> <stage> [filter]",
+    "compare": "target/debug/compare-runs --reports <before> <after>",
+    "units": "cargo test -p quench-runtime-next --lib --test subset",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate"
+  },
+  "producer_owners": [
+    "17",
+    "18"
+  ],
+  "obligation": "Generator return handlers and delegated operation metadata resolve the immutable residual belonging to Continuation.program rather than the caller residual.",
+  "representation": "ProgramStore plus Continuation.program is the only metadata authority. Remove the caller-program parameter from yield_star_iterator and prepare_generator_return. No duplicate per-generator handler table or second executor.",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/vm/generator.rs": "41600cabe855d2c0afb8744b943db8a5ab01ff5797440a5d51dd2015a9e82df2",
+    "crates/quench-runtime-next/src/compile/ast/try_statement.rs": "1d6c251638057f11df66aa5c128edcb9c23263942ca74186808ca18f33120752"
+  },
+  "runners": {
+    "before": {
+      "path": "target/iteration/task20-async-return-await-reduction-run-stages-next",
+      "sha256": "724aee2cbd5c2245d6a4b52c9c094b3e33c26eafe66c022b98e40fdaa47806b5"
+    },
+    "after": {
+      "path": "target/iteration/task20-generator-program-owner-run-stages-next",
+      "sha256": "db04888164b3608fc77346229072639909ef586ff8fd702367cc81e7e1c71e85"
+    }
+  },
+  "scopes": [
+    {
+      "name": "async-generator",
+      "stage": 38,
+      "filter": null,
+      "cases": 48,
+      "before_passed": 48,
+      "after_passed": 48,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-generator.json",
+      "before_sha256": "5e0dfbd2cd962cb67cdd9055390cdc19e7cfff76f9a815e01ac9af9703061285",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-generator.json",
+      "after_sha256": "4a2bb83eda2c8a66954e784e79f277d1080a963c4340dcfdc35efd4b5226954d"
+    },
+    {
+      "name": "async-generator-function",
+      "stage": 37,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-generator-function.json",
+      "before_sha256": "620946b7e9b863c198d1290dbcbdb6bde6c935913c67863a3a07368645204dfd",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-generator-function.json",
+      "after_sha256": "ad57220da572dd33b42136727699ce1ae1d2aa4e8abced3a90edecbba69e6fba"
+    },
+    {
+      "name": "generator",
+      "stage": 50,
+      "filter": null,
+      "cases": 61,
+      "before_passed": 61,
+      "after_passed": 61,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-generator.json",
+      "before_sha256": "46b01a5150f54de37211bc592235b2c157570c1dea7c39db38076bbba461673b",
+      "after_report": "target/iteration/task20-generator-program-owner-after-generator.json",
+      "after_sha256": "0cd9fddf66ca177a067944c6ca4680d6790007be5d83afc9222d0a81e99c556b"
+    },
+    {
+      "name": "async-iterator",
+      "stage": 39,
+      "filter": null,
+      "cases": 13,
+      "before_passed": 13,
+      "after_passed": 13,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-iterator.json",
+      "before_sha256": "043a6229b6c65ed28cfbadeb97b441e3e31b490186653c969e976ec6af112323",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-iterator.json",
+      "after_sha256": "d3b54009c77af7632ddf67f5d700e0bd909358cb666f0e70b65661096a94b30f"
+    },
+    {
+      "name": "async-from-sync",
+      "stage": 35,
+      "filter": null,
+      "cases": 38,
+      "before_passed": 38,
+      "after_passed": 38,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-from-sync.json",
+      "before_sha256": "cb7abbd40bc2690597e637559b77341db3eb6cba77862851aae6e91fdec017ea",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-from-sync.json",
+      "after_sha256": "1119e918e47a500aca2392db06304502507868eb082936cb2ab68e915ec0355a"
+    },
+    {
+      "name": "async-generator-expressions",
+      "stage": 10,
+      "filter": "async-generator",
+      "cases": 663,
+      "before_passed": 663,
+      "after_passed": 663,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-generator-expressions.json",
+      "before_sha256": "5223aa90c826a52976bb94b072303f1b0a86383547a7c0856feeb4e54e58ae1b",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-generator-expressions.json",
+      "after_sha256": "d6c8c462b14d1f3caeea989dacf2b1c8f00531470a0d344ab9ab95bf76dc82a6"
+    },
+    {
+      "name": "async-generator-statements",
+      "stage": 26,
+      "filter": "async-generator",
+      "cases": 357,
+      "before_passed": 357,
+      "after_passed": 357,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-async-generator-statements.json",
+      "before_sha256": "0201e17e3441053d1e36ece55d2038e8d920d85ea56a77121968efe9e4385761",
+      "after_report": "target/iteration/task20-generator-program-owner-after-async-generator-statements.json",
+      "after_sha256": "6375cc2588342098a7761c4fcba4f3d9073c3893e14b25fa428f216e3a1675c1"
+    },
+    {
+      "name": "yield-expressions",
+      "stage": 10,
+      "filter": "yield/",
+      "cases": 63,
+      "before_passed": 63,
+      "after_passed": 63,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-yield-expressions.json",
+      "before_sha256": "1289ce86b3e81b8f1e46821c6d55a9e895f427216bfc4b1e47de7197f45fc950",
+      "after_report": "target/iteration/task20-generator-program-owner-after-yield-expressions.json",
+      "after_sha256": "977a62ef86d31af90c780f8ade2390d56d7ac0b086e80cdff9e0f992906b682b"
+    },
+    {
+      "name": "promise",
+      "stage": 61,
+      "filter": null,
+      "cases": 729,
+      "before_passed": 728,
+      "after_passed": 728,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-promise.json",
+      "before_sha256": "9d6445b82a355b3a0f17fce65efeee2e73b702c607353cbf11acd1ffc75120ff",
+      "after_report": "target/iteration/task20-generator-program-owner-after-promise.json",
+      "after_sha256": "b2af0a1000532c0af3a6916a5c13b8b3664d221dab305f3076aa6ef262d10c58"
+    },
+    {
+      "name": "array-from-async",
+      "stage": 31,
+      "filter": "fromAsync/",
+      "cases": 95,
+      "before_passed": 95,
+      "after_passed": 95,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-array-from-async.json",
+      "before_sha256": "9065e58a0087b3dcd696f319658e4a862797ff75b71de520f38437ef1cc37638",
+      "after_report": "target/iteration/task20-generator-program-owner-after-array-from-async.json",
+      "after_sha256": "23c0a83566fbe0ecf74748ace1929c74dafa7a37a194e478cbc9efcb57cd3838"
+    },
+    {
+      "name": "disposal",
+      "stage": 34,
+      "filter": null,
+      "cases": 104,
+      "before_passed": 104,
+      "after_passed": 104,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-disposal.json",
+      "before_sha256": "382fb4f86cba8d592a7d5cabba6441c70a069a870434fede364e1d716d631da8",
+      "after_report": "target/iteration/task20-generator-program-owner-after-disposal.json",
+      "after_sha256": "a18d7965f41b41a3c271864145a1385902feda7a40f51011e7925f2bfe5dc4d7"
+    },
+    {
+      "name": "generator-expressions",
+      "stage": 10,
+      "filter": "expressions/generators/",
+      "cases": 290,
+      "before_passed": 290,
+      "after_passed": 290,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-generator-expressions.json",
+      "before_sha256": "dd727a59e9aeeaae1af9b12cef38de0bd000f90207b64535f0f7a9f09d893846",
+      "after_report": "target/iteration/task20-generator-program-owner-after-generator-expressions.json",
+      "after_sha256": "159862f4fe92dfd61f933b6a1e804ad91b0c0a59b0c791ffd722db5f6d83aa3b"
+    },
+    {
+      "name": "generator-statements",
+      "stage": 26,
+      "filter": "statements/generators/",
+      "cases": 266,
+      "before_passed": 266,
+      "after_passed": 266,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-generator-statements.json",
+      "before_sha256": "6199d375236c33f016b602886e548864c54173a892b8e403d44df861899afa8f",
+      "after_report": "target/iteration/task20-generator-program-owner-after-generator-statements.json",
+      "after_sha256": "fd5b9ecfed51ba45948632501566bf290b95fe24a54dd96672ee784f9b4d4141"
+    },
+    {
+      "name": "generator-function",
+      "stage": 49,
+      "filter": null,
+      "cases": 23,
+      "before_passed": 23,
+      "after_passed": 23,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-generator-function.json",
+      "before_sha256": "9316ac925d87d7029fe8fbaa69d7c9aa85a965680eaf9d238381b3b1dfb47583",
+      "after_report": "target/iteration/task20-generator-program-owner-after-generator-function.json",
+      "after_sha256": "e33ddaa27d009f525869046d45a8ee201647be5d2a4ca84b0f5db708ed07c54a"
+    },
+    {
+      "name": "eval",
+      "stage": 8,
+      "filter": null,
+      "cases": 347,
+      "before_passed": 347,
+      "after_passed": 347,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-eval.json",
+      "before_sha256": "34d70685ac4b16477a0d056bc8e8e4cba0fd295750eb736a1b40d0be27fb98d0",
+      "after_report": "target/iteration/task20-generator-program-owner-after-eval.json",
+      "after_sha256": "a18068944901d2fb21ed8614de4cdb23b383433ef2887cecd4ad182acdaefa58"
+    },
+    {
+      "name": "module",
+      "stage": 20,
+      "filter": null,
+      "cases": 599,
+      "before_passed": 599,
+      "after_passed": 599,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-module.json",
+      "before_sha256": "a47d87dd3fefa481268ef00253912adab381ca36e4ad908d973f07b5d60ccf1e",
+      "after_report": "target/iteration/task20-generator-program-owner-after-module.json",
+      "after_sha256": "531df277e215de0927197051f3e56c74df94a9cc26a08eaa61c89921ef01bbfe"
+    },
+    {
+      "name": "dynamic-import",
+      "stage": 10,
+      "filter": "dynamic-import/",
+      "cases": 1004,
+      "before_passed": 1004,
+      "after_passed": 1004,
+      "regressions": 0,
+      "before_report": "target/iteration/task20-generator-program-owner-before-dynamic-import.json",
+      "before_sha256": "11529460a20ef7c1e2b74e6457d256b12afe75a498331af4217c0ba10fa9982f",
+      "after_report": "target/iteration/task20-generator-program-owner-after-dynamic-import.json",
+      "after_sha256": "93b32decb0baa8858b28191cee9b22fb0af7d7a4cce09e1006d6de980efdacdd"
+    }
+  ],
+  "total": 4723,
+  "passed": 4722,
+  "regressions": 0,
+  "known_failure": "Unchanged keyed-Promise helper deletion conflict.",
+  "units": {
+    "library_passed": 463,
+    "integration_passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "log": "target/iteration/task20-generator-program-owner-units.log",
+    "sha256": "9a658d2debe6588133d6918f5264a9fdbe2853a7a308f08b29b869154d1cfad1",
+    "new_conformance_units": 0
+  },
+  "features": {
+    "passed": true,
+    "log": "target/iteration/task20-generator-program-owner-features.log",
+    "sha256": "4f4339e70c927f3f7767ff3a2f261ecf03b59d14c3ab5e2bb3bc13fa8685c838"
+  },
+  "node_controls": {
+    "script_comparisons": 114,
+    "script_matches": 112,
+    "module_comparisons": 10,
+    "module_matches": 10,
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "sources": "target/iteration/task20-generator-program-owner-controls.json",
+    "sources_sha256": "99c4f2da996a7eb16f0729ab4057e3a920d6b1e343d78cbf452937390cd94a38",
+    "carried_controls": "target/iteration/task20-async-return-await-node-controls.json",
+    "results": "target/iteration/task20-generator-program-owner-node-results.json",
+    "results_sha256": "5bba4c1ced20b71a4e9d2530ddd3001ad13d6b77bc468d603248e5118ae5e820",
+    "module_results": "target/iteration/task20-generator-program-owner-module-node-results.json",
+    "module_results_sha256": "e7d2f467f3bc43e47bb6db0c3e81e238618cf00bd58bd1bafa711fa6989312f6",
+    "host_hashes": {
+      "target/iteration/task20-generator-program-owner-script-host": "7899695e64fef6922862455492877ae6035647804fbf8ef7105d92080039c0c1",
+      "target/iteration/task20-generator-program-owner-module-host": "bbe0992a87f0c6f41d70e11f2effc4bade3725ce00332b44722a0d386612afc1"
+    },
+    "before_diagnostic": "target/iteration/task20-generator-program-owner-before.json",
+    "remaining_mismatches": [
+      {
+        "name": "dynamic-sync-nested-finally",
+        "mode": "normal",
+        "match": false,
+        "node_exit": 0,
+        "quench_exit": 0,
+        "node_stdout": "inner\nouter\n{\"value\":8,\"done\":true}\n",
+        "quench_stdout": "inner\n{\"value\":8,\"done\":true}\n",
+        "node_stderr": "",
+        "quench_stderr": ""
+      },
+      {
+        "name": "dynamic-sync-nested-finally",
+        "mode": "generic",
+        "match": false,
+        "node_exit": 0,
+        "quench_exit": 0,
+        "node_stdout": "inner\nouter\n{\"value\":8,\"done\":true}\n",
+        "quench_stdout": "inner\n{\"value\":8,\"done\":true}\n",
+        "node_stderr": "",
+        "quench_stderr": ""
+      }
+    ]
+  },
+  "limits": "Program ownership is corrected. The nested-finally return-target lowering defect exposed by these controls remains open in this snapshot; not task 17/18 or Stage A closure."
+}

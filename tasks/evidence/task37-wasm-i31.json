@@ -1,0 +1,129 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "a9087b232f7bb168b0db4c7619d1453517b62fba464a000f144eee17feec8bdd",
+    "crates/quench-runtime-next/src/wasm/i31.rs": "1621e68f5415ad5f2bc18adbebe03c9446f108b9d777b1f0f6c1c79600365949",
+    "crates/quench-runtime-next/src/wasm/scalar.rs": "90e028a13fbf1b5d77abfa73997118e7452321451d6ebbea49c600ba7016ecf5",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "0c90f06adf7480cd7e483d78c01af3b3f454a6d1e2c8465c57cd82d8107ab38f",
+    "crates/quench-runtime-next/src/bytecode.rs": "f787c414151f9658f95933dbd27cdf1752c8a3a3194fb4919659dc458951c290",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "c1063ec0e519f590a2fb4fb42cfda4c9455f76dca448299e7e16c28dfe6bf32c",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "3730cd4d3cc751f6e94e2750c3819576a495b502b2013f15782c2ebc3330cae6",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "f6cc76e0e5bf9efdd1e369be1355a7b8307bff3066720719fd4355fa95454392",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "10168b7832d126a7f2f06292aa170ace2eae3cfbab2d699183fa10ff65be7eb8",
+    "crates/quench-runtime-next/src/vm/wasm_host.rs": "43914eb488c098ee59d3ec45b0661b25fdc6800d4112cb927b13f02e836e7980",
+    "crates/quench-wasm/src/wast_exec.rs": "c1f1b77aa9c721a5eca4c6d2bb0c4417575153441bbc8207d0f3820f858c76f2"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 56,
+  "obligation": "Execute unshared ref.i31, i31.get_s and i31.get_u through the sole VM, including constant initializers and shared callable/global/table boundaries.",
+  "representation": "Canonical unsigned31 payload uses the existing integer Value with no allocation. I31_BITS derives the mask and sign extension. One I31Operator table derives selectors/lowering/admission/disassembly; apply is shared by runtime and constant evaluation. Null getters emit the typed null-i31 trap. Existing GC reference/root transport handles I31/Eq/Any admission. One opcode is appended, with residual format56 explicitly rejecting older encodings; no cell or map is added.",
+  "scope": "230 existing affected pinned files and40 focused files. Ordinary affected verification only; no full suite.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-ref-i31",
+    "https://webassembly.github.io/spec/core/exec/instructions.html#exec-i31-get-sx"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-gc-reference-types-after.json",
+      "sha256": "e3677e49f632dfcca8c61bcdd823a7ac392f0890e8f765d9e8d2bb09e9f9bf54",
+      "binary_sha256": "ebc550eb96c589b83d871ff1d41d24d034be67ea2c94d9b50208fcce42076e56"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-i31-after.json",
+      "sha256": "ddec805ee5e4a6db214faeee2910d0eb1069a21c492c07b0050976f344152312",
+      "binary_sha256": "5fef9b6384885ba8e43411b4035a97afd011e75c92a602f7c4f586f45eb77e25"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61494,
+    "passed": 61543,
+    "failed": 1215,
+    "gains": 49,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/i31.wast": 49
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-i31-controls-before.json",
+      "sha256": "6fa51b7f62970fab2ef5b300ec0394fc9bfc1b79584a2ab7a90a41942ab84fb1",
+      "binary_sha256": "ebc550eb96c589b83d871ff1d41d24d034be67ea2c94d9b50208fcce42076e56"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-i31-controls-after.json",
+      "sha256": "8a1b8b3aa65a21509b5893d4f5c568cbbbc7728ee9c27b9e1247ad9b36599da5",
+      "binary_sha256": "5fef9b6384885ba8e43411b4035a97afd011e75c92a602f7c4f586f45eb77e25"
+    },
+    "files": 40,
+    "total": 3664,
+    "before_passed": 3638,
+    "passed": 3664,
+    "failed": 0,
+    "gains": 26,
+    "gains_by_file": {
+      "target/iteration/task37-wasm-i31-controls.wast": 26
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-i31-runner",
+    "sha256": "5fef9b6384885ba8e43411b4035a97afd011e75c92a602f7c4f586f45eb77e25"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-i31-runtime.log",
+      "sha256": "2284c8411c223aed6593383f2513bb2ec941b184a69febaf3c56d3a04728d5e5",
+      "passed": 33
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-i31-bytecode.log",
+      "sha256": "1e30fdfdd1d918f66e45ca3a2bddc53824c3d2181926dcfdad273b399cfc37b0",
+      "passed": 19
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-i31-frontend.log",
+      "sha256": "6f957c7faf9152720ae318cecbf4e3c732cc7e46e015dcc9abb16d8a279af1cb",
+      "passed": 31
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-i31-check.log",
+      "sha256": "595b7360fe6d38eb87fe347f2bcbe3cb20bb67ec4adcd675667dcfa368abd2e2",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-i31-oracle.json",
+    "sha256": "0c48403660a8c615ad16bd1f21738e10fe0959fe7f89250f7a7ab595fa3db053",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "matched": 23,
+    "input_hashes": {
+      "target/iteration/task37-wasm-i31-a.wat": "8296263fff4e21aff39f468e7e72af0d26562e3c998a832a78f88295b8171e87",
+      "target/iteration/task37-wasm-i31-b.wat": "07bb0ff3d284fed916a63a202dcd4aa0101642d6229fbc094f17239d42585261"
+    }
+  },
+  "internal_obligation": "Existing bytecode admission unit rejects an invalid I31 selector and accepts a valid control. Existing ordinary/tail host lease unit includes non-null immediate GC reference root transfer, expired generation handles and error release. No conformance unit added.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 573,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 1 }": 110,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNew { struct_type_index: 1 }": 108,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: StructNewDefault { struct_type_index: 0 }": 101,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: RefCastNullable { hty: Exact(Module(0)) }": 36,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: unsupported shared Wasm import kind": 23
+  },
+  "limits": "Struct/array allocation and fields, casts/tests/branches, external/internal conversion, shared references/resources, exceptions and JS embedding remain open. Six earlier callable-type Node discrepancies remain recorded. The full pinned suite, frozen implemented Node inventory, production cutover and Stage A are not qualified."
+}

@@ -1,0 +1,156 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/lib.rs": "6d2a5b189a691a7ddf5bfd6f7a752fd933a8c0710bd8294c5ec025877a719968",
+    "crates/quench-runtime-next/src/wasm.rs": "2d0c7890eb9c6505898f33b0888fba6d920bde9e581dee830938ef739c2ee57a",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "5d21e7b220f0c923b6bfd6763e837e7285004c4f07192897b7277077fe03ead7",
+    "crates/quench-runtime-next/src/wasm/element.rs": "f0051b934062b4974af62e561b06163b1a526c67732a79fd663bed40135ff55a",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "e523adf64116af097bca6e8653e7dbcc4fc5c65b2ee02edacc7f81a10b8b6abc",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "150c174181147f59410464f202609ea562609322f90b07f66ee20e6be379d3c2",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "06ab4b1e26475e6c2e99026d949eb2bde299f8650b454bf2c2d79ea87a6bb4d5",
+    "crates/quench-wasm/src/shared.rs": "c03006a04df10616ed654ea32b6cacd5fe60a55c29ca3113449b5c8dbad265a8"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 52,
+  "obligation": "Imported immutable global operands remain symbolic until instantiation. Global chains, active data/element offsets and nullable func/extern table/element initializers evaluate against actual per-instance bindings using shared scalar operations.",
+  "representation": "WasmConstantExpression owns either an inline known value or admitted typed operators with unresolved global dependencies. Lowering folds only known facts; static and instance evaluation use the same expression and I32/I64 arithmetic. No placeholder import values or separate initializer interpreter. Prefix validation rejects mutable/future/invalid dependencies; module admission validates expression types. Existing traced global/table/segment cells retain runtime reference ownership.",
+  "scope": "The previous 122-file function/global/import/instantiation ratchet covers changed globals, segment offsets, references and shared callers. Exact directive IDs and input hashes match the previous completed report. No full suite.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-initializer-expressions-files.json",
+    "sha256": "a11a4942ab09ad1663dcd0ec0032638bd139ca4fe22aafa7c6cab9d9c9c6bc10"
+  },
+  "qualification": {
+    "files": 122,
+    "total": 30521,
+    "before_passed": 28454,
+    "passed": 28535,
+    "failed": 1986,
+    "gains": 81,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/data.wast": 8,
+      "crates/quench-wasm-test/testsuite/data0.wast": 4,
+      "crates/quench-wasm-test/testsuite/data1.wast": 1,
+      "crates/quench-wasm-test/testsuite/elem.wast": 5,
+      "crates/quench-wasm-test/testsuite/global.wast": 63
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 11,
+    "total": 685,
+    "passed": 685,
+    "failed": 0,
+    "new_initializer_directives": 19,
+    "same_runner": true
+  },
+  "checks": {
+    "wasm_internal": 34,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "One compiler-internal test proves known folding, unresolved static failure, distinct instance facts, and malformed dependency/type/end admission. Existing reference-boundary test extended to prove non-null externref initializer payload/root transfer into table/segment owners, retention after import/instance root release, and reclamation after final table release. No ordinary conformance unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-initializer-expressions-oracle.json",
+    "source": "target/iteration/task37-wasm-initializer-expressions-oracle.cjs",
+    "sha256": "3ae4f8a5ee150c9cb0397e8ab4d991b833f6f7c65fa9b7d8a17edb10a8cbe2aa",
+    "source_sha256": "9b756c981fbfef15cc870feb1259eb2f05ba6bf2800e9456d0a8a5c145b4d037",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 4,
+      "checks": "imported arithmetic and chains, wrapping i32/i64, per-instance facts, data and element offsets, earlier data writes survive later offset trap, nullable and non-null imported reference global/table/element identity"
+    },
+    "qualification_limit": "Node supplies expected arithmetic, offset, snapshot and trap observations matched by shared Wast controls. Non-null imported externref GC transfer is covered internally; the extra Node funcref identity control is oracle evidence, not an end-to-end shared-host interoperation claim.",
+    "module_inputs": {
+      "target/iteration/task37-wasm-initializer-expressions-oracle-0.wasm": "b7a838a492a0153ecdb6d0f0aa682f193d9535002620aff0777e5508ed442d7c",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-0.wat": "0781bbad0ff49f1880b7d356e564c9e0ed216cf67163ffd2da16901599527b95",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-1.wasm": "0229744fae2b2dbde4d35c4cab35ee284cecfbd4400f4e20f4983044947dc794",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-1.wat": "c1369f8c409ffe6d1cb49281d22b6b68d8c2bad6faefebd7dbf3feeaab852e41",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-2.wasm": "dec57aa97abb104522f369b0b03166fb2198e16bc7a2746e4084c3109dae3dce",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-2.wat": "8019fcead7e74240350a2d4c782c2ccc48c68b736a58063025e78877ba793352",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-3.wasm": "5ccf250bc66ed6186e5394d853fda2d37a9d95d76f9903f74ddb17719a6ea9b5",
+      "target/iteration/task37-wasm-initializer-expressions-oracle-3.wat": "dcadd9a6016554719037ea326b20bf3414b97fd6c311f41f76abc355b4afd4ef"
+    }
+  },
+  "specification": {
+    "constant_expressions": "https://webassembly.github.io/spec/core/valid/instructions.html#constant-expressions",
+    "execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "instantiation": "https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-function-imports-after.json",
+      "sha256": "3dfa0a57b9bfbbc6665af4af1913d3ebe96c0959c6fa267c1a807205d23074a8",
+      "binary_sha256": "7923b88644bb4fd90e0a943d0e484bb8460f586f763eeddb05b37ca35d6ef617",
+      "command_source": "provenance.command in this report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-after.json",
+      "sha256": "47ca8bdb47f45b10cc63cd41954dac1d3e12f31b46d618fdef7925214e220fca",
+      "binary_sha256": "601e84cea0c059bad292d25fa4b68d5a0a0e77bbdb7ea3730204ebe54fbb2f9c",
+      "command_source": "provenance.command in this report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-controls.json",
+      "sha256": "193f4d3a23cfc49310500e27990e97134595e7a9970a07e3b814ba27dc7a1042",
+      "binary_sha256": "601e84cea0c059bad292d25fa4b68d5a0a0e77bbdb7ea3730204ebe54fbb2f9c",
+      "command_source": "provenance.command in this report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-initializer-expressions-runner",
+    "sha256": "601e84cea0c059bad292d25fa4b68d5a0a0e77bbdb7ea3730204ebe54fbb2f9c"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-runtime.log",
+      "sha256": "9d5bb2b5cdf94f3dc386640daa42d46e3f999b683828a9b9a7961c8e1e63c17e"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-frontend.log",
+      "sha256": "d76e306de44057ea99f45231ddb5d3cb28e591fe47dee8f8817775314b27c7e6"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-build.log",
+      "sha256": "5edbad6fafcb3199d70190144bd8029b230535a6545bb97e52df198922b41c49"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-check.log",
+      "sha256": "ac214dcc2087163dd951d0fe947f6bf3bb9d0d655fccef3528d7cbaf72909666"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-after.log",
+      "sha256": "dfe816356b241243658644ead531568b5ddc6eec08cb634e884777d42b9c78a3"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-initializer-expressions-controls.log",
+      "sha256": "2c193b28a5bc36c9b501a3a423780005a6efd3491047c5ab22400d069b2671a9"
+    }
+  },
+  "remaining": "Host/native imports including spectest print and JS/Wasm interoperation; ref.func global initializers, concrete typed/GC/non-null boundaries, SIMD and remaining memory/table/proposal paths. Complete three-suite qualification, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A stays open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains an independent task68 gap. No profile execution or performance claim."
+}

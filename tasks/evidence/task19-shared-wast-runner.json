@@ -1,0 +1,219 @@
+{
+  "task": "19",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-wasm/src/lib.rs": "c1e4b0706a88a137871fad28e4da54c7530c530a74459345db0eef3d2192da85",
+    "crates/quench-wasm/src/wast_exec.rs": "a758e3ac7bcc231b560388c87660b154cdd6e8c1997e02030697a6b4f78d6b24",
+    "crates/quench-wasm/src/wast_script.rs": "efc6efe733df71263f09f0fdea7d92b7be6ebb222d1911030a6ea83c12b98204",
+    "crates/quench-wasm/src/shared_wast.rs": "bfea15fbd14f70fc04ac7703404220d29b4ed9148ccbc8885202a2c68dbd256d",
+    "crates/quench-wasm-test/src/lib.rs": "728bc923f75957ed991bbfae1e077adcb5da5ea7a112ce725bc3a4c06da0e8b5",
+    "crates/quench-wasm-test/src/bin/run-shared.rs": "cad7d190318000028f8d5e891f6fb9175f2e212708ec13f8081fd112b0d8c7bd",
+    "crates/quench-wasm-test/Cargo.toml": "926e666d210d9bb42d85570f858e92f2b1b1b8de7682e5ccc4f7d7c06e658317"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "obligation": "Execute and report each selected pinned Wasm directive through the shared Runtime; preserve complete inventories, classify unsupported behavior as failure, bound script workers and prevent a failed module replacement from reusing a previous instance.",
+  "representation": "One parser/validator/directive scorer and one scalar/NaN matcher serve both temporary development runners. Execution trait exposes store lifecycle and raw results; SharedEngine calls only Runtime.execute_wasm. Rc module instances own named aliases and requested-export compilation caches; unsupported replacement is an explicit state. Runtime metadata does not depend on fixture identity. Report status is authoritative per directive; summaries are derived.",
+  "runner": {
+    "path": "target/iteration/task19-shared-wast-qualified-runner",
+    "sha256": "ca594816bec3805f7c8597d7f32fcea607abeb44946e8d3287004c8899c0ec7d"
+  },
+  "before_projection": {
+    "path": "target/iteration/task19-shared-wast-before.json",
+    "sha256": "cebabd3d30f3b12149aa16acdce0c56b2d45b0379e82d9d6f290cf9dbbfa41b2"
+  },
+  "report": {
+    "path": "target/iteration/task19-shared-wast-after.json",
+    "sha256": "8220d6ff2660a049beef10059d5e6c2e58126f8e165b4ebf8a7ac48d8e91775c"
+  },
+  "comparison": {
+    "path": "target/iteration/task19-shared-wast-compare.log",
+    "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "inventory_sha256": "aa5e8dfe1430acafb4f7d3913f3778620ae5dd7f5f4ec874230ccd9f8c43c522",
+  "exact_inventory_match": true,
+  "regressions": 0,
+  "total": 13300,
+  "passed": 12516,
+  "failed": 784,
+  "inventory_complete": true,
+  "scopes": [
+    {
+      "file": "crates/quench-wasm-test/testsuite/block.wast",
+      "sha256": "436230d4bb629da323ee97c56a5580545f3dea7818eeb9a362a6c234f5af18d7",
+      "directives": 223,
+      "passed": 170,
+      "failed": 53
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/br.wast",
+      "sha256": "ac34486d8787d469dc7940f8e77c6b4b5999cf9d6c8918138d13b3e58460cae9",
+      "directives": 97,
+      "passed": 20,
+      "failed": 77
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/br_if.wast",
+      "sha256": "b75341e227315fc7765944e3ac09bcb1a15ca918a72c7dd478b2068147792658",
+      "directives": 119,
+      "passed": 30,
+      "failed": 89
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/br_table.wast",
+      "sha256": "9a44bc44564b70bc92e84cea94f6e7d1d3df1725619fcbf5f1d6cf3340f793a1",
+      "directives": 186,
+      "passed": 24,
+      "failed": 162
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/call.wast",
+      "sha256": "faa694f3141b25cb1cf25104298a535ddea8058396825f532b69d0912074d905",
+      "directives": 91,
+      "passed": 18,
+      "failed": 73
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/conversions.wast",
+      "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056",
+      "directives": 619,
+      "passed": 619,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f32.wast",
+      "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f",
+      "directives": 2514,
+      "passed": 2514,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+      "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64",
+      "directives": 364,
+      "passed": 364,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+      "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f",
+      "directives": 2407,
+      "passed": 2407,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f64.wast",
+      "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7",
+      "directives": 2514,
+      "passed": 2514,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+      "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32",
+      "directives": 364,
+      "passed": 364,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+      "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0",
+      "directives": 2407,
+      "passed": 2407,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/i32.wast",
+      "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8",
+      "directives": 460,
+      "passed": 460,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/i64.wast",
+      "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e",
+      "directives": 416,
+      "passed": 416,
+      "failed": 0
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/if.wast",
+      "sha256": "291eaa26f1951a70560cf9942edc4345557718693ec0dd60b32c560310ea81f0",
+      "directives": 241,
+      "passed": 116,
+      "failed": 125
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/loop.wast",
+      "sha256": "4d3c043485ae6d89a397787dec3fdb53283949c116c7c5aad360fc7481c2277a",
+      "directives": 121,
+      "passed": 42,
+      "failed": 79
+    },
+    {
+      "file": "crates/quench-wasm-test/testsuite/select.wast",
+      "sha256": "2acdd7bb97af6f6f4b15538ee91ebc0a2cc4390d81010b2601e44c4f0f4ef836",
+      "directives": 157,
+      "passed": 31,
+      "failed": 126
+    }
+  ],
+  "failure_clusters": {
+    "unsupported shared Wasm argument type": 7,
+    "unsupported shared Wasm module state, imports or section": 777
+  },
+  "numeric_note": "All 12,065 directives from the nine numeric files pass; the other eight complete control files retain 451 passes and 784 explicit failures. No control-file module or directive is skipped or projected out.",
+  "file_timeout_ms": 60000,
+  "safety_controls": {
+    "path": "target/iteration/task19-shared-wast-safety-controls.json",
+    "sha256": "f36de2b669c84a0164d80479bc9f73c6f79068ae062645a3d1f59d2e5a20d25f"
+  },
+  "safety_scope_note": "Seven runner/lifecycle controls: empty discovery, parse failure, definitions/aliases and failed replacement, missing deadline, configured 1ms deadline on unchanged i32 input, duplicate input, missing input. Frozen qualifying runner adds a binary-change guard; incomplete reports can never qualify.",
+  "units": {
+    "frontend_passed": 40,
+    "runner_passed": 3,
+    "failed": 0,
+    "ignored": 0,
+    "new_units": [
+      "shared_wast::tests::failed_module_replacement_is_not_a_fallback_to_previous_instance"
+    ],
+    "new_unit_rationale": "Internal runner state regression: an unsupported replacement and its named aliases must not silently execute the last successful module. Pinned semantic suite cases alone do not prove this harness invariant.",
+    "frontend_log": {
+      "path": "target/iteration/task19-shared-wast-final-units.log",
+      "sha256": "93c61fbfb809f99820586b033de430d973bf8ae2fdde4e9d0e578f9a3b74e052"
+    },
+    "runner_log": {
+      "path": "target/iteration/task19-shared-wast-final-runner-units.log",
+      "sha256": "a5bce2765115708bdef9fafb044566069cfebadeea21d371ef9da63e9daaeaa1"
+    }
+  },
+  "build": {
+    "path": "target/iteration/task19-shared-wast-final-build.log",
+    "sha256": "303b0674431f3c8269856d20c721c9f245e8074d0b2bd17df461ae7bb2b2addb"
+  },
+  "check": {
+    "all_targets_passed": true,
+    "log": {
+      "path": "target/iteration/task19-shared-wast-final-check.log",
+      "sha256": "278126f0bf1b21ccc637b3886a9ded64b18d5e9ccb9f809d0abbf186067463f7"
+    }
+  },
+  "commands": {
+    "build": "cargo build -p quench-wasm-test --bin run-shared",
+    "qualification": "WASM_FILE_TIMEOUT_MS=60000 target/iteration/task19-shared-wast-qualified-runner --report target/iteration/task19-shared-wast-after.json <17 files listed in scopes>",
+    "compare": "target/debug/compare-runs --reports target/iteration/task19-shared-wast-before.json target/iteration/task19-shared-wast-after.json",
+    "units": "cargo test -p quench-wasm --lib; cargo test -p quench-wasm-test --lib",
+    "checks": "cargo check -p quench-wasm-test --all-targets"
+  },
+  "provenance_note": "The before file is an outcome-only projection of the initial numeric/control reports. Their executable paths were rebuilt while the initial campaign ran, so they are not final binary qualification. The after report uses a frozen executable and its report hash matches that artifact exactly.",
+  "limits": "Only 17 affected pinned files were executed, not the complete Wasm suite or Test262/Node inventories. Production legacy Wasm execution remains until shared full-suite proof and cutover. Frozen implemented Node and complete legacy Wasm baseline outcomes remain task 19 work. Task 19, task 23 and Stage A remain open; no benchmark or performance claim.",
+  "binary_change_control": {
+    "path": "target/iteration/task19-shared-wast-change-guard.json",
+    "sha256": "533342f62f1ab50090ef72c7f9f2189e0b39939faeea290e729ab020c331b5c8",
+    "passed": true
+  }
+}

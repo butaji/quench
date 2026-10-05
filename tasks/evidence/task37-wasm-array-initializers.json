@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "residual_format": 62,
+  "obligation": "Execute repeated/default/fixed array constant constructors through the shared VM at instantiation, with fresh instance identity and typed allocation traps.",
+  "representation": "Array constructor mode is symbolic data until instantiation. The original declaration graph validates storage and operands; the explicit initializer effect borrows fixed operands and calls the existing array allocator. No new heap, opcode, executor or side map. Executed Wast modules instantiate even on the formerly lazy global-only path; temporary instances release through the shared lifecycle.",
+  "scope": "230 matched affected pinned files, 20 focused directives, 12 Node no-JIT observations, existing Wasm internal and frontend checks. No full suite; no expectations, skips or inventory changes.",
+  "sources": [
+    "https://raw.githubusercontent.com/WebAssembly/gc/main/proposals/gc/MVP.md"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-elements-after.json",
+      "sha256": "610a65761c5c02d137d216d475869e996edd35e3cc3f0319997c68fda8b6a0d7",
+      "binary_sha256": "a6ced47e963d220d850f4af6542a36eda1f2c23a37f2b5cf9588c4d880f2e58d"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-initializers-after.json",
+      "sha256": "6d1cfeccd6399a739963b76448970b22dbb9e3784bd1d9dd613d1c41034a3141",
+      "binary_sha256": "ebc56751c16d6372d7df7292aa6ab8e1f7923baa87d879fa3662bfea48ff92b6"
+    },
+    "files": 230,
+    "total": 62758,
+    "before_passed": 61788,
+    "passed": 61846,
+    "failed": 912,
+    "gains": 58,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/array.wast": 16,
+      "crates/quench-wasm-test/testsuite/array_fill.wast": 1,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/exact-casts.wast": 37,
+      "crates/quench-wasm-test/testsuite/table_init.wast": 2,
+      "crates/quench-wasm-test/testsuite/table_init64.wast": 2
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-array-initializers-controls-before.json",
+      "sha256": "d916873286cc01bb748f585095d6394e71db9c3c7f2e263491e45063999262a5",
+      "binary_sha256": "a6ced47e963d220d850f4af6542a36eda1f2c23a37f2b5cf9588c4d880f2e58d"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-array-initializers-controls-after.json",
+      "sha256": "3b754ce7135d7ddace5ac038e6e338e83c0ce4147a3e073097e0e1fc43601f04",
+      "binary_sha256": "ebc56751c16d6372d7df7292aa6ab8e1f7923baa87d879fa3662bfea48ff92b6"
+    },
+    "files": 1,
+    "total": 20,
+    "before_passed": 1,
+    "passed": 20,
+    "failed": 0,
+    "gains": 19,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-array-initializers-controls.wast": 19
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-array-initializers-runner",
+    "sha256": "ebc56751c16d6372d7df7292aa6ab8e1f7923baa87d879fa3662bfea48ff92b6"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-array-initializers-runtime.log",
+      "sha256": "d110bf74c86996a48517f280c7af40495593b109f726ac9427e4e4f0a620c3d9"
+    },
+    "facts": {
+      "path": "target/iteration/task37-wasm-array-initializers-facts.log",
+      "sha256": "9735be38a84413307dadf646263aece1e0ac12dfbe5d6584a813dddd6f6637bc"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-array-initializers-frontend.log",
+      "sha256": "4c7419e29a9fe9a373b3d0c12c33350a7e6c7d2d4485f6932a3e9c99c1ca9f04"
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-array-initializers-check.log",
+      "sha256": "8acf2671acf63546f308515a14f7d9db5c7480150857b48cbd7c1f3a1c575e69"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-array-initializers-build.log",
+      "sha256": "ba28e6c9d747d459f4fa0ed31852ce617f897f02dbb7be33839f05eb0dab8902"
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-array-initializers-oracle.json",
+    "sha256": "a01c4fcc68358511c1b52cccc7bcea8e47dada367977999b55cb5bf877fe2fc6",
+    "matched": 12,
+    "node": "v26.10.0",
+    "input_hashes": {
+      "target/iteration/task37-wasm-array-initializers-a.wat": "f6caa52e5d23b06be8f77fc2fb6d3ec0deffa585a415d0057b186a1c711e01f4",
+      "target/iteration/task37-wasm-array-initializers-b.wat": "282fd7d6ff3154fa3570ae14f26b99721515634dae91db41ee26bf3c21f781d3",
+      "target/iteration/task37-wasm-array-initializers-def.wat": "3ec4d26b40b11e6354c71533b11c567d72171110364fdde42daf89cf02e3642a",
+      "target/iteration/task37-wasm-array-initializers-trap.wat": "293f472c11e7aac8af147551bae9e7002700c8ad622883831d3dd34096a7bab6",
+      "target/iteration/task37-wasm-array-initializers-a.wasm": "e19ee9f5a1a30414e881b07558322b528f81a57b4450ac8b449ab9e8680fc330",
+      "target/iteration/task37-wasm-array-initializers-b.wasm": "350a77c859b15400a066ccc30088136b240d4c72a9ec7721865baf739fc1c9b9",
+      "target/iteration/task37-wasm-array-initializers-def.wasm": "a9175de45b6e208423656297086321246d8e2b71d76cc54b707e08caf51243fb",
+      "target/iteration/task37-wasm-array-initializers-trap.wasm": "002053223d12a77f4d27675cd172c7bd7fb51a7496d2eac24bff4790ebbf903d"
+    }
+  },
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/constant.rs": "5e2b633c3602b7c90b3e1438f5b837e6b32618ccf4dcf8f55f10256b9de822bf",
+    "crates/quench-runtime-next/src/wasm.rs": "cfe2ca1f4db0dee225a876412a07c472a6a461063db0a605cd1c8e7e4099ab53",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "24e900f73324fb415c643f22b8ed55f4d53e74dabfa1a5bc7392174d6ac6eded",
+    "crates/quench-wasm/src/shared_wast.rs": "dbf45f1878de5c6b6d4bec6ca17545faee9b96d8c8146af6fb69f0137d092070"
+  },
+  "internal_obligation": "Existing initializer fact test verifies array expressions stay dependent, ownerless evaluation rejects before effects, and missing canonical declarations reject. 33 Wasm runtime internals, the extended fact regression, 32 frontend internals and profile-enabled all-target checks pass. No ordinary conformance unit added.",
+  "limits": "Array bulk and data/element-backed operations, conversions, descriptors, shared resources, exceptions and JS embedding remain open. Existing callable-type Node discrepancies remain recorded. Affected evidence does not close the complete Wasm, implemented Node, single-VM cutover or Stage A gates.",
+  "next_first_failures": {
+    "unsupported shared Wasm: wasm-global-initializer:0..0: unsupported Wasm constant expression operator": 340,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: AnyConvertExtern": 218,
+    "unsupported shared Wasm module state, imports or section": 117,
+    "unsupported shared Wasm: unsupported Wasm global type": 34,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitElem { array_type_index: 0, array_elem_index: 0 }": 33,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayCopy { array_type_index_dst: 1, array_type_index_src: 0 }": 31,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayInitData { array_type_index: 1, array_data_index: 0 }": 31,
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: ArrayFill { array_type_index: 1 }": 26
+  }
+}

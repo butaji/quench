@@ -1,0 +1,253 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "80ab5745285ef298538f4a5c7c9cdf82677a33ae9a60c3e4d2cc31369cab5d18",
+    "crates/quench-runtime-next/src/wasm/gc.rs": "72ffd80a01d85f86ed880a190d4fcce204f09de19885e43f6162ad44d8225c73",
+    "crates/quench-runtime-next/src/wasm/types.rs": "69904a454b2e0fd320d1504126cc6dca69f7f852ffff8e91b3254be12e9ffa03",
+    "crates/quench-runtime-next/src/wasm/constant.rs": "e002704e93737ec913577411784c4f6d567935a81dfa5bea6d00a3f8bf693aa5",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "5f2d0275a8465b144fb9062355f5198232bc9a491835455291745f0a04c6edab",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "fdab42c2faeb5024ee5265d73d437e2177eb6c7e30524215a1511a809cd35893",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "6cef388aca2499d0f54d9caecb7ac0aab9475426e88be64eccff559985404c65",
+    "crates/quench-runtime-next/src/vm/program_store.rs": "0b284cd39de8db20481ad18f850af1909d8469907a3670eb506887bb52c8d2fd",
+    "crates/quench-runtime-next/src/vm/wasm_table.rs": "e07a32893482739679b4f018680690c5bab3da0633b70bcac88bd61b68eb0004",
+    "crates/quench-runtime-next/src/bytecode.rs": "a30e40f0b0379a92cc74682fc4c7b2b2201ca8d195792d54b30d5e874e12a040",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "7d8a908c89bdf1bcd60418fab5209ea6542e5fbc758383827647e8ad6bf10bac",
+    "crates/quench-runtime-next/src/heap.rs": "ca27153301dc76edd1ce4e9aa1a237f7adcc7b0c85b8a5e804ef55c7bdfd9302",
+    "crates/quench-runtime-next/src/heap/cell.rs": "ec1db57076c54f1382b96eb330dc1a36852ffe01816a1a1b3f54db8659e36f6f",
+    "crates/quench-runtime-next/src/heap/tests.rs": "4c7e7e3c85bc727bc6a9f0621f7008f5380bf666b3d6b4279802f622711f6ad0",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "d18261df34b194588af9b95b75ef68d2e97c67017516774784c117e0420d8f20"
+  },
+  "suite_pins": {
+    "tests/test262": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "crates/quench-wasm-test/testsuite": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff"
+  },
+  "suite_inputs_dirty": false,
+  "residual_format": 68,
+  "obligation": "Allocate custom-descriptor structs in bodies and constant expressions, retaining original descriptor identity, exact type ownership, payload roots and typed null traps; project ref.get_desc through the same shared VM.",
+  "representation": "StructConstruction owns regular/default/described/default-described operator projections. The original WasmTypes graph derives descriptor types; one existing WasmGc cell owns optional descriptor and fields. Constant expressions admit the same construction modes and never fold allocation identity. Complete constructor windows include the descriptor as their final operand and derive root/validation behavior from the shared operand layout. Registration checks declaration, defaultability and exact window arity; execution checks original descriptor type before allocation. Descriptor projection checks the source owner/subtype, returns the stored original reference and traps on null. Heap tracing follows descriptor and field edges. Three opcodes append; format68 rejects old encodings without changing packed widths. No side registry, cell kind or executor is added.",
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-descriptors-before.json",
+      "sha256": "0d617771a5956919e9fe9ce7cf188994654cf68b8158dd30c605eb37fc01333a"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-descriptors-after.json",
+      "sha256": "b3b8230ef05356fa48774b09a4b5bf39f5a1b6402ecb63951d575dc90c50fae4"
+    },
+    "binary_sha256": {
+      "before": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a",
+      "after": "e325206592c0cd211692dd79649c67b4cb85bb8974e22ac798fc1c956936fe22"
+    },
+    "files": 7,
+    "total": 494,
+    "before_passed": 167,
+    "passed": 216,
+    "failed": 278,
+    "gains": 49,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast_desc_eq.wast": 2,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/br_on_cast_desc_eq_fail.wast": 2,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/ref_cast_desc_eq.wast": 1,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/ref_get_desc.wast": 21,
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/struct_new_desc.wast": 23
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "gc": {
+    "before": {
+      "path": "target/iteration/task37-wasm-descriptors-gc-before.json",
+      "sha256": "adfda75ed605c225c9f8970f59b3ab843d97350570ca7baacefbd8c50e5af90c"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-descriptors-gc-after.json",
+      "sha256": "1dd1bdd196e8384e4ac19d45387819e08cad3653d6128bd9bf3f893aeff93a75"
+    },
+    "binary_sha256": {
+      "before": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a",
+      "after": "e325206592c0cd211692dd79649c67b4cb85bb8974e22ac798fc1c956936fe22"
+    },
+    "files": 7,
+    "total": 253,
+    "before_passed": 253,
+    "passed": 253,
+    "failed": 0,
+    "gains": 0,
+    "gains_by_file": {},
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-descriptors-controls-before.json",
+      "sha256": "09d88d8a556df74a108c5c9d881132f4121d18bf047fc016cfdb4a9129abead1"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-descriptors-controls-after.json",
+      "sha256": "a959e428a419375d98f1aa6465eb3f28582149cfda6d63c6ddb0937dbf26af71"
+    },
+    "binary_sha256": {
+      "before": "9a83f3d8cebe5a8fb5ce1c6e2bfd67c469a317ce19b163abd81d031a1c4c6b0a",
+      "after": "e325206592c0cd211692dd79649c67b4cb85bb8974e22ac798fc1c956936fe22"
+    },
+    "files": 1,
+    "total": 17,
+    "before_passed": 0,
+    "passed": 17,
+    "failed": 0,
+    "gains": 17,
+    "gains_by_file": {
+      "target/iteration/proposals/custom-descriptors/task37-wasm-descriptors-controls.wast": 17
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-descriptors-runner",
+    "sha256": "e325206592c0cd211692dd79649c67b4cb85bb8974e22ac798fc1c956936fe22"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-descriptors-runtime.log",
+      "sha256": "121d19ab8014c9c0bd8a3d185fa5531fbb3add88ffe74161c8dc6d0a94536c63",
+      "passed": 35
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-descriptors-heap.log",
+      "sha256": "39940a6d222bc2f27ed344f2c0f683bb954d4537749d6a9b14945d9de20e2dd3",
+      "passed": 19
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-descriptors-bytecode.log",
+      "sha256": "91c1acd3c04f356c02781473ca8db997dbe45d309135f9ac09e3e1ed75511240",
+      "passed": 18
+    },
+    "roots": {
+      "path": "target/iteration/task37-wasm-descriptors-roots.log",
+      "sha256": "9ff2ffbfd093ca56c81f43a812afd32d549f3c4c1e7262a3e4b08c04c9465844",
+      "passed": 1
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-descriptors-frontend.log",
+      "sha256": "60703e532aeaf2d8f99cda7e5fd66858b1cd2b3e9da8bd034e5bbfe2d721bade",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-descriptors-check.log",
+      "sha256": "a022f2fdc9588c8348306e074ad396fe248bec2019921050579110911db2384b",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-descriptors-build.log",
+      "sha256": "54114702aa7f4b16e8ed0ff2484467bedef73202fece927b257535afb0c1d4b7",
+      "passed": null
+    },
+    "js-build": {
+      "path": "target/iteration/task37-wasm-descriptors-js-build.log",
+      "sha256": "4941e5f9d7b0be3c5a24f7141436939f241293680795255a304c7e015212d6f5",
+      "passed": null
+    }
+  },
+  "javascript": {
+    "reason": "Shared heap tracing/cell layout and appended residual vocabulary affect existing calls and weak/finalization roots.",
+    "total": 519,
+    "groups": [
+      {
+        "stages": [
+          11,
+          11
+        ],
+        "total": 217,
+        "passed": 217,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "528336a653b380b2cf5b176d2373e2bc1e02eeb5327e8725b114ed46b503b8f9",
+        "before": {
+          "path": "target/iteration/task37-wasm-descriptors-js-before-function-code.json",
+          "sha256": "5c1acd1fe33f09b07527626da6a19c2cdda1fdde3ea330b082cdcbf631303ff1"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-descriptors-js-after-function-code.json",
+          "sha256": "7c921c7a5578ce5c3500fa2d46975111d052de0b071a0941192d7988abfc2991"
+        }
+      },
+      {
+        "stages": [
+          47,
+          47
+        ],
+        "total": 47,
+        "passed": 47,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "277111e10b829f3a2fc4a323fd20910ef4b8e24076cc420d306aaff2dfecfa39",
+        "before": {
+          "path": "target/iteration/task37-wasm-descriptors-js-before-finalization.json",
+          "sha256": "e17bf5e1f3cb9ff46bfeda99ebc455aa159f5afe2d0b95191b3d619ffd902f7e"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-descriptors-js-after-finalization.json",
+          "sha256": "5cd92af2d2a1f9031391a739d418194ff061fe6e3a371ab372d4e3c8d441b1eb"
+        }
+      },
+      {
+        "stages": [
+          79,
+          81
+        ],
+        "total": 255,
+        "passed": 255,
+        "regressions": 0,
+        "same_ids": true,
+        "fixture_content_sha256": "60d41a413b9e80553b520fca6980e98e60e9d69e9ef0b858c1f7d3208176eb7c",
+        "before": {
+          "path": "target/iteration/task37-wasm-descriptors-js-before-weak.json",
+          "sha256": "3927ec0a55ea5491946a5ee3a6f814feeec874e271a404b3c3e128519d0d480b"
+        },
+        "after": {
+          "path": "target/iteration/task37-wasm-descriptors-js-after-weak.json",
+          "sha256": "2bfcfaab12adc5435e0fb87ea76ee088a21a23e02928b9b1ec19d884c4389968"
+        }
+      }
+    ],
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-exceptions-js-runner",
+      "sha256": "9c198e62ad708421318b85f5e78726fa1365fec5a0c6ffcce3e460440b59ab9d"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-descriptors-js-runner",
+      "sha256": "ce470a3212f49bf6da47e1623ef3ddbd018e7351a000cfab918e6578e0319701"
+    },
+    "harness_content_sha256": "8ed90739b38180524c964b42072ab75f5639bf671d175fce3fa32ba4eba68bb6",
+    "regressions": 0
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-descriptors-oracle.json",
+    "sha256": "747832d8d48cb042e19c81ee2b5600c21272e5d1ad08665030243b46528454da",
+    "node": "v26.10.0",
+    "observations": 12,
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-descriptors-controls.wasm": "a2d3749f5d5bf5630192faec148eea554a3a964c08b087381d05c078898d1304",
+      "target/iteration/task37-wasm-descriptors-controls.wat": "cf833175f2e225f239323626414f2524f547cde651f64a070f94f2ceeb8587fc",
+      "target/iteration/task37-wasm-descriptors-oracle.cjs": "1e77ac501b8312af0fc01fa15886805d4232f9e5d017b9674aae7d0df0abc0e3"
+    },
+    "limit": "Core scalar values, descriptor equality/mutation and null traps are compared. The JavaScript descriptor-object facade and custom prototype reflection remain unqualified."
+  },
+  "internal_obligation": "Existing internal heap lifecycle checks add an independent descriptor-only edge, proving retention and release. Existing root-window and untrusted bytecode checks extend complete descriptor windows and rejection of zero descriptor operands. No duplicate suite unit is added.",
+  "sources": [
+    "https://github.com/WebAssembly/custom-descriptors/blob/main/proposals/custom-descriptors/Overview.md"
+  ],
+  "limits": "747 pinned directives in fourteen matching files yield 469 passes, 49 gains and zero regressions; 278 descriptor casts/branch-casts remain unsupported. All 84 directives in struct_new_desc/ref_get_desc pass. Focused 17-directive controls and affected 519-case Test262 scopes pass. No full suites, pinned inputs, expectations, skips or inventories changed. Shared types/tags, remaining proposals, JS/host embedding, frozen implemented Node closure and production cutover remain open."
+}

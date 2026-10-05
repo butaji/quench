@@ -1,0 +1,416 @@
+{
+  "task": "37",
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "profile": "debug",
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "obligation": "Resolve indexed scalar block signatures from the frontend module type table; preserve block/if result arities, loop input arities, alternate-arm inputs and overlapping multi-value branch transport in the single residual VM.",
+  "representation": "Wasm type indices resolve against the canonical decoded FuncType table, independently of function indices. Control stores consumed static arities. Existing Move/Jump/LoadLocal/StoreLocal carry values; hidden frame locals preserve if inputs before conditional branching. Guest declared locals and compiler scratch counts remain distinct domains; total frame locals are derived. No Wasm execution IR, opcode, runtime control stack, heap or residual schema is added.",
+  "specification": "https://webassembly.github.io/spec/core/exec/instructions.html",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "fa1f9892a5637a2b414ec785729b03913d37568bfd107228cbbae346ed5c7049",
+    "crates/quench-runtime-next/src/wasm/control.rs": "211a9198be23f1061928ff71559d9f4ec3751a4282d45ffb6b213ece99a73c63",
+    "crates/quench-wasm/src/shared.rs": "8f801936db6b807c1c4c865b9d11a830a0c134565dabd7dc98bf46073b73e3e5"
+  },
+  "numeric_scopes": [
+    {
+      "name": "i32",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/i32.wast",
+        "sha256": "f3b7e8fd641893ea0989a8ab801fce0654d276d27b5cad9cf482291a422cffe8"
+      },
+      "directives": 460,
+      "passed": 460,
+      "modules": 1,
+      "returns": 364,
+      "traps": 10,
+      "invalid": 83,
+      "malformed": 2
+    },
+    {
+      "name": "i64",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/i64.wast",
+        "sha256": "7d0e27a617565e0685aef56cee01b2b4890084068e3989168c41d14c56b1945e"
+      },
+      "directives": 416,
+      "passed": 416,
+      "modules": 1,
+      "returns": 374,
+      "traps": 10,
+      "invalid": 29,
+      "malformed": 2
+    },
+    {
+      "name": "f32",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f32.wast",
+        "sha256": "91c9e9edf5500659040c6b7657fbaa942ad6c0526d80d2ea558e406257a8674f"
+      },
+      "directives": 2514,
+      "passed": 2514,
+      "modules": 1,
+      "returns": 2500,
+      "traps": 0,
+      "invalid": 11,
+      "malformed": 2
+    },
+    {
+      "name": "f64",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f64.wast",
+        "sha256": "b8b85a753f13ae27d20ca8cb97ab58b30606854deb4fb829caac93785a90b0f7"
+      },
+      "directives": 2514,
+      "passed": 2514,
+      "modules": 1,
+      "returns": 2500,
+      "traps": 0,
+      "invalid": 11,
+      "malformed": 2
+    },
+    {
+      "name": "f32_cmp",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f32_cmp.wast",
+        "sha256": "dc16e4361250dbf9ef2b91481e25964d6c31f9f593f2e31f08d5b4f5028a376f"
+      },
+      "directives": 2407,
+      "passed": 2407,
+      "modules": 1,
+      "returns": 2400,
+      "traps": 0,
+      "invalid": 6,
+      "malformed": 0
+    },
+    {
+      "name": "f64_cmp",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f64_cmp.wast",
+        "sha256": "aabcd2c5af0670a9f7ce2cfd19befd3142c300fa5091575fad21a3726dcfb8c0"
+      },
+      "directives": 2407,
+      "passed": 2407,
+      "modules": 1,
+      "returns": 2400,
+      "traps": 0,
+      "invalid": 6,
+      "malformed": 0
+    },
+    {
+      "name": "f32_bitwise",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f32_bitwise.wast",
+        "sha256": "8a514cd0c6c34cccbcd4deda8b3f1898cab2985a360d0ec10a4b1725027f0b64"
+      },
+      "directives": 364,
+      "passed": 364,
+      "modules": 1,
+      "returns": 360,
+      "traps": 0,
+      "invalid": 3,
+      "malformed": 0
+    },
+    {
+      "name": "f64_bitwise",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/f64_bitwise.wast",
+        "sha256": "efd4e70d58ee853b4509352292058841b775ccea4cfd3060ddd350b8ccd4db32"
+      },
+      "directives": 364,
+      "passed": 364,
+      "modules": 1,
+      "returns": 360,
+      "traps": 0,
+      "invalid": 3,
+      "malformed": 0
+    },
+    {
+      "name": "conversions",
+      "file": {
+        "path": "crates/quench-wasm-test/testsuite/conversions.wast",
+        "sha256": "70eeec77b5c5c4fa6c9547f97ac56c1e21ebd5e2a10e7318f2e22100d5f6f056"
+      },
+      "directives": 619,
+      "passed": 619,
+      "modules": 1,
+      "returns": 526,
+      "traps": 67,
+      "invalid": 25,
+      "malformed": 0
+    }
+  ],
+  "numeric_directives": 12065,
+  "numeric_passed": 12065,
+  "numeric_skips": 0,
+  "numeric_driver": {
+    "path": "target/iteration/task37-block-params-numeric-driver.rs",
+    "sha256": "ea2206e4c5a71d8f1bbd218a2a44b6237691a673a6ea7fc5d13e65ab7e95c1fb"
+  },
+  "numeric_driver_binary": {
+    "path": "target/iteration/task37-block-params-numeric-driver",
+    "sha256": "47b050c60dae8f0e38137770d8dfa148d2c47bec4a395cd52cc5a3d77afa05a9"
+  },
+  "numeric_log": {
+    "path": "target/iteration/task37-block-params-numeric.log",
+    "sha256": "30926fbfd6c9bfd447e9b3fc1b383772a55e4a223f0aa3f4f98f38efa8bdc8a5"
+  },
+  "numeric_scope_note": "Every directive in each listed unchanged numeric file executes or receives exact negative/trap classification. The focused driver lives only under ignored target/; it does not reintroduce unit tests that duplicate suite cases. These nine numeric files are not the complete Wasm inventory.",
+  "controls": {
+    "cases": 22,
+    "matches": 22,
+    "before_unsupported": 22,
+    "manifest": {
+      "path": "target/iteration/task37-block-params-controls.json",
+      "sha256": "c72737ac1f01da4d5c5d64384c279396c05bd9cfb07df9fe946f1f11ee6e687b"
+    },
+    "results": {
+      "path": "target/iteration/task37-block-params-node-results.json",
+      "sha256": "6abe7d32235a1c347521d135d0a951f35d1bb18328d7889dc3ae2f9e80671383"
+    },
+    "sources": [
+      {
+        "path": "target/iteration/task37-block-params-controls/block-param.wat",
+        "sha256": "88d4de979eccd542c3d5ed66f7838b0364f5f05f4e8ae95b065f208b6cb9897d"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-multiple-params.wat",
+        "sha256": "2c9a9456e3ae58afab815ba0376f7d58a62b6fe12e5e9c711eebac652d5f02e3"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-multiple-results.wat",
+        "sha256": "71acf19338c69ec3461b7cb1d2feb91d996a3ff5d51f889b11fe986ed4ea0289"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-branch-multiple-results.wat",
+        "sha256": "b033e24d92c2191adb4219bdc10f168aaa00de018146da36140d19e89f3f757a"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/loop-param.wat",
+        "sha256": "95e5f990f9140244f8bc112e4ea1d049fc99446cd10d9c171088a8835110c836"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/loop-multiple-params.wat",
+        "sha256": "a56f1020cf3dd8239baeafb07c3c5cae077537e4ce708f6fb8a65739cdbe7fdb"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-param-true.wat",
+        "sha256": "7a9638c342ac677a02d57d92e2860ac5e5039fd4eee5452dc7ba4ffe967a1152"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-param-false.wat",
+        "sha256": "7a9638c342ac677a02d57d92e2860ac5e5039fd4eee5452dc7ba4ffe967a1152"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-multi-true.wat",
+        "sha256": "e704af5a04ce8b0d92efd6f0034292839934762730a5a8c8a48ece2e1b5c0e1c"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-multi-false.wat",
+        "sha256": "e704af5a04ce8b0d92efd6f0034292839934762730a5a8c8a48ece2e1b5c0e1c"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-no-else-true.wat",
+        "sha256": "cec0f892c97279564f74d412a5ee03511dd369c2c8dbbab9b90ce293595e2652"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-no-else-false.wat",
+        "sha256": "cec0f892c97279564f74d412a5ee03511dd369c2c8dbbab9b90ce293595e2652"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-type-function-domain.wat",
+        "sha256": "b54d656b21f72b024960c4471c642b77b8bf685402115c36a1ada7e4cb4d83c0"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/outer-branch-multiple.wat",
+        "sha256": "34d23cb06983337acac978320dbf82a2a7438b773fae1ab113f91a9d216a696a"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/indexed-no-param.wat",
+        "sha256": "752d6d42f9671a5372b9e6c7eb7df490b4a64f1859782b81040616419c64a6bd"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-nested-param.wat",
+        "sha256": "f5e6feefb4e5649e57f7bd3783ee59920b4f5341a19860f6000aba17ea25189c"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table-0.wat",
+        "sha256": "373115a150b8dc53b905d768844b26b430bfda6bb75bcf0542527cc1bf07e9c3"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table-1.wat",
+        "sha256": "373115a150b8dc53b905d768844b26b430bfda6bb75bcf0542527cc1bf07e9c3"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table--1.wat",
+        "sha256": "373115a150b8dc53b905d768844b26b430bfda6bb75bcf0542527cc1bf07e9c3"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-overlapping-move.wat",
+        "sha256": "cecc5039eeff0bb9d6a742bf84c62f2a7a23bd65aeda75d6ac6b4243896a4471"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/mixed-multi-results.wat",
+        "sha256": "abe3d7f59932bf9903ac2ded5b96f4774a79a8a91b0304a5d98aa5c64673ea98"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/unreachable-indexed-block.wat",
+        "sha256": "26d6690b943ab1fbe61079dd57fe755acff90ecab9290d0a9f8e9ac279402f25"
+      }
+    ],
+    "wasm_inputs": [
+      {
+        "path": "target/iteration/task37-block-params-controls/block-param.wasm",
+        "sha256": "26eef58382d8522e7ba1c07e76d1a60f052d959698f311497f07de8cef3ff939"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-multiple-params.wasm",
+        "sha256": "cd4eb46567de37c15c75c1054f5344b8ce3a6e08a774c6bb463774d318c0ea99"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-multiple-results.wasm",
+        "sha256": "6a4ad5a07ad341a92dfb32427d8c299efb9f4318368e6086bc4716d52916c9cc"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-branch-multiple-results.wasm",
+        "sha256": "c2eb2e6bf71f16fb1d10d7bd7cbec0b909c7e84dd889353fecde0c330827a2df"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/loop-param.wasm",
+        "sha256": "e7d06d8ad7f91f02ec342383a677df389e2d99fdf4c44cb28646d4450d2af6d1"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/loop-multiple-params.wasm",
+        "sha256": "8e3d29fa8feed970b08247125a4b4f298f06c2c38728ca3450ecaed300476fc6"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-param-true.wasm",
+        "sha256": "be70076150073540df51a8227a1b460d1ceb2e34cf4dd825cdd3886f2f38d7ad"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-param-false.wasm",
+        "sha256": "be70076150073540df51a8227a1b460d1ceb2e34cf4dd825cdd3886f2f38d7ad"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-multi-true.wasm",
+        "sha256": "a2eb462b2a3613d845880868ea2604d162a30bbf3f56401bc344cf5822ea4dce"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-multi-false.wasm",
+        "sha256": "a2eb462b2a3613d845880868ea2604d162a30bbf3f56401bc344cf5822ea4dce"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-no-else-true.wasm",
+        "sha256": "5121c70a1cce3c1795a8ace4cd73dd7b42896bfcd03dc0b06f2b01b19cdfeb80"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-no-else-false.wasm",
+        "sha256": "5121c70a1cce3c1795a8ace4cd73dd7b42896bfcd03dc0b06f2b01b19cdfeb80"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/block-type-function-domain.wasm",
+        "sha256": "368767b83ae56f594cd92e6b91a036d4371be018da1e32b2d16f66ebe8431a28"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/outer-branch-multiple.wasm",
+        "sha256": "4b34691d6a319a6c66ee23ad8fc49a9218229e0bc925c27007f25b5489b9704b"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/indexed-no-param.wasm",
+        "sha256": "290d9ddad712687bc9e8f871c82d6118f6df58a9c598856033dd452a6d5ab5f7"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/if-nested-param.wasm",
+        "sha256": "8da76fd0a594c61acda7db06ffc612fe8ff2f7ee90b72158252a623e3721eef3"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table-0.wasm",
+        "sha256": "f3c0d1d00bf1562d17cd9d46e23ff6da2ef3ee437f1230e62636bc417f3cfa16"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table-1.wasm",
+        "sha256": "f3c0d1d00bf1562d17cd9d46e23ff6da2ef3ee437f1230e62636bc417f3cfa16"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-br-table--1.wasm",
+        "sha256": "f3c0d1d00bf1562d17cd9d46e23ff6da2ef3ee437f1230e62636bc417f3cfa16"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/multi-result-overlapping-move.wasm",
+        "sha256": "b49987612a59921d116cae4a841ba64fdfedcb6a567607771c1d7a48d1f1a902"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/mixed-multi-results.wasm",
+        "sha256": "95c7b440dc9ff1e875a519a4e60ddeb0a44716412e3f59675f9aaca3bd94f95d"
+      },
+      {
+        "path": "target/iteration/task37-block-params-controls/unreachable-indexed-block.wasm",
+        "sha256": "83796cf9edfeee4458e52d80a47873452549f0bb9e2e068103eabc29b2bdf465"
+      }
+    ],
+    "before_binary": {
+      "path": "target/iteration/task37-block-params-before-host",
+      "sha256": "58a164a01be154d1043407144bdeed786069d98cee7de1ce9cd2633ac26b68bc"
+    },
+    "after_binary": {
+      "path": "target/iteration/task37-block-params-after-host",
+      "sha256": "f7280e3bece6ed9dc11a421a29a8d3b0deb8ee9e352a4dd64b879a12be39925c"
+    },
+    "driver": {
+      "path": "target/iteration/task37-block-params-host.rs",
+      "sha256": "12b7352b94622a72dd389fa71edf67a22425482f2d2d1c879e94e700d876035b"
+    },
+    "oracle": "Node v26.10.0",
+    "oracle_flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "oracle_note": "Sparkplug, Maglev and TurboFan JS JIT tiers are disabled; Wasm uses V8 interpreter. This Node build hides WebAssembly under --jitless, so the explicit tier-disable flags are used for these correctness controls only, not Stage B V8-v7 qualification.",
+    "scope_note": "Custom correctness controls cover indexed type/function index separation, block and loop parameters, multiple block results, both if arms, nested ifs, implicit else, outer labels, br_table signed/out-of-range selection, overlapping moves, mixed scalar types and unreachable stack polymorphism. They are not a claim that full pinned control files pass."
+  },
+  "units": {
+    "runtime_wasm_passed": 15,
+    "shared_frontend_passed": 23,
+    "failed": 0,
+    "ignored": 0,
+    "new_units": [
+      "wasm::tests::hidden_if_inputs_do_not_expand_the_guest_local_index_domain"
+    ],
+    "new_unit_rationale": "The direct lowering API boundary must reject a guest local index even after allocating a hidden compiler local. Upstream suite fixtures validate before lowering and cannot observe this internal index-domain invariant.",
+    "retired_unsupported_case": "Remove the old unit assertion that scalar multi-result blocks must remain unsupported; this mechanism is now implemented.",
+    "runtime_log": {
+      "path": "target/iteration/task37-block-params-final-runtime-units.log",
+      "sha256": "108f8e729e173341560dec06dfb5aab14ff2d97dd0cf47e118c184a8c204f283"
+    },
+    "frontend_log": {
+      "path": "target/iteration/task37-block-params-final-frontend-units.log",
+      "sha256": "0981df4b5a01052abfa17d85728e7ed12d4ef30945391de379765b64c39d3243"
+    }
+  },
+  "features": {
+    "passed": true,
+    "log": {
+      "path": "target/iteration/task37-block-params-features.log",
+      "sha256": "c7de5ed0d75129f72892e9af1e5a47da1d47c22cd9b9db6ca70bfbb1d28a6b9b"
+    }
+  },
+  "build": {
+    "path": "target/iteration/task37-block-params-final-build.log",
+    "sha256": "819fe30fc54602165fea61c8445c7f2c599e6e4c5bed1ef32aeb12b16518cdd3"
+  },
+  "commands": {
+    "build": "cargo build -p quench-wasm",
+    "runtime_units": "cargo test -p quench-runtime-next --lib wasm::",
+    "frontend_units": "cargo test -p quench-wasm --lib shared::",
+    "features": "cargo check -p quench-runtime-next --features profile-memory,profile-aggregate",
+    "controls": "python3 target/iteration/task37-block-params-control-check.py",
+    "numeric": "target/iteration/task37-block-params-numeric-driver i32 i64 f32 f64 f32_cmp f64_cmp f32_bitwise f64_bitwise conversions"
+  },
+  "verification_scope": "Only Wasm frontend/lowering changed; shared VM instruction semantics, JS lowering and Node host are unchanged. Focused Wasm controls, existing shared-boundary internals and complete selected numeric inventories cover the change. No full Test262, Node or Wasm run.",
+  "limits": "Multi-result function returns, state/imports, references, remaining proposals and production Wasm suite execution still require migration. Legacy runtime/executor remains. Task 37 and Stage A are open; no performance claim."
+}

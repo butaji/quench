@@ -1,0 +1,215 @@
+{
+  "tasks": [
+    "23",
+    "37",
+    "40",
+    "48"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty shared worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/atomic.rs": "1242ee0e365e9846ffbb639dd5fe4a9fae1856b449257f20722aee53e31033fa",
+    "crates/quench-runtime-next/src/wasm.rs": "2490dcafa1d52e6869200d6ee071c6c83f24ecdbf20a36ae563e60272f88357b",
+    "crates/quench-runtime-next/src/wasm/memory.rs": "3800366dd358fb4598e29309605342b96fdfe37cbb3289a31259041f8361a100",
+    "crates/quench-runtime-next/src/bytecode.rs": "31acaa56015d454776e396cdc4ed2ace90f89d9631e85740627f1a4d603fb1b1",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "969e3336fe72c3c3afb2ba7632a69157ccc0493c18913fc6350c14d76670366e",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "df71589c984518e3c95f499dd67b44df0f5c4a939a2e40acef824ea0b648f865",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "aa32dde2b416a03b17b7890446647f9955cce09ff9c14f15ab0acf7ab4ad8894",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "8c5d158b283717ccfd16aadfd7cde66fb9af17f54f45d684a49a99044fe14895",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "6449d1ca993cbc8a74d952839d9cc69ee098a658220ceae86ca08e23f1eb8265"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 70,
+  "obligation": "Execute all integer atomic load/store, RMW arithmetic/bitwise/exchange/compare-exchange widths and memory-independent fences through the shared VM, with natural alignment, unsigned narrow reads, wrapped narrow compares/stores and sequential consistency.",
+  "representation": "One flat Rust table owns 63 operator-to-kind/load/store mappings and derives selectors, decoder admission, input arity, value type and disassembly. Atomic access composes existing scalar memory reads/writes and I64 integer rules; narrow wrapping derives from byte width. One existing backing lock spans the entire access/RMW. A single ordering mutex is acquired before backing locks for atomic access, memory length/size and growth; fences join that order and perform a native SeqCst fence. Lock granularity is a correctness choice, not a performance claim. Original memory sharedness is preserved; access operators also admit unshared memory. No new memory representation, VM, executor, side identity map or suite-dependent production path.",
+  "lowering": "WasmAtomicAccess has a complete register window containing memory, effective u64 address and operation-specific values; arity derives from named AtomicInput roles and operation kind. Guest operands remain reserved while the window is built. Generic validation rejects unknown selectors and wrong window counts before effects; liveness derives every pending root from the operand layout. Load/store/RMW input types decode before acquiring locks; result encoding occurs after guards are released. Alignment is checked before scalar bounds admission, matching Node when both conditions fail.",
+  "scope": "The previous 92 affected pinned files cover integer/vector memory, bulk/data, growth, imports/exports/linking/start, array data segments and threads/custom-page-sizes. No full suite.",
+  "files": {
+    "path": "target/iteration/task37-wasm-shared-memory-files.json",
+    "sha256": "15192f61f1048ce390f4894d5a06daaafbe499b4921425154572103bf457e691"
+  },
+  "qualification": {
+    "total": 14679,
+    "before_passed": 14430,
+    "passed": 14673,
+    "failed": 6,
+    "gains": 243,
+    "regressions": 0,
+    "same_ids": true,
+    "same_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "before": {
+    "path": "target/iteration/task37-wasm-shared-memory-after.json",
+    "sha256": "021002475a5dad8db3b25310305a957972b68515be109cc97a628e91d40d13bc"
+  },
+  "after": {
+    "path": "target/iteration/task37-wasm-atomics-after.json",
+    "sha256": "453cc751244b37b6922fc081bb79459407cfcf5ea4136a39b07c85e4c72e7698"
+  },
+  "before_runner": {
+    "path": "target/iteration/task37-wasm-shared-memory-runner",
+    "sha256": "316c4266ed92109eb1ae3a26a0af78f3eca1a38dc4ec60bbab31d6aa4ea92d4a"
+  },
+  "after_runner": {
+    "path": "target/iteration/task37-wasm-atomics-runner",
+    "sha256": "d714941f1758e26d1de8ba5388285fbdc0cd79d11d1a9f167400048f93cb046e"
+  },
+  "focused_controls": {
+    "total": 26,
+    "before_passed": 1,
+    "passed": 26,
+    "failed": 0,
+    "gains": 25,
+    "regressions": 0,
+    "same_ids": true,
+    "same_input_hashes": true,
+    "all_workers_completed": true,
+    "source": {
+      "path": "target/iteration/proposals/threads/task37-atomic-access-controls.wast",
+      "sha256": "3ac3e74f57ba8b641f51f565246dffd747ea89aa8f4846068fc120e260f06b68"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-atomics-controls-before.json",
+      "sha256": "85d2c9027e709fe1f6f48e4ee59e005b730bf8e032f7059dabade49a8025c657"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-atomics-controls-after.json",
+      "sha256": "11103acc574941c3020a4c93806b05f1e30d20e57bbf69ecd2d46ec9e8262d3f"
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-atomics-oracle.json",
+    "sha256": "2c4d6da7aee7ec0635a46ad9fe3b2c85873f4f4ce96ed1a8617dcb22bd5d658f",
+    "script": {
+      "path": "target/iteration/task37-wasm-atomics-oracle.cjs",
+      "sha256": "c89a940033b0c52ef682a8a91b4e6ec86ba52777e706aec8561e131e7554345a"
+    },
+    "observations": 18,
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless"
+    ],
+    "module_inputs": [
+      {
+        "path": "target/iteration/task37-wasm-atomics-control.wat",
+        "sha256": "57a322e6cb7e3a9057f6dd7910386b5bbc149fc3453abbd6e3befbf72ad78eee"
+      },
+      {
+        "path": "target/iteration/task37-wasm-atomics-control.wasm",
+        "sha256": "5caa4a8de68158e57c2fa2e74a64e3f3388c4ccfae29b85777d395b4a06b9cd9"
+      },
+      {
+        "path": "target/iteration/task37-wasm-atomics-plain.wat",
+        "sha256": "5fd6b7f1bd7f2d40d892546fa7ab1a027a4a807f90dd0190a067c80bfdb7568e"
+      },
+      {
+        "path": "target/iteration/task37-wasm-atomics-plain.wasm",
+        "sha256": "1342f250521019e8039ce8b2e46428853410c0d022dd9071a221a7e9c1d8ede5"
+      },
+      {
+        "path": "target/iteration/task37-wasm-atomics-fence.wat",
+        "sha256": "b91558d66207441da663810500686cefadca52141850103940b9b3c0533ee248"
+      },
+      {
+        "path": "target/iteration/task37-wasm-atomics-fence.wasm",
+        "sha256": "49116ebdf8b979183532039519c16e1cd9d121947f14e956387e2df94c51229a"
+      }
+    ],
+    "primary_semantics": "https://github.com/WebAssembly/threads/blob/main/proposals/threads/Overview.md"
+  },
+  "javascript": {
+    "total": 217,
+    "before_passed": 217,
+    "passed": 217,
+    "failed": 0,
+    "gains": 0,
+    "regressions": 0,
+    "same_ids": true,
+    "stage": 11,
+    "reason": "New residual vocabulary, operand-window root inference/validation and shared dispatch warrant function/call callers; JavaScript buffer/atomic semantics and heap tracing are unchanged.",
+    "before": {
+      "path": "target/iteration/task37-wasm-atomics-js-before.json",
+      "sha256": "eff68ee668848b6d24bfe767123b3433f6b647a87564a1173c27c380bbc02767"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-atomics-js-after.json",
+      "sha256": "918c72b9e8060571f9c68c65ea69332701a1aec90ed364cacce608785ebd685d"
+    },
+    "before_runner": {
+      "path": "target/iteration/task37-wasm-shared-memory-js-runner",
+      "sha256": "ac893ea103e72d35a18231ab1863215c597b8407b042b8f194e32edcc5b1b9a5"
+    },
+    "after_runner": {
+      "path": "target/iteration/task37-wasm-atomics-js-runner",
+      "sha256": "6ec81b7f3559da64850a169d6b9f252e0d354d1209266bd4f8b26105693366c6"
+    },
+    "suite_head": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "suite_clean": true,
+    "fixture_content_sha256": "fd95684f50ed4cd3609490fd74637792cb95459cf76cf1ffd54e9acf2a0d36d1",
+    "harness_content_sha256": "4bad26740650b342a9c0f9d80bd0ebe387b38a4c98f39ab40531b9afce4581a5"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-atomics-runtime.log",
+      "sha256": "417ca41ca391fb51e4001e99081f3ff0d7300b53db4182aa7dadc78a68667b30",
+      "passed": 37
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-atomics-bytecode.log",
+      "sha256": "0184be7cc1c2ea6d2ec7c5e923bf251c5303aec8eae6f8eb858955aab04e118d",
+      "passed": 18
+    },
+    "roots": {
+      "path": "target/iteration/task37-wasm-atomics-roots.log",
+      "sha256": "c616a9bf4feacd8f34994e9fa35050a6a8db3c6ed4ec9b4d691cc78cfee15d82",
+      "passed": 1
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-atomics-frontend.log",
+      "sha256": "f36f8344dea98b03c3cd45f87453fb151d9010eaedfeb108917329b465479341",
+      "passed": 19
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-atomics-check.log",
+      "sha256": "08860ccf69afca9acad3f6490d6b93d82c8f360bf7838eb6b300b056a8032a73",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-atomics-build.log",
+      "sha256": "8220b565d0a0350f133b10e213aa021fd9c5bc8adf36146cb149a900379e5f71",
+      "passed": null
+    },
+    "js-build": {
+      "path": "target/iteration/task37-wasm-atomics-js-build.log",
+      "sha256": "131fdf48e38a2bd3216d6beb21a1a749f27c0d528e6dd741a459afa50a4dba50",
+      "passed": null
+    }
+  },
+  "comparisons": [
+    {
+      "path": "target/iteration/task37-wasm-atomics-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-atomics-controls-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    {
+      "path": "target/iteration/task37-wasm-atomics-js-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    }
+  ],
+  "remaining_failures": {
+    "unsupported shared Wasm: wasm-instance:0..0: unsupported shared Wasm operator: MemoryAtomicNotify { memarg: MemArg { align: 2, max_align: 2, offset: 0, memory: 0 } }": 6
+  },
+  "unit_scope": "Extend existing bytecode selector/window admission and operand-window root tests. Extend the serialized memory ownership/GC/internal malformed-offset unit to use atomic load/store on unshared Memory64. One new internal concurrency unit checks unique pre-update values under contended RMW and forbids the both-zero store-buffering outcome across distinct backing stores. Ordinary numeric, alignment, bounds and narrow-wrap coverage stays in pinned/focused Wast and Node controls.",
+  "limits": "Six affected directives remain unsupported because wait/notify operators are not yet lowered. Actual wait queues/timeouts, JS Atomics interoperability, cross-agent embedding, complete shared-VM suite qualification and production cutover remain open. Stage A is not closed and no performance claim is made."
+}

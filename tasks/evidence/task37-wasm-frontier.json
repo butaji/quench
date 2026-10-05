@@ -1,0 +1,329 @@
+{
+  "schema": 1,
+  "tasks": [
+    "37",
+    "23",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "scope": "Only the 35 pinned Wasm files absent from the available per-file historical observations; no production semantic change in this qualification.",
+  "host": "Darwin arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "build_profile": "dev, correctness only",
+  "build_command": "cargo build -p quench-wasm-test --bin run-shared",
+  "build_log": "target/iteration/task37-wasm-frontier-build.log",
+  "comparison": {
+    "command": "target/debug/compare-runs --reports target/iteration/task37-wasm-frontier-before.json target/iteration/task37-wasm-frontier-after.json",
+    "log": "target/iteration/task37-wasm-frontier-comparison.log",
+    "files": 35,
+    "total": 2805,
+    "before_passed": 2805,
+    "passed": 2805,
+    "failed": 0,
+    "gains": 0,
+    "regressions": 0,
+    "exact_ids_match": true,
+    "exact_content_hashes_match": true,
+    "worker_completions": 35,
+    "worker_failures": 0,
+    "timeout_ms": 180000
+  },
+  "reports": {
+    "target/iteration/task37-wasm-frontier-before.json": "548c5dc8547d87ca5f43a3539d2140cece1caef0a135bbd0f605186cd4b14030",
+    "target/iteration/task37-wasm-frontier-after.json": "4b89f15f6121429b23b3dedb00f8f32730f394ec9dba30041e86bad0d2ac330b",
+    "target/iteration/task37-wasm-frontier-census.json": "54c2525c01d0c6a017e236829f27af1f692958271130af798c8a45303c724f1b",
+    "target/iteration/task37-wasm-frontier-comparison.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+  },
+  "binaries": {
+    "/Users/admin/Code/GitHub/quench-v2/target/iteration/task37-wasm-wait-runner": "3643a45de758c98f1af910cd70d1b5b619d6dc72310909a9aa28d533069d936c",
+    "/Users/admin/Code/GitHub/quench-v2/target/iteration/task37-wasm-frontier-runner": "902880b96849744f2d9e5f43536dfa87fa8eca62218e6d9100dd30e62db2ec22"
+  },
+  "commands": {
+    "before": [
+      "target/iteration/task37-wasm-wait-runner",
+      "--report",
+      "target/iteration/task37-wasm-frontier-before.json",
+      "crates/quench-wasm-test/testsuite/annotations.wast",
+      "crates/quench-wasm-test/testsuite/binary-gc.wast",
+      "crates/quench-wasm-test/testsuite/binary-leb128.wast",
+      "crates/quench-wasm-test/testsuite/binary0.wast",
+      "crates/quench-wasm-test/testsuite/binary_leb128_64.wast",
+      "crates/quench-wasm-test/testsuite/comments.wast",
+      "crates/quench-wasm-test/testsuite/custom.wast",
+      "crates/quench-wasm-test/testsuite/custom/branch_hint.wast",
+      "crates/quench-wasm-test/testsuite/custom/custom_annot.wast",
+      "crates/quench-wasm-test/testsuite/custom/name_annot.wast",
+      "crates/quench-wasm-test/testsuite/fac.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs0.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs1.wast",
+      "crates/quench-wasm-test/testsuite/float_misc.wast",
+      "crates/quench-wasm-test/testsuite/forward.wast",
+      "crates/quench-wasm-test/testsuite/id.wast",
+      "crates/quench-wasm-test/testsuite/inline-module.wast",
+      "crates/quench-wasm-test/testsuite/int_exprs.wast",
+      "crates/quench-wasm-test/testsuite/labels.wast",
+      "crates/quench-wasm-test/testsuite/left-to-right.wast",
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/binary-descriptors.wast",
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/descriptors.wast",
+      "crates/quench-wasm-test/testsuite/skip-stack-guard-page.wast",
+      "crates/quench-wasm-test/testsuite/switch.wast",
+      "crates/quench-wasm-test/testsuite/table-sub.wast",
+      "crates/quench-wasm-test/testsuite/traps.wast",
+      "crates/quench-wasm-test/testsuite/traps0.wast",
+      "crates/quench-wasm-test/testsuite/type-canon.wast",
+      "crates/quench-wasm-test/testsuite/type.wast",
+      "crates/quench-wasm-test/testsuite/unwind.wast",
+      "crates/quench-wasm-test/testsuite/utf8-custom-section-id.wast",
+      "crates/quench-wasm-test/testsuite/utf8-import-field.wast",
+      "crates/quench-wasm-test/testsuite/utf8-import-module.wast",
+      "crates/quench-wasm-test/testsuite/utf8-invalid-encoding.wast"
+    ],
+    "after": [
+      "target/iteration/task37-wasm-frontier-runner",
+      "--report",
+      "target/iteration/task37-wasm-frontier-after.json",
+      "crates/quench-wasm-test/testsuite/annotations.wast",
+      "crates/quench-wasm-test/testsuite/binary-gc.wast",
+      "crates/quench-wasm-test/testsuite/binary-leb128.wast",
+      "crates/quench-wasm-test/testsuite/binary0.wast",
+      "crates/quench-wasm-test/testsuite/binary_leb128_64.wast",
+      "crates/quench-wasm-test/testsuite/comments.wast",
+      "crates/quench-wasm-test/testsuite/custom.wast",
+      "crates/quench-wasm-test/testsuite/custom/branch_hint.wast",
+      "crates/quench-wasm-test/testsuite/custom/custom_annot.wast",
+      "crates/quench-wasm-test/testsuite/custom/name_annot.wast",
+      "crates/quench-wasm-test/testsuite/fac.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs0.wast",
+      "crates/quench-wasm-test/testsuite/float_exprs1.wast",
+      "crates/quench-wasm-test/testsuite/float_misc.wast",
+      "crates/quench-wasm-test/testsuite/forward.wast",
+      "crates/quench-wasm-test/testsuite/id.wast",
+      "crates/quench-wasm-test/testsuite/inline-module.wast",
+      "crates/quench-wasm-test/testsuite/int_exprs.wast",
+      "crates/quench-wasm-test/testsuite/labels.wast",
+      "crates/quench-wasm-test/testsuite/left-to-right.wast",
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/binary-descriptors.wast",
+      "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/descriptors.wast",
+      "crates/quench-wasm-test/testsuite/skip-stack-guard-page.wast",
+      "crates/quench-wasm-test/testsuite/switch.wast",
+      "crates/quench-wasm-test/testsuite/table-sub.wast",
+      "crates/quench-wasm-test/testsuite/traps.wast",
+      "crates/quench-wasm-test/testsuite/traps0.wast",
+      "crates/quench-wasm-test/testsuite/type-canon.wast",
+      "crates/quench-wasm-test/testsuite/type.wast",
+      "crates/quench-wasm-test/testsuite/unwind.wast",
+      "crates/quench-wasm-test/testsuite/utf8-custom-section-id.wast",
+      "crates/quench-wasm-test/testsuite/utf8-import-field.wast",
+      "crates/quench-wasm-test/testsuite/utf8-import-module.wast",
+      "crates/quench-wasm-test/testsuite/utf8-invalid-encoding.wast"
+    ]
+  },
+  "inventory": [
+    {
+      "path": "crates/quench-wasm-test/testsuite/annotations.wast",
+      "sha256": "b1f707945949cd756a28ed27dc2392c0ac0ef4c23546290f353af41a7cb48443",
+      "directives": 74
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/binary-gc.wast",
+      "sha256": "dba71997b80a60f04d1afd330ee205cd4187cb6c71c4630472efb11116fae160",
+      "directives": 1
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/binary-leb128.wast",
+      "sha256": "785c4cbd50e3076200a8e7571cb6dc9cacd37009276fcfee633a7454368b6f61",
+      "directives": 91
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/binary0.wast",
+      "sha256": "8153bbe3d79578edd8486b87ab70a914d375907a3f0fb71b4c4373628b12dc2a",
+      "directives": 7
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/binary_leb128_64.wast",
+      "sha256": "8f93914dcb0c4486f777e49f71d4efd5b14bcb7ac365083c2b0b0c974b14fc79",
+      "directives": 2
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/comments.wast",
+      "sha256": "0d3251bbe35291f80c6861cdc8b869d0c3da23836345d79210765fd80351b64f",
+      "directives": 8
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/custom.wast",
+      "sha256": "59067c2c216fe1d6ac1249dbf9fc33573fb23b45b1bf5cc8f8a6eca14cf96f10",
+      "directives": 11
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/custom/branch_hint.wast",
+      "sha256": "3cebe7fcc847e9a73d916612d28a9fa8913037204f293d818af00c1538c14017",
+      "directives": 4
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/custom/custom_annot.wast",
+      "sha256": "c2baeb65033e844644e7e582a8351458d40331d61c34f0e4ecf3c88dc721bb5b",
+      "directives": 17
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/custom/name_annot.wast",
+      "sha256": "5f4f08c001ed3cf2fd3b3eb93ea8a09cd5b9faaa7e94ab8a205c9c04776b655f",
+      "directives": 7
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/fac.wast",
+      "sha256": "160f50dd99afe4c87f9a49424887e6fd94baa79b20f0e07567b867e866b583d2",
+      "directives": 8
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/float_exprs.wast",
+      "sha256": "f1659759fc66b9d7d46738adaefd9d9ff6d6a433d3192c762aa32f052fe6d071",
+      "directives": 927
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/float_exprs0.wast",
+      "sha256": "0f170be704a1e36d2f453d08b597cab3332cd0128332f4eb04432bb4cf089f0a",
+      "directives": 14
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/float_exprs1.wast",
+      "sha256": "8fc3383298eac32d2d99114f818c41cc33d710a2d753daa48bb4001c5b8f0c5b",
+      "directives": 3
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/float_misc.wast",
+      "sha256": "03247e5060c34d2db3e3602cd25f1fa5179239ba175f95c6a509bd5c1859de81",
+      "directives": 471
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/forward.wast",
+      "sha256": "a387e07010b2846f37491ea2cfb9efaa6a334dc84377c4788754a5c6d8abdb6b",
+      "directives": 5
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/id.wast",
+      "sha256": "7d876e4681a3b8e5e22b6668d3577709a074e34ee7a2b62e16a5dabd38139ca0",
+      "directives": 7
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/inline-module.wast",
+      "sha256": "fcaab83e53f188536b952c7d66e663f8c1e7e7bd52e3272a32c5c921654ec44a",
+      "directives": 1
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/int_exprs.wast",
+      "sha256": "e8b884e16bdbed0270e9b912eaa60a0e8688831e7574be98c00a60dcc667ed2b",
+      "directives": 108
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/labels.wast",
+      "sha256": "c4f00b0b980f9b33487a002b495dc186d35232bf726fa60982a4c1b226275a26",
+      "directives": 29
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/left-to-right.wast",
+      "sha256": "1a7376ac279bcf95b2493d6c2413721e14c35dfcd47fbfdffcb203aad8cb5a16",
+      "directives": 96
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/binary-descriptors.wast",
+      "sha256": "7618009be4597e821461f064ba66ff1cb36dc8a731007e846a4eac0b60ed1fa0",
+      "directives": 5
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/proposals/custom-descriptors/descriptors.wast",
+      "sha256": "bc43a37d72af3ed10b0fc95b59a2b6c9e59b67d67a7c6116685fd3717e17c5a5",
+      "directives": 57
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/skip-stack-guard-page.wast",
+      "sha256": "6392fe50486ae71c758f6f15f756cf6336fcab3b53155488f3be21fbe7bc98c4",
+      "directives": 11
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/switch.wast",
+      "sha256": "56addb6d426e9f8128ec7666dc8b0656f5625eb41b0657d219495afeeddfa8b1",
+      "directives": 28
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/table-sub.wast",
+      "sha256": "e40ed421ae67bd38f30b4830155134ff330f3f3f85b0f307ecdd6cb1a0d4ffe5",
+      "directives": 3
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/traps.wast",
+      "sha256": "3c0615dd26ee186c9a8138e933ff068fd6679e4fc34756b4ab1605d1fc7f1ede",
+      "directives": 36
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/traps0.wast",
+      "sha256": "43a8f235560f920409936d541a8f44feaa1f82c34f22ef505c4d5c38b3678499",
+      "directives": 15
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/type-canon.wast",
+      "sha256": "51506c9b325f4943c627b5bf42fbafcf30db33fe20922360ed4641932cbbbaf4",
+      "directives": 2
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/type.wast",
+      "sha256": "72df248a2a7afe432a46aea636f96c8930a894bdc285f8fe365aa28736bc9f73",
+      "directives": 3
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/unwind.wast",
+      "sha256": "55da9a7d4d2dc19feb04fca3ab47eb842aa10202f2f9136fb3ca756c0b2bb931",
+      "directives": 50
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/utf8-custom-section-id.wast",
+      "sha256": "20f6802e8ae0c9515d10687934f8f43a9312dfc64a52761f629f5547a689cb3a",
+      "directives": 176
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/utf8-import-field.wast",
+      "sha256": "1b9f2344c4b041c516079c5587c88d6fac1ec06c68d3328eaa5427f5b0242929",
+      "directives": 176
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/utf8-import-module.wast",
+      "sha256": "20449f8bb0249777e33aee76472009b48ec2ea3d3ecc78a8b8004173b47223c0",
+      "directives": 176
+    },
+    {
+      "path": "crates/quench-wasm-test/testsuite/utf8-invalid-encoding.wast",
+      "sha256": "ef0280c3f5ab3befef6755878a107b1f18dc9f302fb8edd339afd413e8c31e47",
+      "directives": 176
+    }
+  ],
+  "historical_triage": {
+    "files": 253,
+    "directives": 64319,
+    "scope_reports": [
+      "target/iteration/task37-wasm-wait-after.json",
+      "target/iteration/task37-wasm-descriptor-casts-after.json",
+      "target/iteration/task37-wasm-descriptors-gc-after.json",
+      "target/iteration/task37-wasm-descriptors-after.json",
+      "target/iteration/task37-wasm-delegate-structured-after.json",
+      "target/iteration/task37-wasm-delegate-after.json",
+      "target/iteration/task37-wasm-exceptions-after.json",
+      "target/iteration/task37-wasm-tags-after.json",
+      "target/iteration/task37-wasm-exact-imports-focused-after.json",
+      "target/iteration/task37-wasm-exact-imports-after.json"
+    ],
+    "all_latest_observations_passed": true,
+    "complete_filesystem_coverage_including_frontier": 288,
+    "qualification": false,
+    "reason": "253 historical file observations and this 35-file qualification use different binary revisions. Their union is triage coverage, not a complete current-build suite report."
+  },
+  "limits": [
+    "No full Wasm or Test262 suite or benchmark was run.",
+    "Task 23 current-build full-suite qualification remains open.",
+    "Production Wasm still uses legacy execution until task 27.",
+    "This report supplies no source snapshot claim for the historical frozen runners beyond their exact binary hashes."
+  ]
+}

@@ -1,0 +1,186 @@
+{
+  "tasks": [
+    "19",
+    "23",
+    "37",
+    "40",
+    "48",
+    "86"
+  ],
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "source_state": "dirty worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/memory.rs": "33c774f5fe80d079ff416a54db3f76e74b00b444423d4ca8fff7606be1c541f1",
+    "crates/quench-runtime-next/src/wasm/simd.rs": "d56499b2c40692a19d4a2d1fdd9352e9869fd728912ea18f1eeb47dbf98e44ad",
+    "crates/quench-runtime-next/src/wasm/simd/integer.rs": "2b7494d69e68e7fda7a8975feb7f7a3a41f52d4d946615f0f1355f53bfb79296",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "2b864ee849fb308950a55024cd4ddd36cdbf3dc94eaf4bb053bd727275c3f8c6",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "85fd9d8dd1a54cc72a0199ff822900ac40f5278c016848cdaf45a54014992b55",
+    "crates/quench-runtime-next/src/bytecode.rs": "6883256769bdb0c1f31ab039ffc127f57c1c15d7949c6ab7c43e35ab70a8a928",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "bff371e18a443b16c4771dfcc498afb4793d48321dd19bec042da6deccac4031",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "481cee76d5344cd1c4cc014a6dabce6481961f6077365e421b68cc6ecd21a972"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "debug",
+  "residual_format": 54,
+  "obligation": "Execute all twenty specialized vector memory forms through the existing shared memory owner, effective-address checks and SIMD lane rules.",
+  "representation": "The existing memory-load table preserves the first 15 tags and appends 12 splat/widen/zero loads. Checked scalar-width byte reads feed existing SIMD splat and low-extension operators; zero loads project raw bytes into zeroed V128 bits. One lane-access table maps 8 guest operators to existing scalar load/store selectors and SIMD replace/extract operators. Lowering reserves consumed address/vector registers before loading resource bindings or temporaries. Lane loads compose checked scalar loads with lane replacement; lane stores extract raw scalar bits then use the existing checked store. Memory32/64, offsets, resource identities, byte ranges, stores and trap effects retain their current authorities. No cell, opcode, selector reinterpretation, executor or residual format added.",
+  "scope": "The unchanged 209-file affected inventory from SIMD conversion qualification, including every top-level v128 source and existing scalar/resource/host/lifecycle callers. Exact hashes/directive IDs and completed 60-second workers required. Controls extend boundary coverage through two-memory Memory32 and Memory64 modules. No full Wasm, Test262, implemented Node or performance campaign.",
+  "inventory": {
+    "path": "target/iteration/task37-wasm-simd-memory-files.json",
+    "sha256": "02f701595425dc034e5a79f6a285e4daff3377a8c887e6c5279f035f1779317a"
+  },
+  "qualification": {
+    "files": 209,
+    "total": 61479,
+    "before_passed": 59945,
+    "passed": 60441,
+    "failed": 1038,
+    "gains": 496,
+    "regressions": 0,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/simd_align.wast": 34,
+      "crates/quench-wasm-test/testsuite/simd_load16_lane.wast": 33,
+      "crates/quench-wasm-test/testsuite/simd_load32_lane.wast": 21,
+      "crates/quench-wasm-test/testsuite/simd_load64_lane.wast": 13,
+      "crates/quench-wasm-test/testsuite/simd_load8_lane.wast": 49,
+      "crates/quench-wasm-test/testsuite/simd_load_extend.wast": 86,
+      "crates/quench-wasm-test/testsuite/simd_load_splat.wast": 114,
+      "crates/quench-wasm-test/testsuite/simd_load_zero.wast": 29,
+      "crates/quench-wasm-test/testsuite/simd_memory-multi.wast": 1,
+      "crates/quench-wasm-test/testsuite/simd_store16_lane.wast": 33,
+      "crates/quench-wasm-test/testsuite/simd_store32_lane.wast": 21,
+      "crates/quench-wasm-test/testsuite/simd_store64_lane.wast": 13,
+      "crates/quench-wasm-test/testsuite/simd_store8_lane.wast": 49
+    },
+    "exact_directive_ids": true,
+    "identical_input_hashes": true,
+    "complete_workers": true
+  },
+  "controls": {
+    "files": 21,
+    "total": 2872,
+    "passed": 2872,
+    "failed": 0,
+    "new_memory_directives": 594,
+    "previous_controls": 2278,
+    "same_runner": true,
+    "obligations": "All twenty specialized forms; signed/unsigned widening, splat/zero bit patterns, every replacement/extraction lane, unaligned offsets, nondefault memory selection, exact-end valid ranges, one-byte overflow, 32/64-bit maximal-address-plus-offset overflow; out-of-bounds loads/stores trap and preserve memory head/tail bytes. Earlier scalar/vector/resource/ABI controls retained."
+  },
+  "checks": {
+    "wasm_internal": 33,
+    "bytecode_internal": 19,
+    "frontend": 39,
+    "profile_feature_all_target_check": "passed",
+    "internal_obligations": "Existing serialization, root/GC, typed host protocols, exact address transport and malformed bytecode-domain checks pass. No representation/ownership change or ordinary suite unit added."
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-simd-memory-oracle.json",
+    "sha256": "dd1528274959d4a92774ecf9d6d20eb2d622580b26c53c2670b9097f239d00d5",
+    "source": "target/iteration/task37-wasm-simd-memory-oracle.cjs",
+    "source_sha256": "6e96303c8f0a216e9970bba74fd9217c2c18fd3dd1431c0bd4e4b02558303b46",
+    "result": {
+      "node": "v26.10.0",
+      "flags": [
+        "--no-sparkplug",
+        "--no-maglev",
+        "--no-turbofan",
+        "--wasm-jitless"
+      ],
+      "modules": 2,
+      "operators": 20,
+      "checks": 592,
+      "cases": 368,
+      "traps": 112
+    },
+    "qualification_limit": "Two exact shared Wast/Node modules, Memory32/Memory64 each with two resources; all twenty added forms and every lane. 368 cases include 112 bounds/overflow traps; 224 post-trap memory observations bring checks to 592. Hex strings and BigInt preserve every bit. This does not qualify shared memory/threads, installed JS API/embedding adapters or full suite closure.",
+    "cases": {
+      "path": "target/iteration/task37-wasm-simd-memory-oracle-cases.json",
+      "sha256": "8c1b4fa5124baadca87f02fa7a4f23a56d7d418caf9313d60d151e07a19ed4bb"
+    },
+    "fixture_generator": {
+      "path": "target/iteration/task37-wasm-simd-memory-controls.py",
+      "sha256": "8778420499c4ccc388b11c85e725f7604a1966012e2d5f1ed0cc3d341f67f915"
+    },
+    "module_inputs": {
+      "target/iteration/task37-wasm-simd-memory-oracle32.wat": "45d85537a2a0559ce250d6c86d29ffa45ff40bd1858b96a4779d8d6b03273cf4",
+      "target/iteration/task37-wasm-simd-memory-oracle32.wasm": "d04f4d8f06cd529c0ee8b41c1cbec2fcc46a56e2bccf5fdb6b69c893e0297091",
+      "target/iteration/task37-wasm-simd-memory-oracle64.wat": "fb9abbab90af8a905457dc6b21e5b86865ab583fba1b0577b02c6a2a28511868",
+      "target/iteration/task37-wasm-simd-memory-oracle64.wasm": "6ddfd221cd7840e507fbe3581332048fa1ad0ff4d97855b771354b2ee4e665c9"
+    }
+  },
+  "specification": {
+    "vector_execution": "https://webassembly.github.io/spec/core/exec/instructions.html",
+    "vector_numerics": "https://webassembly.github.io/spec/core/exec/numerics.html"
+  },
+  "reports": {
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-memory-before.json",
+      "sha256": "9517899998260256f6b0ef8a747014bcccac7a167b9a0e4bf12e4d0f86ef7689",
+      "binary_sha256": "19ec0c2701bf43d4ab88fb1e3d9e1e86a823deb77bd8eeeb750c7311ce062967",
+      "command_source": "provenance.command in report"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-memory-after.json",
+      "sha256": "9708dc4d535c78427f69b61617bb48409c525e8cc340cf57731e773b9862c3d7",
+      "binary_sha256": "5a783e39cd4e59db40bb8c6d62bbd11cca0e4806e351579f0d0dce49553d556b",
+      "command_source": "provenance.command in report"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-memory-controls.json",
+      "sha256": "5ce33cbb2d4cfe9c110db60adc7f11a421a0caedc3c123752dab21eab4f3fc32",
+      "binary_sha256": "5a783e39cd4e59db40bb8c6d62bbd11cca0e4806e351579f0d0dce49553d556b",
+      "command_source": "provenance.command in report"
+    }
+  },
+  "frozen_runner": {
+    "path": "target/iteration/task37-wasm-simd-memory-runner",
+    "sha256": "5a783e39cd4e59db40bb8c6d62bbd11cca0e4806e351579f0d0dce49553d556b"
+  },
+  "logs": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-simd-memory-runtime.log",
+      "sha256": "fbf529961ebc3410bfd0720c1296b5bb257b0e1a69b5f3289aa24cefaa625dd4"
+    },
+    "bytecode": {
+      "path": "target/iteration/task37-wasm-simd-memory-bytecode.log",
+      "sha256": "ae1668c683839b62e11b91e116849156d0aaa8d8955d57bd366ae5e65b009e85"
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-simd-memory-frontend.log",
+      "sha256": "07c5bba7c7467f91585dafcf87bd8c6e62eded663e026d8da8496ad77b05a109"
+    },
+    "profile-check": {
+      "path": "target/iteration/task37-wasm-simd-memory-profile-check.log",
+      "sha256": "a923af5b7affe3753ff1247c912e3532d6379c2e0e7b89bdd69d383c6f72ee24"
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-simd-memory-build.log",
+      "sha256": "1b4f999da25528d8abc527fc52268089aa9b865fa368ab1038ac31d304cf4e81"
+    },
+    "compare": {
+      "path": "target/iteration/task37-wasm-simd-memory-compare.log",
+      "sha256": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+    },
+    "before": {
+      "path": "target/iteration/task37-wasm-simd-memory-before.log",
+      "sha256": "d77fcd384b4cd356101332b3b16f4c3b099ef723de84d7f45d1c0744844adffc"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-simd-memory-after.log",
+      "sha256": "c46f159bf6d9ba4c429602c858a98b455c9784daa0a6d70f942f586bb1689bce"
+    },
+    "controls": {
+      "path": "target/iteration/task37-wasm-simd-memory-controls.log",
+      "sha256": "3526a3e61dec3fac8f6603a93b0e7e4c761f1d3cb4577adcb8dfa8211b7789e0"
+    },
+    "oracle": {
+      "path": "target/iteration/task37-wasm-simd-memory-oracle.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "remaining": "Relaxed SIMD; concrete typed/GC/non-null references, shared resources/threads and remaining proposals; JS/Wasm adapters and embedding reentry. Full three-suite gates, implemented Node inventory/migration, production cutover and cleanup remain open. Stage A is open; Stage B has not started.",
+  "profile_limit": "Feature builds pass; profile execution attribution remains task68 work. No speed or RSS claim."
+}

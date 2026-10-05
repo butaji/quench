@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "canonical_process_module_root",
+  "timestamp_utc": "2026-10-05T02:21:18.862752+00:00",
+  "git_head": "ca16bc7aabe13ad84b7a46ab54f15e5435c90d8d",
+  "sources": {
+    "crates/quench-node/src/host.rs": "fe7c33afc392f44374a5471f124f2a99081da942fc2110eee036aea26bbec84b",
+    "crates/quench-node/src/modules/console.rs": "2308d6bfec3e2b8786c4bc4dfa5bf371f96f17f271cdfb4c86763e7a1d3caf62",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "a9af8104f029c4c056daa9a7e5e5967136a1edd3d07d39128179eae428baf5af",
+    "crates/quench-node/src/modules/process/shared_vm_tests.rs": "29dd843958ac07c2156f628a2b04fe7407d60b3512c059e3fe45099bf0edaf41"
+  },
+  "internal_check": {
+    "command": "cargo test -p quench-node --lib canonical_process_root_survives -- --nocapture",
+    "passed": 1,
+    "failed": 0,
+    "obligations": [
+      "Canonical module root survives global replacement and collection.",
+      "Fresh VM execution invalidates the previous root and installs a new canonical process identity.",
+      "Legacy consumers use the explicit legacy variant, without a parallel process cache."
+    ]
+  },
+  "node_control": {
+    "node": {
+      "exit": 0,
+      "stdout": "{\"detached\":true,\"identity\":true,\"replacement\":true,\"name\":\"uptime\",\"length\":0,\"writable\":true,\"enumerable\":true,\"configurable\":true}\n",
+      "stderr": ""
+    },
+    "quench": {
+      "exit": 0,
+      "stdout": "{\"detached\":true,\"identity\":true,\"replacement\":true,\"name\":\"uptime\",\"length\":0,\"writable\":true,\"enumerable\":true,\"configurable\":true}\n",
+      "stderr": ""
+    }
+  },
+  "upstream_contract": "tests/node/lib/internal/modules/helpers.js:406-410 resolves builtin modules through the canonical require path rather than a mutable global.",
+  "scope": {
+    "full_suites_run": false,
+    "test262_stages_affected": [],
+    "reason": "No JavaScript semantics or runtime implementation changed; host process-root ownership and legacy cache projection only.",
+    "implemented_inventory_changed": false
+  },
+  "limits": [
+    "Production Node still uses legacy.",
+    "Shared process has only uptime; CommonJS and builtin module aliases have not migrated.",
+    "This is an internal ownership qualification and a guest control, not a new upstream suite pass."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task43-process-module-root/control.js": "281b227edb317ca4e0666b8a8599a28d24f41900b138aed6a87a0c7aa7161a47",
+    "target/iteration/task43-process-module-root/control-results.json": "2374cef2132c90d382f020a842ac82406e500ca52b2eef61ed34a065b1fa2565",
+    "target/iteration/task43-process-module-root/internal-test.log": "b55a6314a7956663d780bf674a821cf839e905573a1324a2ff7b3b6674afc6cb"
+  }
+}

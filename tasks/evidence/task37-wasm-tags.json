@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "source_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "dirty_worktree": true,
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm.rs": "a393ed3ae94d09b57e14d19fe32ba725f455d61e584b8a03ec5269b6e17096fd",
+    "crates/quench-runtime-next/src/wasm/tag.rs": "5f34a06686b63f8e6edac51e07df55dc12fe8e3382e85b0ceb87ee4325087191",
+    "crates/quench-runtime-next/src/lib.rs": "76d6cd29f18e21b495d3cfe73af683956dfe5e4f5e1b5e62568be9462b216462",
+    "crates/quench-runtime-next/src/heap.rs": "03532d52997fca5808a69f1ea536375965da4ee19435205bc990bb316b808574",
+    "crates/quench-runtime-next/src/heap/cell.rs": "cfbdd23b0bad9563a114180d56ee4eb220ab8da6056e7322b1d890b98348d9d4",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "a972c735c459a93ec8f71ba5c2efb2f589c6ca0e50f58386e8df352010348f56",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "7ca8c0e92e0f67b3eb8ddd1f16f9964cd6a59eaae78b6ca4d53474cfc96cbd65",
+    "crates/quench-runtime-next/src/api.rs": "1df785781a6ffeeedb2c6dcb9c82094c53ded68c8591b78e3c5b28559613c311",
+    "crates/quench-runtime-next/src/vm/json.rs": "e617d7bc23f3c4fc7e390f38fa0f626210654f7c51f5428d4e71e20cf5aae9d9",
+    "crates/quench-wasm/src/shared.rs": "36511ec4a07539013019918df97c2bb41dabfaf89ed3f137d30370205127d540",
+    "crates/quench-wasm/src/shared_wast.rs": "ea2dc42f2dee43ddace4ce5ba18a396adf68757392506f07028bd2b8ded5471b"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_dirty": false,
+  "residual_format": 66,
+  "obligation": "Allocate exception tags and link imports/reexports using original heap identity and exact closed declaration equality, in the single shared VM.",
+  "representation": "WasmTag owns source type index and optional import name. The validated original declaration graph remains shared. A live WasmTag heap cell owns identity and original graph/type; equal types allocate distinct identities per definition and instantiation. Imported bindings retain the original cell. Mixed declaration lookup order derives from the resource/name projection. Tag slots precede the final imported-function suffix, preserving ref.func base derivation without new offset metadata. Heap tracing/profiling derive a new non-edge-bearing cell kind. No opcode, residual format, payload execution, side registry or second executor is added.",
+  "scope": "Eight matching pinned files: tags, imports, linking, exports, globals, starts, indirect calls and exact-function imports. Thirteen focused directives and thirteen Node observations cover shifted foreign types, mixed tag/function/global/memory/table imports, direct/indirect calls, copied identity and rejected links before start effects. Rust internal controls additionally prove distinct same-type identities and root release/retention through GC. No full suites, expectations, skips or inventory changes.",
+  "sources": [
+    "https://webassembly.github.io/spec/core/exec/modules.html",
+    "https://webassembly.github.io/spec/core/valid/types.html",
+    "https://webassembly.github.io/spec/core/valid/matching.html"
+  ],
+  "affected": {
+    "before": {
+      "path": "target/iteration/task37-wasm-tags-before.json",
+      "sha256": "8c73a149a0498f9a369839e353241475047256aa04b863dd86f5ac7b4d243f32",
+      "binary_sha256": "428b615704e71c5429c9753abc43eabdf99b877b28bc4b71d3d83e0076b410ca"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-tags-after.json",
+      "sha256": "0ef7d6d36ef7efa97c7a2e6934138071d1f299f18301347e1e757a887e963624",
+      "binary_sha256": "1b55a8546e91107595ad42badd6202963e22264324737ed01c2ed1754ef86671"
+    },
+    "files": 8,
+    "total": 837,
+    "before_passed": 809,
+    "passed": 837,
+    "failed": 0,
+    "gains": 28,
+    "gains_by_file": {
+      "crates/quench-wasm-test/testsuite/imports.wast": 20,
+      "crates/quench-wasm-test/testsuite/tag.wast": 8
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "controls": {
+    "before": {
+      "path": "target/iteration/task37-wasm-tags-controls-before.json",
+      "sha256": "ab75ca2cf3b2a244d0bfbe76df989c3f5c28f339d2f4ca8dd53cea996b5cba2b",
+      "binary_sha256": "428b615704e71c5429c9753abc43eabdf99b877b28bc4b71d3d83e0076b410ca"
+    },
+    "after": {
+      "path": "target/iteration/task37-wasm-tags-controls-after.json",
+      "sha256": "5c8952e25807896e53a0ac82cbdeff6a7de9ed17010410c924093a621a529bc1",
+      "binary_sha256": "1b55a8546e91107595ad42badd6202963e22264324737ed01c2ed1754ef86671"
+    },
+    "files": 1,
+    "total": 13,
+    "before_passed": 0,
+    "passed": 13,
+    "failed": 0,
+    "gains": 13,
+    "gains_by_file": {
+      "target/iteration/task37-wasm-tags-controls.wast": 13
+    },
+    "regressions": 0,
+    "same_ids_and_input_hashes": true,
+    "all_workers_completed": true
+  },
+  "runner": {
+    "path": "target/iteration/task37-wasm-tags-runner",
+    "sha256": "1b55a8546e91107595ad42badd6202963e22264324737ed01c2ed1754ef86671"
+  },
+  "checks": {
+    "runtime": {
+      "path": "target/iteration/task37-wasm-tags-runtime.log",
+      "sha256": "3a0654a074276c434379c881fc02da89566bddd337ba0315b773eca0d27556e0",
+      "passed": 34
+    },
+    "heap": {
+      "path": "target/iteration/task37-wasm-tags-heap.log",
+      "sha256": "edc3509722ae434b2e2abed636b6cac41eedac09c808da52a78b6a745b07736a",
+      "passed": 21
+    },
+    "frontend": {
+      "path": "target/iteration/task37-wasm-tags-frontend.log",
+      "sha256": "13e28b7adad07c102b4fbe7447d0eb10f2c1fdff1242077d4cbb43210b9039c0",
+      "passed": 32
+    },
+    "check": {
+      "path": "target/iteration/task37-wasm-tags-check.log",
+      "sha256": "ce3016ade8f2daaa9e43fe7d1b69e4a101f46dbe43acd594e965cafc087c0266",
+      "passed": null
+    },
+    "build": {
+      "path": "target/iteration/task37-wasm-tags-build.log",
+      "sha256": "9b1d8c83edd8975d6c6f82de1eef26174f95bc2f6d4556c6d5b339bae0e866b2",
+      "passed": null
+    }
+  },
+  "oracle": {
+    "path": "target/iteration/task37-wasm-tags-oracle.json",
+    "sha256": "cac589af9eb53273568f16f7546c72caea3cb1e1ec95e7419b6b6ed8033305b8",
+    "node": "v26.10.0",
+    "flags": [
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors"
+    ],
+    "matched": 13,
+    "command": [
+      "node",
+      "--no-sparkplug",
+      "--no-maglev",
+      "--no-turbofan",
+      "--wasm-jitless",
+      "--experimental-wasm-custom-descriptors",
+      "target/iteration/task37-wasm-tags-oracle.cjs"
+    ],
+    "input_hashes": {
+      "target/iteration/task37-wasm-tags-a.wat": "6e8746c5cbf60d4af5b01888a406c64dbda972df3f9e6d5c249f272b476935ee",
+      "target/iteration/task37-wasm-tags-b.wat": "62784d7a62ad116e4b454b1b0546f98e069cebcfff4124e97a19556394b48d97",
+      "target/iteration/task37-wasm-tags-bad-group.wat": "424a9caddf605362bed0c7eab11ee8db408b46be5a11c33e507dc2add8fe5967",
+      "target/iteration/task37-wasm-tags-bad-kind.wat": "02cf1392c8f356d83dcd39bde602ff909479506135671988df2dd909e3ebc7c7",
+      "target/iteration/task37-wasm-tags-bad-param.wat": "8861a6e1c584615ddc60562ed6244ea39ee09467e843ac278c1569dfbd76990f",
+      "target/iteration/task37-wasm-tags-bad-start.wat": "ebcab4622042589d17a6b0e12e7ce5cfd63547f801ad6f9fb10cc0b3e70cd89f",
+      "target/iteration/task37-wasm-tags-c.wat": "174b71caa5a8f0c310e38908a617d9e029a9e9f256bd27aa30e5119a2b23c81f",
+      "target/iteration/task37-wasm-tags-a.wasm": "6d9ab86e9b459df369bcaf7f50de453d5595cd63b305e5af562118b80c4995f0",
+      "target/iteration/task37-wasm-tags-b.wasm": "33ebad13fe5a94607d988b85c0abb0a99d1bf61903ab5951d3e8269816a28838",
+      "target/iteration/task37-wasm-tags-bad-group.wasm": "542214b001d186ca66a65e074c8a3e85f3e6f5e886e2881321feda7366d379dd",
+      "target/iteration/task37-wasm-tags-bad-kind.wasm": "1918cb20a4b19e752ab8348021c862bc99b1f7216acda706716aa5297da1740e",
+      "target/iteration/task37-wasm-tags-bad-param.wasm": "ceba753e190a8746c3df527f90f90d899397e39e2d3d7824965bf107329a5008",
+      "target/iteration/task37-wasm-tags-bad-start.wasm": "753ba9d39fa238054c8634f5e7d37c5f27824a2654a65c435c19a333974a42a2",
+      "target/iteration/task37-wasm-tags-c.wasm": "f235e1677ab8a6240cb331689f233ab1ef7cb8118cdf3bfd91480a07c376f981",
+      "target/iteration/task37-wasm-tags-oracle.cjs": "d11b261ccc10e05efca8bb3caff19843329b211adb42af1bc5b7008607f09dd6"
+    }
+  },
+  "internal_obligation": "One Rust embedding/root-lifecycle regression exercises tag leases across importer/reexporter destruction, independent instances, final collection, stale handles without leaked roots, and untrusted source declarations before effects. These internal observations are unavailable to pinned Wast directives; ordinary tag conformance stays in the suite.",
+  "limits": "This qualification covers tag declarations, allocation, imports and exports. Throw/catch/try_table/exception references and JS embedding remain unsupported; it is not exception-execution qualification. Shared tags/types remain unsupported. Complete pinned Wasm and frozen implemented Node inventories, production cutover and Stage A closure remain open."
+}
