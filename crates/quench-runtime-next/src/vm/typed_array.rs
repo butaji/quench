@@ -166,6 +166,10 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, uint8_array, name, native)?;
         }
+        self.realm.intrinsics.builtin_prototypes.insert(
+            (self.realm.globals, Native::Uint8Array),
+            self.uint8_array_proto,
+        );
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
             if kind != TypedArrayKind::Uint8 {
                 self.install_typed_array_kind(program, kind, native, name)?;
@@ -957,14 +961,6 @@ impl<H: Host> Vm<H> {
         } else {
             (integer as usize).min(length)
         })
-    }
-
-    pub(super) fn construct_uint8_array_native(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        self.construct_typed_array_native(p, args, TypedArrayKind::Uint8, "Uint8Array")
     }
 
     pub(super) fn uint8_from_value(number: f64) -> u8 {

@@ -22,7 +22,11 @@ pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
         Native::BigUint64Array,
         "BigUint64Array",
     ),
-    (TypedArrayKind::Float16, Native::Float16Array, "Float16Array"),
+    (
+        TypedArrayKind::Float16,
+        Native::Float16Array,
+        "Float16Array",
+    ),
     (
         TypedArrayKind::Float32,
         Native::Float32Array,
@@ -90,6 +94,10 @@ impl<H: Host> Vm<H> {
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(typed_array_proto)));
+            self.realm
+                .intrinsics
+                .builtin_prototypes
+                .insert((global, native), prototype);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.intern_atom("prototype");
             self.set_property_attributes(
@@ -142,6 +150,10 @@ impl<H: Host> Vm<H> {
             TypedArrayKind::Float64 => self.float64_array_proto = proto,
             TypedArrayKind::Uint8 => unreachable!(),
         }
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((self.realm.globals, native), proto);
         self.set_named(program, constructor, "prototype", proto)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
