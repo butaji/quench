@@ -14,6 +14,8 @@ use rqj::{
 
 use crate::Test262Host;
 
+const TEST262_MODULE_SOURCE_SPECIFIER: &str = "<module source>";
+
 static HOST_GLOBALS: [HostGlobal; 2] = [
     HostGlobal {
         name: "$262",
@@ -69,6 +71,10 @@ impl Host for RuntimeNextHost {
         self.done = Some(text.unwrap_or_default().to_string());
     }
 
+    fn has_module_source(&self, module: &ModuleSource) -> bool {
+        module.name == TEST262_MODULE_SOURCE_SPECIFIER
+    }
+
     fn can_block(&self) -> bool {
         self.can_block
     }
@@ -78,7 +84,7 @@ impl Host for RuntimeNextHost {
         referrer: &str,
         specifier: &str,
     ) -> Result<Option<ModuleSource>, String> {
-        if specifier == "<module source>" {
+        if specifier == TEST262_MODULE_SOURCE_SPECIFIER {
             return Ok(Some(ModuleSource {
                 name: specifier.to_string(),
                 source: String::new(),
