@@ -418,7 +418,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto)
     }
 
-    fn realm_function_prototype(&self, realm: Value) -> Value {
+    pub(super) fn realm_function_prototype(&self, realm: Value) -> Value {
         self.realm
             .intrinsics
             .builtin_prototypes

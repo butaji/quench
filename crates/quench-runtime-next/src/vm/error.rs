@@ -1265,7 +1265,7 @@ impl<H: Host> Vm<H> {
         let array_buffer_name = self.heap.alloc(Cell::String("ArrayBuffer".into()));
         self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
         self.set_named(program, global, "ArrayBuffer", array_buffer)?;
-        let realm_error_prototype = self.object();
+        let realm_error_prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1303,6 +1303,9 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
+        self.set_realm_builtin_named(program, realm_error_prototype, "toString", Native::ErrorToString, Some(global))?;
+        self.object_data_mut(type_error_prototype).expect("realm TypeError prototype").proto = realm_error_prototype;
+        self.object_data_mut(type_error).expect("realm TypeError constructor").proto = realm_error_constructor;
         for (name, native) in [
             ("AggregateError", Native::AggregateError),
             ("SuppressedError", Native::SuppressedError),
@@ -1337,6 +1340,7 @@ impl<H: Host> Vm<H> {
             self.set_named(program, global, name, intrinsic)?;
         }
         self.install_realm_default_bindings(global)?;
+        self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
         self.install_intl_for_realm(program, global, object_prototype)?;
         let realm = self.object();

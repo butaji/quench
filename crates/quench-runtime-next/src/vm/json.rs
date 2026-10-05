@@ -386,6 +386,11 @@ fn hex_digit(unit: u16) -> Option<u16> {
 }
 
 impl<H: Host> Vm<H> {
+    fn json_object(&mut self) -> Value {
+        let prototype = self.realm_object_prototype(self.realm.globals);
+        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+    }
+
     pub(super) fn json_raw_json(
         &mut self,
         p: &ResidualProgram,
@@ -416,7 +421,7 @@ impl<H: Host> Vm<H> {
         ) {
             return self.syntax_error_result(p, "rawJSON text must be a JSON primitive");
         }
-        let object = self.object();
+        let object = self.json_object();
         let object_root = self.heap.root(object);
         if let Some(data) = self.object_data_mut(object) {
             data.proto = Value::NULL;
@@ -465,7 +470,7 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         let reviver_root = self.heap.root(reviver);
-        let holder = self.object();
+        let holder = self.json_object();
         let holder_root = self.heap.root(holder);
         let empty = self.intern_atom("");
         let result = (|| {
@@ -500,12 +505,12 @@ impl<H: Host> Vm<H> {
                     .map(|value| self.parse_json_value(value))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
+                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements: Rc::new(values),
                 })
             }
             JsonValue::Object(values) => {
-                let object = self.object();
+                let object = self.json_object();
                 for (key, value) in values {
                     let atom = self.intern_js_atom(key);
                     let value = self.parse_json_value(value)?;
@@ -595,7 +600,7 @@ impl<H: Host> Vm<H> {
             let key_value = self.heap.alloc(Cell::String(key.clone()));
             let key_handle = self.heap.root(key_value);
             key_root = Some(key_handle);
-            let context = self.object();
+            let context = self.json_object();
             let context_handle = self.heap.root(context);
             context_root = Some(context_handle);
             if let Some(source) = source_text {
@@ -674,7 +679,7 @@ impl<H: Host> Vm<H> {
             gap,
             ancestors: Vec::new(),
         };
-        let holder = self.object();
+        let holder = self.json_object();
         let holder_root = self.heap.root(holder);
         let empty = self.intern_atom("");
         self.set_property(holder, empty, value)?;
