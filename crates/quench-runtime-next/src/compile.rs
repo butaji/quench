@@ -2356,7 +2356,7 @@ impl<'a> Compiler<'a> {
             global_function_atoms: Vec::new(),
             global_annex_b_var_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
-            eval_sites: function.eval_sites,
+            binding_sites: function.binding_sites,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

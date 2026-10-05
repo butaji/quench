@@ -191,7 +191,7 @@ impl Engine {
                 global_function_atoms: vec![],
                 global_annex_b_var_atoms: vec![],
                 global_immutable_atoms: vec![],
-                eval_sites: vec![],
+                binding_sites: vec![],
                 code: lowering.code,
                 wide: lowering.wide,
                 registers: lowering.registers,

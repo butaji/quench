@@ -122,7 +122,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            eval_sites: vec![],
+            binding_sites: vec![],
             constructible: true,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
