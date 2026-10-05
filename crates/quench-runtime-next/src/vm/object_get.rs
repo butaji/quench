@@ -336,12 +336,9 @@ impl<H: Host> Vm<H> {
             && self.atom_name(atom) == "caller"
             && matches!(self.heap.get(object), Some(Cell::Function { .. }))
             && self.own_property(object, atom).is_none()
+            && !self.function_caller_is_restricted(object)
         {
-            return if object == self.function_proto || self.function_caller_is_restricted(object) {
-                Err(self.type_error(p, "restricted function caller access".into()))
-            } else {
-                Ok(Value::UNDEFINED)
-            };
+            return Ok(self.function_caller(object));
         }
         let private_target = object;
         let mut object = object;

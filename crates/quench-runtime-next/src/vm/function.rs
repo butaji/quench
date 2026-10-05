@@ -14,24 +14,63 @@ impl<H: Host> Vm<H> {
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.get(function) {
             Some(Cell::Function {
-                kind: FunctionKind::Native(_),
-                ..
-            }) => true,
-            Some(Cell::Function {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program.functions.get(*id as usize).is_some_and(|function| {
-                    function.strict
-                        || function.is_async
-                        || function.is_generator
-                        || function.name.is_some_and(|name| {
-                            (name as usize) < program.atoms.len()
-                                && program.atoms[name as usize].as_bytes() == b"\0rqj:arrow"
-                        })
+                    function.strict || !function.constructible || function.is_class_constructor
                 })
             }),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(_),
+                ..
+            }) => true,
             _ => false,
+        }
+    }
+
+    pub(super) fn function_caller(&self, function: Value) -> Value {
+        let Some(mut index) = self
+            .frames
+            .iter()
+            .rposition(|frame| frame.context.callable() == Some(function))
+        else {
+            return Value::NULL;
+        };
+        loop {
+            if self.realm.promise.active_native.iter().any(|activation| {
+                activation.frame_depth == index
+                    && activation.boundary == super::activation::NativeCallBoundary::Opaque
+            }) {
+                return Value::NULL;
+            }
+            let Some(parent) = index.checked_sub(1) else {
+                return Value::NULL;
+            };
+            index = parent;
+            match self.frames[index].context {
+                CallContext::DirectEval(_) => continue,
+                CallContext::Internal | CallContext::IndirectEval(_) => return Value::NULL,
+                CallContext::Function(caller) => {
+                    let Some(Cell::Function {
+                        kind:
+                            FunctionKind::User(program_id, id)
+                            | FunctionKind::NumericUser(program_id, id),
+                        realm,
+                        ..
+                    }) = self.heap.get(caller)
+                    else {
+                        return Value::NULL;
+                    };
+                    let visible = *realm == self.realm.globals
+                        && self.programs.get(*program_id).is_some_and(|program| {
+                            program.functions.get(*id as usize).is_some_and(|metadata| {
+                                !metadata.strict && !metadata.is_async && !metadata.is_generator
+                            })
+                        });
+                    return if visible { caller } else { Value::NULL };
+                }
+            }
         }
     }
 

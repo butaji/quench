@@ -125,11 +125,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self
-            .realm
-            .promise
-            .active_native
-            .last()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise async resume without callback".into()))?;
         let resume = self
             .realm

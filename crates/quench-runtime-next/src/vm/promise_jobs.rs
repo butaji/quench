@@ -375,9 +375,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self.realm.promise
-            .active_native
-            .last()
+        let job = self.active_native_callable()
             .ok_or_else(|| JsError("Promise aggregate job without callback".into()))?;
         let aggregate_job = self.realm.promise
             .aggregate_jobs
@@ -517,9 +515,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self.realm.promise
-            .active_native
-            .last()
+        let job = self.active_native_callable()
             .ok_or_else(|| JsError("Promise job without callback".into()))?;
         let reaction = self.realm.promise
             .jobs
@@ -575,9 +571,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = *self.realm.promise
-            .active_native
-            .last()
+        let job = self.active_native_callable()
             .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
         let thenable = self.realm.promise
             .thenable_jobs
@@ -597,9 +591,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let job = *self.realm.promise
-            .active_native
-            .last()
+        let job = self.active_native_callable()
             .ok_or_else(|| JsError("Promise finally job without callback".into()))?;
         let reaction = self.realm.promise
             .finally_jobs
@@ -632,9 +624,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         cleanup_value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self.realm.promise
-            .active_native
-            .last()
+        let job = self.active_native_callable()
             .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
         let continuation = self.realm.promise
             .finally_continuation_jobs
