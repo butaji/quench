@@ -99,6 +99,7 @@ impl<H: Host> Vm<H> {
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
             context: CallContext::Internal,
+            original_arguments: vec![],
             program: self.active_program,
             function: 0,
             pc: 0,
@@ -127,7 +128,7 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(elements),
             });
         }
-        frame.context = context;
+        self.initialize_frame_invocation(&mut frame, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
