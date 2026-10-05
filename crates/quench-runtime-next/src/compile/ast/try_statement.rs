@@ -1,6 +1,16 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn push_finally_context(&mut self, return_atom: Atom) {
+        self.finally_contexts.push(FinallyContext {
+            control_depth: self.controls.len(),
+            iterator_depth: self.iterator_closures.len(),
+            return_atom,
+            return_edges: vec![],
+            abrupt_edges: vec![],
+        });
+    }
+
     pub(super) fn try_statement(&mut self, item: &TryStatement<'_>) {
         if let Some(finalizer) = &item.finalizer {
             if let Some(handler) = &item.handler {
@@ -52,11 +62,7 @@ impl FunctionCompiler<'_, '_> {
         self.clear_statement_completion();
         let error_atom = self.hidden_local("\0rqj:finally-error");
         let return_atom = self.hidden_local("\0rqj:finally-return");
-        self.finally_contexts.push(FinallyContext {
-            return_atom,
-            return_edges: vec![],
-            abrupt_edges: vec![],
-        });
+        self.push_finally_context(return_atom);
         let start = self.code.len() as u32;
         self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&item.block.body);
@@ -82,7 +88,9 @@ impl FunctionCompiler<'_, '_> {
         self.iterator_close_ranges
             .push((return_target, self.code.len() as u32));
         self.patch_edges(&context.return_edges, return_target);
-        self.emit_abrupt_paths(finalizer, &context);
+        self.emit_abrupt_paths(&context, finalizer.span, |this| {
+            this.scoped_finalizer_statements(&finalizer.body)
+        });
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         let error_slot = self.local_slot(error_atom);
@@ -115,11 +123,7 @@ impl FunctionCompiler<'_, '_> {
         let (catch_slot, binding) = self.catch_slot(handler);
         let error_atom = self.hidden_local("\0rqj:finally-error");
         let return_atom = self.hidden_local("\0rqj:finally-return");
-        self.finally_contexts.push(FinallyContext {
-            return_atom,
-            return_edges: vec![],
-            abrupt_edges: vec![],
-        });
+        self.push_finally_context(return_atom);
         let start = self.code.len() as u32;
         self.iterator_close_exclusions.push(vec![]);
         self.scoped_statements(&item.block.body);
@@ -183,7 +187,9 @@ impl FunctionCompiler<'_, '_> {
         self.patch_to(body_exit, finalizer_target);
         self.patch_to(catch_exit, finalizer_target);
         self.patch_edges(&context.return_edges, return_target);
-        self.emit_abrupt_paths(finalizer, &context);
+        self.emit_abrupt_paths(&context, finalizer.span, |this| {
+            this.scoped_finalizer_statements(&finalizer.body)
+        });
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         let error_slot = self.local_slot(error_atom);
@@ -292,7 +298,18 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    fn emit_abrupt_paths(&mut self, finalizer: &BlockStatement<'_>, context: &FinallyContext) {
+    pub(super) fn abrupt_context_index(&self, control: usize) -> Option<usize> {
+        self.finally_contexts
+            .iter()
+            .rposition(|context| control < context.control_depth)
+    }
+
+    pub(super) fn emit_abrupt_paths(
+        &mut self,
+        context: &FinallyContext,
+        span: Span,
+        mut cleanup: impl FnMut(&mut Self),
+    ) {
         let mut paths = Vec::new();
         for abrupt in &context.abrupt_edges {
             if let Some((_, _, _, path, _)) =
@@ -304,7 +321,11 @@ impl FunctionCompiler<'_, '_> {
                 continue;
             }
             let path = self.code.len() as u32;
-            self.scoped_finalizer_statements(&finalizer.body);
+            cleanup(self);
+            let iterator_depth = self
+                .abrupt_context_index(abrupt.control)
+                .map_or(0, |index| self.finally_contexts[index].iterator_depth);
+            self.close_iterators_leaving(abrupt.control, iterator_depth);
             let tail = self.emit(Op::Jump, 0, 0, 0, 0);
             paths.push((
                 abrupt.control,
@@ -316,7 +337,16 @@ impl FunctionCompiler<'_, '_> {
             self.patch_to(abrupt.edge, path);
         }
         for (control, continue_edge, destination, _, tail) in paths {
-            if let Some(target) = destination.get() {
+            if let Some(context_index) = self.abrupt_context_index(control) {
+                self.finally_contexts[context_index]
+                    .abrupt_edges
+                    .push(FinallyAbrupt {
+                        edge: tail,
+                        control,
+                        destination,
+                        continue_edge,
+                    });
+            } else if let Some(target) = destination.get() {
                 self.patch_to(tail, target);
             } else if let Some(control) = self.controls.get_mut(control) {
                 if continue_edge {
@@ -325,10 +355,8 @@ impl FunctionCompiler<'_, '_> {
                     control.breaks.push(tail);
                 }
             } else {
-                self.owner.reject(
-                    finalizer.span,
-                    "finally completion outlived its control target",
-                );
+                self.owner
+                    .reject(span, "finally completion outlived its control target");
             }
         }
     }

@@ -1,0 +1,315 @@
+{
+  "schema": 1,
+  "tasks": [
+    "17",
+    "20"
+  ],
+  "baseline_source_head": "8abed68540d5704fc28dfce162222556ee2cd22b",
+  "qualification": "Isolated resource-scope return/finalizer lowering, excluding unqualified Node, Wasm and other main-tree work.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/compile/ast.rs": "8227062754b0072f0ea96247e1e9c508d2c07788a1084cc3a5c84340e33cb464",
+    "crates/quench-runtime-next/src/compile/ast/disposal.rs": "ba7bc68a35b627e9f24274c7c27eac090ee94fae5562a5b1cd9fcd002f4da0e9",
+    "crates/quench-runtime-next/src/compile/ast/statement.rs": "c666e4d1513f6fae613c619b3eb7a192e2fd2edb4f47e07a3928c437f3637171",
+    "crates/quench-runtime-next/src/compile/ast/try_statement.rs": "5c16915f3107569371e6f806170afd5096dda2f5acd8cd7cd9e804a26e12f000"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Resource scopes use the existing FinallyContext and Handler return target/slot. One context constructor captures lexical control and iterator boundaries; explicit and implicit finalizers share abrupt-exit path emission.",
+    "transitions": "Store the return value, dispose the resource scope, then resume the enclosing return/finalizer. Break/continue select only enclosing scopes they actually leave; nested finalizers propagate the original destination. Generator return uses the existing handler metadata.",
+    "invariants": "LIFO disposal; preserve returns and error identity/suppression; resource disposal precedes closing enclosing iterators; internal loop control does not leave outer resource scopes; uninitialized cleanup stacks cause neither disposal nor Await.",
+    "scope": "Function/arrow bodies, nested blocks and classic for resource initializers. No new runtime-side map, serializer layout, representation ABI, guest shim, fixture branch or duplicated semantic unit test."
+  },
+  "contract": "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-disposeresources",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/interpreter/bytecode-generator.cc": "3c081422abdeaa3d48784fe5f1e37cd79d7b7297d470daa8ebc326c6a484f278"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task17-return-disposal/build.log",
+    "before_binary_sha256": "f14acf3cdc261170f98fcb4b040292757577dd4c651d0259d4f7b8bb9d71f122",
+    "after_binary_sha256": "455a6e126293219108516818728be77dcf7dcd02cfa0cec6141b27c50c9ef5bb"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 5426,
+    "passed_before": 5426,
+    "passed_after": 5426,
+    "gained": [],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "arrows",
+        "total": 766,
+        "passed_before": 766,
+        "passed_after": 766,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-arrows.json": "d8601675fdee20c9102ed0aa630a91561e0871a7a2a1002671d7f0ca94adf4d0",
+          "target/iteration/task17-return-disposal/after-arrows.json": "30aa53a7aea10c266e008664141ceeb823b9eda6aae1f60efb1f93dc3320b3ce",
+          "target/iteration/task17-return-disposal/compare-arrows.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "async-stack",
+        "total": 104,
+        "passed_before": 104,
+        "passed_after": 104,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-async-stack.json": "5cb8f4637eb90c0316690c0f4d8b496bced77d39317e8537d4cafb96627396f1",
+          "target/iteration/task17-return-disposal/after-async-stack.json": "7e0c9b7526e5f404060ccca3c609899addc6678ef3d860c6faf648754fd2e409",
+          "target/iteration/task17-return-disposal/compare-async-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "await-using",
+        "total": 100,
+        "passed_before": 100,
+        "passed_after": 100,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-await-using.json": "892879dbe7a5f4b2479ec7e0ba114066a084a5746fde355e37d8c8cad98e4eb2",
+          "target/iteration/task17-return-disposal/after-await-using.json": "2579ceed31bb115e3b3fb4d1ac3835656c62a05f25a80b39dcaa898715f3f5d9",
+          "target/iteration/task17-return-disposal/compare-await-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "break",
+        "total": 20,
+        "passed_before": 20,
+        "passed_after": 20,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-break.json": "e818f9f7ef9293ab163cc4f2d3a5a36bd1547cfd2be9d855ca209c1bd9bc1d03",
+          "target/iteration/task17-return-disposal/after-break.json": "14d89f1e7a8573a50d0551958158fed704256039ca1d02a2d0ca60ffbcc6af42",
+          "target/iteration/task17-return-disposal/compare-break.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "continue",
+        "total": 24,
+        "passed_before": 24,
+        "passed_after": 24,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-continue.json": "748fdde25ddaffee4d2a1c1c1470b8f3f9130490474b1460b6d5fb4de5a786b0",
+          "target/iteration/task17-return-disposal/after-continue.json": "53de801faa90119c91e526239109deb4703a4a3ee7d6761e9213bebfe3160428",
+          "target/iteration/task17-return-disposal/compare-continue.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "do-while",
+        "total": 36,
+        "passed_before": 36,
+        "passed_after": 36,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-do-while.json": "6816ebe598b52e66ac5456f7a0fa6a37d3f15f7d36c4c8de38916e16f5e6e1c7",
+          "target/iteration/task17-return-disposal/after-do-while.json": "afc918093ea809b7c14ccf4d3f23004b47f4344405f95be7be29b70515022fc7",
+          "target/iteration/task17-return-disposal/compare-do-while.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "for-await",
+        "total": 1234,
+        "passed_before": 1234,
+        "passed_after": 1234,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-for-await.json": "399eecf177ddeafe8b77adc83b56a478f09db2c4ba1dc633c80891db0936f730",
+          "target/iteration/task17-return-disposal/after-for-await.json": "a193792c8794a2c4bf2ef2867d264b5f0a19094af548c58f3fa146b17dd7436f",
+          "target/iteration/task17-return-disposal/compare-for-await.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "for-of",
+        "total": 751,
+        "passed_before": 751,
+        "passed_after": 751,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-for-of.json": "8e05283a6e384ac13102a19c346f7f41a1ba7f65bbd8b048f151fca9b61beba9",
+          "target/iteration/task17-return-disposal/after-for-of.json": "157fbc23b3db4909bb1c6c9dfe3834f51762d3b42734b2b6adaedd72ab128ae8",
+          "target/iteration/task17-return-disposal/compare-for-of.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "for",
+        "total": 385,
+        "passed_before": 385,
+        "passed_after": 385,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-for.json": "54a074ba9e7e549d4bf915a98717b2bfc8c6863e550b88aeac83cef92b785eb7",
+          "target/iteration/task17-return-disposal/after-for.json": "e026f34b3b895c30f19d51fd5c1b3f396d41887977cd6a20bde2450b1f8e6168",
+          "target/iteration/task17-return-disposal/compare-for.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "function-code",
+        "total": 217,
+        "passed_before": 217,
+        "passed_after": 217,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-function-code.json": "d9b0f3ea44b41244aaae8cef340222fb882841f73fe65eaee4683d72368bbfab",
+          "target/iteration/task17-return-disposal/after-function-code.json": "52a11f8bd192176ff06703f241e6af2164dc911177ce91c8cb94f03a53d9cf1c",
+          "target/iteration/task17-return-disposal/compare-function-code.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "generators",
+        "total": 1032,
+        "passed_before": 1032,
+        "passed_after": 1032,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-generators.json": "9cb2fad88e5eceb3035e4ece9137087e9b07ff2213df8731410b0f43e0161b90",
+          "target/iteration/task17-return-disposal/after-generators.json": "64836f288b28aa01a5b9b7633587805320ab7712c62b8bf15cd0345ed42a6e60",
+          "target/iteration/task17-return-disposal/compare-generators.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "labeled",
+        "total": 24,
+        "passed_before": 24,
+        "passed_after": 24,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-labeled.json": "67b70022f9350f141c46abde5055173be2d3f795e37a03002fb4eaa710ad0fa4",
+          "target/iteration/task17-return-disposal/after-labeled.json": "8c4a00919e0245a6d3138c723de7a52bc4a15bc467a70bd300b872a0278deb94",
+          "target/iteration/task17-return-disposal/compare-labeled.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-disposal",
+        "total": 53,
+        "passed_before": 53,
+        "passed_after": 53,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-staged-disposal.json": "b27964a2a47698ac5fe735781839775b326c859118a42560c0a43a1e64c0d446",
+          "target/iteration/task17-return-disposal/after-staged-disposal.json": "d20ee560940239d6233037508a032a3f915c9fe39d114229de394f6357f49c9b",
+          "target/iteration/task17-return-disposal/compare-staged-disposal.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "switch",
+        "total": 111,
+        "passed_before": 111,
+        "passed_after": 111,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-switch.json": "08c8ff174524783f544293dba59d51f5950391a11f56f764a3f773bfe05bb49a",
+          "target/iteration/task17-return-disposal/after-switch.json": "23df9bf923d6230e9c6713dd21ceeb6be2b8d2bf03a50698b6e1ac130aa57fc1",
+          "target/iteration/task17-return-disposal/compare-switch.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "sync-stack",
+        "total": 93,
+        "passed_before": 93,
+        "passed_after": 93,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-sync-stack.json": "3c041588747bcd591f6b40782d669e8ecaa72c523d1550cd299ba88711642911",
+          "target/iteration/task17-return-disposal/after-sync-stack.json": "85a7d58eb35bd2e4f1e1e17829da88f91508131c083b6e659ec9050dd11e84ac",
+          "target/iteration/task17-return-disposal/compare-sync-stack.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "try",
+        "total": 201,
+        "passed_before": 201,
+        "passed_after": 201,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-try.json": "4102d6eed21dc91dab2328d184582f057c0d7cadc6da3998f5c45f820a99af6e",
+          "target/iteration/task17-return-disposal/after-try.json": "e6109907d08633bb64d63bcfbd6fa58e6e99705739b7f3130fcf2a3e6f1d911b",
+          "target/iteration/task17-return-disposal/compare-try.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "using",
+        "total": 78,
+        "passed_before": 78,
+        "passed_after": 78,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-using.json": "a6f34bd260ecadc90f2299c006008e6e883c7d4ff566f1770f6b1c798b018379",
+          "target/iteration/task17-return-disposal/after-using.json": "f92c57ae66ece348de33d9547152f83ec0e080f94b71df2b42b298daaba85e28",
+          "target/iteration/task17-return-disposal/compare-using.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "while",
+        "total": 38,
+        "passed_before": 38,
+        "passed_after": 38,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-while.json": "16760073bbdf7626cc6eaf7733a2da27a32f52b64cd1b75c8c61eb2f6695779f",
+          "target/iteration/task17-return-disposal/after-while.json": "a0417b722b60afbbcc51adf32b73b737702cccb9f49e24771dc102b7b91b0d59",
+          "target/iteration/task17-return-disposal/compare-while.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "with",
+        "total": 181,
+        "passed_before": 181,
+        "passed_after": 181,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task17-return-disposal/before-with.json": "bc3ebb5d9161cbc3645fb9a359d199aa5cfcfefdf7c64a2e9802729db17dccdd",
+          "target/iteration/task17-return-disposal/after-with.json": "ba549fb0d1061c45647d4fae0616589d7d495e3fef4060112918bdde75c0f56e",
+          "target/iteration/task17-return-disposal/compare-with.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "sources": 107,
+    "observations_per_build": 214,
+    "before_matches": 102,
+    "after_matches": 208,
+    "losses": 0,
+    "node_version": "v26.10.0",
+    "report": "target/iteration/task17-return-disposal/node-controls.json",
+    "sha256": "4ebb85bda632f03889a2eade707eb45170ceedf5ead671d9668d551adfc0b534",
+    "remaining_cases": [
+      "sync-arrow-for-head-return",
+      "sync-function-for-head-return",
+      "resource-for-head-break"
+    ],
+    "remaining_difference": "Three synchronous classic-for initializer controls (six normal/generic observations): local Node invokes the same disposer twice on return/break, Quench once. Retained as an oracle difference; not forced into production semantics.",
+    "scope": "Original implicit/explicit arrow exits; ordinary sync/async returns; early exits before declarations; nested resources/finalizers; finalizer override and catch; LIFO and suppression; lexical this; internal and leaving break/continue; iterator order; generator explicit/injected return and async generator cleanup. Labeled exits dispose resources and close abandoned iterators in order."
+  },
+  "verification": "Final source bytes built and all affected reports requalified after reduction; inventories match and compare-runs --reports succeeds. The skipped-await-using regression found during development is fixed without fixture/deadline edits.",
+  "limits": [
+    "Pinned inputs, discovery, harnesses, expectations, exclusions and deadlines unchanged.",
+    "Focused scope does not establish all resource iteration forms or a complete suite claim.",
+    "Complete Test262/Wasm, implemented Node, single production VM cutover and Stage A remain open."
+  ],
+  "upstream_node_pin": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+}

@@ -61,6 +61,8 @@ struct LexicalScope {
 }
 
 pub(super) struct FinallyContext {
+    control_depth: usize,
+    iterator_depth: usize,
     return_atom: Atom,
     return_edges: Vec<usize>,
     abrupt_edges: Vec<FinallyAbrupt>,
@@ -834,19 +836,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn scoped_statements(&mut self, body: &[Statement<'_>]) {
-        let has_using = body.iter().any(|statement| {
-            matches!(
-                statement,
-                Statement::VariableDeclaration(declaration)
-                    if matches!(
-                        declaration.kind,
-                        VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
-                    )
-            )
-        });
+        let has_using = Self::has_using_declarations(body);
         let disposal_error = has_using.then(|| self.hidden_local("\0rqj:using-error"));
         if has_using {
             self.push_disposal_scope();
+            self.push_disposal_context();
         }
         self.push_lexical_scope(body);
         self.emit_hoisted(body);
@@ -855,7 +849,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let disposal_body_end = self.code.len() as u32;
         self.lexical_scopes.pop();
         if let Some(error) = disposal_error {
-            self.emit_disposal_scope_exit(disposal_body_start, disposal_body_end, error);
+            let context = self.finally_contexts.pop().expect("block disposal context");
+            self.emit_disposal_scope_exit(
+                disposal_body_start,
+                disposal_body_end,
+                error,
+                Some(context),
+            );
             self.pop_disposal_scope();
         }
     }

@@ -2,10 +2,31 @@ use super::*;
 
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn function_body_statements(&mut self, body: &[Statement<'_>]) {
+        let has_using = Self::has_using_declarations(body);
+        if has_using {
+            self.push_disposal_context();
+        }
         let start = self.code.len() as u32;
         self.statements(body);
         let end = self.code.len() as u32;
-        self.emit_function_disposal_scope_exit(start, end);
+        let context = has_using.then(|| {
+            self.finally_contexts
+                .pop()
+                .expect("function disposal context")
+        });
+        self.emit_function_disposal_scope_exit(start, end, context);
+    }
+
+    pub(super) fn has_using_declarations(body: &[Statement<'_>]) -> bool {
+        body.iter().any(|statement| {
+            matches!(statement, Statement::VariableDeclaration(declaration)
+                if matches!(declaration.kind, VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing))
+        })
+    }
+
+    pub(super) fn push_disposal_context(&mut self) {
+        let return_atom = self.hidden_local("\0rqj:using-return");
+        self.push_finally_context(return_atom);
     }
 
     pub(super) fn push_disposal_scope(&mut self) {
@@ -22,7 +43,13 @@ impl FunctionCompiler<'_, '_> {
             .is_some_and(|scope| scope.stack.is_some())
     }
 
-    pub(super) fn emit_disposal_scope_exit(&mut self, start: u32, end: u32, error: Atom) {
+    pub(super) fn emit_disposal_scope_exit(
+        &mut self,
+        start: u32,
+        end: u32,
+        error: Atom,
+        context: Option<FinallyContext>,
+    ) {
         let (stack_atom, asynchronous) = self
             .disposal_scopes
             .last()
@@ -37,6 +64,17 @@ impl FunctionCompiler<'_, '_> {
         self.emit_disposal_with_completion(stack, original_error, asynchronous);
         self.patch(skip_uninitialized_stack);
         self.emit(Op::Throw, original_error, 0, 0, 0);
+        let return_target = context.as_ref().map(|context| {
+            let target = self.code.len() as u32;
+            self.emit_disposal();
+            let value = self.load_atom(context.return_atom);
+            self.emit_return(value);
+            self.patch_edges(&context.return_edges, target);
+            target
+        });
+        if let Some(context) = &context {
+            self.emit_abrupt_paths(context, Span::default(), |this| this.emit_disposal());
+        }
         let end_target = self.code.len() as u32;
         self.patch_to(normal_exit, end_target);
         self.handlers.push(crate::bytecode::Handler {
@@ -44,8 +82,8 @@ impl FunctionCompiler<'_, '_> {
             end,
             target: exceptional_target,
             slot: self.local_slot(error),
-            return_target: None,
-            return_slot: None,
+            return_target,
+            return_slot: context.and_then(|context| self.local_slot(context.return_atom)),
             with_depth: self.with_depth,
         });
     }
@@ -75,12 +113,17 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
-    pub(crate) fn emit_function_disposal_scope_exit(&mut self, start: u32, end: u32) -> bool {
+    pub(crate) fn emit_function_disposal_scope_exit(
+        &mut self,
+        start: u32,
+        end: u32,
+        context: Option<FinallyContext>,
+    ) -> bool {
         if !self.has_disposal_stack() {
             return false;
         }
         let error = self.hidden_local("\0rqj:function-using-error");
-        self.emit_disposal_scope_exit(start, end, error);
+        self.emit_disposal_scope_exit(start, end, error, context);
         self.pop_disposal_scope();
         true
     }
@@ -115,6 +158,7 @@ impl FunctionCompiler<'_, '_> {
         };
         let asynchronous = scope.asynchronous;
         let stack = self.load_atom(atom);
+        let skip_uninitialized_stack = self.emit(Op::JumpFalse, stack, 0, 0, 0);
         let method_atom = self.owner.atom(if asynchronous {
             "disposeAsync"
         } else {
@@ -131,6 +175,7 @@ impl FunctionCompiler<'_, '_> {
             let awaited = self.reg();
             self.emit(Op::Await, awaited, result, 0, 0);
         }
+        self.patch(skip_uninitialized_stack);
     }
 
     pub(super) fn call_disposable_method(
