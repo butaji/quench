@@ -968,7 +968,11 @@ impl<H: Host> Vm<H> {
             Native::ErrorStackSetter => self.error_stack_setter(p, this, args),
             Native::ArrayBufferSpecies => Ok(this),
             Native::NumberExponential => self.number_exponential(p, this, args),
-            native if native.is_error_constructor() => self.construct_native(p, native, args),
+            native if native.is_error_constructor() => {
+                let callee = self.realm.promise.active_native.last().copied()
+                    .unwrap_or_else(|| self.native_value(native));
+                self.construct_value_with_new_target(p, callee, callee, args)
+            }
             _ => self.call_primitive_native(p, native, this, args),
         }
     }

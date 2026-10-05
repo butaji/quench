@@ -718,7 +718,7 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if matches!(
             self.heap.get(source),
-            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::Function { .. })
         ) || self
             .object_data(source)
             .is_some_and(Object::is_module_namespace)
