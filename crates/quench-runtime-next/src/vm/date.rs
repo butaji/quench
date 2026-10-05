@@ -90,6 +90,12 @@ const FIRST_DAY_OF_MONTH: f64 = 1.0;
 const DATE_DAY_FIELD_WIDTH: usize = 2;
 const DATE_TIME_FIELD_WIDTH: usize = 2;
 const DATE_YEAR_MINIMUM_WIDTH: usize = 4;
+const DATE_EXPANDED_YEAR_DIGITS: usize = 6;
+const DATE_NEGATIVE_ZERO_YEAR_TEXT: &str = "-000000";
+const DATE_MAX_DAY_OF_MONTH: f64 = 31.0;
+const DATE_FRACTION_RADIX: f64 = 10.0;
+const DATE_DEFAULT_MONTH_DAY_TEXT: &str = "01";
+const DATE_DEFAULT_SECONDS_TEXT: &str = "00";
 const DATE_MILLISECOND_DIGITS: usize = 3;
 const DATE_OFFSET_FIELD_WIDTH: usize = 2;
 const DATE_MINUTES_PER_HOUR: u32 = 60;
@@ -1106,16 +1112,25 @@ fn format_date_time_string(milliseconds: f64) -> String {
 }
 
 fn parse_date_string(text: &str) -> f64 {
-    if let Some(milliseconds) = parse_iso_date_string(text) {
+    let numeric_prefix = text
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'));
+    let (date, time, strict) = if let Some((date, time)) =
+        text.split_once(['T', 't']).filter(|_| numeric_prefix)
+    {
+        (date, Some(time), true)
+    } else if let Some((date, time)) = text.split_once(' ') {
+        (date, Some(time), false)
+    } else {
+        (text, None, false)
+    };
+    if let Some(milliseconds) = parse_numeric_date_parts(date, time, strict) {
         return milliseconds;
     }
-    if text.len() == DATE_YEAR_MINIMUM_WIDTH && text.bytes().all(|byte| byte.is_ascii_digit()) {
-        if let Ok(year) = text.parse::<i32>() {
-            return make_date_milliseconds(
-                [f64::from(year), 0.0, FIRST_DAY_OF_MONTH, 0.0, 0.0, 0.0, 0.0],
-                true,
-            );
-        }
+    // An ISO time form cannot fall back to permissive legacy parsing.
+    if strict {
+        return f64::NAN;
     }
     chrono::DateTime::parse_from_rfc3339(text)
         .ok()
@@ -1130,83 +1145,150 @@ fn parse_date_string(text: &str) -> f64 {
                 .ok()
                 .map(|date| time_clip(date.and_utc().timestamp_millis() as f64))
         })
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f")
-                .ok()
-                .and_then(|local| match Local.from_local_datetime(&local) {
-                    LocalResult::Single(date) => Some(time_clip(date.timestamp_millis() as f64)),
-                    LocalResult::Ambiguous(first, second) => Some(time_clip(
-                        first.timestamp_millis().min(second.timestamp_millis()) as f64,
-                    )),
-                    LocalResult::None => None,
-                })
-        })
         .unwrap_or(f64::NAN)
 }
 
-fn parse_iso_date_string(text: &str) -> Option<f64> {
-    let (date, time) = text.split_once('T').unwrap_or((text, ""));
+fn parse_numeric_date_parts(date: &str, time: Option<&str>, strict: bool) -> Option<f64> {
     let year_width = if date.starts_with('+') || date.starts_with('-') {
-        DATE_YEAR_MINIMUM_WIDTH + 3
+        DATE_EXPANDED_YEAR_DIGITS + 1
     } else {
         DATE_YEAR_MINIMUM_WIDTH
     };
-    let year = date.get(..year_width)?.parse::<i32>().ok()?;
-    if date.get(..year_width)? == "-000000" {
+    let year_text = date.get(..year_width)?;
+    let year = year_text.parse::<i32>().ok()?;
+    if year_text == DATE_NEGATIVE_ZERO_YEAR_TEXT {
         return None;
     }
-    let date_tail = date.get(year_width..)?.strip_prefix('-')?;
-    let (month, day) = date_tail.split_once('-')?;
-    let month = month.parse::<f64>().ok()?;
-    let day = day.parse::<f64>().ok()?;
-    if time.is_empty() {
+    let date_tail = date.get(year_width..)?;
+    let (month_text, day_text) = if date_tail.is_empty() {
+        (DATE_DEFAULT_MONTH_DAY_TEXT, DATE_DEFAULT_MONTH_DAY_TEXT)
+    } else {
+        let date_tail = date_tail.strip_prefix('-')?;
+        date_tail.split_once('-').unwrap_or((date_tail, DATE_DEFAULT_MONTH_DAY_TEXT))
+    };
+    let month = parse_date_digits(month_text, DATE_DAY_FIELD_WIDTH, strict)?;
+    let day = parse_date_digits(day_text, DATE_DAY_FIELD_WIDTH, strict)?;
+    if !(1.0..=MONTHS_PER_YEAR).contains(&month)
+        || !(FIRST_DAY_OF_MONTH..=DATE_MAX_DAY_OF_MONTH).contains(&day)
+    {
+        return None;
+    }
+    let Some(time) = time else {
+        let utc =
+            month_text.len() == DATE_DAY_FIELD_WIDTH && day_text.len() == DATE_DAY_FIELD_WIDTH;
         return Some(make_date_milliseconds(
             [f64::from(year), month - 1.0, day, 0.0, 0.0, 0.0, 0.0],
-            true,
+            utc,
         ));
-    }
-    let (time, offset_minutes) = if let Some(time) = time.strip_suffix('Z') {
-        (time, 0.0)
-    } else if let Some(index) = time.rfind(|character| character == '+' || character == '-') {
+    };
+    let (time, offset_minutes) = if let Some(time) = time.strip_suffix(['Z', 'z']) {
+        (time, Some(0.0))
+    } else if let Some(index) = time.rfind(['+', '-']) {
         let (clock, offset) = time.split_at(index);
-        let (hours, minutes) = offset[1..].split_once(':')?;
-        let sign = if offset.starts_with('-') { -1.0 } else { 1.0 };
-        (
-            clock,
-            sign * (hours.parse::<f64>().ok()? * f64::from(DATE_MINUTES_PER_HOUR)
-                + minutes.parse::<f64>().ok()?),
-        )
+        (clock, Some(parse_date_offset(offset, strict)?))
     } else {
-        (time, f64::NAN)
+        (time, None)
     };
     let (hour, rest) = time.split_once(':')?;
-    let (minute, rest) = rest.split_once(':').unwrap_or((rest, "0"));
+    let (minute, rest) = rest.split_once(':').unwrap_or((rest, DATE_DEFAULT_SECONDS_TEXT));
     let (second, fraction) = rest.split_once('.').unwrap_or((rest, "0"));
-    let millisecond = fraction
-        .chars()
-        .take(DATE_MILLISECOND_DIGITS)
-        .collect::<String>()
-        .chars()
-        .chain(std::iter::repeat('0'))
-        .take(DATE_MILLISECOND_DIGITS)
-        .collect::<String>()
-        .parse::<f64>()
-        .ok()?;
-    let components = [
+    let hour = parse_date_digits(hour, DATE_TIME_FIELD_WIDTH, strict)?;
+    let minute = parse_date_digits(minute, DATE_TIME_FIELD_WIDTH, strict)?;
+    let second = parse_date_digits(second, DATE_TIME_FIELD_WIDTH, strict)?;
+    let millisecond = parse_date_fraction(fraction)?;
+    if hour > HOURS_PER_DAY
+        || minute >= f64::from(DATE_MINUTES_PER_HOUR)
+        || second >= f64::from(SECONDS_PER_MINUTE)
+        || (hour == HOURS_PER_DAY
+            && (minute != 0.0
+                || second != 0.0
+                || millisecond != 0.0
+                || (strict && fraction.bytes().any(|byte| byte != b'0'))))
+    {
+        return None;
+    }
+    let mut components = [
         f64::from(year),
         month - 1.0,
         day,
-        hour.parse().ok()?,
-        minute.parse().ok()?,
-        second.parse().ok()?,
+        hour,
+        minute,
+        second,
         millisecond,
     ];
-    let milliseconds = if offset_minutes.is_nan() {
-        make_date_milliseconds(components, false)
+    let utc = if let Some(offset) = offset_minutes {
+        components[MINUTE_COMPONENT] -= offset;
+        true
     } else {
-        make_date_milliseconds(components, true) - offset_minutes * MILLISECONDS_PER_MINUTE
+        false
     };
-    Some(time_clip(milliseconds))
+    Some(make_date_milliseconds(components, utc))
+}
+
+fn parse_date_digits(text: &str, maximum_width: usize, exact_width: bool) -> Option<f64> {
+    if text.is_empty()
+        || text.len() > maximum_width
+        || (exact_width && text.len() != maximum_width)
+        || !text.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    text.parse().ok()
+}
+
+fn parse_date_fraction(text: &str) -> Option<f64> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let value = text
+        .bytes()
+        .take(DATE_MILLISECOND_DIGITS)
+        .fold(0.0, |value, byte| {
+            value * DATE_FRACTION_RADIX + f64::from(byte - b'0')
+        });
+    Some(
+        value
+            * DATE_FRACTION_RADIX
+                .powi((DATE_MILLISECOND_DIGITS - text.len().min(DATE_MILLISECOND_DIGITS)) as i32),
+    )
+}
+
+fn parse_date_offset(text: &str, strict: bool) -> Option<f64> {
+    let sign = if text.starts_with('-') { -1.0 } else { 1.0 };
+    let digits = text.get(1..)?;
+    if !digits
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b':')
+    {
+        return None;
+    }
+    let (hour, minute) = if let Some((hour, minute)) = digits.split_once(':') {
+        (
+            parse_date_digits(hour, DATE_OFFSET_FIELD_WIDTH, strict)?,
+            parse_date_digits(minute, DATE_OFFSET_FIELD_WIDTH, strict)?,
+        )
+    } else if digits.len() == DATE_OFFSET_FIELD_WIDTH * 2
+        || (!strict
+            && digits.len() > DATE_OFFSET_FIELD_WIDTH
+            && digits.len() < DATE_OFFSET_FIELD_WIDTH * 2)
+    {
+        let hour_width = digits.len() - DATE_OFFSET_FIELD_WIDTH;
+        (
+            parse_date_digits(&digits[..hour_width], DATE_OFFSET_FIELD_WIDTH, strict)?,
+            parse_date_digits(&digits[hour_width..], DATE_OFFSET_FIELD_WIDTH, true)?,
+        )
+    } else if !strict {
+        (
+            parse_date_digits(digits, DATE_OFFSET_FIELD_WIDTH, false)?,
+            0.0,
+        )
+    } else {
+        return None;
+    };
+    if strict && (hour >= HOURS_PER_DAY || minute >= f64::from(DATE_MINUTES_PER_HOUR)) {
+        return None;
+    }
+    Some(sign * (hour * f64::from(DATE_MINUTES_PER_HOUR) + minute))
 }
 
 fn display_date_year(year: i32) -> String {

@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "tasks": [
+    "15",
+    "20"
+  ],
+  "baseline_source_head": "917e5542b167daed7dda39f363a7dd166c7c7af8",
+  "qualification": "Isolated Date grammar on the committed shared-VM baseline; other pending Date, host and Wasm changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/date.rs": "07dd42c1c99e070740d46bc9955ed92cfc820dfc2afb60a1b07ed566dfe227f0"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "grammar": "One numeric form selection derives field widths and ISO fallback policy. Full/partial dates use the same omitted-field defaults; space forms admit the pinned legacy field/offset widths.",
+    "construction": "Date.parse and string construction use one parser and the shared date constructor. Offsets adjust the minute component before shared TimeClip, preserving valid range-boundary values.",
+    "reduction": "Removed standalone year parsing and chrono local-ISO reconstruction; fractional milliseconds are folded without padding-string allocations. Grammar widths, defaults and limits have named owners."
+  },
+  "contract": "https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-date.parse",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/date/dateparser-inl.h": "f4d6751423c17f671f383aa4bfa9f8c8158a09fc28f7bc860c71edc2cb01fb73",
+    "tests/node/deps/v8/src/date/dateparser.cc": "64ae6bae3ba2438a8a9323a0a1010da285f51bcbab1e02adf753fbbdaffaf461"
+  },
+  "build": {
+    "profile": "release, correctness only; no performance claim",
+    "log": "target/iteration/task15-date-grammar/final-build.log",
+    "before_binary_sha256": "989a0e237ec5fedcf88334d4a89bd0e5c9c071a059743588e342c12375ee668a",
+    "after_binary_sha256": "88a0a34d89f959f4b56471564bf5361782d6b1a8519482018b6be4aa9052d71a"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 622,
+    "passed_before": 613,
+    "passed_after": 614,
+    "gained": [
+      "staging/sm/Date/non-iso.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "date",
+        "total": 594,
+        "before_passed": 594,
+        "after_passed": 594,
+        "compare_exit": 0,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-date-grammar/before-date.json": "dc16087155efb94b5624fad5af5a7eb7a543da31802bfb37470a8275040dc3de",
+          "target/iteration/task15-date-grammar/after-date.json": "4ae171b311ec454ae8f8cbbdb1a1cec9068d09faa5c176fe38e0474dcc15c86d",
+          "target/iteration/task15-date-grammar/compare-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date",
+        "total": 28,
+        "before_passed": 19,
+        "after_passed": 20,
+        "compare_exit": 0,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-date-grammar/before-staged-date.json": "52557646c431f2dd3f730e53b111d3f6d4a2bedd7e07593d3d2fd960ceb3a87d",
+          "target/iteration/task15-date-grammar/after-staged-date.json": "51f9e1530757db96519a049282607ebc964ed63d473d923f7358908a83a3b11b",
+          "target/iteration/task15-date-grammar/compare-staged-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": [
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-2-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-3-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-4-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-5-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-6-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-7-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-8-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      }
+    ]
+  },
+  "node_controls": {
+    "strings": 73,
+    "timezones": 3,
+    "controls": 219,
+    "observations_per_build": 438,
+    "before_matches": 162,
+    "after_matches": 428,
+    "oracle": "v26.10.0",
+    "report": "target/iteration/task15-date-grammar/node-controls.json",
+    "report_sha256": "de15c610e58002c4a293a67f96afca5a373f7a0153a5bb7b58cfa3d60d227308",
+    "input_sha256": "e8d318c9d5bfe929947a42888f689f864d99ac7faa765b344de20c1fc0d2ac7d",
+    "regressions": 0,
+    "scope": "73 strings in UTC, America/New_York and Asia/Kathmandu; normal/generic paths observe Date.parse and string construction. ISO/space field widths, partial/expanded years, fractional precision, offsets, date limits and DST transitions.",
+    "remaining_differences": {
+      "dst_gap": "Two New York inputs in both modes still return NaN because the shared local date conversion rejects nonexistent wall times. This is a concrete follow-up correctness gap, not a pass.",
+      "negative_zero_year": "The date-only -000000-01-01 input remains NaN in all three zones and both modes. Local Node accepts it through permissive parsing; Quench retains the ECMAScript invalid expanded-year rule. Strict negative-zero cases in the pinned suite pass."
+    }
+  },
+  "units": "No new general Date units duplicating suite cases. The selected production suites and matched oracle observations qualify this pure parsing change.",
+  "limits": [
+    "The eight unchanged Date stress timeouts at the matched ten-second deadline remain failures. No fixture, helper, expectation or inventory changed.",
+    "Stage A, complete current Test262, Wasm and implemented Node qualification remain open."
+  ]
+}
