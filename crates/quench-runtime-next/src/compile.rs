@@ -2437,10 +2437,7 @@ impl<'a> Compiler<'a> {
         if options.implicit_super {
             function.emit_implicit_super();
         }
-        let disposal_body_start = function.code.len() as u32;
-        function.statements(body);
-        let disposal_body_end = function.code.len() as u32;
-        function.emit_function_disposal_scope_exit(disposal_body_start, disposal_body_end);
+        function.function_body_statements(body);
         let result = if let Some(expression) = expression_body {
             function.expression(expression)
         } else {
