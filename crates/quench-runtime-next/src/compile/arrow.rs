@@ -100,7 +100,7 @@ impl Compiler<'_> {
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
                 function.emit_hoisted(&body.statements);
-                function.statements(&body.statements);
+                function.function_body_statements(&body.statements);
                 let undefined = function.literal(Constant::Undefined);
                 function.emit(Op::Return, undefined, 0, 0, 0);
             }

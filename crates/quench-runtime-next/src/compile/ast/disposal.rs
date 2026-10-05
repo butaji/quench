@@ -1,6 +1,13 @@
 use super::*;
 
 impl FunctionCompiler<'_, '_> {
+    pub(crate) fn function_body_statements(&mut self, body: &[Statement<'_>]) {
+        let start = self.code.len() as u32;
+        self.statements(body);
+        let end = self.code.len() as u32;
+        self.emit_function_disposal_scope_exit(start, end);
+    }
+
     pub(super) fn push_disposal_scope(&mut self) {
         self.disposal_scopes.push(DisposalScope::default());
     }
