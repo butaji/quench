@@ -272,21 +272,25 @@ fn wasm_bits64_follow_the_shared_strong_root_lifecycle() {
 
 #[test]
 fn regexp_legacy_constructor_is_traced_through_live_instances() {
-    let mut heap = Heap::new();
-    let constructor = heap.alloc(Cell::Object(plain_object()));
-    let weak_constructor = heap.weak_handle(constructor).unwrap();
-    let regexp = heap.alloc(Cell::RegExp {
-        object: plain_object(),
-        source: "a".into(),
-        flags: String::new(),
-        matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
-        legacy_constructor: constructor,
-    });
-    let root = heap.root(regexp);
-    heap.collect([]);
-    assert_eq!(heap.weak_value(weak_constructor), Some(constructor));
-    assert!(heap.release_root(root));
-    heap.collect([]);
-    assert!(heap.weak_value(weak_constructor).is_none());
-    assert!(heap.get(regexp).is_none());
+    let owners: [fn(Value) -> RegExpLegacyOwner; 2] =
+        [RegExpLegacyOwner::Enabled, RegExpLegacyOwner::Disabled];
+    for owner in owners {
+        let mut heap = Heap::new();
+        let constructor = heap.alloc(Cell::Object(plain_object()));
+        let weak_constructor = heap.weak_handle(constructor).unwrap();
+        let regexp = heap.alloc(Cell::RegExp {
+            object: plain_object(),
+            source: "a".into(),
+            flags: String::new(),
+            matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
+            legacy_constructor: owner(constructor),
+        });
+        let root = heap.root(regexp);
+        heap.collect([]);
+        assert_eq!(heap.weak_value(weak_constructor), Some(constructor));
+        assert!(heap.release_root(root));
+        heap.collect([]);
+        assert!(heap.weak_value(weak_constructor).is_none());
+        assert!(heap.get(regexp).is_none());
+    }
 }

@@ -1113,6 +1113,19 @@ pub(crate) enum ProxyKind {
     Constructor,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RegExpLegacyOwner {
+    Enabled(Value),
+    Disabled(Value),
+}
+impl RegExpLegacyOwner {
+    pub(crate) fn constructor(self) -> Value {
+        match self {
+            Self::Enabled(owner) | Self::Disabled(owner) => owner,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 #[rustfmt::skip]
 pub(crate) enum Cell {
@@ -1219,9 +1232,8 @@ pub(crate) enum Cell {
         source: JsString,
         flags: String,
         matcher: Rc<quench_regexp::Regex>,
-        // Intrinsic constructor identity owns legacy eligibility and realm.
-        // Undefined disables legacy features for derived construction.
-        legacy_constructor: Value,
+        // One constructor identity owns creation realm and legacy eligibility.
+        legacy_constructor: RegExpLegacyOwner,
     },
     Error(String),
     PromiseResolvingState {
