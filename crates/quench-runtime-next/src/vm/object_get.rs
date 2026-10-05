@@ -485,18 +485,6 @@ impl<H: Host> Vm<H> {
                         bytes.len() as f64
                     }));
                 }
-                Some(Cell::Array { .. })
-                    if atom == self.length_atom
-                        && !self
-                            .object_data(object)
-                            .is_some_and(Object::is_arguments_object) =>
-                {
-                    let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
-                        unreachable!()
-                    };
-                    let length = self.heap.sparse_length(object).unwrap_or(elements.len());
-                    return Ok(Value::number(length as f64));
-                }
                 Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
                 }

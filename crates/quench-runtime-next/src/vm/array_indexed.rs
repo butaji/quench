@@ -371,16 +371,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
     ) -> Result<usize, JsError> {
-        if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
-            && !self
-                .object_data(object)
-                .is_some_and(Object::is_arguments_object)
-        {
-            return Ok(self
-                .heap
-                .sparse_length(object)
-                .unwrap_or(0)
-                .max(elements.len()));
+        if let Some(length) = self.own_array_length(object) {
+            return Ok(length);
         }
         let length_atom = self.intern_atom("length");
         let value = self.get_property(p, object, length_atom)?;

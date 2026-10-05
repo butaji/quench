@@ -3,6 +3,11 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const ARRAY_LENGTH_MODULUS: f64 = u32::MAX as f64 + 1.0;
+pub(super) const ARRAY_LENGTH_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
+    enumerable: false,
+    configurable: false,
+    ..DEFAULT_PROPERTY_ATTRIBUTES
+};
 
 fn array_length_uint32(number: f64) -> u32 {
     if !number.is_finite() || number == 0.0 {
@@ -13,6 +18,18 @@ fn array_length_uint32(number: f64) -> u32 {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+        let Cell::Array { object, elements } = self.heap.get(target)? else {
+            return None;
+        };
+        (!object.is_arguments_object()).then(|| {
+            self.heap
+                .sparse_length(target)
+                .unwrap_or(0)
+                .max(elements.len())
+        })
+    }
+
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
             || matches!(self.heap.get(target), Some(Cell::Array { elements, .. })
@@ -53,18 +70,11 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(false);
             }
-            let (current_len, current_writable) = match self.heap.get(target) {
-                Some(Cell::Array { elements, .. }) => (
-                    self.heap
-                        .sparse_length(target)
-                        .unwrap_or(0)
-                        .max(elements.len()),
-                    self.descriptors
-                        .get(&(target, PropertyKey::string(self.length_atom)))
-                        .is_none_or(|attributes| attributes.writable),
-                ),
-                _ => return Err(self.type_error(p, "array receiver is not array".into())),
-            };
+            let current_len = self.own_array_length(target).expect("array length owner");
+            let current_writable = self
+                .property_attributes(target, PropertyKey::string(self.length_atom))
+                .expect("array length has attributes")
+                .writable;
             let next_len = requested_len.unwrap_or(current_len);
             let writable = descriptor.writable.unwrap_or(current_writable);
             if !current_writable && (next_len != current_len || writable) {
@@ -82,7 +92,9 @@ impl<H: Host> Vm<H> {
                                     index >= next_len && !attributes.configurable
                                 })))
                         .then(|| match key {
-                            PropertyKey::String(atom) => self.atom_name(*atom).parse::<usize>().ok(),
+                            PropertyKey::String(atom) => {
+                                self.atom_name(*atom).parse::<usize>().ok()
+                            }
                             PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
                         })
                         .flatten()
@@ -113,11 +125,7 @@ impl<H: Host> Vm<H> {
                             (target, PropertyKey::string(self.length_atom)),
                             PropertyAttributes {
                                 writable: false,
-                                enumerable: false,
-                                configurable: false,
-                                accessor: false,
-                                getter: None,
-                                setter: None,
+                                ..ARRAY_LENGTH_ATTRIBUTES
                             },
                         );
                     }
@@ -146,11 +154,7 @@ impl<H: Host> Vm<H> {
                 (target, PropertyKey::string(self.length_atom)),
                 PropertyAttributes {
                     writable,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
+                    ..ARRAY_LENGTH_ATTRIBUTES
                 },
             );
             Ok(true)
@@ -239,17 +243,8 @@ impl<H: Host> Vm<H> {
             return true;
         }
         let length_attributes = self
-            .descriptors
-            .get(&(target, PropertyKey::string(self.length_atom)))
-            .copied()
-            .unwrap_or(PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            });
+            .property_attributes(target, PropertyKey::string(self.length_atom))
+            .expect("array length has attributes");
         !length_attributes.configurable
             && (!freeze || !length_attributes.writable)
             && self.array_present_indices(target).into_iter().all(|index| {
