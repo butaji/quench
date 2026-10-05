@@ -560,39 +560,7 @@ impl<H: Host> Vm<H> {
             let native = match global.capability {
                 CapabilityId::Done => Native::HostDone,
                 CapabilityId::CreateRealm => {
-                    let realm = self.object();
-                    self.set_named(
-                        program,
-                        realm,
-                        "createRealm",
-                        self.native_value(Native::CreateRealm),
-                    )?;
-                    self.set_named(
-                        program,
-                        realm,
-                        "evalScript",
-                        self.native_value(Native::EvalScript),
-                    )?;
-                    self.set_named(
-                        program,
-                        realm,
-                        "detachArrayBuffer",
-                        self.native_value(Native::DetachArrayBuffer),
-                    )?;
-                    let detach_name = self.heap.alloc(Cell::String("detachArrayBuffer".into()));
-                    self.set_named(
-                        program,
-                        self.native_value(Native::DetachArrayBuffer),
-                        "name",
-                        detach_name,
-                    )?;
-                    self.set_named(
-                        program,
-                        realm,
-                        "AbstractModuleSource",
-                        self.native_value(Native::AbstractModuleSource),
-                    )?;
-                    self.set_builtin_named(program, realm, "gc", Native::CollectGarbage)?;
+                    let realm = self.install_realm_host_api(program, self.realm.globals)?;
                     self.install_test262_agent(program, realm)?;
                     self.global(program, global.name, realm)?;
                     continue;
@@ -1344,12 +1312,37 @@ impl<H: Host> Vm<H> {
         self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
         self.install_intl_for_realm(program, global, object_prototype)?;
+        let realm = self.install_realm_host_api(program, global)?;
+        for binding in self.host.globals() {
+            if binding.capability == CapabilityId::CreateRealm {
+                self.set_builtin_value_named(global, binding.name, realm)?;
+            }
+        }
+        Ok(realm)
+    }
+
+    fn install_realm_host_api(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+    ) -> Result<Value, JsError> {
         let realm = self.object();
         self.set_named(program, realm, "global", global)?;
-        self.set_builtin_named(program, realm, "gc", Native::CollectGarbage)?;
-        let eval_script = self.native_with_realm(Native::EvalScript, global, global);
-        self.set_builtin_function_name(eval_script, "evalScript")?;
-        self.set_builtin_value_named(realm, "evalScript", eval_script)?;
+        let current_realm = global == self.realm.globals;
+        for (name, native) in [
+            ("createRealm", Native::CreateRealm),
+            ("evalScript", Native::EvalScript),
+            ("detachArrayBuffer", Native::DetachArrayBuffer),
+            ("gc", Native::CollectGarbage),
+            ("AbstractModuleSource", Native::AbstractModuleSource),
+        ] {
+            let method = self.realm_native_value(native, global, current_realm);
+            // The primary module-source constructor installs its name with its prototype.
+            if native != Native::AbstractModuleSource || !current_realm {
+                self.set_builtin_function_name(method, name)?;
+            }
+            self.set_named(program, realm, name, method)?;
+        }
         Ok(realm)
     }
 
