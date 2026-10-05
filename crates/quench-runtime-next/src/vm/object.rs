@@ -192,7 +192,14 @@ impl<H: Host> Vm<H> {
         {
             return Some(attributes);
         }
-        self.descriptors.get(&(object, key)).copied()
+        // Non-shape properties, including array length and indexed elements,
+        // keep explicit attributes in descriptors. Array length always exists;
+        // its unchanged attributes derive from the array exotic contract.
+        self.descriptors.get(&(object, key)).copied().or_else(|| {
+            (key == PropertyKey::string(self.length_atom)
+                && self.own_array_length(object).is_some())
+            .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
+        })
     }
     pub(super) fn set_property_attributes(
         &mut self,
@@ -365,6 +372,11 @@ impl<H: Host> Vm<H> {
             .alloc_object_pair(self.object_proto, shape, first, second)
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
+        if atom == self.length_atom
+            && let Some(length) = self.own_array_length(object)
+        {
+            return Some(Value::number(length as f64));
+        }
         let object = self.object_data(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
         self.heap.property_get(object, slot)
@@ -1069,18 +1081,6 @@ impl<H: Host> Vm<H> {
             } else {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
-        }
-        if atom == self.length_atom
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
-            && !self
-                .object_data(object)
-                .is_some_and(Object::is_arguments_object)
-        {
-            self.evaluate_deferred_namespace_for_key(p, object, Some(PropertyKey::string(atom)))?;
-            if !self.set_array_length(p, object, value)? && strict {
-                return Err(self.type_error(p, "cannot set array length".into()));
-            }
-            return Ok(());
         }
         let written = self.set_property_with_receiver(p, object, atom, value, object)?;
         if written || !strict {
