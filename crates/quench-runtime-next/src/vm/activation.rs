@@ -17,6 +17,19 @@ pub(crate) enum Completion {
     Await(Value),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct NativeActivation {
+    pub callable: Value,
+    pub frame_depth: usize,
+    pub boundary: NativeCallBoundary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NativeCallBoundary {
+    Forward,
+    Opaque,
+}
+
 /// The origin of an activation, including the identity exposed to JavaScript.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum CallContext {
@@ -44,6 +57,12 @@ impl CallContext {
         }
     }
 
+    pub(super) fn callable(self) -> Option<Value> {
+        match self {
+            Self::Function(value) => Some(value),
+            Self::DirectEval(_) | Self::IndirectEval(_) | Self::Internal => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

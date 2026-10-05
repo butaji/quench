@@ -344,7 +344,9 @@ impl<H: Host> Vm<H> {
                         }),
                 )
                 .chain(self.test262_agent.roots())
-                .chain(self.realm.promise.active_native.iter().copied())
+                .chain(
+                    self.realm.promise.active_native.iter().map(|activation| activation.callable),
+                )
                 .chain(self.realm.promise.modules.values().flat_map(ModuleRecord::roots))
                 .chain(self.realm.promise.module_sources.values().copied())
                 .chain(self.realm.promise.records.iter().flat_map(|(promise, record)| {

@@ -1,0 +1,193 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "75231e0bb95c369f3425c05ee1175557b433b78e",
+  "qualification": "Isolated caller reflection, native activation ownership/projections, and existing internal lifetime invariant; argument snapshots, Promise cell-state refactors, Node and Wasm work excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/activation.rs": "fb3fcb68ac3a238534bfb67cac1d4433887f08d9a92e4037940f107adec39811",
+    "crates/quench-runtime-next/src/vm/function.rs": "2676ef1de9a413271382d60f311126d795af5b112a0ab0c8ec07f467f2c017dc",
+    "crates/quench-runtime-next/src/vm/gc.rs": "2defe92ddf383f9bb8a3978b7307a9f3e954de72e36967ad641771beb0b3a6aa",
+    "crates/quench-runtime-next/src/vm/object_get.rs": "393b82c63d2b2adb7f267dcda6b5a12615f7163703fee29533fbff2b74d5cac4",
+    "crates/quench-runtime-next/src/vm/operations.rs": "b635865a90770b05d441fd06776768df4b5f8416e6391372e3657f7319abfa1f",
+    "crates/quench-runtime-next/src/vm/promise.rs": "e89df96db51bbf7c896caa5163ae9534bb7edc77f4d8522cf11fdf34cf55af53",
+    "crates/quench-runtime-next/src/vm/promise_async.rs": "b4c4db3f7b2cc5e4f9641bea9a6d4457e8338e33ed21a514d15b6ebde97d34e7",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "f3a7917ab543d1aaae898e74961f8bffdff70969b579fe5bd560a633cbfcb96b",
+    "crates/quench-runtime-next/src/vm/tests.rs": "96e8b8def17a422a9811133758bc16db74c7df2476f4e56ff42c37c76d3eea8c"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "The existing native activation stack stores callable, entry frame depth and named Forward/Opaque boundary; active_native_callable derives the callable for all existing native environment, Promise job, Error and revoker consumers. GC derives callable roots from the same records.",
+    "caller": "Walk existing CallContext frames by callable identity. Skip direct-eval frames; hide strict, async, generator, foreign-realm, indirect-eval, internal and opaque-native callers. Eligibility derives from strictness, constructibility and class metadata, replacing function-name sentinels.",
+    "scope": "No parallel caller stack, arguments snapshot allocation, frame field, fixture branch, benchmark special case or duplicate semantic unit test."
+  },
+  "contract": {
+    "proposal_cited_by_pinned_tests": "https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md",
+    "status": "Legacy-reflection proposal, not a claim that its optional behavior is universally standardized or matches current Node.",
+    "pinned_fixture": "staging/sm/Function/function-caller-restrictions.js requires null async/generator callers; extensions/function-caller-skips-eval-frames.js requires transparent direct eval.",
+    "native_boundary": "Function.call/apply, bound calls, Reflect.apply/construct and direct eval forward the caller. Other native activations remain opaque. Indirect eval has no visible function context."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/accessors.cc": "bab4d27dbfaccfc56bd9768a288a071ff6cf9797a1b65daa3396e8ba87514d07"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task12-function-caller/build.log",
+    "before_binary_sha256": "4f7811dad5fa4a6226ab9241534d827f68cbada1ae42af5165e964e15ec66c4a",
+    "after_binary_sha256": "fb414bc55aa4d70245b6d4937dfa9a09521d1507aa27b056a1852a4e45b1c3d9"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Function; staged Function; staging caller paths; Promise; GeneratorFunction/Prototype; AsyncFunction/GeneratorFunction/GeneratorPrototype; eval.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1496,
+    "passed_before": 1491,
+    "passed_after": 1495,
+    "gained": [
+      "staging/sm/Function/function-caller-restrictions.js",
+      "staging/sm/extensions/censor-strict-caller.js",
+      "staging/sm/extensions/function-caller-skips-eval-frames.js",
+      "staging/sm/extensions/newer-type-functions-caller-arguments.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "built-ins/Promise/allSettledKeyed/result-property-descriptors.js"
+    ],
+    "scopes": [
+      {
+        "scope": "function",
+        "total": 509,
+        "passed_before": 509,
+        "passed_after": 509,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-function.json": "07d7c7256055b5c7ee83f3f8be4fa6a4c07b7c0d64262ad89d5f07d329426ca8",
+          "target/iteration/task12-function-caller/after-function.json": "2798f3c83fb328220f7125c8c2b5ffcd2d26643c4a371f0de71fe7c3ce4b9018",
+          "target/iteration/task12-function-caller/compare-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-function",
+        "total": 53,
+        "passed_before": 52,
+        "passed_after": 53,
+        "gained": [
+          "staging/sm/Function/function-caller-restrictions.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-staged-function.json": "22ac9e1d091d0831c4e207968b6c9f059b2bbe170472fee78b14e289908223d6",
+          "target/iteration/task12-function-caller/after-staged-function.json": "96f60674356bbb81528e05151756f024090c807692fe4729bc52b540c741cf54",
+          "target/iteration/task12-function-caller/compare-staged-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "extensions-caller",
+        "total": 25,
+        "passed_before": 21,
+        "passed_after": 25,
+        "gained": [
+          "staging/sm/Function/function-caller-restrictions.js",
+          "staging/sm/extensions/censor-strict-caller.js",
+          "staging/sm/extensions/function-caller-skips-eval-frames.js",
+          "staging/sm/extensions/newer-type-functions-caller-arguments.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-extensions-caller.json": "5c1443281f686f70dd39d49a2966a1a21f84d7718def20e42ff6457217f3d21d",
+          "target/iteration/task12-function-caller/after-extensions-caller.json": "39e26bcb5aa36998e0cedc6d4e32faa322d15337d5d36f37fc0634a47d76070b",
+          "target/iteration/task12-function-caller/compare-extensions-caller.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "promise",
+        "total": 729,
+        "passed_before": 728,
+        "passed_after": 728,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-promise.json": "b38a991b65de99381de46d28425c7318a93a22cad55b298d2bf35776dee7c0fb",
+          "target/iteration/task12-function-caller/after-promise.json": "5891185b6c9115bf2f310ba40b0ff9fc3bef0102657cab1b094a8c203d725c5f",
+          "target/iteration/task12-function-caller/compare-promise.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "generator",
+        "total": 84,
+        "passed_before": 84,
+        "passed_after": 84,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-generator.json": "4630a85bde78d7e3fa467cd0fa1fa2195cf28323485eadf79e97442efc90507c",
+          "target/iteration/task12-function-caller/after-generator.json": "0ea5cb218324b99e554a3d6191bb4de53c59e96d2d0ccbed07653c2b9ea20634",
+          "target/iteration/task12-function-caller/compare-generator.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "async",
+        "total": 89,
+        "passed_before": 89,
+        "passed_after": 89,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-async.json": "e383512e9c220b780a0ea67807dd3287b14546546e44efd62cfb00f1cd0f75f5",
+          "target/iteration/task12-function-caller/after-async.json": "b098c018f711f7ef0f332f577af4c9025518e6dc92f1f6d13c72a1f6c65779cc",
+          "target/iteration/task12-function-caller/compare-async.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "eval",
+        "total": 10,
+        "passed_before": 10,
+        "passed_after": 10,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-caller/before-eval.json": "c3c358df723cf15c1880e688acc736e98c277d95e18d98d5d7204d672c3598ef",
+          "target/iteration/task12-function-caller/after-eval.json": "65b9801bee2b616f7cbaa81c6e7c10d6a5b9687bc7d8d2c96e0d8f6177311892",
+          "target/iteration/task12-function-caller/compare-eval.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "sources": 43,
+    "observations_per_build": 86,
+    "before_matches": 28,
+    "after_matches": 76,
+    "losses": 10,
+    "report": "target/iteration/task12-function-caller/node-controls.json",
+    "sha256": "a40c4bb4d623b5e195c7972739a8fa3ccd4ff33b04f3434fbb3c5a88b420c38d",
+    "remaining_cases": [
+      "async-censor",
+      "generator-censor",
+      "async-generator-censor",
+      "indirect-eval",
+      "native-stringify"
+    ],
+    "differences": "Ten previously matching observations no longer match Node: normal/generic async, generator, async-generator, indirect-eval and JSON.stringify/toJSON caller controls. The pinned proposal requires hiding async/generator and non-ECMAScript/absent-function boundaries; current Node reveals callers in these controls. Retained all observations, with no universal Node parity claim.",
+    "scope": "Callable identity, recursion, closure identity, strictness, forwarding, direct/nested/indirect eval, callbacks, proxies, shadows and abrupt boundary restoration in both compilation modes."
+  },
+  "limits": [
+    "Pinned inputs, discovery, harnesses, exclusions, deadlines and expectations unchanged.",
+    "The unchanged Promise/allSettledKeyed/result-property-descriptors.js failure remains; function.arguments snapshots remain pending.",
+    "This does not qualify the complete Test262, Wasm or implemented Node suites or production single-VM cutover; Stage A remains open."
+  ],
+  "internal_verification": {
+    "command": "cargo test --profile iteration -p quench-runtime-next --lib native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls",
+    "passed": 1,
+    "failed": 0,
+    "scope": "Extend existing lifetime invariant across direct and guarded native dispatch; fresh native callees survive GC during coercion callbacks, activation count restores on success/abrupt completion, and unowned callees collect afterward. Both compilation modes.",
+    "log": "target/iteration/task12-function-caller/internal.log",
+    "sha256": "703f89921913fe1f71b6083402093fa1bdea8f1b52cdb59be375a643c826afe0"
+  }
+}
