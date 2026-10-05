@@ -517,7 +517,7 @@ impl<H: Host> Vm<H> {
         self.global(program, "Function", function)?;
         let symbol = self.native_value(Native::Symbol);
         let symbol_prototype = self.object();
-        self.set_builtin_value_named(symbol, "prototype", symbol_prototype)?;
+        self.set_named_constant(program, symbol, "prototype", symbol_prototype)?;
         self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
         self.set_builtin_named(program, symbol_prototype, "valueOf", Native::SymbolValueOf)?;
         self.set_builtin_named(
