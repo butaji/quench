@@ -1165,10 +1165,10 @@ impl<H: Host> Vm<H> {
         let frame = self.frames.last()?;
         let function = p.functions.get(frame.function as usize)?;
         function
-            .eval_sites
+            .binding_sites
             .iter()
             .find(|site| site.resume_pc as usize == frame.pc)?
-            .lexical_bindings
+            .bindings
             .iter()
             .find(|binding| binding.atom == atom)
             .copied()

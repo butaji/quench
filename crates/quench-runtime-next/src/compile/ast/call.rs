@@ -224,7 +224,7 @@ impl FunctionCompiler<'_, '_> {
                 ),
             );
             if direct_eval {
-                self.record_direct_eval_site(pc);
+                self.record_lexical_binding_site(pc);
             }
         }
         dst
@@ -246,13 +246,13 @@ impl FunctionCompiler<'_, '_> {
             this,
             crate::bytecode::ImmediateLayout::call_immediate(base, 1, true, parameter_eval),
         );
-        self.record_direct_eval_site(pc);
+        self.record_lexical_binding_site(pc);
         result
     }
 
-    fn record_direct_eval_site(&mut self, pc: usize) {
+    fn record_lexical_binding_site(&mut self, pc: usize) {
         let mut visible = rustc_hash::FxHashSet::default();
-        let mut lexical_bindings = Vec::new();
+        let mut bindings = Vec::new();
         for scope in self.lexical_scopes.iter().rev() {
             if self.with_depth != 0 && scope.with_depth < self.with_depth {
                 continue;
@@ -261,7 +261,7 @@ impl FunctionCompiler<'_, '_> {
                 if visible.insert(*atom)
                     && let Some(slot) = self.local_slots.get(binding)
                 {
-                    lexical_bindings.push(crate::bytecode::EvalBinding {
+                    bindings.push(crate::bytecode::EvalBinding {
                         atom: *atom,
                         location: crate::bytecode::EvalBindingLocation::Local(*slot),
                         kind: scope
@@ -296,7 +296,7 @@ impl FunctionCompiler<'_, '_> {
                     continue;
                 }
                 let catch_marker = format!("\0rqj:catch-capture:{name}");
-                lexical_bindings.push(crate::bytecode::EvalBinding {
+                bindings.push(crate::bytecode::EvalBinding {
                     atom,
                     location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
                     kind,
@@ -308,10 +308,10 @@ impl FunctionCompiler<'_, '_> {
                 });
             }
         }
-        lexical_bindings.sort_unstable_by_key(|binding| binding.atom);
-        self.eval_sites.push(crate::bytecode::EvalSite {
+        bindings.sort_unstable_by_key(|binding| binding.atom);
+        self.binding_sites.push(crate::bytecode::BindingSite {
             resume_pc: (pc + 1) as u32,
-            lexical_bindings,
+            bindings,
         });
     }
 
