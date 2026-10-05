@@ -649,41 +649,16 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if freeze && let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(source) {
-            let resizable = matches!(
-                self.heap.get(*buffer),
-                Some(Cell::ArrayBuffer {
-                    resizable: true,
-                    ..
-                })
-            );
-            if resizable
-                || self
-                    .typed_array_length(source)
-                    .is_some_and(|length| length > 0)
-            {
-                return Err(self.type_error(
-                    p,
-                    "cannot freeze a typed array with indexed elements".into(),
-                ));
-            }
-        }
-        if matches!(self.heap.get(source), Some(Cell::Proxy { .. }))
-            || self.object_data(source).is_some_and(Object::is_module_namespace)
+        if matches!(
+            self.heap.get(source),
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+        ) || self
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
         {
             return self.set_integrity_level(p, source, freeze);
         }
         let target = source;
-        if !freeze && matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
-            self.object_prevent_extensions(p, &[target])?;
-            if self.typed_array_length(target).is_some_and(|length| length > 0) {
-                return Err(self.type_error(
-                    p,
-                    "cannot seal a typed array with indexed elements".into(),
-                ));
-            }
-            return Ok(target);
-        }
         if self.object_data(target).is_none() {
             return Ok(target);
         }
@@ -741,8 +716,12 @@ impl<H: Host> Vm<H> {
         freeze: bool,
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if matches!(self.heap.get(source), Some(Cell::Proxy { .. }))
-            || self.object_data(source).is_some_and(Object::is_module_namespace)
+        if matches!(
+            self.heap.get(source),
+            Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+        ) || self
+            .object_data(source)
+            .is_some_and(Object::is_module_namespace)
         {
             return self.test_integrity_level(p, source, freeze);
         }
