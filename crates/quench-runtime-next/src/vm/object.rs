@@ -606,7 +606,9 @@ impl<H: Host> Vm<H> {
                     {
                         return self.typed_array_set(p, current, index, value);
                     }
-                    super::object_descriptors::TypedArrayIndexKey::Invalid if current == receiver => {
+                    super::object_descriptors::TypedArrayIndexKey::Invalid
+                        if current == receiver =>
+                    {
                         if let Some(kind) = self.typed_array_kind(current) {
                             self.typed_array_convert_value(p, kind, value)?;
                         }
@@ -709,7 +711,11 @@ impl<H: Host> Vm<H> {
                 value,
             );
         }
-        let new_property = self.own_property(receiver, atom).is_none();
+        let new_property = if target == receiver {
+            found.is_none_or(|(owner, _)| owner != receiver)
+        } else {
+            self.own_property(receiver, atom).is_none()
+        };
         if !new_property
             && let Some(attributes) = self.property_attributes(receiver, PropertyKey::string(atom))
             && (attributes.accessor || !attributes.writable)
@@ -737,7 +743,11 @@ impl<H: Host> Vm<H> {
         {
             return Ok(false);
         }
-        self.set_shape_property(receiver, PropertyKey::string(atom), value)?;
+        if new_property {
+            self.create_shape_property(receiver, PropertyKey::string(atom), value)?;
+        } else {
+            self.set_shape_property(receiver, PropertyKey::string(atom), value)?;
+        }
         self.mirror_global_var_property_write(receiver, atom, value);
         Ok(true)
     }
@@ -840,28 +850,43 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
-        let (slot, shape, exists) = {
+        let (slot, exists) = {
             let data = self
                 .object_data(object)
                 .ok_or_else(|| JsError("property write on non-object".into()))?;
             let slot = self.property_shape_slot(data.shape(), key);
             let exists = slot.is_some_and(|slot| self.heap.property_get(data, slot).is_some());
-            (slot, data.shape(), exists)
+            (slot, exists)
         };
         self.check_property_key_write(object, key, exists)?;
         let invalidates_method = slot.is_some_and(|slot| self.callable_write(object, slot, value));
         if let Some(slot) = slot {
             self.heap.property_set(object, slot, value);
         } else {
-            let next_shape = self.transition_property_shape(shape, key);
-            self.heap.property_push(object, value);
-            self.object_data_mut(object).unwrap().set_shape(next_shape);
+            return self.create_shape_property(object, key, value);
         }
         if invalidates_method {
             self.invalidate_method_caches_for_key(key);
-        } else if slot.is_none()
-            && let PropertyKey::String(atom) = key
-        {
+        }
+        Ok(())
+    }
+
+    /// Create a shape-backed property after proving its absence.
+    fn create_shape_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let shape = self
+            .object_data(object)
+            .ok_or_else(|| JsError("property write on non-object".into()))?
+            .shape();
+        self.check_property_key_write(object, key, false)?;
+        let next_shape = self.transition_property_shape(shape, key);
+        self.heap.property_push(object, value);
+        self.object_data_mut(object).unwrap().set_shape(next_shape);
+        if let PropertyKey::String(atom) = key {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
         Ok(())
@@ -906,7 +931,8 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
-            let written = self.proxy_set(p, target, handler, object, PropertyKey::string(atom), value)?;
+            let written =
+                self.proxy_set(p, target, handler, object, PropertyKey::string(atom), value)?;
             return if written || !strict {
                 Ok(())
             } else {

@@ -98,51 +98,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
-        if let Some(index) = key.as_number().filter(|x| {
-            *x >= 0.0
-                && x.fract() == 0.0
-                && (!matches!(self.heap.get(object), Some(Cell::Array { .. }))
-                    || *x < u32::MAX as f64)
-        }) {
-            if let Some(value) = self.typed_array_get(object, index as usize) {
-                return Ok(value);
-            }
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
-                let index = index as usize;
-                let dense = elements
-                    .get(index)
-                    .copied()
-                    .filter(|value| !value.is_deleted());
-                let sparse = dense
-                    .is_none()
-                    .then(|| {
-                        self.heap
-                            .sparse_get(object, index)
-                            .filter(|value| !value.is_deleted())
-                    })
-                    .flatten();
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_get(
-                    usize::from(key.as_int().is_none()) * 3
-                        + if dense.is_some() {
-                            0
-                        } else if sparse.is_some() {
-                            1
-                        } else {
-                            2
-                        },
-                );
-                if let Some(value) = dense.or(sparse) {
-                    return Ok(value);
-                }
-            }
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.index_get(6);
-        }
-        #[cfg(feature = "profile-aggregate")]
-        if key.as_number().is_none_or(|x| x < 0.0 || x.fract() != 0.0) {
-            self.profile.index_get(7);
-        }
+
         let key = self.coerce_js_string(p, key)?;
         let atom = self.intern_js_atom(&key);
         self.get_property(p, object, atom)
@@ -188,7 +144,8 @@ impl<H: Host> Vm<H> {
                 let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
-            if !self.has_own_array_index(object, index)
+            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+                && !self.has_own_array_index(object, index)
                 && self.set_inherited_index_accessor(p, object, index, value, strict)?
             {
                 return Ok(());
@@ -214,7 +171,8 @@ impl<H: Host> Vm<H> {
                 if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
-                    return Err(JsError("cannot write sealed or frozen array".into()));
+                    let atom = self.intern_atom(&index.to_string());
+                    return self.set_property_with_program_mode(p, object, atom, value, strict);
                 }
             }
             if self.typed_array_set(p, object, index, value)? {
@@ -268,68 +226,7 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_js_atom(&key);
             return self.set_property_with_program(p, object, atom, value);
         }
-        if let Some(index) = key.as_number().filter(|x| {
-            *x >= 0.0
-                && x.fract() == 0.0
-                && (!matches!(self.heap.get(object), Some(Cell::Array { .. }))
-                    || *x < u32::MAX as f64)
-        }) {
-            let index = index as usize;
-            let typed_array_index_in_proto =
-                if matches!(self.heap.get(object), Some(Cell::Array { .. })) {
-                let atom = self.intern_atom(&index.to_string());
-                self.prototype_chain_contains_typed_array_index(object, atom)
-            } else {
-                false
-            };
-            if !typed_array_index_in_proto {
-                if let Some(attributes) = self.array_descriptor(object, index) {
-                    if attributes.accessor {
-                        if let Some(setter) = attributes.setter {
-                            self.call_value(p, setter, object, &[value])?;
-                        } else if strict {
-                            return Err(self.type_error(p, "array index has no setter".into()));
-                        }
-                        return Ok(());
-                    }
-                    if !attributes.writable {
-                        return if strict {
-                            Err(self.type_error(p, "array index is not writable".into()))
-                        } else {
-                            Ok(())
-                        };
-                    }
-                }
-                if self.set_inherited_index_accessor(p, object, index, value, strict)? {
-                    return Ok(());
-                }
-                #[cfg(feature = "profile-aggregate")]
-                let kind = self.heap.get(object).and_then(|cell| match cell {
-                    Cell::Array { elements, .. } => {
-                        let sparse =
-                            self.array_index_uses_sparse_storage(object, index, elements.len());
-                        Some(if sparse {
-                            2
-                        } else {
-                            usize::from(index >= elements.len())
-                        })
-                    }
-                    _ => None,
-                });
-                if self.set_array_element(object, index, value) {
-                    #[cfg(feature = "profile-aggregate")]
-                    self.profile
-                        .index_set(usize::from(key.as_int().is_none()) * 3 + kind.unwrap());
-                    return Ok(());
-                }
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_set(6);
-            }
-        }
-        #[cfg(feature = "profile-aggregate")]
-        if key.as_number().is_none_or(|x| x < 0.0 || x.fract() != 0.0) {
-            self.profile.index_set(7);
-        }
+
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))

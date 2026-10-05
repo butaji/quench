@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "a9f7ce17191f7201e77564cc8a8ff9f8b1e0baab",
+  "qualification": "Isolated shared property creation, indexed access reduction and array-like source lookup preparation. Pending lexical-this, Node, Wasm, parser and Promise work excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/index.rs": "0e70f72bfde2faf23830a4fd6f6d58e413fe11943ac765bf391d419f358e1cd9",
+    "crates/quench-runtime-next/src/vm/object.rs": "aa30f0967a627a060fc3c3a41962cd4b359855c5177f7f739b93570c075c80fc",
+    "crates/quench-runtime-next/src/vm/typed_array_construct.rs": "c641cc1a9d9c6f10c640773f613247f0656f58c2e1fce7b8f33ecc11fbd307d8"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "Shape transitions remain the property-layout authority. Existing ShapeLookupIndex is a derived immutable projection prepared after array-like length conversion for repeated reads. No new storage representation or cache.",
+    "invariant": "Getters and per-element conversion still execute in order; mutation selects a new shape. Rooted source is refreshed after length conversion. Same-target OrdinarySet reuses its own-property finding only across native operations without guest execution.",
+    "creation": "One create_shape_property operation owns the absent-property transition, storage append and prototype-cache invalidation. Shared setter and ordinary shape writes use it.",
+    "reduction": "Removed unreachable numeric branches after ToPropertyKey, restricted array-index accessor shortcuts to actual arrays, and removed repeated absent-property scans. Sealed/frozen indexed writes use the exact shared setter fallback, preserving sloppy-mode behavior and realm-owned strict errors.",
+    "allocation_purpose": "Prepare the existing lookup only for more than one element read; zero or single element construction does not allocate this projection solely for element access."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-ordinarysetwithowndescriptor",
+    "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-typedarray-constructors"
+  ],
+  "build": {
+    "profile": "release; correctness only, no V8-v7 Score or RSS claim",
+    "log": "target/iteration/task13-detachment-cost/build.log",
+    "binaries": {
+      "before-quench-next": "165686b5ae2a5e96ff03ed402c9320624d6f405bdda520ded69708834b67124b",
+      "before-run-stages-next": "873308f9a9a3b9949ad62f04fc7e5b5935ca37db7bde8a7d1a39ff92e66848b8",
+      "after-quench-next": "37c9e4c1fb4cbf58c1ec2db2ed919b2875d09cd5e35f8a8e14b7c6376da8cb0d",
+      "after-run-stages-next": "b0bf85a34d54293bb512f1a04dc222fc5b4921edc2020bd1be4f5abb96c099c5"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 5243,
+    "passed_before": 5239,
+    "passed_after": 5242,
+    "gained": [
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+      "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js"
+    ],
+    "scopes": [
+      {
+        "scope": "array",
+        "before_report": "target/iteration/task13-detachment-cost/before-array.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-array.json",
+        "passed_before": 3081,
+        "passed_after": 3081,
+        "failed_after": 0
+      },
+      {
+        "scope": "typed-array",
+        "before_report": "target/iteration/task13-detachment-cost/before-typed-array.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-typed-array.json",
+        "passed_before": 1442,
+        "passed_after": 1445,
+        "failed_after": 1
+      },
+      {
+        "scope": "assignment",
+        "before_report": "target/iteration/task13-detachment-cost/before-assignment.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-assignment.json",
+        "passed_before": 485,
+        "passed_after": 485,
+        "failed_after": 0
+      },
+      {
+        "scope": "reflect-set",
+        "before_report": "target/iteration/task13-detachment-cost/before-reflect-set.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-reflect-set.json",
+        "passed_before": 18,
+        "passed_after": 18,
+        "failed_after": 0
+      },
+      {
+        "scope": "proxy-set",
+        "before_report": "target/iteration/task13-detachment-cost/before-proxy-set.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-proxy-set.json",
+        "passed_before": 27,
+        "passed_after": 27,
+        "failed_after": 0
+      },
+      {
+        "scope": "staged-array",
+        "before_report": "target/iteration/task13-detachment-cost/before-staged-array.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-staged-array.json",
+        "passed_before": 90,
+        "passed_after": 90,
+        "failed_after": 0
+      },
+      {
+        "scope": "staged-typed-array",
+        "before_report": "target/iteration/task13-detachment-cost/before-staged-typed-array.json",
+        "after_report": "target/iteration/task13-detachment-cost/after-staged-typed-array.json",
+        "passed_before": 96,
+        "passed_after": 96,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for each matching inventory"
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "summary": {
+      "sources": 269,
+      "observations_per_build": 538,
+      "before_matches": 510,
+      "after_matches": 514,
+      "losses": 0
+    },
+    "report": "target/iteration/task13-detachment-cost/node-controls.json",
+    "coverage": [
+      "ordinary, array, typed-array, null-prototype and Map indexed writes",
+      "own/inherited accessors and readonly properties, proxy receiver, extensibility and frozen arrays",
+      "strict/sloppy mode; numeric/string/Symbol/coercible keys",
+      "typed-array constructor controls and source getter mutations: deletion/readdition, descriptor/prototype changes, length changes, value conversion, abrupt identity and freezing"
+    ],
+    "remaining": "24 unchanged observations are the previously recorded constructor prototype-versus-iterator/length ordering differences; not frozen implemented Node compatibility suite qualification."
+  },
+  "gc_control": {
+    "exit": 0,
+    "report": "target/iteration/task13-detachment-cost/gc-control.log",
+    "coverage": "GC in array-like element getters while changing the next descriptor; derived shape projection preserves symbol identity and getter effects."
+  },
+  "diagnosis": {
+    "census": "External unchanged-harness factory diagnostic isolated the array-like path; no suite input or guest harness edit.",
+    "census_report": "target/iteration/task13-detachment-cost/factory-control.log",
+    "contaminated_runs": "A later run reported three staged TypedArray timing regressions and an Array timeout; baseline standalone diagnostic also exceeded 60 seconds under unrelated Deno CPU load. All reports retained. No claim of zero regression was based on those runs.",
+    "external_load": "target/iteration/task13-detachment-cost/external-load.json",
+    "preserved_reports_prefix": "target/iteration/task13-detachment-cost/contended-",
+    "requalification": "Observed competing Deno processes completed before matched typed-array, staged Array and staged TypedArray scopes were rerun on the same frozen binaries. Both staged scopes pass on both binaries; three official detachment fixtures are gained.",
+    "requalification_log": "target/iteration/task13-detachment-cost/requalification.log"
+  },
+  "limits": [
+    "The immutable-species fixture conflict remains unchanged.",
+    "Earlier timing failures remain recorded; broader timing stability and full conformance are unproven.",
+    "No pins, discovery, harness inputs, fixture expectations, exclusions or deadlines changed.",
+    "Stage A single-VM cutover, Wasm and frozen implemented Node suite remain incomplete; Stage B has not started."
+  ]
+}
