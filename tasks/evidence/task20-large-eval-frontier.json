@@ -1,0 +1,101 @@
+{
+  "schema": 1,
+  "tasks": [
+    "20"
+  ],
+  "source_head": "d122ca429491e12f83db62092ec6b7898151a129",
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "qualification": "Existing committed build only; pending main-tree and experimental empty-block reduction changes excluded.",
+  "build": {
+    "profile": "release; correctness only",
+    "binaries": {
+      "before-quench-next": "b988669fc05b9fb940840ff4e4b0e0b7b5eec0e12fb9ad927bf751503f55dcde",
+      "before-run-stages-next": "814d452bbad8fa35e8a33eaecd9ab596d36e6bb84eeccc9f45407f9cd3689cca"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "timeout_ms": 10000,
+    "jobs_per_scope": 2,
+    "distinct_cases": 14625,
+    "passed": 14625,
+    "failed": 0,
+    "scopes": [
+      {
+        "scope": "block-scope",
+        "report": "target/iteration/task20-empty-blocks/before-block-scope.json",
+        "report_sha256": "e97ace3e5ba82c42ea722119e83fdd9428c9c5a07f9d0b84991981ff7988b92c",
+        "passed": 145,
+        "failed": 0
+      },
+      {
+        "scope": "eval-language",
+        "report": "target/iteration/task20-empty-blocks/before-eval-language.json",
+        "report_sha256": "264be389b7f2816fc1c00c69b3f65db4e5268552d490cd36f157d3e045824617",
+        "passed": 347,
+        "failed": 0
+      },
+      {
+        "scope": "function-code",
+        "report": "target/iteration/task20-empty-blocks/before-function-code.json",
+        "report_sha256": "b8d7a517269c79518c1ec34d794764b374e68d942dc28254b6306380ef4095ae",
+        "passed": 217,
+        "failed": 0
+      },
+      {
+        "scope": "statements",
+        "report": "target/iteration/task20-empty-blocks/before-statements.json",
+        "report_sha256": "f3124ef9d80b581ba26bd590e1ad566cc934f9f8cdde2821827c49274d90528d",
+        "passed": 9337,
+        "failed": 0
+      },
+      {
+        "scope": "eval-builtin",
+        "report": "target/iteration/task20-empty-blocks/before-eval-builtin.json",
+        "report_sha256": "567c80041e38fd7b10ce9beca3136c7b6bd093b382221060e90ff6b5970f0051",
+        "passed": 10,
+        "failed": 0
+      },
+      {
+        "scope": "function-builtin",
+        "report": "target/iteration/task20-empty-blocks/before-function-builtin.json",
+        "report_sha256": "df6647d55f26d5f1156ed275173029a034b436b0cc2b7e597143384dd3c1df2b",
+        "passed": 509,
+        "failed": 0
+      },
+      {
+        "scope": "class",
+        "report": "target/iteration/task20-empty-blocks/before-class.json",
+        "report_sha256": "4facf3db72cf606d742e9dabbd3ce8f4ab5dc4468bb41c3f01b650d8ee9c6907",
+        "passed": 4059,
+        "failed": 0
+      },
+      {
+        "scope": "large-eval",
+        "report": "target/iteration/task20-empty-blocks/before-large-eval.json",
+        "report_sha256": "009f33e0b9b5131fb2dde21bfea328cec87c8414bce391ebb7b58db2c71643e4",
+        "passed": 1,
+        "failed": 0
+      }
+    ]
+  },
+  "frontier": "staging/sm/regress/regress-610026.js already passes at the unchanged ten-second deadline on the committed build; its historical timeout is not a current failure. No new gain is attributed to this check.",
+  "experiment": {
+    "decision": "deferred",
+    "reason": "Empty-block AST reduction adds no affected suite passes and is not required for Stage A. No candidate production source is committed. Cost measurements deferred while unrelated CPU-intensive jobs run.",
+    "comparison": "All eight matched affected inventories have zero regressions; compare-runs --reports.",
+    "node_controls": {
+      "sources": 34,
+      "observations_per_build": 68,
+      "before_matches": 66,
+      "after_matches": 66,
+      "losses": 0
+    },
+    "remaining_node_difference": "with/proxy has-trap lookup count differs in both baseline and candidate; unchanged by this experiment."
+  },
+  "limits": [
+    "Bounded checks do not establish full Test262 or Stage A completion.",
+    "Single-VM cutover, pinned Wasm and frozen implemented Node compatibility remain unqualified.",
+    "Pins, guest inputs, harness, expectations, exclusions and deadlines unchanged."
+  ]
+}
