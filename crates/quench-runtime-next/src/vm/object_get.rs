@@ -464,24 +464,10 @@ impl<H: Host> Vm<H> {
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);
             }
-            if let Some(v) = self.indexed_view_property(object, atom) {
-                return Ok(v);
-            }
             match self.heap.get(object) {
-                Some(Cell::TypedArray { .. }) if atom == self.length_atom => {
-                    return Ok(Value::number(
-                        self.typed_array_length(object).unwrap_or(0) as f64
-                    ));
-                }
-                Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
-                    return Ok(Value::number(entries.len() as f64));
-                }
                 Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
                 Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
                 Some(Cell::DataView { object: x, .. }) => object = x.proto,
-                Some(Cell::Set { entries, .. }) if atom == self.size_atom => {
-                    return Ok(Value::number(entries.len() as f64));
-                }
                 Some(Cell::String(v)) => {
                     if let Ok(index) = self.atom_name(atom).parse::<usize>()
                         && let Some(unit) = v.units().get(index).copied()
