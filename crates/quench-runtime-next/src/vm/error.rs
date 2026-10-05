@@ -874,7 +874,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::RealmTypeError), type_error_prototype);
-        self.set_named(program, type_error, "prototype", type_error_prototype)?;
+        self.set_named_constant(program, type_error, "prototype", type_error_prototype)?;
         self.set_named(program, type_error_prototype, "constructor", type_error)?;
         let type_error_name = self.heap.alloc(Cell::String("TypeError".into()));
         self.set_named(program, type_error_prototype, "name", type_error_name)?;
@@ -1229,7 +1229,7 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((global, Native::Error), realm_error_prototype);
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
-        self.set_builtin_value_named(realm_error_constructor, "prototype", realm_error_prototype)?;
+        self.set_named_constant(program, realm_error_constructor, "prototype", realm_error_prototype)?;
         self.set_builtin_value_named(
             realm_error_prototype,
             "constructor",
@@ -1260,20 +1260,18 @@ impl<H: Host> Vm<H> {
                 setter: Some(stack_setter),
             },
         );
+        self.set_builtin_function_name(realm_error_constructor, "Error")?;
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
         self.set_realm_builtin_named(program, realm_error_prototype, "toString", Native::ErrorToString, Some(global))?;
         self.object_data_mut(type_error_prototype).expect("realm TypeError prototype").proto = realm_error_prototype;
         self.object_data_mut(type_error).expect("realm TypeError constructor").proto = realm_error_constructor;
-        for (name, native) in [
-            ("AggregateError", Native::AggregateError),
-            ("SuppressedError", Native::SuppressedError),
-            ("EvalError", Native::EvalError),
-            ("RangeError", Native::RangeError),
-            ("ReferenceError", Native::ReferenceError),
-            ("SyntaxError", Native::SyntaxError),
-            ("URIError", Native::URIError),
-        ] {
+        self.set_builtin_function_name(type_error, "TypeError")?;
+        for &(name, native) in ERROR_CONSTRUCTORS {
+            if matches!(native, Native::Error | Native::TypeError) {
+                continue;
+            }
             let constructor = self.native_with_realm(native, global, global);
+            self.set_builtin_function_name(constructor, name)?;
             let prototype = self
                 .heap
                 .alloc(Cell::Object(Self::empty_object(realm_error_prototype)));
@@ -1281,7 +1279,7 @@ impl<H: Host> Vm<H> {
                 .intrinsics
                 .builtin_prototypes
                 .insert((global, native), prototype);
-            self.set_builtin_value_named(constructor, "prototype", prototype)?;
+            self.set_named_constant(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let name_value = self.heap.alloc(Cell::String(name.into()));
             self.set_builtin_value_named(prototype, "name", name_value)?;
@@ -1543,7 +1541,7 @@ impl<H: Host> Vm<H> {
                 .intrinsics
                 .builtin_prototypes
                 .insert((self.realm.globals, *native), prototype);
-            self.set_named(program, constructor, "prototype", prototype)?;
+            self.set_named_constant(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
             let constructor_name = self.heap.alloc(Cell::String(JsString::from_str(name)));
             self.set_named(program, constructor, "name", constructor_name)?;
@@ -1555,19 +1553,6 @@ impl<H: Host> Vm<H> {
                     writable: false,
                     enumerable: false,
                     configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-            let prototype_atom = self.intern_atom("prototype");
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::string(prototype_atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: false,
                     accessor: false,
                     getter: None,
                     setter: None,
@@ -1632,6 +1617,48 @@ impl<H: Host> Vm<H> {
         native: Native,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        let prototype = self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(self.realm.globals, native))
+            .copied()
+            .unwrap_or_else(|| {
+                let constructor = self.native_value(native);
+                let atom = self.intern_atom("prototype");
+                self.own_property(constructor, atom)
+                    .unwrap_or(self.object_proto)
+            });
+        self.construct_error_with_prototype(program, native, args, prototype)
+    }
+
+    pub(super) fn construct_error_with_new_target(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        new_target: Value,
+    ) -> Result<Value, JsError> {
+        self.with_call_roots(
+            std::iter::once(new_target).chain(args.iter().copied()),
+            |vm| {
+                let prototype = vm
+                    .native_constructor_prototype(program, new_target, native)?
+                    .ok_or_else(|| {
+                        JsError::validation("error constructor has no intrinsic prototype".into())
+                    })?;
+                vm.construct_error_with_prototype(program, native, args, prototype)
+            },
+        )
+    }
+
+    fn construct_error_with_prototype(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        args: &[Value],
+        prototype: Value,
+    ) -> Result<Value, JsError> {
         let (message, options, suppressed) = match native {
             Native::SuppressedError => (
                 args.get(SUPPRESSED_MESSAGE_ARGUMENT)
@@ -1658,18 +1685,6 @@ impl<H: Host> Vm<H> {
                 None,
             ),
         };
-        let prototype = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(self.realm.globals, native))
-            .copied()
-            .unwrap_or_else(|| {
-                let constructor = self.native_value(native);
-                let atom = self.intern_atom("prototype");
-                self.own_property(constructor, atom)
-                    .unwrap_or(self.object_proto)
-            });
         let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
         let root = self.heap.root(object);
         let outcome = (|| {
@@ -1743,18 +1758,15 @@ impl<H: Host> Vm<H> {
         let mut object = None;
         let mut errors_list = Vec::new();
         let outcome = (|| {
+            let target = self.heap.root_value(new_target).unwrap();
             let prototype = self
-                .realm
-                .intrinsics
-                .builtin_prototypes
-                .get(&(self.realm.globals, Native::AggregateError))
-                .copied()
-                .unwrap_or(self.object_proto);
+                .native_constructor_prototype(program, target, Native::AggregateError)?
+                .ok_or_else(|| {
+                    JsError::validation("AggregateError has no intrinsic prototype".into())
+                })?;
             let value = self.heap.alloc(Cell::Object(Object::error(prototype)));
             let root = self.heap.root(value);
             object = Some(root);
-            let new_target = self.heap.root_value(new_target).unwrap();
-            self.set_constructed_prototype(program, value, new_target, Native::AggregateError)?;
             if let Some(message) = message {
                 let message = self.heap.root_value(message).unwrap();
                 let message = self.to_string(program, message)?;
