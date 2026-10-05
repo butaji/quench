@@ -9,6 +9,8 @@
 //!
 //! Keep runner policy separate from the Node host and runtime semantics.
 
+pub mod case_process;
+pub mod inventory;
 pub mod reader;
 pub mod runner;
 pub mod stages;
