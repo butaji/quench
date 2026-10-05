@@ -19,6 +19,8 @@ pub enum UnhandledRejectionMode {
 }
 
 pub struct ProcessState {
+    /// Monotonic origin for this logical Node process, shared by both adapters.
+    started: std::time::Instant,
     pub argv: Vec<String>,
     pub exit_handlers: Vec<(Value, bool)>,
     pub before_exit_handlers: Vec<(Value, bool)>,
@@ -87,6 +89,7 @@ impl ProcessState {
         ];
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
+            started: std::time::Instant::now(),
             argv,
             exit_handlers: Vec::new(),
             before_exit_handlers: Vec::new(),
@@ -119,7 +122,14 @@ impl ProcessState {
             dropped_permissions: HashSet::new(),
         }
     }
+
+    pub fn uptime(&self) -> f64 {
+        self.started.elapsed().as_secs_f64()
+    }
 }
+
+#[path = "process/shared_vm.rs"]
+pub(crate) mod shared_vm;
 
 /// Install invocation-time trace categories before bootstrap creates any
 /// timers or promises. The process state is the single source of truth for

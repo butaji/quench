@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::time::Instant;
 
 use quench_runtime::execute::VmError;
@@ -161,8 +160,6 @@ pub fn event_trusted_get(
 ) -> Result<Value, VmError> {
     Ok(Value::Boolean(false))
 }
-
-static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 
 fn value_text(value: &Value) -> String {
     match value {
@@ -6731,16 +6728,11 @@ pub fn process_setgroups(
 }
 
 pub fn process_uptime(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Number(
-        PROCESS_START
-            .get_or_init(Instant::now)
-            .elapsed()
-            .as_secs_f64(),
-    ))
+    Ok(Value::Number(state.borrow().process.uptime()))
 }
 
 pub fn process_available_memory(

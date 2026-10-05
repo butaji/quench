@@ -1,4 +1,6 @@
-use rqj::{ExecutionRequest, Runtime, SystemHost};
+use quench_node::NodeHost;
+use quench_runtime::ops::RealmId;
+use rqj::{ExecutionRequest, Runtime};
 
 fn main() {
     let result = std::thread::Builder::new()
@@ -7,7 +9,9 @@ fn main() {
         .spawn(run)
         .map_err(|error| format!("runtime worker thread: {error}"))
         .and_then(|worker| {
-            worker.join().unwrap_or_else(|_| Err("runtime worker panicked".into()))
+            worker
+                .join()
+                .unwrap_or_else(|_| Err("runtime worker panicked".into()))
         });
     if let Err(error) = result {
         eprintln!("quench-node-next: {error}");
@@ -40,7 +44,8 @@ fn run() -> Result<(), String> {
         ),
         None => return Err("usage: quench-node-next [-e CODE|SCRIPT]".into()),
     };
-    let mut runtime = Runtime::new(SystemHost);
+    let host = NodeHost::new(RealmId::ROOT, std::env::args().collect());
+    let mut runtime = Runtime::new(host);
     runtime
         .compile_and_execute(ExecutionRequest::script(&source, &name))
         .map(|_| ())
