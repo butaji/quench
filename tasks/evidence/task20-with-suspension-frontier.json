@@ -1,0 +1,194 @@
+{
+  "schema": 1,
+  "tasks": [
+    "07",
+    "11",
+    "15",
+    "20"
+  ],
+  "baseline_source_head": "09bde325f97c17d7adada5b8154a380384afa172",
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "qualification": "Committed-build suspension probes and matched candidate review. Empty-projection candidate discarded; no production source change.",
+  "baseline_binaries": {
+    "before-quench-next": "0ffe0c67fdaa2f7f9f7a403faf78826bad6d233403594d93e70f7031bf80ae75",
+    "before-run-stages-next": "10e3f1ae9419903288bb29047c5c30152e348248f9a822528aa4331af996679f"
+  },
+  "suspension_frontier": {
+    "node_version": "v26.10.0",
+    "observations": [
+      {
+        "case": "generator-with-loss",
+        "source": "var x=\"outer\",object={x:\"inner\"};function* f(){with(object){yield x;yield x;}}var g=f();print(g.next().value);print(x);print(g.next().value);",
+        "node": {
+          "exit": 0,
+          "stdout": "inner\nouter\ninner\n"
+        },
+        "engines": {
+          "normal": {
+            "exit": 0,
+            "stdout": "inner\nouter\nouter\n",
+            "stderr": "",
+            "matches_node": false
+          },
+          "generic": {
+            "exit": 0,
+            "stdout": "inner\nouter\nouter\n",
+            "stderr": "",
+            "matches_node": false
+          }
+        }
+      },
+      {
+        "case": "async-with-loss",
+        "source": "var x=\"outer\",object={x:\"inner\"};async function f(){with(object){print(x);await 0;print(x);}}f();print(x);",
+        "node": {
+          "exit": 0,
+          "stdout": "inner\nouter\ninner\n"
+        },
+        "engines": {
+          "normal": {
+            "exit": 0,
+            "stdout": "inner\nouter\nouter\n",
+            "stderr": "",
+            "matches_node": false
+          },
+          "generic": {
+            "exit": 0,
+            "stdout": "inner\nouter\nouter\n",
+            "stderr": "",
+            "matches_node": false
+          }
+        }
+      }
+    ],
+    "diagnosis": "Active with scope is kept in the VM with_stack; continuation fields preserve frames but do not preserve that scope projection. Resume starts from the outer binding.",
+    "required_fix": "Transfer active scope ownership at suspension and restore it at resume through shared generator/async activation transitions. Keep captured lexical scopes, GC roots and abrupt cleanup correct.",
+    "qualification_limit": "These uncovered scenarios fail in both execution modes on the committed build; pinned suite passes do not cover this interaction."
+  },
+  "empty_projection_experiment": {
+    "decision": "deferred; candidate source discarded",
+    "reason": "The isolated first Date fragment passed once, but the matched full Date family remains 20/28 on both builds. No deadline closure is established.",
+    "first_fragment_reports": [
+      "target/iteration/task20-with-empty-projection/before-date-first.json",
+      "target/iteration/task20-with-empty-projection/after-date-first.json"
+    ],
+    "paired_affected": {
+      "distinct_cases": 3568,
+      "passed_before": 3559,
+      "passed_after": 3559,
+      "regressions": [],
+      "gained": [],
+      "remaining": [
+        "staging/sm/Date/dst-offset-caching-1-of-8.js",
+        "staging/sm/Date/dst-offset-caching-2-of-8.js",
+        "staging/sm/Date/dst-offset-caching-3-of-8.js",
+        "staging/sm/Date/dst-offset-caching-4-of-8.js",
+        "staging/sm/Date/dst-offset-caching-5-of-8.js",
+        "staging/sm/Date/dst-offset-caching-6-of-8.js",
+        "staging/sm/Date/dst-offset-caching-7-of-8.js",
+        "staging/sm/Date/dst-offset-caching-8-of-8.js",
+        "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+      ],
+      "scopes": [
+        {
+          "scope": "date",
+          "before_report": "target/iteration/task20-with-empty-projection/before-date.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-date.json",
+          "passed_before": 20,
+          "passed_after": 20,
+          "failed_after": 8
+        },
+        {
+          "scope": "with",
+          "before_report": "target/iteration/task20-with-empty-projection/before-with.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-with.json",
+          "passed_before": 181,
+          "passed_after": 181,
+          "failed_after": 0
+        },
+        {
+          "scope": "generator",
+          "before_report": "target/iteration/task20-with-empty-projection/before-generator.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-generator.json",
+          "passed_before": 266,
+          "passed_after": 266,
+          "failed_after": 0
+        },
+        {
+          "scope": "generator-expr",
+          "before_report": "target/iteration/task20-with-empty-projection/before-generator-expr.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-generator-expr.json",
+          "passed_before": 290,
+          "passed_after": 290,
+          "failed_after": 0
+        },
+        {
+          "scope": "async-generator",
+          "before_report": "target/iteration/task20-with-empty-projection/before-async-generator.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-async-generator.json",
+          "passed_before": 623,
+          "passed_after": 623,
+          "failed_after": 0
+        },
+        {
+          "scope": "eval",
+          "before_report": "target/iteration/task20-with-empty-projection/before-eval.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-eval.json",
+          "passed_before": 347,
+          "passed_after": 347,
+          "failed_after": 0
+        },
+        {
+          "scope": "function",
+          "before_report": "target/iteration/task20-with-empty-projection/before-function.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-function.json",
+          "passed_before": 217,
+          "passed_after": 217,
+          "failed_after": 0
+        },
+        {
+          "scope": "global",
+          "before_report": "target/iteration/task20-with-empty-projection/before-global.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-global.json",
+          "passed_before": 56,
+          "passed_after": 56,
+          "failed_after": 0
+        },
+        {
+          "scope": "assignment",
+          "before_report": "target/iteration/task20-with-empty-projection/before-assignment.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-assignment.json",
+          "passed_before": 1527,
+          "passed_after": 1527,
+          "failed_after": 0
+        },
+        {
+          "scope": "staged-lexical",
+          "before_report": "target/iteration/task20-with-empty-projection/before-staged-lexical.json",
+          "after_report": "target/iteration/task20-with-empty-projection/after-staged-lexical.json",
+          "passed_before": 33,
+          "passed_after": 33,
+          "failed_after": 1
+        }
+      ]
+    },
+    "captured_parameter_controls": {
+      "sources": 14,
+      "observations_per_build": 28,
+      "before_matches": 26,
+      "after_matches": 26,
+      "losses": 0
+    },
+    "captured_parameter_control_report": "target/iteration/task20-with-empty-projection/controls.json",
+    "gc_controls": {
+      "matched_before_after": 7,
+      "report": "target/iteration/task20-with-empty-projection/gc-controls.json"
+    },
+    "invariant_found": "Generator parameter frames may have captured with objects before they are projected into the active stack; checking stack emptiness alone is insufficient."
+  },
+  "limits": [
+    "No full Test262 run, Stage A closure, single-VM cutover or Stage B measurement.",
+    "All eight Date stress timeouts and the Annex B arguments conflict remain.",
+    "Pins, discovery, harness, guest fixtures, expectations, exclusions and deadlines unchanged."
+  ]
+}
