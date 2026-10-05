@@ -40,6 +40,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let state = context.host_mut().state();
+    if let Some(root) = state.borrow_mut().assert_module.take() {
+        context.release_root(root);
+    }
     let previous = std::mem::replace(
         &mut state.borrow_mut().module_cache,
         ModuleCache::Shared(Default::default()),
@@ -82,13 +85,23 @@ pub(super) fn require(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
-    if matches!(specifier.as_str(), "process" | "node:process") {
-        return match context.host_mut().state().borrow().process_module.as_ref() {
-            Some(ProcessModule::Shared(root)) => Ok(*root),
-            _ => Err(RootedError::host(
-                "shared process module is not initialized",
-            )),
-        };
+    match BuiltinModule::from_specifier(&specifier) {
+        Some(BuiltinModule::Process) => {
+            return match context.host_mut().state().borrow().process_module.as_ref() {
+                Some(ProcessModule::Shared(root)) => Ok(*root),
+                _ => Err(RootedError::host(
+                    "shared process module is not initialized",
+                )),
+            };
+        }
+        Some(BuiltinModule::Assert) => {
+            return crate::modules::assert::shared_vm::module(context);
+        }
+        Some(BuiltinModule::AssertStrict) => {
+            let module = crate::modules::assert::shared_vm::module(context)?;
+            return get(context, module, "strict");
+        }
+        None => {}
     }
     let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
@@ -101,12 +114,30 @@ pub(super) fn resolve(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
-    if matches!(specifier.as_str(), "process" | "node:process") {
+    if BuiltinModule::from_specifier(&specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
     let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
+}
+
+#[derive(Clone, Copy)]
+enum BuiltinModule {
+    Process,
+    Assert,
+    AssertStrict,
+}
+
+impl BuiltinModule {
+    fn from_specifier(specifier: &str) -> Option<Self> {
+        match specifier {
+            "process" | "node:process" => Some(Self::Process),
+            "assert" | "node:assert" => Some(Self::Assert),
+            "assert/strict" | "node:assert/strict" => Some(Self::AssertStrict),
+            _ => None,
+        }
+    }
 }
 
 enum Request {

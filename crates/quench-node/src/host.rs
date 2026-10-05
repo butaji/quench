@@ -136,6 +136,8 @@ pub struct HostState {
     pub console_module: Option<Value>,
     /// Canonical `require("process")` module and global process identity.
     pub process_module: Option<ProcessModule>,
+    /// One retained shared-VM export for `assert` and its `node:` alias.
+    pub assert_module: Option<rqj::RootId>,
     /// Canonical `require("module")` namespace for this realm.
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
@@ -220,6 +222,7 @@ impl NodeHost {
             util_module: None,
             console_module: None,
             process_module: None,
+            assert_module: None,
             module_api: None,
             module_extensions: None,
             string_decoder_aliases: std::collections::HashMap::new(),
