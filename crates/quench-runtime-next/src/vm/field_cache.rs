@@ -29,9 +29,6 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            Cell::ArrayBuffer { .. } if self.array_buffer_virtual_property(value, atom).is_some() => {
-                return None;
-            }
             Cell::Function { .. } if self.atom_name(atom) == "caller" => return None,
             _ => {}
         }

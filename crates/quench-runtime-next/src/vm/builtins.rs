@@ -789,7 +789,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.install_array_unscopables()?;
         self.install_abstract_module_source(program)?;
-        self.install_array_buffer_species(program)?;
+        self.install_array_buffer_species()?;
         self.global(program, "Symbol", symbol)?;
         self.install_disposal(program)?;
         let string = self.native_value(Native::String);
