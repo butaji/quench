@@ -6,6 +6,8 @@
 //! an AssertionError-shaped object (`name`, `message`, `operator`,
 //! `actual`, `expected`), which is catchable via `try`/`catch`.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
