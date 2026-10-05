@@ -1,5 +1,4 @@
 use super::*;
-use crate::bytecode::MAPPED_ARGUMENTS_BIT;
 
 impl<H: Host> Vm<H> {
     pub(super) fn mapped_argument_load(
@@ -10,21 +9,13 @@ impl<H: Host> Vm<H> {
         fallback: Value,
     ) -> Value {
         let function = &p.functions[self.frames[frame].function as usize];
-        let Some(encoded) = function.arguments_slot else {
+        let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return fallback;
         };
-        if encoded & MAPPED_ARGUMENTS_BIT == 0 || slot >= usize::from(function.params) {
-            return fallback;
-        }
-        let argument_slot = usize::from(encoded & !MAPPED_ARGUMENTS_BIT);
         let arguments = if self.frames[frame].captured {
-            match self.heap.get(self.frames[frame].env) {
-                Some(Cell::Environment { slots, .. }) => slots
-                    .get(argument_slot)
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED),
-                _ => Value::UNDEFINED,
-            }
+            self.heap
+                .environment_slot(self.frames[frame].env, argument_slot)
+                .unwrap_or(Value::UNDEFINED)
         } else {
             self.frames[frame]
                 .locals
@@ -32,15 +23,7 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(Value::UNDEFINED)
         };
-        let Some(index) = self
-            .object_data(arguments)
-            .and_then(Object::arguments_map)
-            .and_then(|mapping| {
-                mapping
-                    .iter()
-                    .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
-            })
-        else {
+        let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
         };
         match self.heap.get(arguments) {
@@ -61,21 +44,13 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) {
         let function = &p.functions[self.frames[frame].function as usize];
-        let Some(encoded) = function.arguments_slot else {
+        let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
-        if encoded & MAPPED_ARGUMENTS_BIT == 0 || slot >= usize::from(function.params) {
-            return;
-        }
-        let argument_slot = usize::from(encoded & !MAPPED_ARGUMENTS_BIT);
         let arguments = if self.frames[frame].captured {
-            match self.heap.get(self.frames[frame].env) {
-                Some(Cell::Environment { slots, .. }) => slots
-                    .get(argument_slot)
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED),
-                _ => Value::UNDEFINED,
-            }
+            self.heap
+                .environment_slot(self.frames[frame].env, argument_slot)
+                .unwrap_or(Value::UNDEFINED)
         } else {
             self.frames[frame]
                 .locals
@@ -83,15 +58,40 @@ impl<H: Host> Vm<H> {
                 .copied()
                 .unwrap_or(Value::UNDEFINED)
         };
-        let Some(index) = self
-            .object_data(arguments)
+        self.store_mapped_argument(arguments, slot, value);
+    }
+
+    pub(super) fn store_environment_mapped_argument(
+        &mut self,
+        p: &ResidualProgram,
+        function: u32,
+        environment: Value,
+        slot: usize,
+        value: Value,
+    ) {
+        let function = &p.functions[function as usize];
+        let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
+            return;
+        };
+        let arguments = self
+            .heap
+            .environment_slot(environment, argument_slot)
+            .unwrap_or(Value::UNDEFINED);
+        self.store_mapped_argument(arguments, slot, value);
+    }
+
+    fn mapped_argument_index(&self, arguments: Value, slot: usize) -> Option<usize> {
+        self.object_data(arguments)
             .and_then(Object::arguments_map)
             .and_then(|mapping| {
                 mapping
                     .iter()
                     .position(|mapped| *mapped != u16::MAX && usize::from(*mapped) == slot)
             })
-        else {
+    }
+
+    fn store_mapped_argument(&mut self, arguments: Value, slot: usize, value: Value) {
+        let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return;
         };
         let _ = self.set_array_element(arguments, index, value);
@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
         let mut updates = Vec::new();
         for (frame_index, frame) in self.frames.iter().enumerate() {
             let has_arguments = if frame.captured {
-                matches!(self.heap.get(frame.env), Some(Cell::Environment { slots, .. }) if slots.contains(&object))
+                self.heap.environment_contains(frame.env, object)
             } else {
                 frame.locals.contains(&object)
             };
@@ -117,9 +117,9 @@ impl<H: Host> Vm<H> {
         }
         for (frame_index, slot) in updates {
             if self.frames[frame_index].captured {
-                if let Some(Cell::Environment { slots, .. }) =
-                    self.heap.get_mut(self.frames[frame_index].env)
-                    && let Some(target) = slots.get_mut(slot)
+                if let Some(target) = self
+                    .heap
+                    .environment_slot_mut(self.frames[frame_index].env, slot)
                 {
                     *target = value;
                 }
@@ -138,4 +138,10 @@ impl<H: Host> Vm<H> {
             *slot = u16::MAX;
         }
     }
+}
+
+fn mapped_arguments_slot(function: &crate::bytecode::Function, parameter: usize) -> Option<usize> {
+    let slot = function.arguments_slot?;
+    (function.arguments_are_mapped() && parameter < usize::from(function.params))
+        .then_some(usize::from(slot))
 }

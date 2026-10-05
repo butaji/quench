@@ -17,12 +17,9 @@ impl<H: Host> Vm<H> {
                 let Some(environment) = self.programs.module_environment(program) else {
                     return Some(fallback);
                 };
-                let value = match self.heap.get(environment) {
-                    Some(Cell::Environment { slots, .. }) => {
-                        slots.get(usize::from(binding)).copied()
-                    }
-                    _ => None,
-                };
+                let value = self
+                    .heap
+                    .environment_slot(environment, usize::from(binding));
                 Some(match value {
                     Some(Value::DELETED) if !fallback.is_undefined() => fallback,
                     None => fallback,
@@ -44,7 +41,11 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                self.clone_frame_environment(f);
+                self.clone_frame_environment(
+                    f,
+                    &p.functions[self.frames[f].function as usize].environment_clones
+                        [i.environment_clone_index()],
+                )?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
@@ -56,49 +57,12 @@ impl<H: Host> Vm<H> {
                     })?;
                 self.write(f, i.result_register(), value);
             }
-            Op::LoadLocal => {
-                let slot = i.local_slot();
-                let v = if let Some(value) = self.direct_eval_var_binding(f, slot) {
-                    value
-                } else if let Some(value) =
-                    self.root_global_lexical_value(p, self.frames[f].function, slot)
-                {
-                    value
-                } else if let Some(atom) = self.global_object_var_atom(f, slot) {
-                    self.get_property(p, self.realm.globals, atom)?
-                } else if let Some(value) =
-                    self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
-                {
-                    value
-                } else if self.frames[f].captured {
-                    let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    *slots
-                        .get(slot)
-                        .ok_or_else(|| JsError("invalid local slot".into()))?
-                } else {
-                    // SAFETY: compiler construction and residual decoding establish
-                    // the frame-local bound before interpretation.
-                    unsafe { *self.frames.get_unchecked(f).locals.get_unchecked(slot) }
-                };
-                if v.is_deleted() {
-                    let atom = p.functions[self.frames[f].function as usize]
-                        .local_atoms
-                        .get(slot)
-                        .copied()
-                        .unwrap_or_default();
-                    return Err(self.reference_error(
-                        p,
-                        format!(
-                            "Cannot access '{}' before initialization",
-                            self.atom_name(atom)
-                        ),
-                    ));
-                }
-                let v = self.mapped_argument_load(p, f, slot, v);
-                self.write(f, i.result_register(), v);
+            Op::LoadLocal | Op::LoadEnvLocal => {
+                let value = self.load_local_binding(p, f, i.local_slot(), None)?;
+                self.write(f, i.result_register(), value);
+            }
+            Op::StoreVarBinding => {
+                self.store_var_binding(p, f, i.local_slot(), self.read(f, i.register_a()))?;
             }
             Op::StoreLocal => {
                 let value = self.read(f, i.register_a());
@@ -119,27 +83,14 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(StepResult::Continue);
                 }
+                self.check_local_assignment_initialized(
+                    p,
+                    f,
+                    slot,
+                    i.boolean_field(crate::bytecode::InstructionField::C)
+                        .unwrap_or(false),
+                )?;
                 if self.frames[f].function == 0 {
-                    let current = if self.frames[f].captured {
-                        match self.heap.get(self.frames[f].env) {
-                            Some(Cell::Environment { slots, .. }) => slots.get(slot).copied(),
-                            _ => None,
-                        }
-                    } else {
-                        self.frames[f].locals.get(slot).copied()
-                    };
-                    if current.is_some_and(Value::is_deleted)
-                        && i.boolean_field(crate::bytecode::InstructionField::C) == Some(false)
-                    {
-                        let atom = function.local_atoms.get(slot).copied().unwrap_or_default();
-                        return Err(self.reference_error(
-                            p,
-                            format!(
-                                "Cannot access '{}' before initialization",
-                                self.atom_name(atom)
-                            ),
-                        ));
-                    }
                     if function
                         .local_atoms
                         .get(slot)
@@ -150,13 +101,9 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 if self.frames[f].captured {
-                    let Some(Cell::Environment { slots, .. }) =
-                        self.heap.get_mut(self.frames[f].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    *slots
-                        .get_mut(slot)
+                    *self
+                        .heap
+                        .environment_slot_mut(self.frames[f].env, slot)
                         .ok_or_else(|| JsError("invalid local slot".into()))? = value;
                 } else {
                     self.frames[f].locals[slot] = value;
@@ -167,62 +114,31 @@ impl<H: Host> Vm<H> {
                     self.write(f, register, value);
                 }
             }
-            Op::LoadEnvLocal => {
-                let slot = i.local_slot();
-                let value = if let Some(value) = self.direct_eval_var_binding(f, slot) {
-                    value
-                } else if let Some(value) =
-                    self.root_global_lexical_value(p, self.frames[f].function, slot)
-                {
-                    value
-                } else if let Some(atom) = self.global_object_var_atom(f, slot) {
-                    self.get_property(p, self.realm.globals, atom)?
-                } else if let Some(value) =
-                    self.module_import_value(self.frames[f].program, self.frames[f].function, slot)
-                {
-                    value
-                } else if self.frames[f].captured {
-                    let Some(Cell::Environment { slots, .. }) = self.heap.get(self.frames[f].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    slots[slot]
-                } else {
-                    self.frames[f].locals[slot]
-                };
-                if value.is_deleted() {
-                    let atom = p.functions[self.frames[f].function as usize]
-                        .local_atoms
-                        .get(slot)
-                        .copied()
-                        .unwrap_or_default();
-                    return Err(self.reference_error(
-                        p,
-                        format!(
-                            "Cannot access '{}' before initialization",
-                            self.atom_name(atom)
-                        ),
-                    ));
-                }
-                let value = self.mapped_argument_load(p, f, slot, value);
-                self.write(f, i.result_register(), value);
-            }
             Op::StoreEnvLocal => {
                 let value = self.read(f, i.register_a());
                 let slot = i.local_slot();
                 let function = &p.functions[self.frames[f].function as usize];
                 let atom = function.local_atoms.get(slot).copied();
                 if let Some(atom) = atom
-                    && self.store_with_binding(p, f, atom, value)?
+                    && self.store_with_binding(p, f, atom, value, function.strict)?
                 {
                     if let Some(register) = i.optional_register_b() {
                         self.write(f, register, value);
                     }
                     return Ok(StepResult::Continue);
                 }
+                self.check_local_assignment_initialized(
+                    p,
+                    f,
+                    slot,
+                    i.boolean_field(crate::bytecode::InstructionField::C)
+                        .unwrap_or(false),
+                )?;
                 if let Some(atom) = atom
                     && function.global_immutable_atoms.contains(&atom)
-                    && !i.boolean_field(crate::bytecode::InstructionField::C).unwrap_or(false)
+                    && !i
+                        .boolean_field(crate::bytecode::InstructionField::C)
+                        .unwrap_or(false)
                 {
                     return Err(self.type_error(p, "assignment to constant binding".into()));
                 }
@@ -238,7 +154,12 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(StepResult::Continue);
                 }
-                let global_var = self.root_global_var_atom(p, self.frames[f].function, slot);
+                let global_var = self.root_global_var_atom(
+                    p,
+                    self.frames[f].program,
+                    self.frames[f].function,
+                    slot,
+                );
                 if let Some(atom) = global_var {
                     let written = self.set_property_with_receiver(
                         p,
@@ -264,12 +185,10 @@ impl<H: Host> Vm<H> {
                     self.realm.global_lexical_bindings.insert(atom, value);
                 }
                 if self.frames[f].captured {
-                    let Some(Cell::Environment { slots, .. }) =
-                        self.heap.get_mut(self.frames[f].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    slots[slot] = value;
+                    *self
+                        .heap
+                        .environment_slot_mut(self.frames[f].env, slot)
+                        .ok_or_else(|| JsError("invalid local environment".into()))? = value;
                 } else {
                     self.frames[f].locals[slot] = value;
                 }
@@ -295,7 +214,7 @@ impl<H: Host> Vm<H> {
             }
             Op::LoadNameCall => {
                 let (callee, this) =
-                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()))?;
+                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()), false)?;
                 self.write(f, i.result_register(), callee);
                 self.write(f, i.register_b(), this);
             }
@@ -330,7 +249,7 @@ impl<H: Host> Vm<H> {
             }
             Op::InitializeThis => {
                 let value = self.read(f, i.register_a());
-                self.initialize_this_binding(f, value);
+                self.initialize_this_binding(p, f, value)?;
             }
             Op::CacheTemplateObject => {
                 let key = (
@@ -362,7 +281,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = self.promote_frame_environment(f);
+                let env = self.capture_binding_environment(f)?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
@@ -406,7 +325,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeArray => {
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
+                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements: Rc::new(vec![Value::DELETED; i.array_length()]),
                 });
                 self.write(f, i.result_register(), v);
@@ -421,7 +340,7 @@ impl<H: Host> Vm<H> {
                         JsError::validation("constant array is outside program".into())
                     })?;
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
+                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements,
                 });
                 self.write(f, i.result_register(), v);
@@ -612,13 +531,9 @@ impl<H: Host> Vm<H> {
             Op::InitializeTdz => {
                 let slot = i.local_slot();
                 if self.frames[f].captured {
-                    let Some(Cell::Environment { slots, .. }) =
-                        self.heap.get_mut(self.frames[f].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    *slots
-                        .get_mut(slot)
+                    *self
+                        .heap
+                        .environment_slot_mut(self.frames[f].env, slot)
                         .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
                 } else {
                     self.frames[f].locals[slot] = Value::DELETED;
@@ -629,14 +544,23 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Await => {
+                // Promise conversion is part of this instruction, so abrupt
+                // completion reaches the active frame's catch/finally handlers.
+                let value = self.promise_for_value(p, self.read(f, i.register_b()))?;
                 return Ok(StepResult::Await {
-                    value: self.read(f, i.register_b()),
+                    value,
                     destination: i.result_register(),
                 });
             }
             Op::Yield => {
+                let value = self.read(f, i.register_b());
+                let value = if p.functions[self.frames[f].function as usize].is_async {
+                    self.promise_for_value(p, value)?
+                } else {
+                    value
+                };
                 return Ok(StepResult::Yield {
-                    value: self.read(f, i.register_b()),
+                    value,
                     destination: i.result_register(),
                     delegated_result: None,
                 });
@@ -690,8 +614,9 @@ impl<H: Host> Vm<H> {
                         self.iterator_next_with_cached_method(p, iterator, next_method, &[input])?;
                     if asynchronous {
                         *pc -= 1;
+                        let value = self.promise_for_value(p, result)?;
                         return Ok(StepResult::Await {
-                            value: result,
+                            value,
                             destination: state_register,
                         });
                     }
@@ -735,15 +660,16 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             Op::DefinePropertyRecord => {
-                let mode = i
-                    .property_definition_mode()
-                    .ok_or_else(|| JsError::validation("invalid property definition mode".into()))?;
+                let mode = i.property_definition_mode().ok_or_else(|| {
+                    JsError::validation("invalid property definition mode".into())
+                })?;
                 let target = self.read(f, i.register_b());
                 let key = self.read(f, i.register_c());
-                let descriptor = super::object_descriptors::PropertyDescriptorRecord::for_definition(
-                    mode,
-                    self.read(f, i.register_a()),
-                );
+                let descriptor =
+                    super::object_descriptors::PropertyDescriptorRecord::for_definition(
+                        mode,
+                        self.read(f, i.register_a()),
+                    );
                 self.define_property_or_throw(p, target, key, descriptor)?;
             }
             Op::DefineField => {
@@ -819,23 +745,27 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
-            Op::WasmUnreachable => return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable)),
+            Op::WasmUnreachable => {
+                return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable));
+            }
             Op::WasmI32Binary => {
-                let (left, right) = Value::int_pair(
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                )
-                .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
+                let (left, right) =
+                    Value::int_pair(self.read(f, i.register_b()), self.read(f, i.register_c()))
+                        .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
                 let operator = crate::wasm::integer::I32BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm binary operator");
-                let value = operator.apply(left, right).map_err(JsError::wasm_trap_error)?;
+                let value = operator
+                    .apply(left, right)
+                    .map_err(JsError::wasm_trap_error)?;
                 let crate::WasmValue::I32(value) = value else {
                     unreachable!("i32 operator result")
                 };
                 self.write(f, i.result_register(), Value::integer(value));
             }
             Op::WasmI32Unary => {
-                let value = self.read(f, i.register_b()).as_int()
+                let value = self
+                    .read(f, i.register_b())
+                    .as_int()
                     .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))?;
                 let operator = crate::wasm::integer::I32UnaryOperator::from_tag(i.imm())
                     .expect("validated Wasm unary operator");
@@ -849,7 +779,9 @@ impl<H: Host> Vm<H> {
                 let right = self.wasm_i64_operand(self.read(f, i.register_c()))?;
                 let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
                     .expect("validated Wasm binary operator");
-                let value = operator.apply(left, right).map_err(JsError::wasm_trap_error)?;
+                let value = operator
+                    .apply(left, right)
+                    .map_err(JsError::wasm_trap_error)?;
                 let value = self.encode_wasm_scalar(value);
                 self.write(f, i.result_register(), value);
             }
@@ -863,10 +795,8 @@ impl<H: Host> Vm<H> {
             Op::WasmScalarConvert => {
                 let operator = crate::wasm::conversion::ScalarConversionOperator::from_tag(i.imm())
                     .expect("validated Wasm scalar conversion");
-                let value = self.decode_wasm_scalar(
-                    self.read(f, i.register_b()),
-                    operator.source_type(),
-                )?;
+                let value =
+                    self.decode_wasm_scalar(self.read(f, i.register_b()), operator.source_type())?;
                 let value = operator.apply(value).map_err(JsError::wasm_trap_error)?;
                 debug_assert_eq!(value.ty(), operator.result_type());
                 let value = self.encode_wasm_scalar(value);
@@ -1011,7 +941,44 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
+                if p.kind == crate::bytecode::ProgramKind::Wasm
+                    && i.returns_from_frame()
+                    && let Some(CallTarget::User(program_id, id, env)) =
+                        self.call_target(callee).ok()
+                {
+                    let program = self.programs.get(program_id).ok_or_else(|| {
+                        JsError::validation("missing Wasm tail-call program".into())
+                    })?;
+                    let realm = match self.heap.get(callee) {
+                        Some(Cell::Function { realm, .. }) => *realm,
+                        _ => self.realm.globals,
+                    };
+                    let result = self.with_call_roots(
+                        [callee, this].into_iter().chain(args.iter().copied()),
+                        |vm| {
+                            vm.active_program = program_id;
+                            vm.realm.globals = realm;
+                            vm.prepare_user_tail(
+                                &program,
+                                f,
+                                id,
+                                env,
+                                this,
+                                args,
+                                CallContext::Function(callee),
+                            )
+                        },
+                    );
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    result?;
+                    self.profile.terminal_call(0);
+                    return Ok(StepResult::TailCall);
+                }
                 if terminal
+                    && p.kind != crate::bytecode::ProgramKind::Wasm
+                    && p.functions[self.frames[f].function as usize].strict
+                    && !p.functions[self.frames[f].function as usize].class_field_initializer
                     && !matches!(self.heap.get(callee), Some(Cell::Proxy { .. }))
                     && let Some(CallTarget::User(program_id, id, env)) =
                         self.call_target(callee).ok()
@@ -1019,11 +986,37 @@ impl<H: Host> Vm<H> {
                     && !p.functions[id as usize].is_async
                     && !p.functions[id as usize].is_generator
                 {
-                    self.prepare_user_tail(p, f, id, env, this, args)?;
+                    self.with_call_roots(
+                        [callee, this].into_iter().chain(args.iter().copied()),
+                        |vm| {
+                            vm.prepare_user_tail(
+                                p,
+                                f,
+                                id,
+                                env,
+                                this,
+                                args,
+                                CallContext::Function(callee),
+                            )
+                        },
+                    )?;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
+                }
+                if p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame() {
+                    // Native/host calls need argument roots, not the discarded guest activation.
+                    self.with_stack.truncate(self.frames[f].with_base);
+                    let frame = &mut self.frames[f];
+                    frame.context = CallContext::Internal;
+                    frame.locals.fill(Value::UNDEFINED);
+                    frame.registers.fill(Value::UNDEFINED);
+                    frame.dynamic_bindings.clear();
+                    frame.active_iterators.clear();
+                    frame.env = Value::NULL;
+                    frame.this = Value::UNDEFINED;
+                    frame.captured = false;
                 }
                 let value = match self.call_value(p, callee, this, args) {
                     Ok(value) => value,
@@ -1072,8 +1065,10 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
-                if terminal
-                    && p.kind != crate::bytecode::ProgramKind::Wasm
+                if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
+                    || (p.kind != crate::bytecode::ProgramKind::Wasm
+                        && terminal
+                        && p.functions[self.frames[f].function as usize].strict))
                     && !p.functions[function_index as usize].is_async
                     && !p.functions[function_index as usize].is_generator
                 {
@@ -1084,6 +1079,7 @@ impl<H: Host> Vm<H> {
                         parent,
                         Value::UNDEFINED,
                         args,
+                        CallContext::Internal,
                     )?;
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
@@ -1094,6 +1090,7 @@ impl<H: Host> Vm<H> {
                     parent,
                     Value::UNDEFINED,
                     args,
+                    CallContext::Internal,
                 )?;
                 if i.returns_from_frame() {
                     self.profile.terminal_call(0);
@@ -1200,17 +1197,7 @@ impl<H: Host> Vm<H> {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }
             Some(crate::bytecode::OperandKind::Local) => {
-                let slot = operand.payload() as usize;
-                if self.frames[frame].captured {
-                    let Some(Cell::Environment { slots, .. }) =
-                        self.heap.get(self.frames[frame].env)
-                    else {
-                        return Err(JsError("invalid local environment".into()));
-                    };
-                    Ok(slots[slot])
-                } else {
-                    Ok(self.frames[frame].locals[slot])
-                }
+                self.load_local_binding(p, frame, operand.payload() as usize, None)
             }
             None => unreachable!("two-bit operand tag"),
         }

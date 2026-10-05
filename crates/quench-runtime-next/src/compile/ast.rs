@@ -19,12 +19,6 @@ enum ControlKind {
     Label,
 }
 
-enum UpdateTarget {
-    Name(Atom, Option<Register>),
-    Field(Atom, Register),
-    Index(Register, Register),
-}
-
 #[derive(Clone, Copy)]
 pub(super) enum StatementCompletion {
     Ignored,
@@ -94,6 +88,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) function_id: u32,
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
+    pub(super) environment_clones: Vec<Vec<u16>>,
     controls: Vec<ControlTarget>,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
@@ -118,11 +113,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     annex_b_arguments_binding: bool,
     pub(super) statement_completion: StatementCompletion,
     pub(super) parameter_local_count: usize,
-    pub(super) defer_instance_fields: bool,
     pub(super) super_call_binds_this: bool,
     lexical_scopes: Vec<LexicalScope>,
     disposal_scopes: Vec<DisposalScope>,
-    pub(super) deferred_instance_field_edges: Vec<(usize, u32)>,
 }
 
 #[derive(Default)]
@@ -142,7 +135,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         super_flags: (bool, bool),
         async_function: bool,
         generator: bool,
-        defer_instance_fields: bool,
         parameter_arguments_slot: Option<u16>,
         annex_b_arguments_binding: bool,
         parameter_local_count: usize,
@@ -172,6 +164,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             function_id,
             handlers: vec![],
             binding_sites: vec![],
+            environment_clones: vec![],
             controls: vec![],
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
@@ -196,11 +189,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             annex_b_arguments_binding,
             statement_completion: StatementCompletion::Ignored,
             parameter_local_count,
-            defer_instance_fields,
             super_call_binds_this: false,
             lexical_scopes: Vec::new(),
             disposal_scopes: vec![DisposalScope::default()],
-            deferred_instance_field_edges: Vec::new(),
         }
     }
 
@@ -266,7 +257,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 })
         });
         self.code.push(instruction);
-        let pc = self.code.len() - 1;
+        if op == Op::MakeClosure && self.with_depth != self.inherited_with_depth {
+            self.record_lexical_binding_site(self.code.len() - 1);
+        }
+        // Deletion always resolves a binding by name, including block slots
+        // whose storage atom differs from their source name.
         if op == Op::DeleteName
             || (self.with_depth != self.inherited_with_depth
                 && matches!(
@@ -278,9 +273,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         | Op::StoreName
                 ))
         {
-            self.record_name_binding_site(pc, imm);
+            self.record_name_binding_site(self.code.len() - 1, imm);
         }
-        pc
+        self.code.len() - 1
     }
 
     pub(super) fn patch(&mut self, at: usize) {
@@ -363,12 +358,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 let Some(name) = name else { continue };
                 let params = Self::params(function, self.owner);
                 let Some(body) = &function.body else { continue };
-                let mut scopes = self.capture_scopes();
-                scopes.extend(self.scopes.iter().cloned());
+                let scopes = self.capture_scopes();
                 let id = self.owner.compile_function(
                     Some(name),
                     &params,
-                    &body.statements,
+                    FunctionBody::Statements(&body.statements),
                     &scopes,
                     Some(self.function_id),
                     FunctionOptions {
@@ -383,7 +377,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         class_field_initializer: false,
                         instance_fields: None,
                         instance_private_methods: None,
-                        defer_instance_fields: false,
                         super_static: false,
                         super_home: false,
                         super_home_atom: None,
@@ -409,7 +402,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     self.store_atom_with_initialization(atom, dst, true);
                 } else if let Some(identifier) = &function.id {
                     let atom = self.owner.atom(identifier.name.as_str());
-                    self.initialize_atom(atom, dst);
+                    if self.function_id == 0
+                        && self.owner.eval_context.is_some()
+                        && self.active_lexical_binding(atom).is_none()
+                        && let Some(slot) = self.local_slots.get(&atom).copied()
+                    {
+                        self.emit(Op::StoreVarBinding, dst, 0, 0, u32::from(slot));
+                    } else {
+                        self.initialize_atom(atom, dst);
+                    }
                 } else {
                     continue;
                 }
@@ -534,13 +535,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         atom
     }
 
-    pub(super) fn emit_implicit_super(
-        &mut self,
-        fields: &[ClassField<'_>],
-        private_methods: &[Atom],
-    ) {
+    pub(super) fn emit_implicit_super(&mut self) {
         let args = self.load_name("\0rqj:derived-args");
-        let callee = self.literal(Constant::Undefined);
+        let callee = self.super_constructor();
         let result = self.reg();
         self.emit(
             Op::Construct,
@@ -550,7 +547,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             crate::bytecode::ImmediateLayout::construct_immediate(1, true, true),
         );
         self.emit(Op::InitializeThis, result, 0, 0, 0);
-        self.emit_instance_fields(fields, private_methods);
         self.emit(Op::Return, result, 0, 0, 0);
     }
 
@@ -603,7 +599,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     unreachable!();
                 };
                 let binding = self.owner.atom(identifier.name.as_str());
-                self.store_atom(binding, current);
+                self.initialize_atom(binding, current);
             } else {
                 self.bind_pattern(&item.pattern, current);
             }
@@ -656,6 +652,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.push_lexical_bindings_with_immutability(bindings, FxHashSet::default());
     }
 
+    pub(super) fn push_body_lexical_bindings(&mut self, bindings: &[(Atom, LexicalBindingKind)]) {
+        self.push_immutable_lexical_bindings(
+            bindings.iter().map(|(atom, _)| (*atom, *atom)).collect(),
+            bindings
+                .iter()
+                .filter_map(|(atom, kind)| {
+                    (*kind == LexicalBindingKind::Immutable).then_some(*atom)
+                })
+                .collect(),
+        );
+    }
+
     pub(super) fn push_immutable_lexical_bindings(
         &mut self,
         bindings: FxHashMap<Atom, Atom>,
@@ -672,12 +680,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     ) {
         for item in &declaration.declarations {
             self.map_pattern_lexicals(&item.id, bindings);
-            if matches!(
-                declaration.kind,
-                VariableDeclarationKind::Const
-                    | VariableDeclarationKind::Using
-                    | VariableDeclarationKind::AwaitUsing
-            ) {
+            if super::is_immutable_binding_declaration(declaration.kind) {
                 let mut names = Vec::new();
                 super::early::collect_pattern_names(&item.id, &mut names);
                 immutable.extend(names.iter().map(|name| self.owner.atom(name)));
@@ -728,22 +731,41 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .unwrap_or(LexicalBindingKind::Mutable)
     }
 
-    fn push_catch_lexical_bindings(&mut self, bindings: FxHashMap<Atom, Atom>) {
-        self.push_lexical_bindings(bindings);
+    fn lexical_scope_slots(&self) -> Vec<u16> {
         self.lexical_scopes
-            .last_mut()
-            .expect("catch binding scope was just pushed")
-            .catch_parameter = true;
-    }
-
-    pub(super) fn initialize_lexical_scope(&mut self) {
-        let slots = self
-            .lexical_scopes
             .last()
             .into_iter()
             .flat_map(|scope| scope.bindings.values())
             .filter_map(|binding| self.local_slots.get(binding).copied())
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    pub(super) fn clone_lexical_environment(&mut self) {
+        self.clone_environment_slots(self.lexical_scope_slots());
+    }
+
+    pub(super) fn clone_environment_slots(&mut self, mut slots: Vec<u16>) {
+        slots.sort_unstable();
+        slots.dedup();
+        if slots.is_empty() {
+            return;
+        }
+        let index = if let Some(index) = self
+            .environment_clones
+            .iter()
+            .position(|existing| *existing == slots)
+        {
+            index
+        } else {
+            self.environment_clones.push(slots);
+            self.environment_clones.len() - 1
+        };
+        self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
+    }
+
+    pub(super) fn initialize_lexical_scope(&mut self) {
+        let slots = self.lexical_scope_slots();
+        self.clone_environment_slots(slots.clone());
         self.initialize_tdz_slots(slots);
     }
 
@@ -856,12 +878,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 usize::from(*slot) < self.parameter_local_count
                     || Some(*slot) == self.parameter_arguments_slot
             });
+            if let Some(slot) = self.parameter_arguments_slot {
+                scope.insert(self.owner.atom("arguments"), slot);
+            }
         }
-        for lexical in self
-            .lexical_scopes
-            .iter()
-            .filter(|scope| self.with_depth == 0 || scope.with_depth >= self.with_depth)
-        {
+        for lexical in &self.lexical_scopes {
             for (source, target) in &lexical.bindings {
                 if let Some(slot) = self.local_slots.get(target).copied() {
                     scope.insert(*source, slot);
@@ -895,6 +916,25 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // bindings cannot be replaced by those declarations and remain capturable.
         if !self.dynamic_eval {
             scopes.extend(self.scopes.iter().cloned());
+        } else {
+            // Source eval cannot introduce compiler bindings. Keep their scope
+            // depths while dropping source-name projections and capture markers.
+            scopes.extend(self.scopes.iter().map(|scope| {
+                Rc::new(
+                    scope
+                        .iter()
+                        .filter_map(|(atom, slot)| {
+                            let name = self.owner.atoms[*atom as usize].as_ref();
+                            (self.is_compiler_binding(*atom)
+                                && !LexicalBindingKind::ALL
+                                    .into_iter()
+                                    .any(|kind| name.starts_with(kind.capture_prefix()))
+                                && !name.starts_with("\0rqj:catch-capture:"))
+                            .then_some((*atom, *slot))
+                        })
+                        .collect(),
+                )
+            }));
         }
         scopes
     }
@@ -913,7 +953,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
             }
         }
-        self.push_catch_lexical_bindings(scope);
+        self.push_lexical_bindings(scope);
+        // Annex B permits redeclaration only for a simple catch identifier.
+        self.lexical_scopes
+            .last_mut()
+            .expect("catch binding scope was just pushed")
+            .catch_parameter = !requires_initialization;
         if requires_initialization {
             self.initialize_lexical_scope();
         }

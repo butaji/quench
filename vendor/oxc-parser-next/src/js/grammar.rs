@@ -86,6 +86,20 @@ impl<'a, C: Config> CoverGrammar<'a, Expression<'a>, C> for SimpleAssignmentTarg
             Expression::TSInstantiationExpression(expr) => {
                 p.fatal_error(diagnostics::invalid_lhs_assignment(expr.span()))
             }
+            Expression::CallExpression(call)
+                if p.options.allow_call_assignment_targets && !call.optional =>
+            {
+                let span = call.span;
+                let property =
+                    IdentifierName::new(span, p.ident(crate::CALL_ASSIGNMENT_TARGET_MARKER), p);
+                Self::from(MemberExpression::new_static_member_expression(
+                    span,
+                    Expression::CallExpression(call),
+                    property,
+                    false,
+                    p,
+                ))
+            }
             expr => p.fatal_error(diagnostics::invalid_assignment(expr.span())),
         }
     }
@@ -146,9 +160,11 @@ impl<'a, C: Config> CoverGrammar<'a, Expression<'a>, C> for AssignmentTargetMayb
         match expr {
             Expression::AssignmentExpression(assignment_expr) => {
                 if assignment_expr.operator != AssignmentOperator::Assign {
-                    p.error(diagnostics::invalid_assignment_target_default_value_operator(
-                        assignment_expr.span,
-                    ));
+                    p.error(
+                        diagnostics::invalid_assignment_target_default_value_operator(
+                            assignment_expr.span,
+                        ),
+                    );
                 }
                 let target = AssignmentTargetWithDefault::cover(assignment_expr.unbox(), p);
                 AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(p.alloc(target))
@@ -224,7 +240,11 @@ impl<'a, C: Config> CoverGrammar<'a, ObjectProperty<'a>, C> for AssignmentTarget
                 _ => return p.unexpected(),
             };
             // convert `CoverInitializedName`
-            let init = p.state.cover_initialized_name.remove(&property.span.start).map(|e| e.right);
+            let init = p
+                .state
+                .cover_initialized_name
+                .remove(&property.span.start)
+                .map(|e| e.right);
             AssignmentTargetProperty::new_assignment_target_property_identifier(
                 property.span,
                 binding,

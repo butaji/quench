@@ -668,8 +668,13 @@ impl Heap {
                 ..
             } => {
                 work.push(*parent);
-                work.extend(slots.iter().copied());
-                work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
+                work.extend(slots.roots());
+                match dynamic_bindings {
+                    EnvironmentBindings::Owned(bindings) => {
+                        work.extend(bindings.iter().map(|(_, value)| *value))
+                    }
+                    EnvironmentBindings::Shared(owner) => work.push(*owner),
+                }
                 work.extend(with_objects.iter().copied());
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
@@ -769,7 +774,10 @@ impl Heap {
                     slots,
                     with_objects,
                     ..
-                } => (slots.len() + with_objects.capacity()) * size_of::<Value>(),
+                } => {
+                    slots.len() * size_of::<EnvironmentSlot>()
+                        + with_objects.capacity() * size_of::<Value>()
+                }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
                 Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),

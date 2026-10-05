@@ -18,12 +18,13 @@ impl Compiler<'_> {
         let id = self.functions.len() as u32;
         self.functions.push(None);
         let source_text = self.source_text(value.span);
-        let lexical_atoms = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
+        let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
-            self.collect_lexical_atoms(&body.statements)
+            self.collect_body_lexical_bindings(&body.statements)
         } else {
             Vec::new()
         };
+        let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
         let arrow_marker = self.atom("\0rqj:arrow");
         let params = FunctionCompiler::params_from_formals(&value.params, self);
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
@@ -68,7 +69,6 @@ impl Compiler<'_> {
             (false, false),
             value.r#async,
             false,
-            false,
             None,
             false,
             parameter_local_count,
@@ -81,13 +81,22 @@ impl Compiler<'_> {
         function.class_field_initializer = class_field_initializer;
         function.super_call_binds_this = super_call_binds_this;
         function.this_override = lexical_this_atom.map(|atom| function.load_atom(atom));
-        function.dynamic_eval = early::parameters_contain_direct_eval(&value.params);
+        function.dynamic_eval = early::parameters_contain_direct_eval(&value.params)
+            || match &value.body {
+                oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
+                    early::body_contains_direct_eval(&body.statements)
+                }
+                body => early::expression_contains_direct_eval(
+                    body.as_expression().expect("arrow expression body"),
+                ),
+            };
         let lexical_slots = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
             .collect();
         function.initialize_tdz_slots(lexical_slots);
         function.emit_parameter_bindings(&value.params);
+        function.push_body_lexical_bindings(&body_lexicals);
         match &value.body {
             oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) => {
                 function.emit_hoisted(&body.statements);
@@ -127,6 +136,7 @@ impl Compiler<'_> {
                 instruction.set_op(op);
             }
         }
+        let name_bindings = function.name_bindings();
         let result = BcFunction {
             parent,
             // Keep the arrow/non-constructor invariant in the residual
@@ -148,11 +158,13 @@ impl Compiler<'_> {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom,
             constructible: false,
             class_field_initializer,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: !FunctionCompiler::has_non_simple_parameters(&value.params),
             strict,
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
@@ -163,7 +175,9 @@ impl Compiler<'_> {
             global_function_atoms: Vec::new(),
             global_annex_b_var_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
+            name_bindings,
             binding_sites: function.binding_sites,
+            environment_clones: function.environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

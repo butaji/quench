@@ -31,6 +31,25 @@ pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
 }
 
 /// Eval may inherit new.target from a function, but never its Return grammar.
+pub(super) fn field_eval_references_arguments(statements: &[Statement<'_>]) -> bool {
+    struct Arguments(bool);
+    impl<'a> Visit<'a> for Arguments {
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc_ast::ast::IdentifierReference<'a>,
+        ) {
+            self.0 |= identifier.name == "arguments";
+        }
+        // Ordinary functions introduce their own arguments binding; arrows inherit it.
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+    }
+    let mut arguments = Arguments(false);
+    for statement in statements {
+        arguments.visit_statement(statement);
+    }
+    arguments.0
+}
+
 pub(super) fn eval_return_outside_function(program: &Program<'_>) -> Option<oxc_span::Span> {
     struct Returns(Option<oxc_span::Span>);
     impl<'a> Visit<'a> for Returns {
@@ -330,8 +349,22 @@ pub(super) fn parameter_early_error(
 }
 
 pub(super) fn parameters_contain_direct_eval(params: &FormalParameters<'_>) -> bool {
-    let mut finder = DirectEvalParameterFinder(false);
+    let mut finder = DirectEvalFinder(false);
     finder.visit_formal_parameters(params);
+    finder.0
+}
+
+pub(super) fn body_contains_direct_eval(body: &[Statement<'_>]) -> bool {
+    let mut finder = DirectEvalFinder(false);
+    for statement in body {
+        finder.visit_statement(statement);
+    }
+    finder.0
+}
+
+pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bool {
+    let mut finder = DirectEvalFinder(false);
+    finder.visit_expression(expression);
     finder.0
 }
 
@@ -340,9 +373,9 @@ pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
         && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")
 }
 
-struct DirectEvalParameterFinder(bool);
+struct DirectEvalFinder(bool);
 
-impl<'a> Visit<'a> for DirectEvalParameterFinder {
+impl<'a> Visit<'a> for DirectEvalFinder {
     fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
         if is_direct_eval_call(call) {
             self.0 = true;
@@ -796,52 +829,25 @@ pub(super) fn annex_b_lexical_collisions(statements: &[Statement<'_>]) -> FxHash
 }
 
 pub(super) fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<(u32, String)> {
-    statements
-        .iter()
-        .flat_map(annex_b_function_names_in)
-        .collect()
-}
-
-fn annex_b_function_names_in(statement: &Statement<'_>) -> Vec<(u32, String)> {
-    match statement {
-        Statement::FunctionDeclaration(function) => annex_b_function_name(function)
-            .map(|name| (function.span.start, name))
-            .into_iter()
-            .collect(),
-        Statement::BlockStatement(block) => annex_b_function_names(&block.body),
-        Statement::IfStatement(statement) => {
-            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
-            if let Some(alternate) = &statement.alternate {
-                names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
+    #[derive(Default)]
+    struct Names(Vec<(u32, String)>);
+    impl<'a> Visit<'a> for Names {
+        fn visit_function(&mut self, function: &Function<'a>, _: ScopeFlags) {
+            if function.r#type == oxc_ast::ast::FunctionType::FunctionDeclaration
+                && let Some(name) = annex_b_function_name(function)
+            {
+                self.0.push((function.span.start, name));
             }
-            names
+            // Nested functions own their declarations, not this variable scope.
         }
-        Statement::SwitchStatement(statement) => statement
-            .cases
-            .iter()
-            .flat_map(|case| annex_b_function_names(&case.consequent))
-            .collect(),
-        Statement::LabeledStatement(statement) => {
-            annex_b_function_names(std::slice::from_ref(&statement.body))
-        }
-        Statement::WhileStatement(statement) => {
-            annex_b_function_names(std::slice::from_ref(&statement.body))
-        }
-        Statement::DoWhileStatement(statement) => {
-            annex_b_function_names(std::slice::from_ref(&statement.body))
-        }
-        Statement::TryStatement(statement) => {
-            let mut names = annex_b_function_names(&statement.block.body);
-            if let Some(handler) = &statement.handler {
-                names.extend(annex_b_function_names(&handler.body.body));
-            }
-            if let Some(finalizer) = &statement.finalizer {
-                names.extend(annex_b_function_names(&finalizer.body));
-            }
-            names
-        }
-        _ => Vec::new(),
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {}
     }
+    let mut names = Names::default();
+    for statement in statements {
+        names.visit_statement(statement);
+    }
+    names.0
 }
 
 pub(super) fn annex_b_function_eligible(function: &oxc_ast::ast::Function<'_>) -> bool {
@@ -933,6 +939,9 @@ fn collect_annex_b_collisions(
                 collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
             }
             Statement::LabeledStatement(statement) => {
+                collect_annex_b_one(&statement.body, visible, collisions);
+            }
+            Statement::WithStatement(statement) => {
                 collect_annex_b_one(&statement.body, visible, collisions);
             }
             Statement::WhileStatement(statement) => {
@@ -1199,7 +1208,9 @@ impl<'a> Visit<'a> for StrictRestrictedAssignmentEarlyError {
     }
 
     fn visit_update_expression(&mut self, expression: &UpdateExpression<'a>) {
-        if self.strict && let Some(name) = Self::restricted_target(&expression.argument) {
+        if self.strict
+            && let Some(name) = Self::restricted_target(&expression.argument)
+        {
             self.found.get_or_insert(name);
         }
         walk::walk_update_expression(self, expression);

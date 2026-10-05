@@ -2,10 +2,11 @@ use super::Vm;
 use super::activation::{Continuation, ContinuationId, SuspendedEntry};
 use crate::host::Host;
 
+const INITIAL_CONTINUATION_GENERATION: u32 = 1;
+
 impl<H: Host> Vm<H> {
-    // Suspension producers are introduced by Task 17; keeping the lifecycle
-    // here gives every producer one generation-checked ownership boundary.
-    #[allow(dead_code)]
+    // A new token remains rooted until a producer attaches its callbacks.
+    // Attached tokens follow those callbacks' reachability.
     pub(crate) fn suspend_continuation(&mut self, continuation: Continuation) -> ContinuationId {
         while let Some(slot) = self.suspended_free.pop() {
             let entry = &mut self.suspended[slot as usize];
@@ -22,16 +23,15 @@ impl<H: Host> Vm<H> {
         let slot =
             u32::try_from(self.suspended.len()).expect("suspended continuation table exhausted");
         self.suspended.push(SuspendedEntry {
-            generation: 1,
+            generation: INITIAL_CONTINUATION_GENERATION,
             continuation: Some(continuation),
         });
         ContinuationId {
             slot,
-            generation: 1,
+            generation: INITIAL_CONTINUATION_GENERATION,
         }
     }
 
-    #[allow(dead_code)]
     pub(crate) fn resume_continuation(&mut self, id: ContinuationId) -> Option<Continuation> {
         let entry = self.suspended.get_mut(id.slot as usize)?;
         if entry.generation != id.generation {

@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn eval_binding_declarations_survive_residual_round_trip() {
+    let source = r#"
+    function outer(parameter) {
+        try { throw 1; } catch (caught) {
+            return function inner() { let lexical = 2; eval('parameter + caught + lexical'); };
+        }
+    }
+    { let blocked = 3; with ({blocked: 4}) {
+        blocked; blocked = 5; typeof blocked; delete blocked;
+        let nested = 6; eval('nested');
+    } }
+"#;
+    let program = crate::Engine::specialize(source, "eval-bindings.js").unwrap();
+    let path = std::env::temp_dir().join(format!("rqj-eval-bindings-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let encoded = std::fs::read(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    decoded.write_binary(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), encoded);
+    std::fs::remove_file(path).unwrap();
+    let declarations = decoded
+        .functions
+        .iter()
+        .flat_map(|function| {
+            function
+                .name_bindings
+                .iter()
+                .chain(
+                    function
+                        .binding_sites
+                        .iter()
+                        .flat_map(|site| site.bindings.iter()),
+                )
+                .map(|binding| {
+                    (
+                        decoded.atoms[binding.atom as usize].as_ref(),
+                        binding.declaration,
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    for (name, expected) in [
+        ("parameter", EvalBindingDeclaration::Variable),
+        ("caught", EvalBindingDeclaration::CatchParameter),
+        ("lexical", EvalBindingDeclaration::Lexical),
+        ("inner", EvalBindingDeclaration::Lexical),
+        ("blocked", EvalBindingDeclaration::Lexical),
+    ] {
+        assert!(
+            declarations.contains(&(name, expected)),
+            "{name}: {declarations:?}"
+        );
+    }
+    let nested = decoded
+        .atoms
+        .iter()
+        .position(|atom| atom == "nested")
+        .unwrap() as Atom;
+    assert!(
+        decoded
+            .functions
+            .iter()
+            .flat_map(|function| {
+                function
+                    .binding_sites
+                    .iter()
+                    .flat_map(|site| &site.bindings)
+            })
+            .any(|binding| binding.atom == nested && binding.with_depth == 1)
+    );
+    let mut invalid = decoded.clone();
+    let binding = invalid
+        .functions
+        .iter_mut()
+        .flat_map(|function| {
+            function
+                .binding_sites
+                .iter_mut()
+                .flat_map(|site| &mut site.bindings)
+        })
+        .find(|binding| binding.atom == nested)
+        .unwrap();
+    binding.with_depth = u16::MAX;
+    assert!(invalid.validate().is_err());
+    assert!(EvalBindingDeclaration::from_binary_tag(u8::MAX).is_err());
+}
+
+#[test]
 fn decoder_rejects_out_of_range_local_load() {
     let program = ResidualProgram {
         specialized: true,
@@ -24,11 +112,13 @@ fn decoder_rejects_out_of_range_local_load() {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: true,
             strict: false,
             locals: 1,
             local_atoms: vec![],
@@ -40,6 +130,8 @@ fn decoder_rejects_out_of_range_local_load() {
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
             binding_sites: vec![],
+            name_bindings: vec![],
+            environment_clones: vec![],
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
             registers: 1,
@@ -86,11 +178,13 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: true,
             strict: false,
             locals: 0,
             local_atoms: vec![],
@@ -102,6 +196,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
             binding_sites: vec![],
+            name_bindings: vec![],
+            environment_clones: vec![],
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
             registers: 1,
@@ -126,7 +222,6 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
     std::fs::remove_file(path).unwrap();
     assert_eq!(result.unwrap_err(), "residual runtime ABI mismatch");
 }
-
 
 #[test]
 fn decoder_rejects_unknown_property_definition_modes() {
@@ -208,6 +303,10 @@ fn scoped_binding_sites_survive_residual_round_trip() {
         );
         for (before, after) in program.functions.iter().zip(&decoded.functions) {
             assert_eq!(before.binding_sites, after.binding_sites);
+            assert_eq!(before.name_bindings, after.name_bindings);
+            assert_eq!(before.environment_clones, after.environment_clones);
+            assert_eq!(before.simple_parameters, after.simple_parameters);
+            assert_eq!(before.instance_initializer, after.instance_initializer);
         }
         crate::Runtime::new(crate::SystemHost)
             .execute(&decoded)

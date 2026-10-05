@@ -92,11 +92,13 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.profile.function(id as usize);
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+            context: CallContext::Internal,
             program: self.active_program,
             function: 0,
             pc: 0,
@@ -121,10 +123,11 @@ impl<H: Host> Vm<H> {
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(elements),
             });
         }
+        frame.context = context;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -166,7 +169,7 @@ impl<H: Host> Vm<H> {
                 match ins.op() {
                     Op::LoadLocal => {
                         let local = ins.local_slot();
-                        let value = self.frames[frame].locals[local];
+                        let value = self.load_local_binding(p, frame, local, None)?;
                         self.write(frame, ins.result_register(), value);
                         if let Some(target) = ins.numeric_local_store_target()
                             && let Some(integer) = value.as_int()
@@ -183,6 +186,13 @@ impl<H: Host> Vm<H> {
                     Op::StoreLocal => {
                         let value = self.read(frame, ins.register_a());
                         let local = ins.local_slot();
+                        self.check_local_assignment_initialized(
+                            p,
+                            frame,
+                            local,
+                            ins.boolean_field(crate::bytecode::InstructionField::C)
+                                .unwrap_or(false),
+                        )?;
                         self.frames[frame].locals[local] = value;
                         self.mirror_global_lexical_binding(p, frame, local, value);
                         if let Some(register) = ins.optional_register_b() {
@@ -342,16 +352,7 @@ impl<H: Host> Vm<H> {
                         let value = error
                             .thrown_value()
                             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                        if self.frames[frame].captured {
-                            let env = self.frames[frame].env;
-                            let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
-                            else {
-                                return Err(JsError("invalid catch environment".into()));
-                            };
-                            slots[slot as usize] = value;
-                        } else {
-                            self.frames[frame].locals[slot as usize] = value;
-                        }
+                        self.initialize_handler_binding(frame, slot, value)?;
                     }
                     pc = handler.target as usize;
                 }

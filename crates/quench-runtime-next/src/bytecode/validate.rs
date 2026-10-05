@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, Register,
-    ResidualProgram, REGISTER_MASK,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
+    Register, ResidualProgram,
 };
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
@@ -67,6 +67,7 @@ struct ValidationBounds {
     locals: u16,
     functions: usize,
     constants: usize,
+    environment_clones: usize,
     atoms: usize,
     field_sites: usize,
     cache_sites: u16,
@@ -143,6 +144,9 @@ fn immediate_domains_in_bounds(
 ) -> bool {
     match instruction.op().immediate_role() {
         super::ImmediateRole::ConstantIndex => instruction.constant_index() < bounds.constants,
+        super::ImmediateRole::EnvironmentCloneIndex => {
+            instruction.environment_clone_index() < bounds.environment_clones
+        }
         super::ImmediateRole::ClosureFunctionIndex => {
             (instruction.closure_function_index() as usize) < bounds.functions
         }
@@ -290,24 +294,102 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
-            let code_len = function.code.len() as u32;
-            if function.binding_sites.windows(2).any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+            if let Some(initializer) = function.instance_initializer {
+                let valid = self
+                    .functions
+                    .get(initializer as usize)
+                    .is_some_and(|plan| {
+                        function.derived_constructor
+                            && initializer as usize != index
+                            && plan.parent == function.parent
+                            && plan.class_field_initializer
+                            && !plan.constructible
+                            && plan.instance_initializer.is_none()
+                    });
+                if !valid {
+                    return Err(format!(
+                        "function {index} has an invalid instance initializer"
+                    ));
+                }
+            }
+            if function
+                .name_bindings
+                .windows(2)
+                .any(|pair| pair[0].atom >= pair[1].atom)
+            {
+                return Err(format!(
+                    "function {index} has duplicate or unsorted name bindings"
+                ));
+            }
+            if function
+                .binding_sites
+                .windows(2)
+                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
                 || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0 || site.resume_pc > code_len
-                        || site.bindings.windows(2).any(|pair| pair[0].atom >= pair[1].atom)
-                        || site.bindings.iter().any(|binding| {
-                            !atom_in_bounds(binding.atom, self.atoms.len())
-                                || matches!(binding.location, super::EvalBindingLocation::Local(slot) if slot >= function.locals)
-                        })
+                    site.resume_pc == 0
+                        || site.resume_pc as usize > function.code.len()
+                        || site
+                            .bindings
+                            .windows(2)
+                            .any(|pair| pair[0].atom >= pair[1].atom)
                 })
             {
-                return Err(format!("function {index} has invalid binding-site metadata"));
+                return Err(format!(
+                    "function {index} has invalid binding-site metadata"
+                ));
+            }
+            for (domain, binding) in function
+                .name_bindings
+                .iter()
+                .map(|binding| ("name binding", binding))
+                .chain(
+                    function
+                        .binding_sites
+                        .iter()
+                        .flat_map(|site| site.bindings.iter())
+                        .map(|binding| ("binding-site metadata", binding)),
+                )
+            {
+                let target = match binding.location {
+                    super::EvalBindingLocation::Local(_) => Some(function),
+                    super::EvalBindingLocation::Capture { depth, .. } => {
+                        let mut parent = function.parent;
+                        for _ in 0..depth {
+                            parent = parent
+                                .and_then(|id| self.functions.get(id as usize))
+                                .and_then(|function| function.parent);
+                        }
+                        parent.and_then(|id| self.functions.get(id as usize))
+                    }
+                };
+                let slot = match binding.location {
+                    super::EvalBindingLocation::Local(slot)
+                    | super::EvalBindingLocation::Capture { slot, .. } => slot,
+                };
+                if !atom_in_bounds(binding.atom, self.atoms.len())
+                    || target.is_none_or(|function| {
+                        slot >= function.locals
+                            || usize::from(binding.with_depth) > function.code.len()
+                    })
+                {
+                    return Err(format!("function {index} has invalid {domain}"));
+                }
+            }
+            let code_len = function.code.len() as u32;
+            if function.environment_clones.iter().any(|slots| {
+                slots.iter().any(|slot| *slot >= function.locals)
+                    || slots.windows(2).any(|pair| pair[0] >= pair[1])
+            }) {
+                return Err(format!(
+                    "function {index} has invalid environment clone slots"
+                ));
             }
             let bounds = ValidationBounds {
                 registers: function.registers,
                 locals: function.locals,
                 functions: self.functions.len(),
                 constants: self.constants.len(),
+                environment_clones: function.environment_clones.len(),
                 atoms: self.atoms.len(),
                 field_sites: self.field_sites.len(),
                 cache_sites: self.cache_sites,
@@ -316,6 +398,13 @@ impl ResidualProgram {
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
+            if function
+                .arguments_slot
+                .is_some_and(|slot| slot >= function.locals)
+                || function.rest && function.simple_parameters
+            {
+                return Err(format!("function {index} has invalid argument metadata"));
+            }
             if function.parameter_end_pc > code_len
                 || function.parameter_end_pc != 0 && !function.is_generator
             {
@@ -451,6 +540,93 @@ impl ResidualProgram {
 mod tests {
     use crate::bytecode::{AtomTable, DispatchClass, Function, Instr, Op, ResidualProgram};
 
+    #[test]
+    fn binding_site_domains_are_validated() {
+        let program = crate::Engine::specialize(
+            "{let value = 1; with ({}) {value; value = 2; typeof value; delete value;}}",
+            "binding-sites.js",
+        )
+        .unwrap();
+        assert!(program.validate().is_ok());
+        assert!(program.functions[0].binding_sites.len() >= 2);
+        for pc in [0, u32::MAX] {
+            let mut invalid = program.clone();
+            invalid.functions[0].binding_sites[0].resume_pc = pc;
+            assert!(invalid.validate().is_err());
+        }
+        let mut invalid = program.clone();
+        invalid.functions[0].binding_sites.reverse();
+        assert!(invalid.validate().is_err());
+        let mut invalid = program.clone();
+        invalid.functions[0].binding_sites[0].bindings[0].atom = u32::MAX;
+        assert!(invalid.validate().is_err());
+        let mut invalid = program.clone();
+        invalid.functions[0].binding_sites[0].bindings[0].location =
+            super::super::EvalBindingLocation::Local(u16::MAX);
+        assert!(invalid.validate().is_err());
+        let mut invalid = program.clone();
+        let binding = invalid.functions[0].binding_sites[0].bindings[0];
+        invalid.functions[0].binding_sites[0].bindings.push(binding);
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn name_binding_domains_are_validated() {
+        use crate::bytecode::EvalBindingLocation;
+        let program = crate::Engine::specialize(
+            "function outer() { const captured = 1; return function inner() { eval('0'); return captured; }; }",
+            "name-bindings.js",
+        ).unwrap();
+        assert!(program.validate().is_ok());
+        let owner = program
+            .functions
+            .iter()
+            .position(|function| function.name_bindings.len() >= 2)
+            .unwrap();
+        for location in [
+            EvalBindingLocation::Local(u16::MAX),
+            EvalBindingLocation::Capture {
+                depth: u16::MAX,
+                slot: 0,
+            },
+            EvalBindingLocation::Capture {
+                depth: 0,
+                slot: u16::MAX,
+            },
+        ] {
+            let mut invalid = program.clone();
+            invalid.functions[owner].name_bindings[0].location = location;
+            assert!(invalid.validate().is_err());
+        }
+        let mut invalid = program.clone();
+        invalid.functions[owner].name_bindings.reverse();
+        assert!(invalid.validate().is_err());
+        let mut invalid = program.clone();
+        invalid.functions[owner].name_bindings[1] = invalid.functions[owner].name_bindings[0];
+        assert!(invalid.validate().is_err());
+        let mut invalid = program;
+        invalid.functions[owner].name_bindings[0].atom = u32::MAX;
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn environment_clone_domains_are_validated() {
+        let program = crate::Engine::specialize(
+            "var readers = []; for (let i = 0; i < 2; i++) readers.push(() => i);",
+            "clones.js",
+        )
+        .unwrap();
+        assert!(program.validate().is_ok());
+        for slots in [vec![u16::MAX], vec![0, 0], vec![1, 0]] {
+            let mut invalid = program.clone();
+            invalid.functions[0].environment_clones[0] = slots;
+            assert!(invalid.validate().is_err());
+        }
+        let mut invalid = program;
+        invalid.functions[0].environment_clones.clear();
+        assert!(invalid.validate().is_err());
+    }
+
     fn function(code: Vec<Instr>, registers: u16, root: u32) -> Function {
         Function {
             parent: None,
@@ -465,11 +641,13 @@ mod tests {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: true,
             strict: false,
             locals: 0,
             local_atoms: vec![],
@@ -480,7 +658,9 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
+            name_bindings: vec![],
             binding_sites: vec![],
+            environment_clones: vec![],
             code,
             wide: vec![],
             registers,

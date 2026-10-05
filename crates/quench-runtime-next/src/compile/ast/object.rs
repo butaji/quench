@@ -9,8 +9,8 @@ impl FunctionCompiler<'_, '_> {
         ] = value.properties.as_slice()
             && first.kind == PropertyKind::Init
             && second.kind == PropertyKind::Init
-            && !(Self::static_key(&first.key) == Some("__proto__") && !first.shorthand)
-            && !(Self::static_key(&second.key) == Some("__proto__") && !second.shorthand)
+            && !Self::is_object_literal_prototype(first)
+            && !Self::is_object_literal_prototype(second)
             && !Self::anonymous_function_definition(&first.value)
             && !Self::anonymous_function_definition(&second.value)
             && let (Some(first_key), Some(second_key)) =
@@ -25,11 +25,16 @@ impl FunctionCompiler<'_, '_> {
             return dst;
         }
         self.emit(Op::MakeObject, dst, 0, 0, 0);
-        let super_atom = self.hidden_local("\0rqj:super");
-        if value.properties.iter().any(|property| {
-            matches!(property, ObjectPropertyKind::ObjectProperty(property)
+        let super_atom = value
+            .properties
+            .iter()
+            .any(|property| {
+                matches!(property, ObjectPropertyKind::ObjectProperty(property)
                 if property.method || property.kind != PropertyKind::Init)
-        }) {
+            })
+            .then(|| self.hidden_local(&format!("\0rqj:object-home:{}", value.span.start)));
+        if let Some(super_atom) = super_atom {
+            self.clone_environment_slots(vec![self.local_slots[&super_atom]]);
             self.store_atom(super_atom, dst);
         }
         for property in &value.properties {
@@ -40,11 +45,7 @@ impl FunctionCompiler<'_, '_> {
                     continue;
                 }
             };
-            if property.kind == PropertyKind::Init
-                && !property.computed
-                && !property.shorthand
-                && Self::static_key(&property.key) == Some("__proto__")
-            {
+            if Self::is_object_literal_prototype(property) {
                 let prototype = self.expression(&property.value);
                 self.object_literal_prototype(dst, prototype);
                 continue;
@@ -78,7 +79,11 @@ impl FunctionCompiler<'_, '_> {
                         .reject(property.span, "object accessor key unsupported");
                     continue;
                 };
-                let item = self.object_method(&property.value, super_atom, property.span);
+                let item = self.object_method(
+                    &property.value,
+                    super_atom.expect("object accessor has a home binding"),
+                    property.span,
+                );
                 if computed {
                     self.emit(
                         Op::SetFunctionNameKey,
@@ -189,6 +194,14 @@ impl FunctionCompiler<'_, '_> {
         dst
     }
 
+    fn is_object_literal_prototype(property: &ObjectProperty<'_>) -> bool {
+        property.kind == PropertyKind::Init
+            && !property.method
+            && !property.computed
+            && !property.shorthand
+            && Self::static_key(&property.key) == Some("__proto__")
+    }
+
     fn object_literal_prototype(&mut self, object: Register, prototype: Register) {
         let callee = self.load_name("\0rqj:object-literal-prototype");
         let this = self.literal(Constant::Undefined);
@@ -225,7 +238,7 @@ impl FunctionCompiler<'_, '_> {
         let id = self.owner.compile_function(
             None,
             &params,
-            body,
+            FunctionBody::Statements(body),
             &scopes,
             Some(self.function_id),
             FunctionOptions {
@@ -255,11 +268,15 @@ impl FunctionCompiler<'_, '_> {
         &mut self,
         value: &Expression<'_>,
         is_method: bool,
-        super_atom: Atom,
+        super_atom: Option<Atom>,
         source_span: Span,
     ) -> Register {
         if is_method {
-            self.object_method(value, super_atom, source_span)
+            self.object_method(
+                value,
+                super_atom.expect("object method has a home binding"),
+                source_span,
+            )
         } else {
             self.expression(value)
         }

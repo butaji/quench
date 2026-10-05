@@ -1,8 +1,8 @@
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
-    LexicalBindingKind, MAPPED_ARGUMENTS_BIT, MethodSite, ModuleImportBinding, ModuleImportName,
-    ModuleLinkPlan, ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register,
-    ResidualProgram, SET_THIS_REGISTER, Superinstruction, WideInstruction,
+    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
+    ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
+    SET_THIS_REGISTER, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
@@ -31,6 +31,51 @@ mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
+
+/// The synthetic method supplies parsing context only; execution uses its body.
+fn eval_method_body<'a, 'b>(
+    program: &'b mut Program<'a>,
+) -> Option<&'b mut oxc_ast::ast::FunctionBody<'a>> {
+    let [Statement::ExpressionStatement(statement)] = program.body.as_mut_slice() else {
+        return None;
+    };
+    let function = match statement.expression.without_parentheses_mut() {
+        Expression::ClassExpression(class) => {
+            let ClassElement::MethodDefinition(method) = class.body.body.last_mut()? else {
+                return None;
+            };
+            &mut method.value
+        }
+        Expression::ObjectExpression(object) => {
+            let [ObjectPropertyKind::ObjectProperty(property)] = object.properties.as_mut_slice()
+            else {
+                return None;
+            };
+            let Expression::FunctionExpression(function) = &mut property.value else {
+                return None;
+            };
+            function
+        }
+        _ => return None,
+    };
+    function.body.as_deref_mut()
+}
+
+pub(crate) fn eval_context_source(
+    source: &str,
+    private_names: &[(String, String)],
+    super_calls: bool,
+) -> String {
+    let declarations = private_names
+        .iter()
+        .map(|(label, _)| format!("#{label};"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let heritage = if super_calls { " extends null" } else { "" };
+    let method = if super_calls { "constructor" } else { "__eval" };
+    format!("(class{heritage} {{\n{declarations}\n{method}() {{\n{source}\n}}\n}})")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DiagnosticKind {
     Compilation,
@@ -104,10 +149,25 @@ pub(crate) enum DynamicFunctionKind {
     AsyncGenerator,
 }
 
+pub(crate) enum EvalExpressionKind {
+    Identifier(String),
+    Import,
+    Other,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct EvalContext {
+    pub in_function: bool,
+    pub home_atom: Option<Atom>,
+    pub super_calls: bool,
+    pub field_initializer: bool,
+}
+
 #[derive(Clone, Copy)]
 enum ParsedProgramShape {
     Any,
     DynamicFunction { parameter_list_end: usize },
+    Eval(EvalContext),
 }
 
 #[derive(Clone, Copy)]
@@ -144,6 +204,28 @@ fn eval_expression_span(body: &[Statement<'_>], directives: &[Directive<'_>]) ->
 }
 
 impl Engine {
+    pub(crate) fn eval_single_string_constant(source: &str) -> Option<Constant> {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return None;
+        }
+        let literal = match (
+            parsed.program.body.as_slice(),
+            parsed.program.directives.as_slice(),
+        ) {
+            ([], [directive]) => &directive.expression,
+            ([Statement::ExpressionStatement(statement)], []) => {
+                let Expression::StringLiteral(literal) = &statement.expression else {
+                    return None;
+                };
+                literal
+            }
+            _ => return None,
+        };
+        Some(string::constant(literal))
+    }
+
     pub(crate) fn eval_single_regexp_literal(source: &str) -> Option<EvalRegExpLiteral> {
         let allocator = Allocator::with_capacity(source.len());
         let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
@@ -191,59 +273,48 @@ impl Engine {
             .flatten()
     }
 
-    pub(crate) fn eval_var_names(source: &str) -> Option<Vec<String>> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
+    pub(crate) fn field_eval_references_arguments(source: &str) -> bool {
+        let context = eval_context_source(source, &[], true);
+        let allocator = Allocator::with_capacity(context.len());
+        let mut parsed = annex_b_targets::parse_program(&allocator, &context, SourceType::script());
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return false; // The normal eval compiler owns syntax and exhaustion errors.
         }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        let mut declarations = early::collect_var_names(&parsed.program.body);
-        declarations.extend(parsed.program.body.iter().filter_map(|statement| {
-            match statement {
-                Statement::FunctionDeclaration(function) => function
-                    .id
-                    .as_ref()
-                    .map(|identifier| identifier.name.to_string()),
-                _ => None,
-            }
-        }));
-        let collisions = early::annex_b_lexical_collisions(&parsed.program.body);
-        declarations.extend(
-            early::annex_b_function_names(&parsed.program.body)
-                .into_iter()
-                .filter(|(span, _)| !collisions.contains(span))
-                .map(|(_, name)| name),
-        );
-        declarations.sort();
-        declarations.dedup();
-        Some(declarations)
-    }
-
-    pub(crate) fn eval_directives(source: &str) -> Option<Vec<String>> {
-        let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
-        if stack::validate_parsed(&parsed).is_err() {
-            return None;
-        }
-        if !parsed.diagnostics.is_empty() {
-            return None;
-        }
-        Some(
-            parsed
-                .program
-                .directives
-                .iter()
-                .map(|directive| directive.directive.to_string())
-                .collect(),
-        )
+        eval_method_body(&mut parsed.program)
+            .is_some_and(|body| early::field_eval_references_arguments(&body.statements))
     }
 
     pub(crate) fn eval_has_use_strict_directive(source: &str) -> bool {
-        Self::eval_directives(source)
-            .is_some_and(|directives| directives.iter().any(|directive| directive == "use strict"))
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return false;
+        }
+        parsed
+            .program
+            .directives
+            .iter()
+            .any(|directive| directive.directive == "use strict")
+    }
+
+    pub(crate) fn eval_expression_kind(source: &str) -> EvalExpressionKind {
+        let allocator = Allocator::with_capacity(source.len());
+        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
+            return EvalExpressionKind::Other;
+        }
+        match parsed.program.body.as_slice() {
+            [Statement::ExpressionStatement(statement)] => {
+                match statement.expression.without_parentheses() {
+                    Expression::Identifier(identifier) => {
+                        EvalExpressionKind::Identifier(identifier.name.to_string())
+                    }
+                    Expression::ImportExpression(_) => EvalExpressionKind::Import,
+                    _ => EvalExpressionKind::Other,
+                }
+            }
+            _ => EvalExpressionKind::Other,
+        }
     }
 
     pub(crate) fn eval_single_expression(source: &str) -> Option<&str> {
@@ -263,20 +334,11 @@ impl Engine {
     /// grammar context instead of reparsing that body as a standalone Script.
     pub(crate) fn eval_method_expression(source: &str) -> Option<&str> {
         let allocator = Allocator::with_capacity(source.len());
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        let mut parsed = Parser::new(&allocator, source, SourceType::script()).parse();
         if stack::validate_parsed(&parsed).is_err() || !parsed.diagnostics.is_empty() {
             return None;
         }
-        let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice() else {
-            return None;
-        };
-        let Expression::ClassExpression(class) = statement.expression.without_parentheses() else {
-            return None;
-        };
-        let ClassElement::MethodDefinition(method) = class.body.body.last()? else {
-            return None;
-        };
-        let body = method.value.body.as_ref()?;
+        let body = eval_method_body(&mut parsed.program)?;
         // The synthetic class method is already strict. Literal directives
         // have no effects before its sole expression.
         let span = eval_expression_span(&body.statements, &[])?;
@@ -292,7 +354,12 @@ impl Engine {
         if !parsed.diagnostics.is_empty() {
             return None;
         }
-        let mut statements = Vec::with_capacity(parsed.program.body.len());
+        let mut statements =
+            Vec::with_capacity(parsed.program.directives.len() + parsed.program.body.len());
+        for directive in &parsed.program.directives {
+            let span = directive.expression.span();
+            statements.push(source.get(span.start as usize..span.end as usize)?);
+        }
         for statement in &parsed.program.body {
             if matches!(statement, Statement::EmptyStatement(_)) {
                 continue;
@@ -314,9 +381,15 @@ impl Engine {
     pub(crate) fn eval_requires_compiled_program(source: &str) -> bool {
         use oxc_ast_visit::Visit;
 
-        struct RegExpSyntax(bool);
-        impl<'a> Visit<'a> for RegExpSyntax {
+        struct ResidualSyntax(bool);
+        impl<'a> Visit<'a> for ResidualSyntax {
             fn visit_reg_exp_literal(&mut self, _: &RegExpLiteral<'a>) {
+                self.0 = true;
+            }
+            fn visit_assignment_expression(&mut self, _: &AssignmentExpression<'a>) {
+                self.0 = true;
+            }
+            fn visit_update_expression(&mut self, _: &UpdateExpression<'a>) {
                 self.0 = true;
             }
         }
@@ -326,11 +399,12 @@ impl Engine {
         if stack::validate_parsed(&parsed).is_err() {
             return true;
         }
-        // RegExp token contents belong to OXC, not the text expression splitter.
-        let mut regexp = RegExpSyntax(false);
-        regexp.visit_program(&parsed.program);
+        // OXC lowering owns reference writes and RegExp token contents.
+        let mut residual = ResidualSyntax(false);
+        residual.visit_program(&parsed.program);
         !parsed.diagnostics.is_empty()
-            || regexp.0
+            || !parsed.program.comments.is_empty()
+            || residual.0
             || parsed.program.body.iter().any(|statement| {
                 matches!(
                     statement,
@@ -626,28 +700,53 @@ impl Engine {
             false,
         )
     }
-    pub(crate) fn specialize_eval_unspecialized_with_atom_prefix(
+    pub(crate) fn specialize_eval_with_context(
         source: &str,
         name: &str,
         atom_prefix: &[String],
         inherited_strict: bool,
-        in_function: bool,
+        context: EvalContext,
+        private_names: &[(String, String)],
+        annex_b_forbidden_names: &[String],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(
+        let method_source;
+        let (source, source_type) = if context.home_atom.is_some() {
+            method_source = if private_names.is_empty() && !context.super_calls {
+                let directive = if inherited_strict {
+                    "'use strict';\n"
+                } else {
+                    ""
+                };
+                format!("{directive}({{__eval() {{\n{source}\n}}}})")
+            } else {
+                eval_context_source(source, private_names, context.super_calls)
+            };
+            (method_source.as_str(), SourceType::script())
+        } else {
+            (
+                source,
+                if context.in_function {
+                    SourceType::cjs()
+                } else {
+                    SourceType::script()
+                },
+            )
+        };
+        Self::specialize_with_mode_and_private_names(
             source,
             name,
             SpecializationMode::Disabled,
             atom_prefix,
-            if in_function {
-                SourceType::cjs()
-            } else {
-                SourceType::script()
-            },
+            source_type,
             false,
             true,
             inherited_strict,
+            private_names,
+            annex_b_forbidden_names,
+            ParsedProgramShape::Eval(context),
         )
     }
+
     pub fn specialize_module_unspecialized(
         source: &str,
         name: &str,
@@ -738,7 +837,7 @@ impl Engine {
             DynamicFunctionKind::Generator => "function*",
             DynamicFunctionKind::AsyncGenerator => "async function*",
         };
-        let function_prefix = format!("{prefix} anonymous(");
+        let function_prefix = format!("{prefix}(");
         let expression_wrapper = "(";
         let parameter_list_end =
             expression_wrapper.len() + function_prefix.len() + parameters.len() + ")".len();
@@ -769,7 +868,7 @@ impl Engine {
         private_names: &[(String, String)],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
-        let source = format!("(function anonymous({parameters}) {{{body}\n}})");
+        let source = format!("(function({parameters}) {{{body}\n}})");
         Self::specialize_with_mode_and_private_names(
             &source,
             name,
@@ -780,6 +879,7 @@ impl Engine {
             false,
             false,
             private_names,
+            &[],
             ParsedProgramShape::Any,
         )
     }
@@ -842,6 +942,7 @@ impl Engine {
             capture_script_completion,
             inherited_strict,
             &[],
+            &[],
             expected_shape,
         )
     }
@@ -855,16 +956,12 @@ impl Engine {
         capture_script_completion: bool,
         inherited_strict: bool,
         private_name_overrides: &[(String, String)],
+        annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
-        let (normalized, annex_b_call_target_marker) = match annex_b_targets::normalize(&normalized)
-        {
-            Some(targets) => (targets.source, targets.marker),
-            None => (normalized.into_owned(), String::new()),
-        };
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
-        let mut parsed = Parser::new(&allocator, &normalized, source_type).parse();
+        let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
         if parsed.stack_exhausted {
             return Err(vec![Diagnostic::stack_exhausted(name)]);
         }
@@ -908,9 +1005,7 @@ impl Engine {
             // eval still has Script semantics for declarations and scopes.
             parsed.program.source_type = SourceType::script();
         }
-        if let Some(span) =
-            annex_b_targets::invalid_target(&parsed.program, &annex_b_call_target_marker)
-        {
+        if let Some(span) = annex_b_targets::invalid_target(&parsed.program) {
             return Err(vec![Diagnostic {
                 kind: DiagnosticKind::Compilation,
                 source: name.into(),
@@ -920,16 +1015,16 @@ impl Engine {
         }
         let dynamic_function_shape = match expected_shape {
             ParsedProgramShape::Any => true,
+            ParsedProgramShape::Eval(context) => {
+                context.home_atom.is_none() || eval_method_body(&mut parsed.program).is_some()
+            }
             ParsedProgramShape::DynamicFunction { parameter_list_end } => {
                 match parsed.program.body.as_slice() {
                     [Statement::ExpressionStatement(statement)] => match &statement.expression {
                         Expression::ParenthesizedExpression(expression) => {
                             match &expression.expression {
                                 Expression::FunctionExpression(function) => {
-                                    function
-                                        .id
-                                        .as_ref()
-                                        .is_some_and(|id| id.name == "anonymous")
+                                    function.id.is_none()
                                         && function.body.is_some()
                                         && function.params.span.end as usize == parameter_list_end
                                 }
@@ -965,17 +1060,82 @@ impl Engine {
         }
         let private_name_ids = private_name_ids(&semantic.semantic);
         let private_name_labels = private_name_labels(&semantic.semantic);
-        let mut compiler = Compiler::new_with_mode(
-            name,
-            &normalized,
-            mode,
-            atom_prefix,
-            private_name_ids,
-            annex_b_call_target_marker,
-        );
+        let inherited_private_ids = if matches!(expected_shape, ParsedProgramShape::Eval(context) if context.home_atom.is_some())
+        {
+            let mut ids = FxHashSet::default();
+            if let [Statement::ExpressionStatement(statement)] = parsed.program.body.as_slice()
+                && let Expression::ClassExpression(class) =
+                    statement.expression.without_parentheses()
+            {
+                for element in &class.body.body {
+                    if let ClassElement::PropertyDefinition(field) = element {
+                        let span = field.key.span();
+                        if let Some(id) = private_name_ids.get(&(span.start, span.end)) {
+                            ids.insert(*id);
+                        }
+                    }
+                }
+            }
+            Some(ids)
+        } else {
+            None
+        };
+        let private_aliases = private_name_ids
+            .iter()
+            .filter_map(|(span, id)| {
+                if inherited_private_ids
+                    .as_ref()
+                    .is_some_and(|ids| !ids.contains(id))
+                {
+                    return None;
+                }
+                let label = private_name_labels.get(span)?;
+                let (_, identity) = private_name_overrides
+                    .iter()
+                    .find(|(name, _)| name == label)?;
+                Some((*id, identity.clone()))
+            })
+            .collect();
+        // Validate in method grammar, then remove the context wrapper. Original
+        // spans still address `normalized`, retaining exact nested function source.
+        drop(semantic);
+        let eval_context = if let ParsedProgramShape::Eval(context) = expected_shape {
+            if context.home_atom.is_some() {
+                let body =
+                    eval_method_body(&mut parsed.program).expect("validated eval method shape");
+                let statements = std::mem::replace(
+                    &mut body.statements,
+                    oxc_allocator::Vec::new_in(&&allocator),
+                );
+                let directives = std::mem::replace(
+                    &mut body.directives,
+                    oxc_allocator::Vec::new_in(&&allocator),
+                );
+                parsed.program.body = statements;
+                parsed.program.directives = directives;
+                if let Some(span) = early::eval_return_outside_function(&parsed.program) {
+                    return Err(vec![Diagnostic {
+                        kind: DiagnosticKind::Compilation,
+                        source: name.into(),
+                        message: "SyntaxError: return outside function in eval".into(),
+                        span,
+                    }]);
+                }
+            }
+            Some(context)
+        } else {
+            None
+        };
+        let mut compiler =
+            Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.private_name_labels = private_name_labels;
-        compiler.private_name_overrides = private_name_overrides.iter().cloned().collect();
+        compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
+        compiler.eval_context = eval_context;
+        compiler.eval_annex_b_collisions = early::annex_b_function_names(&parsed.program.body)
+            .into_iter()
+            .filter_map(|(span, name)| annex_b_forbidden_names.contains(&name).then_some(span))
+            .collect();
         let program = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
@@ -1000,22 +1160,24 @@ impl Engine {
         early::parameter_early_error(&parsed.program, strict)
     }
 
-    pub(crate) fn strict_eval_syntax_error(source: &str) -> Option<String> {
+    pub(crate) fn strict_eval_syntax_error(source: &str, in_function: bool) -> Option<String> {
         let strict_source = format!("'use strict';\n{source}");
         let source = strict_source.as_str();
         let allocator = Allocator::with_capacity(source.len().saturating_mul(2));
-        let parsed = Parser::new(&allocator, source, SourceType::script()).parse();
+        let parsed = Parser::new(
+            &allocator,
+            source,
+            if in_function {
+                SourceType::cjs()
+            } else {
+                SourceType::script()
+            },
+        )
+        .parse();
         if stack::validate_parsed(&parsed).is_err() {
             return None;
         }
         if !parsed.diagnostics.is_empty() {
-            if parsed.diagnostics.iter().any(|diagnostic| {
-                diagnostic
-                    .to_string()
-                    .contains("Unexpected new.target expression")
-            }) {
-                return None;
-            }
             return Some(format!("SyntaxError: {}", parsed.diagnostics[0]));
         }
         oxc_semantic::SemanticBuilder::new()
@@ -1374,12 +1536,13 @@ struct Compiler<'a> {
     root_strict: bool,
     module_goal: bool,
     capture_script_completion: bool,
+    eval_context: Option<EvalContext>,
+    eval_annex_b_collisions: FxHashSet<u32>,
     atoms: Vec<Rc<str>>,
     atom_index: FxHashMap<Rc<str>, Atom>,
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
-    private_name_overrides: FxHashMap<String, String>,
-    annex_b_call_target_marker: String,
+    private_name_overrides: FxHashMap<u32, String>,
     constants: Vec<Constant>,
     constant_index: FxHashMap<ConstantKey, u32>,
     functions: Vec<Option<BcFunction>>,
@@ -1454,6 +1617,12 @@ fn private_name_labels(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32,
     labels
 }
 
+#[derive(Clone, Copy)]
+enum FunctionBody<'a> {
+    Statements(&'a [Statement<'a>]),
+    Expression(&'a Expression<'a>),
+}
+
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
@@ -1467,7 +1636,6 @@ struct FunctionOptions<'a> {
     class_field_initializer: bool,
     instance_fields: Option<&'a [ClassField<'a>]>,
     instance_private_methods: Option<&'a [Atom]>,
-    defer_instance_fields: bool,
     super_static: bool,
     super_home: bool,
     super_home_atom: Option<Atom>,
@@ -1514,13 +1682,18 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
+    fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
+        let mut collisions = early::annex_b_lexical_collisions(body);
+        collisions.extend(self.eval_annex_b_collisions.iter().copied());
+        collisions
+    }
+
     fn new_with_mode(
         source: &'a str,
         text: &'a str,
         mode: SpecializationMode,
         atom_prefix: &[String],
         private_name_ids: FxHashMap<(u32, u32), u32>,
-        annex_b_call_target_marker: String,
     ) -> Self {
         let atoms: Vec<Rc<str>> = atom_prefix
             .iter()
@@ -1537,12 +1710,13 @@ impl<'a> Compiler<'a> {
             root_strict: false,
             module_goal: false,
             capture_script_completion: false,
+            eval_context: None,
+            eval_annex_b_collisions: FxHashSet::default(),
             atoms,
             atom_index,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
-            annex_b_call_target_marker,
             constants: vec![],
             constant_index: FxHashMap::default(),
             functions: vec![],
@@ -1608,7 +1782,7 @@ impl<'a> Compiler<'a> {
         self.compile_function(
             None,
             &[],
-            &program.body,
+            FunctionBody::Statements(&program.body),
             &[],
             None,
             FunctionOptions {
@@ -1620,13 +1794,16 @@ impl<'a> Compiler<'a> {
                 class_constructor: false,
                 derived_constructor: false,
                 non_constructible: false,
-                class_field_initializer: false,
+                class_field_initializer: self
+                    .eval_context
+                    .is_some_and(|context| context.field_initializer),
                 instance_fields: None,
                 instance_private_methods: None,
-                defer_instance_fields: false,
                 super_static: false,
-                super_home: false,
-                super_home_atom: None,
+                super_home: self
+                    .eval_context
+                    .is_some_and(|context| context.home_atom.is_some()),
+                super_home_atom: self.eval_context.and_then(|context| context.home_atom),
                 rest_override: false,
                 implicit_super: false,
                 strict: self.root_strict,
@@ -1731,7 +1908,7 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .any(|directive| directive.directive == "use strict");
         if !strict_script {
-            let collisions = early::annex_b_lexical_collisions(&program.body);
+            let collisions = self.annex_b_collisions(&program.body);
             let direct_functions: FxHashSet<_> = program
                 .body
                 .iter()
@@ -1807,7 +1984,6 @@ impl<'a> Compiler<'a> {
         }
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
         if self.mode == SpecializationMode::Enabled {
-            binding_time::apply(&mut functions);
             Self::apply_rewrites(
                 &mut functions,
                 &self.method_sites,
@@ -1907,7 +2083,7 @@ impl<'a> Compiler<'a> {
             Some(id) => {
                 let label = self.private_name_label(span, *id);
                 let identity = format!("\0rqj:private:{}:{id}:{label}", self.source);
-                if let Some(override_name) = self.private_name_overrides.get(&label) {
+                if let Some(override_name) = self.private_name_overrides.get(id) {
                     override_name.clone()
                 } else {
                     identity
@@ -1929,10 +2105,7 @@ impl<'a> Compiler<'a> {
 
     fn source_text(&self, span: Span) -> Option<String> {
         let source = self.text.get(span.start as usize..span.end as usize)?;
-        if self.annex_b_call_target_marker.is_empty() {
-            return Some(source.to_owned());
-        }
-        Some(source.replace(&format!(".{}", self.annex_b_call_target_marker), ""))
+        Some(source.to_owned())
     }
 
     fn private_name_label(&self, span: Span, id: u32) -> String {
@@ -1965,6 +2138,10 @@ impl<'a> Compiler<'a> {
             .max()
             .map_or(0, |current| current + 1);
         self.private_name_ids.insert((span.start, span.end), id);
+        // Auto-accessor storage has an identity but no source-visible private
+        // identifier. Direct eval must not project it into its lexical names.
+        self.private_name_labels
+            .insert((span.start, span.end), String::new());
     }
 
     fn private_name_text(&mut self, span: Span) -> String {
@@ -2040,69 +2217,79 @@ impl<'a> Compiler<'a> {
             span,
         });
     }
-    pub(super) fn collect_lexical_atoms(&mut self, body: &[Statement<'_>]) -> Vec<Atom> {
-        let mut names = Vec::new();
+    pub(super) fn collect_body_lexical_bindings(
+        &mut self,
+        body: &[Statement<'_>],
+    ) -> Vec<(Atom, LexicalBindingKind)> {
+        let mut bindings = Vec::new();
         for statement in body {
-            match statement {
-                Statement::VariableDeclaration(declaration)
-                    if is_lexical_binding_declaration(declaration.kind) =>
-                {
-                    for item in &declaration.declarations {
-                        early::collect_pattern_names(&item.id, &mut names);
-                    }
-                }
-                Statement::ClassDeclaration(declaration) => {
-                    if let Some(name) = &declaration.id {
-                        names.push(name.name.to_string());
-                    }
-                }
+            let declaration = match statement {
+                Statement::VariableDeclaration(declaration) => Some(declaration.as_ref()),
                 Statement::ExportDeclaration(export) => match &export.declaration {
-                    Declaration::VariableDeclaration(declaration)
-                        if is_lexical_binding_declaration(declaration.kind) =>
-                    {
-                        for item in &declaration.declarations {
-                            early::collect_pattern_names(&item.id, &mut names);
-                        }
-                    }
-                    Declaration::ClassDeclaration(declaration) => {
-                        if let Some(name) = &declaration.id {
-                            names.push(name.name.to_string());
-                        }
-                    }
-                    _ => {}
+                    Declaration::VariableDeclaration(declaration) => Some(declaration.as_ref()),
+                    _ => None,
                 },
-                Statement::ExportDefaultDeclaration(export) => {
-                    if let oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) =
-                        &export.declaration
-                        && let Some(identifier) = &class.id
-                    {
-                        names.push(identifier.name.to_string());
-                    }
+                _ => None,
+            };
+            let mut names = Vec::new();
+            let kind = if let Some(declaration) = declaration {
+                if !is_lexical_binding_declaration(declaration.kind) {
+                    continue;
                 }
-                _ => {}
+                for item in &declaration.declarations {
+                    early::collect_pattern_names(&item.id, &mut names);
+                }
+                if is_immutable_binding_declaration(declaration.kind) {
+                    LexicalBindingKind::Immutable
+                } else {
+                    LexicalBindingKind::Mutable
+                }
+            } else {
+                let class = match statement {
+                    Statement::ClassDeclaration(class) => Some(class.as_ref()),
+                    Statement::ExportDeclaration(export) => match &export.declaration {
+                        Declaration::ClassDeclaration(class) => Some(class.as_ref()),
+                        _ => None,
+                    },
+                    Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                        oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                            Some(class.as_ref())
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(identifier) = class.and_then(|class| class.id.as_ref()) {
+                    names.push(identifier.name.to_string());
+                }
+                LexicalBindingKind::Mutable
+            };
+            for name in names {
+                let atom = self.atom(&name);
+                if !bindings.iter().any(|(candidate, _)| *candidate == atom) {
+                    bindings.push((atom, kind));
+                }
             }
         }
-        let mut atoms = Vec::new();
-        for name in names {
-            let atom = self.atom(&name);
-            if !atoms.contains(&atom) {
-                atoms.push(atom);
-            }
-        }
-        atoms
+        bindings
     }
     fn compile_function(
         &mut self,
         name: Option<&str>,
         params: &[String],
-        body: &[Statement<'_>],
+        body: FunctionBody<'_>,
         scopes: &[Rc<FxHashMap<Atom, u16>>],
         parent: Option<u32>,
         options: FunctionOptions<'_>,
     ) -> u32 {
+        let (body, expression_body) = match body {
+            FunctionBody::Statements(body) => (body, None),
+            FunctionBody::Expression(expression) => (&[][..], Some(expression)),
+        };
         let id = self.functions.len() as u32;
         self.functions.push(None);
-        let lexical_atoms = self.collect_lexical_atoms(body);
+        let body_lexicals = self.collect_body_lexical_bindings(body);
+        let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
         if let Some(formal) = options.defaults {
@@ -2127,12 +2314,15 @@ impl<'a> Compiler<'a> {
                 Some((source_name, binding))
             }
         });
-        let has_arguments_binding = locals.contains(&self.atom("arguments"));
+        let arguments = self.atom("arguments");
+        let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
+        let has_arguments_binding = locals.contains(&arguments);
         let parameter_arguments_slot = options
             .defaults
             .filter(|parameters| {
                 name != Some("\0rqj:arrow")
                     && has_arguments_binding
+                    && !parameter_shadows_arguments
                     && FunctionCompiler::has_non_simple_parameters(parameters)
             })
             .map(|_| {
@@ -2146,14 +2336,12 @@ impl<'a> Compiler<'a> {
             function_scope.retain(|atom| lexical_atoms.contains(atom));
         }
         let module_source = self.source;
-        let annex_b_collisions = early::annex_b_lexical_collisions(body);
+        let annex_b_collisions = self.annex_b_collisions(body);
         let arguments_slot = if let Some(slot) = parameter_arguments_slot {
             Some(slot)
         } else if parent.is_none() {
             None
         } else {
-            let arguments = self.atom("arguments");
-            let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
             if parameter_shadows_arguments {
                 None
             } else if has_arguments_binding {
@@ -2182,7 +2370,6 @@ impl<'a> Compiler<'a> {
             (options.super_static, options.super_home),
             options.async_function,
             options.generator,
-            options.defer_instance_fields,
             parameter_arguments_slot,
             arguments_slot.is_some(),
             parameter_local_count,
@@ -2192,8 +2379,14 @@ impl<'a> Compiler<'a> {
             function.push_function_name_binding(name, binding);
         }
         function.super_home_atom = options.super_home_atom;
-        function.super_call_binds_this = options.derived_constructor;
+        function.super_call_binds_this = options.derived_constructor
+            || (parent.is_none()
+                && function
+                    .owner
+                    .eval_context
+                    .is_some_and(|context| context.super_calls));
         function.strict = root_strict;
+        function.class_field_initializer = options.class_field_initializer;
         if capture_script_completion {
             let completion = function.reg();
             let undefined = function.literal(Constant::Undefined);
@@ -2202,7 +2395,9 @@ impl<'a> Compiler<'a> {
         }
         function.dynamic_eval = options
             .defaults
-            .is_some_and(early::parameters_contain_direct_eval);
+            .is_some_and(early::parameters_contain_direct_eval)
+            || early::body_contains_direct_eval(body)
+            || expression_body.is_some_and(early::expression_contains_direct_eval);
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
@@ -2219,50 +2414,41 @@ impl<'a> Compiler<'a> {
             }
         }
         function.initialize_tdz_slots(lexical_slots);
-        if let Some(defaults) = options.defaults {
-            function.emit_parameter_bindings(defaults);
-        }
-        let parameter_end_pc = function.code.len() as u32;
-        function.emit_hoisted(body);
-        if options.implicit_super {
-            function.emit_implicit_super(
-                options.instance_fields.unwrap_or_default(),
-                options.instance_private_methods.unwrap_or_default(),
-            );
-        } else if let Some(fields) = options
+        if let Some(fields) = options
             .instance_fields
-            .filter(|_| !options.defer_instance_fields)
+            .filter(|_| !options.derived_constructor)
         {
             function
                 .emit_instance_fields(fields, options.instance_private_methods.unwrap_or_default());
         }
+        if let Some(defaults) = options.defaults {
+            function.emit_parameter_bindings(defaults);
+        }
+        if let Some(slot) = parameter_arguments_slot
+            && !lexical_atoms.contains(&arguments)
+        {
+            let value = function.reg();
+            function.emit(Op::LoadLocal, value, 0, 0, u32::from(slot));
+            function.store_atom(arguments, value);
+        }
+        let parameter_end_pc = function.code.len() as u32;
+        function.push_body_lexical_bindings(&body_lexicals);
+        function.emit_hoisted(body);
+        if options.implicit_super {
+            function.emit_implicit_super();
+        }
         let disposal_body_start = function.code.len() as u32;
         function.statements(body);
-        if options.defer_instance_fields {
-            let edges = std::mem::take(&mut function.deferred_instance_field_edges);
-            let skip_blocks = (!edges.is_empty()).then(|| function.emit(Op::Jump, 0, 0, 0, 0));
-            if !edges.is_empty() {
-                function.next_reg = function.max_reg;
-            }
-            for (edge, continuation) in edges {
-                function.patch(edge);
-                function.emit_instance_fields(
-                    options.instance_fields.unwrap_or_default(),
-                    options.instance_private_methods.unwrap_or_default(),
-                );
-                let resume = function.emit(Op::Jump, 0, 0, 0, 0);
-                function.patch_instruction(resume, continuation);
-            }
-            if let Some(skip_blocks) = skip_blocks {
-                function.patch(skip_blocks);
-            }
-        }
         let disposal_body_end = function.code.len() as u32;
         function.emit_function_disposal_scope_exit(disposal_body_start, disposal_body_end);
-        let result = function
-            .statement_completion
-            .register()
-            .unwrap_or_else(|| function.literal(Constant::Undefined));
+        let result = if let Some(expression) = expression_body {
+            function.expression(expression)
+        } else {
+            function
+                .statement_completion
+                .register()
+                .unwrap_or_else(|| function.literal(Constant::Undefined))
+        };
         function.emit(Op::Return, result, 0, 0, 0);
         let captures_locals = function
             .code
@@ -2274,6 +2460,7 @@ impl<'a> Compiler<'a> {
                 .any(|instruction| instruction.op() == Op::MakeClosure);
         let arguments_slot = arguments_slot.filter(|slot| {
             captures_locals
+                || function.dynamic_eval
                 || function.code.iter().any(|instruction| {
                     instruction.op() == Op::LoadLocal
                         && instruction.local_slot() == usize::from(*slot)
@@ -2301,26 +2488,21 @@ impl<'a> Compiler<'a> {
                 instruction.set_op(op);
             }
         }
-        let simple_parameters = options.defaults.is_none_or(|formal| {
-            formal.rest.is_none()
-                && formal.items.iter().all(|item| {
-                    item.initializer.is_none()
-                        && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
-                })
-        });
-        let arguments_slot = arguments_slot.map(|slot| {
-            if !root_strict && !options.rest_override && simple_parameters {
-                slot | MAPPED_ARGUMENTS_BIT
-            } else {
-                slot
-            }
-        });
+        let simple_parameters = !options.rest_override
+            && options.defaults.is_none_or(|formal| {
+                formal.rest.is_none()
+                    && formal.items.iter().all(|item| {
+                        item.initializer.is_none()
+                            && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
+                    })
+            });
         let parameter_atoms = options.defaults.map_or_else(Vec::new, |formal| {
             FunctionCompiler::parameter_bound_names(formal)
                 .iter()
                 .map(|name| function.owner.atom(name))
                 .collect()
         });
+        let name_bindings = function.name_bindings();
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
@@ -2339,6 +2521,7 @@ impl<'a> Compiler<'a> {
             is_generator: options.generator,
             is_class_constructor: options.class_constructor,
             derived_constructor: options.derived_constructor,
+            instance_initializer: None,
             super_home_atom: options.super_home_atom,
             constructible: !options.non_constructible
                 && !options.async_function
@@ -2346,6 +2529,7 @@ impl<'a> Compiler<'a> {
             class_field_initializer: options.class_field_initializer,
             parameter_eval_arguments_error: function.parameter_eval_arguments_error,
             arguments_slot,
+            simple_parameters,
             strict: root_strict,
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
@@ -2356,7 +2540,9 @@ impl<'a> Compiler<'a> {
             global_function_atoms: Vec::new(),
             global_annex_b_var_atoms: Vec::new(),
             global_immutable_atoms: Vec::new(),
+            name_bindings,
             binding_sites: function.binding_sites,
+            environment_clones: function.environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

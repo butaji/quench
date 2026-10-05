@@ -1,17 +1,4 @@
 use super::*;
-use crate::bytecode::MAPPED_ARGUMENTS_BIT;
-
-pub(super) fn is_derived_constructor(function: &crate::bytecode::Function) -> bool {
-    function.derived_constructor
-        || function
-            .code
-            .iter()
-            .any(|instruction| instruction.op() == Op::SuperCallCheck)
-        || function
-            .wide
-            .iter()
-            .any(|instruction| instruction.op() == Op::SuperCallCheck)
-}
 
 impl<H: Host> Vm<H> {
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
@@ -24,6 +11,29 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn initialize_activation_bindings(
+        &mut self,
+        frame: &mut Frame,
+        arrow: bool,
+        new_target: Value,
+    ) {
+        if !arrow && frame.function != super::ROOT_FUNCTION_ID {
+            let atom = self.intern_atom("\0rqj:new-target");
+            frame.dynamic_bindings.push((atom, new_target));
+        }
+        let inherits_this = arrow
+            || (frame.function == super::ROOT_FUNCTION_ID
+                && !frame.env.is_null()
+                && self
+                    .programs
+                    .get(frame.program)
+                    .is_some_and(|program| program.kind == crate::bytecode::ProgramKind::Eval));
+        if !inherits_this {
+            let atom = self.intern_atom("\0rqj:lexical-this");
+            frame.dynamic_bindings.push((atom, frame.this));
+        }
+    }
+
     #[inline(never)]
     pub(super) fn call_user(
         &mut self,
@@ -32,8 +42,9 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<Value, JsError> {
-        match self.call_user_frame(p, id, parent, this, args)? {
+        match self.call_user_frame(p, id, parent, this, args, context)? {
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
                 Ok(value)
             }
@@ -54,8 +65,9 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, this, args, false)
+        self.call_user_frame_mode(p, id, parent, this, args, context, false)
     }
 
     pub(super) fn call_user_construct_frame(
@@ -64,8 +76,9 @@ impl<H: Host> Vm<H> {
         id: u32,
         parent: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, Value::UNDEFINED, args, true)
+        self.call_user_frame_mode(p, id, parent, Value::UNDEFINED, args, context, true)
     }
 
     fn call_user_frame_mode(
@@ -75,6 +88,7 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
         self.profile.function(id as usize);
@@ -85,6 +99,7 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+            context: CallContext::Internal,
             program: self.active_program,
             function: 0,
             pc: 0,
@@ -109,7 +124,7 @@ impl<H: Host> Vm<H> {
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(elements),
             });
         }
@@ -118,19 +133,16 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
         {
-            frame.locals[slot] = self.cached_functions_in_environment(self.active_program, id, parent)
-                .next_back()
-                .unwrap_or(Value::UNDEFINED);
+            frame.locals[slot] = context.callee().unwrap_or(Value::UNDEFINED);
         }
-        if let Some(encoded_slot) = function.arguments_slot {
-            let mapped = encoded_slot & MAPPED_ARGUMENTS_BIT != 0;
-            let slot = encoded_slot & !MAPPED_ARGUMENTS_BIT;
+        if let Some(slot) = function.arguments_slot {
+            let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
                 let mapping = (0..function.params.min(args.len() as u16)).collect();
                 if let Some(object) = self.object_data_mut(arguments) {
@@ -138,6 +150,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        frame.context = context;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -146,7 +159,7 @@ impl<H: Host> Vm<H> {
         let arrow = function
             .name
             .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
-        let derived = is_derived_constructor(function);
+        let derived = function.derived_constructor;
         let this = if derived {
             Value::DELETED
         } else if arrow {
@@ -180,11 +193,9 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("module import slot is out of bounds".into()));
                 }
                 if frame.captured {
-                    let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(frame.env) else {
-                        return Err(JsError("module environment is unavailable".into()));
-                    };
-                    *slots
-                        .get_mut(index)
+                    *self
+                        .heap
+                        .environment_slot_mut(frame.env, index)
                         .ok_or_else(|| JsError("module import slot is out of bounds".into()))? =
                         value;
                 } else {
@@ -192,25 +203,8 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let new_target_atom = self.intern_atom("\0rqj:new-target");
-        if !arrow && id != super::ROOT_FUNCTION_ID {
-            frame.dynamic_bindings.push((
-                new_target_atom,
-                self.construct_target.unwrap_or(Value::UNDEFINED),
-            ));
-        }
-        // Arrows resolve `new.target` through their captured environment;
-        // ordinary calls own a fresh binding, and constructor calls own the
-        // active target. Derived `super()` establishes its own constructor call.
-        self.construct_target = None;
-        let lexical_this_atom = self.intern_atom("\0rqj:lexical-this");
-        frame.dynamic_bindings.push((lexical_this_atom, frame.this));
-        if !arrow {
-            let super_called_atom = self.intern_atom("\0rqj:super-called");
-            frame
-                .dynamic_bindings
-                .push((super_called_atom, Value::FALSE));
-        }
+        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
+        self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         frame.prepare_registers(register_count);
         self.frames.push(frame);
@@ -273,6 +267,7 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<(), JsError> {
         self.profile.function(id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
@@ -284,6 +279,7 @@ impl<H: Host> Vm<H> {
         let old = std::mem::replace(
             &mut self.frames[frame_index],
             Frame {
+                context: CallContext::Internal,
                 program: self.active_program,
                 function: 0,
                 pc: 0,
@@ -311,7 +307,7 @@ impl<H: Host> Vm<H> {
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(elements),
             });
         }
@@ -320,19 +316,16 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
         {
-            frame.locals[slot] = self.cached_functions_in_environment(self.active_program, id, parent)
-                .next_back()
-                .unwrap_or(Value::UNDEFINED);
+            frame.locals[slot] = context.callee().unwrap_or(Value::UNDEFINED);
         }
-        if let Some(encoded_slot) = function.arguments_slot {
-            let mapped = encoded_slot & MAPPED_ARGUMENTS_BIT != 0;
-            let slot = encoded_slot & !MAPPED_ARGUMENTS_BIT;
+        if let Some(slot) = function.arguments_slot {
+            let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
                 let mapping = (0..function.params.min(args.len() as u16)).collect();
                 if let Some(object) = self.object_data_mut(arguments) {
@@ -340,6 +333,8 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        frame.context = context;
+        frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
         frame.binding_site_pc = None;
@@ -347,7 +342,7 @@ impl<H: Host> Vm<H> {
         let arrow = function
             .name
             .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
-        let derived = is_derived_constructor(function);
+        let derived = function.derived_constructor;
         let this = if derived {
             Value::DELETED
         } else if arrow {
@@ -365,36 +360,21 @@ impl<H: Host> Vm<H> {
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         self.with_stack.extend(self.captured_with_objects(parent));
-        let new_target_atom = self.intern_atom("\0rqj:new-target");
-        if !arrow && id != super::ROOT_FUNCTION_ID {
-            frame.dynamic_bindings.push((
-                new_target_atom,
-                self.construct_target.unwrap_or(Value::UNDEFINED),
-            ));
-        }
-        self.construct_target = None;
-        let lexical_this_atom = self.intern_atom("\0rqj:lexical-this");
-        frame.dynamic_bindings.push((lexical_this_atom, frame.this));
-        if !arrow {
-            let super_called_atom = self.intern_atom("\0rqj:super-called");
-            frame
-                .dynamic_bindings
-                .push((super_called_atom, Value::FALSE));
-        }
+        let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
+        self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         frame.prepare_registers(register_count);
         self.frames[frame_index] = frame;
         Ok(())
     }
 
+
     pub(super) fn initialize_arguments_object(
         &mut self,
-        p: &ResidualProgram,
         arguments: Value,
-        id: u32,
-        parent: Value,
+        callable: Option<Value>,
         args: &[Value],
-        mapped: bool,
+        expose_callee: bool,
     ) -> Result<(), JsError> {
         if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
@@ -414,20 +394,15 @@ impl<H: Host> Vm<H> {
             },
         );
         let callee = self.intern_atom("callee");
-        let value = if mapped {
-            if let Some(function) = self
-                .cached_functions_in_environment(self.active_program, id, parent)
-                .next()
-            {
-                function
-            } else {
-                self.closure(p, id, parent)?
-            }
+        let value = if expose_callee {
+            callable.ok_or_else(|| {
+                JsError::validation("mapped arguments require callable identity".into())
+            })?
         } else {
             Value::UNDEFINED
         };
         self.set_property(arguments, callee, value)?;
-        if mapped {
+        if expose_callee {
             self.set_property_attributes(
                 arguments,
                 property_key::PropertyKey::string(callee),
@@ -483,9 +458,10 @@ impl<H: Host> Vm<H> {
             parent,
             program: Some(self.frames[frame].program.raw()),
             root_eval_scope: false,
+            binding_site_pc: None,
             function: self.frames[frame].function,
-            slots: slots.into_boxed_slice(),
-            dynamic_bindings: self.frames[frame].dynamic_bindings.clone(),
+            slots: slots.into_boxed_slice().into(),
+            dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
             with_objects: Vec::new(),
         });
         self.frames[frame].env = env;
@@ -493,33 +469,52 @@ impl<H: Host> Vm<H> {
         env
     }
 
-    pub(super) fn clone_frame_environment(&mut self, frame: usize) {
-        let source = self.promote_frame_environment(frame);
+    pub(super) fn clone_frame_environment(
+        &mut self,
+        frame: usize,
+        fresh: &[u16],
+    ) -> Result<(), JsError> {
+        if !self.frames[frame].captured {
+            return Ok(());
+        }
+        let source = self.frames[frame].env;
+        let slots = self
+            .heap
+            .clone_environment_slots(source, fresh)
+            .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
+        let owner = self
+            .heap
+            .environment_binding_owner(source)
+            .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
         let Some(Cell::Environment {
             parent,
             program,
             root_eval_scope,
+            binding_site_pc,
             function,
-            slots,
-            dynamic_bindings,
             with_objects,
-        }) = self.heap.get(source).cloned()
+            ..
+        }) = self.heap.get(source)
         else {
-            return;
+            return Err(JsError("invalid environment clone".into()));
         };
-        let env = self.heap.alloc(Cell::Environment {
-            parent,
-            program,
-            root_eval_scope,
-            function,
+        let environment = Cell::Environment {
+            parent: *parent,
+            program: *program,
+            root_eval_scope: *root_eval_scope,
+            binding_site_pc: *binding_site_pc,
+            function: *function,
             slots,
-            dynamic_bindings,
-            with_objects,
-        });
+            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+            with_objects: with_objects.clone(),
+        };
+        let env = self.heap.alloc(environment);
         self.frames[frame].env = env;
+        Ok(())
     }
 
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
+        frame.context = CallContext::Internal;
         const RETAINED_VALUES: usize = 256;
         if frame.locals.capacity() > RETAINED_VALUES {
             frame.locals.clear();
@@ -563,129 +558,146 @@ impl<H: Host> Vm<H> {
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            crate::stack::StackGuard::enter().map_err(|()| {
-                JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted)
-            })?
-        } else {
-            self.enter_stack()?
-        };
-        let initial_function = self.frames[frame].function as usize;
-        let mut pc = self.frames[frame].pc;
-        if let Some(error) = initial_error {
-            let throwing_pc = pc.saturating_sub(1) as u32;
-            let handler = p.functions[initial_function]
-                .handlers
-                .iter()
-                .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
-                .copied();
-            let Some(handler) = handler else {
-                return Err(error);
-            };
-            let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
-            self.with_stack.truncate(with_depth);
-            if let Some(slot) = handler.slot {
-                let value = self.thrown_value_for(p, error);
-                if self.frames[frame].captured {
-                    let env = self.frames[frame].env;
-                    let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
-                        return Err(JsError("invalid catch environment".into()));
-                    };
-                    slots[slot as usize] = value;
-                } else {
-                    self.frames[frame].locals[slot as usize] = value;
-                }
-            }
-            pc = handler.target as usize;
-        }
-        loop {
-            if stop_pc == Some(pc) {
-                self.frames[frame].pc = pc;
-                return Ok(FrameOutcome::ParameterInitializationComplete);
-            }
-            let function = self.frames[frame].function as usize;
-            let code = &p.functions[function].code;
-            let instruction_pc = pc;
-            // GC inside a getter or native operation needs this instruction's root map.
-            self.frames[frame].pc = instruction_pc;
-            // SAFETY: the validated residual program has in-range branch targets
-            // and a terminal Return. The frame publishes the active instruction.
-            let packed = unsafe { *code.get_unchecked(pc) };
-            let ins = if packed.is_wide() {
-                p.functions[function].wide[packed.wide_index()]
+        let entry_program = p;
+        let previous_program = self.active_program;
+        let previous_global = self.realm.globals;
+        let outcome = (|| {
+            let mut current_program: Option<Rc<ResidualProgram>> = None;
+            let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+                crate::stack::StackGuard::enter()
+                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
             } else {
-                packed.as_wide()
+                self.enter_stack()?
             };
-            pc += 1;
-            #[cfg(feature = "profile-aggregate")]
-            self.profile
-                .opcode(ins.op() as usize, frame, function as u32, instruction_pc);
-            #[cfg(not(feature = "profile-aggregate"))]
-            self.profile.opcode(ins.op() as usize);
-            match self.step(p, frame, ins, &mut pc) {
-                Ok(StepResult::Return(value)) => {
+            let initial_function = self.frames[frame].function as usize;
+            let mut pc = self.frames[frame].pc;
+            if let Some(error) = initial_error {
+                pc = self.exception_handler_target(
+                    p,
+                    frame,
+                    initial_function,
+                    pc.saturating_sub(1) as u32,
+                    error,
+                )?;
+            }
+            loop {
+                let p = current_program.as_deref().unwrap_or(p);
+                if stop_pc == Some(pc) {
                     self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::Complete(value));
+                    return Ok(FrameOutcome::ParameterInitializationComplete);
                 }
-                Ok(StepResult::Continue) => {}
-                Ok(StepResult::TailCall) => {
-                    pc = self.frames[frame].pc;
-                }
-                Ok(StepResult::Await { value, destination }) => {
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::Await {
-                        value,
-                        destination,
-                        frame: None,
-                    });
-                }
-                Ok(StepResult::Yield {
-                    value,
-                    destination,
-                    delegated_result,
-                }) => {
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::Yield {
+                let executing_program = self.frames[frame].program;
+                let function = self.frames[frame].function as usize;
+                let code = &p.functions[function].code;
+                let instruction_pc = pc;
+                // GC inside a getter or native operation needs this instruction's root map.
+                self.frames[frame].pc = instruction_pc;
+                // SAFETY: the validated residual program has in-range branch targets
+                // and a terminal Return. The frame publishes the active instruction.
+                let packed = unsafe { *code.get_unchecked(pc) };
+                let ins = if packed.is_wide() {
+                    p.functions[function].wide[packed.wide_index()]
+                } else {
+                    packed.as_wide()
+                };
+                pc += 1;
+                #[cfg(feature = "profile-aggregate")]
+                self.profile
+                    .opcode(ins.op() as usize, frame, function as u32, instruction_pc);
+                #[cfg(not(feature = "profile-aggregate"))]
+                self.profile.opcode(ins.op() as usize);
+                match self.step(p, frame, ins, &mut pc) {
+                    Ok(StepResult::Return(value)) => {
+                        self.frames[frame].pc = pc;
+                        return Ok(FrameOutcome::Complete(value));
+                    }
+                    Ok(StepResult::Continue) => {}
+                    Ok(StepResult::TailCall) => {
+                        if self.frames[frame].program != executing_program {
+                            current_program =
+                                Some(self.programs.get(self.frames[frame].program).ok_or_else(
+                                    || JsError::validation("missing tail-call program".into()),
+                                )?);
+                        }
+                        pc = self.frames[frame].pc;
+                        // The replacement frame publishes all callee roots before this back edge.
+                        self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                    }
+                    Ok(StepResult::Await { value, destination }) => {
+                        self.frames[frame].pc = pc;
+                        return Ok(FrameOutcome::Await {
+                            value,
+                            destination,
+                            frame: None,
+                        });
+                    }
+                    Ok(StepResult::Yield {
                         value,
                         destination,
                         delegated_result,
-                        frame: None,
-                    });
-                }
-                Err(error) => {
-                    let throwing_pc = instruction_pc as u32;
-                    let handler = p.functions[function]
-                        .handlers
-                        .iter()
-                        .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
-                        .copied();
-                    let Some(handler) = handler else {
+                    }) => {
                         self.frames[frame].pc = pc;
-                        return Err(error);
-                    };
-                    let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
-                    self.with_stack.truncate(with_depth);
-                    if let Some(slot) = handler.slot {
-                        let value = self.thrown_value_for(p, error);
-                        if self.frames[frame].captured {
-                            let env = self.frames[frame].env;
-                            let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
-                            else {
-                                self.frames[frame].pc = pc;
-                                return Err(JsError("invalid catch environment".into()));
-                            };
-                            slots[slot as usize] = value;
-                        } else {
-                            self.frames[frame].locals[slot as usize] = value;
-                        }
+                        return Ok(FrameOutcome::Yield {
+                            value,
+                            destination,
+                            delegated_result,
+                            frame: None,
+                        });
                     }
-                    pc = handler.target as usize;
+                    Err(error) => {
+                        pc = match self.exception_handler_target(
+                            p,
+                            frame,
+                            function,
+                            instruction_pc as u32,
+                            error,
+                        ) {
+                            Ok(target) => target,
+                            Err(error) => {
+                                self.frames[frame].pc = pc;
+                                return Err(error);
+                            }
+                        };
+                    }
                 }
             }
-        }
+        })();
+        self.active_program = previous_program;
+        self.realm.globals = previous_global;
+        outcome
     }
 
-    fn captured_with_objects(&self, mut env: Value) -> Vec<Value> {
+    fn exception_handler_target(
+        &mut self,
+        program: &ResidualProgram,
+        frame: usize,
+        function: usize,
+        throwing_pc: u32,
+        error: JsError,
+    ) -> Result<usize, JsError> {
+        let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
+        let handler = program.functions[function]
+            .handlers
+            .iter()
+            .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
+            .copied();
+        let Some(handler) = handler else {
+            return Err(error);
+        };
+        let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);
+        self.with_stack.truncate(with_depth);
+        if let Some(slot) = handler.slot {
+            let value = self.thrown_value_for(program, error);
+            if wasm {
+                self.frames[frame].locals[usize::from(slot)] = value;
+            } else {
+                self.initialize_handler_binding(frame, slot, value)?;
+            }
+        }
+        Ok(handler.target as usize)
+    }
+
+    pub(super) fn captured_with_objects(&self, mut env: Value) -> Vec<Value> {
         let mut layers = Vec::new();
         while let Some(Cell::Environment {
             parent,

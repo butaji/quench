@@ -1,0 +1,551 @@
+{
+  "kind": "Isolated binding/environment ownership qualification; not Stage A closure",
+  "base_revision": "a9e7f480c2db83ca3f14f50082b9ce3c50dbdcff",
+  "source_files_sha256": {
+    "crates/quench-runtime-next/src/bytecode.rs": "ae81818a462bce97af53c0ba66762e9151fdfdc63a9f71c0d9b77c2b25db9d21",
+    "crates/quench-runtime-next/src/bytecode/binary.rs": "a4d296f47ba033115feaaa71ded7de58efa14d13dcfa27c4e2077b9cdec99d72",
+    "crates/quench-runtime-next/src/bytecode/disassemble.rs": "050cf09cf15dbe86aa7dc007bb111ec00198d8295fcdd04a0c3f0b5c47143256",
+    "crates/quench-runtime-next/src/bytecode/instruction.rs": "86fd2e0d8201b62756e86aebdf401762747e5e1da107414649d1d442b7207bfd",
+    "crates/quench-runtime-next/src/bytecode/tests.rs": "1afb7b1d6fbefe76d30d51c20e58e6e6b56e0918ba94e8652616d3dec72b1bd3",
+    "crates/quench-runtime-next/src/bytecode/validate.rs": "8f6375049897f7e901ca3fb40ee6fa38d17a355dfb245d2c496edb80847123c2",
+    "crates/quench-runtime-next/src/compile.rs": "e62bf7bd758c61aad88f157b3ad67dc95fec92cd45d69b6a90ff6586b4171e82",
+    "crates/quench-runtime-next/src/compile/annex_b_targets.rs": "bc2a634290cc5e53155a93fc93c5b45e2922336f32570374c7e338a59aa81718",
+    "crates/quench-runtime-next/src/compile/arrow.rs": "94b44c174eaa834fb752c6962e886436c3d0cd9106ab5d1086c2bb434fd53e3b",
+    "crates/quench-runtime-next/src/compile/ast.rs": "e72b5245427d656deb41001958b2ff4d0933d2487acbd243ed39b18f2429b4bf",
+    "crates/quench-runtime-next/src/compile/ast/call.rs": "e3bc576c5d90be4e15d4667ae53826626d1089165b40ded7e6dcf4196a85caf3",
+    "crates/quench-runtime-next/src/compile/ast/destructure.rs": "3060962337c3c7b7507b8723ba51689d604eac06b0d78eb55c1761f10a894d87",
+    "crates/quench-runtime-next/src/compile/ast/expression.rs": "6bb642feb390441473b9bbfad6ab03143aeb640b1be453d1d1c9c03969292c52",
+    "crates/quench-runtime-next/src/compile/ast/iteration.rs": "4f2f361cf0f8153ef854b5450036a7a260ecb94726bdbf409dea796ce75a3bba",
+    "crates/quench-runtime-next/src/compile/ast/object.rs": "6033dcac13ae57b463205b747031ae62398a3a99f8c8818fd1e7ede3cc934ae2",
+    "crates/quench-runtime-next/src/compile/ast/optional.rs": "2a5f16123f992d2d28a6f3107adc0020f413a51f2304cc438e08d151db2105f1",
+    "crates/quench-runtime-next/src/compile/ast/statement.rs": "97c365289e7b57fdfd9132a44ff8b12bd5cfd71448254e0e070f5b45e4b8cb68",
+    "crates/quench-runtime-next/src/compile/ast/try_statement.rs": "dc5b9bfe5a4fd7488086f15c508e5815d9f9e56c7102ddef512c207294580429",
+    "crates/quench-runtime-next/src/compile/binding_time.rs": "8a9a45422218dee7ebc4b9decc73967387d8678f8427d241cf76d081bdf7acb2",
+    "crates/quench-runtime-next/src/compile/class.rs": "52a2ec8ecd00f4e1aff20462c2acc1f3629f4654d026e7d1962d63308ae638f9",
+    "crates/quench-runtime-next/src/compile/early.rs": "c0c1e63c4886c1717a6ebd1861d02560f4032f82864a115f3a00048b316ce84f",
+    "crates/quench-runtime-next/src/compile/liveness.rs": "dbf941faf6d67e6de44be102334b08b79b2db92bfd8da9fdb21ec10f1ca676e5",
+    "crates/quench-runtime-next/src/compile/locals.rs": "ba5e576e2341c324e7e108f67462f62375897d642e6a9dbbcabdd0f9d94eb3ae",
+    "crates/quench-runtime-next/src/compile/numeric.rs": "45a989243905710a633c135c3313598e41f3e0d37eb984294ae2224fa132a789",
+    "crates/quench-runtime-next/src/compile/sequence.rs": "003bb7388155c87e167b822d60cf7a89411af1770eb348d09448e8e40792a427",
+    "crates/quench-runtime-next/src/compile/tests.rs": "e31100c6a7e0e6061d994fa966a8e398a37110574ce6af3dd2d3cd27ce34514c",
+    "crates/quench-runtime-next/src/heap.rs": "37853449c500b1caedcd9ebd931aa59088a225e015791aac0ea59165467fde29",
+    "crates/quench-runtime-next/src/heap/access.rs": "bfb58646d2ddc207ba4d9785701956d31d6bd449601541cac7c66d59febf4bc7",
+    "crates/quench-runtime-next/src/heap/cell.rs": "b86a9873ddb4e5629613b28d00dbb4c098f73f305b200b0796fc53cc136be32c",
+    "crates/quench-runtime-next/src/heap/memory_profile.rs": "fd596e4520c15b01e617f0a93c13a923a062006733d0e2a7d78be1eed077b055",
+    "crates/quench-runtime-next/src/heap/tests.rs": "036ff7133ec1ba5699e0c2a64980dc830b0533fd968963b4ce17581fee22f9cc",
+    "crates/quench-runtime-next/src/profile/dispatch_pairs.rs": "6c7a6210ce16b32d03c40a18cd454a3abe04b4895bc3279291c65e2a74f4fe02",
+    "crates/quench-runtime-next/src/vm.rs": "3c6cfa942e8aa6e5b1cc7ff4e921c123fbb30c55a9126b4ddef3aa8b9dd6f393",
+    "crates/quench-runtime-next/src/vm/activation.rs": "45732e0cc490a1151d227c716c387f1a8802968e6eac1cf972898a6bb2a6e07c",
+    "crates/quench-runtime-next/src/vm/activation_lifecycle.rs": "6b2f3073d997cafd102fd745dbcede03a73dc549fe766f6ab8e5f4bb705e3e61",
+    "crates/quench-runtime-next/src/vm/arguments.rs": "5e3f0d369c516b4997316c14ebd962f8c7abac21f94b6bdffce26942982a33d9",
+    "crates/quench-runtime-next/src/vm/construction.rs": "d4ef55da8e882cd8732c3d48aee3246dd4e7aaf3049b7f4846a5414161e016a2",
+    "crates/quench-runtime-next/src/vm/dispatch.rs": "274c6ce175fc3928f84cc2dcc839dd44da8951a4939d2dbccb2c30f781c8f16d",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "d59b94449e0b218c9d87b1dacd41116317e340de8c642f05ef249f2b34fcf4cf",
+    "crates/quench-runtime-next/src/vm/dispatch_numeric.rs": "79014457b5091949b81a12696e69a30de1de2f5c3124d50da146ed5ab9c3bb58",
+    "crates/quench-runtime-next/src/vm/environment.rs": "0c70e38f42546df6f34611cd565a8b97c27541c10f129df8aafa3ba3a2a43122",
+    "crates/quench-runtime-next/src/vm/error.rs": "832f0c06e0218c82f80bf66d8de6fdbf7965c9f7576be29840d4ba500e7eef7a",
+    "crates/quench-runtime-next/src/vm/eval.rs": "ae840c7b1bdaa9ef2bad1338bc03e25c09834022cf960f8d6d499244c3f6cb03",
+    "crates/quench-runtime-next/src/vm/gc.rs": "5e4203f4c7ce6ae380c0fa8af7e830a246c588cd28d5babcf7cb2c164e0318e8",
+    "crates/quench-runtime-next/src/vm/generator.rs": "d415b2147520c854dbb5179ed63e169fbe6c9d1bf6f8c9676872a562a45f6d2e",
+    "crates/quench-runtime-next/src/vm/object_get.rs": "f64b57f5adce57168fe4a7ff7123ce73da62adda295a835ce7847bb3001adb5a",
+    "crates/quench-runtime-next/src/vm/profile_edges.rs": "c7588b3b44d9bde292b1d8d79b65b39ceeed2f05863c7a6910c747a0c7f39fa3",
+    "crates/quench-runtime-next/src/vm/promise.rs": "81fc254b3dd952cb39e093c1e346281cb26e1d03335c045c8b6bdb7c6d13b21a",
+    "crates/quench-runtime-next/src/vm/promise_async.rs": "699c2ae533c4d0e7f2a3669b08e77c2942cd4ea978d94847aa12da89c0923d93",
+    "crates/quench-runtime-next/src/vm/shadow_realm.rs": "4a78f528da8f5f0c8d03177ba1b62572a6c63ef2eea66f57d05c55a81243461f",
+    "crates/quench-runtime-next/src/vm/tests.rs": "dc94886db9d09528781305579761b91036d4e01d5a8b0752b2210837c37bfb43",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "46d7ae3a03e501dc7379c6f4fa8a9cb7684324d7d2ac2adf6a62481acb54238e",
+    "crates/quench-runtime-next/src/wasm.rs": "6b8c05537f2852e2be7c088012ea1dc2ed686ef34a8d4bbab2f489964dcf23c2",
+    "vendor/oxc-parser-next/src/js/grammar.rs": "3cfe1c974a303fc7f36f5ddefeea3e306d291c1e0c2aff411f2d7a9dd2c17ef5",
+    "vendor/oxc-parser-next/src/js/statement.rs": "8fed16e7ebdf035413a0f991cd9d1a28359b4fc992f7583e0a73fa9536e975df",
+    "vendor/oxc-parser-next/src/lib.rs": "da6b072482aa2897242781c5b5eccb5d82c0b56d25f7f93b9c0f40a0da7f08ab"
+  },
+  "binary_sha256": {
+    "run-stages-next": "39ad0791205bec4f36c4824e72e4905c42b34787ac8a7e5ebbbe0d8b56bd39a3",
+    "quench-next": "74a6983b8edb4c0baec02f0b3efbc12114af37322551e9523abd45a1d33500cc"
+  },
+  "residual_format_version": 39,
+  "changes": [
+    "Scope views share the direct owner of unaffected slots; clone plans give fresh storage only to lexical slots. Dynamic bindings move to one owner on capture.",
+    "Captured binding-site and declaration-kind facts drive lexical, with, catch and eval lookup; Annex B writes target the variable environment.",
+    "OXC and residual execution replace text-interpreted eval paths. Shared AST visitors discover declarations and direct eval before lowering.",
+    "Callable identity survives active/suspended/tail-call transitions and GC. No unused argument-list snapshots are retained.",
+    "Constructor and async-resume boundaries consume the values produced by the shared compiler exactly once.",
+    "Literal static/dynamic BTA remains. The detached root-store rewriting pass is removed; new binding specialization needs ownership-derived facts and proof or guards."
+  ],
+  "test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "baseline_revision": "e58e54e83d510989d04616ae0c8a0a5b3d9c7a62",
+    "scopes": [
+      {
+        "scope": "blocks",
+        "total": 21,
+        "before_passed": 21,
+        "after_passed": 21,
+        "compare_exit": 0
+      },
+      {
+        "scope": "functions",
+        "total": 451,
+        "before_passed": 451,
+        "after_passed": 451,
+        "compare_exit": 0
+      },
+      {
+        "scope": "labels",
+        "total": 24,
+        "before_passed": 24,
+        "after_passed": 24,
+        "compare_exit": 0
+      },
+      {
+        "scope": "switch",
+        "total": 111,
+        "before_passed": 111,
+        "after_passed": 111,
+        "compare_exit": 0
+      },
+      {
+        "scope": "with",
+        "total": 181,
+        "before_passed": 181,
+        "after_passed": 181,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex-language",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-lexical",
+        "total": 34,
+        "before_passed": 29,
+        "after_passed": 33,
+        "compare_exit": 0
+      },
+      {
+        "scope": "eval",
+        "total": 347,
+        "before_passed": 347,
+        "after_passed": 347,
+        "compare_exit": 0
+      },
+      {
+        "scope": "block-scope",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145,
+        "compare_exit": 0
+      },
+      {
+        "scope": "destructuring",
+        "total": 19,
+        "before_passed": 19,
+        "after_passed": 19,
+        "compare_exit": 0
+      },
+      {
+        "scope": "identifier-resolution",
+        "total": 14,
+        "before_passed": 14,
+        "after_passed": 14,
+        "compare_exit": 0
+      },
+      {
+        "scope": "let",
+        "total": 145,
+        "before_passed": 145,
+        "after_passed": 145,
+        "compare_exit": 0
+      },
+      {
+        "scope": "const",
+        "total": 136,
+        "before_passed": 136,
+        "after_passed": 136,
+        "compare_exit": 0
+      },
+      {
+        "scope": "try",
+        "total": 201,
+        "before_passed": 201,
+        "after_passed": 201,
+        "compare_exit": 0
+      },
+      {
+        "scope": "assignment",
+        "total": 485,
+        "before_passed": 485,
+        "after_passed": 485,
+        "compare_exit": 0
+      },
+      {
+        "scope": "prefix-increment",
+        "total": 33,
+        "before_passed": 33,
+        "after_passed": 33,
+        "compare_exit": 0
+      },
+      {
+        "scope": "postfix-increment",
+        "total": 38,
+        "before_passed": 38,
+        "after_passed": 38,
+        "compare_exit": 0
+      },
+      {
+        "scope": "prefix-decrement",
+        "total": 34,
+        "before_passed": 34,
+        "after_passed": 34,
+        "compare_exit": 0
+      },
+      {
+        "scope": "postfix-decrement",
+        "total": 37,
+        "before_passed": 37,
+        "after_passed": 37,
+        "compare_exit": 0
+      },
+      {
+        "scope": "typeof",
+        "total": 16,
+        "before_passed": 16,
+        "after_passed": 16,
+        "compare_exit": 0
+      },
+      {
+        "scope": "delete",
+        "total": 165,
+        "before_passed": 165,
+        "after_passed": 165,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function-code",
+        "total": 217,
+        "before_passed": 217,
+        "after_passed": 217,
+        "compare_exit": 0
+      },
+      {
+        "scope": "arguments",
+        "total": 263,
+        "before_passed": 263,
+        "after_passed": 263,
+        "compare_exit": 0
+      },
+      {
+        "scope": "global-code",
+        "total": 42,
+        "before_passed": 42,
+        "after_passed": 42,
+        "compare_exit": 0
+      },
+      {
+        "scope": "rest-parameters",
+        "total": 11,
+        "before_passed": 11,
+        "after_passed": 11,
+        "compare_exit": 0
+      },
+      {
+        "scope": "class-expression",
+        "total": 4059,
+        "before_passed": 4059,
+        "after_passed": 4059,
+        "compare_exit": 0
+      },
+      {
+        "scope": "arrow",
+        "total": 343,
+        "before_passed": 343,
+        "after_passed": 343,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-arrow",
+        "total": 60,
+        "before_passed": 60,
+        "after_passed": 60,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-function",
+        "total": 93,
+        "before_passed": 93,
+        "after_passed": 93,
+        "compare_exit": 0
+      },
+      {
+        "scope": "async-generator",
+        "total": 623,
+        "before_passed": 623,
+        "after_passed": 623,
+        "compare_exit": 0
+      },
+      {
+        "scope": "generator-expression",
+        "total": 290,
+        "before_passed": 290,
+        "after_passed": 290,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function-expression",
+        "total": 264,
+        "before_passed": 264,
+        "after_passed": 264,
+        "compare_exit": 0
+      },
+      {
+        "scope": "calls",
+        "total": 92,
+        "before_passed": 92,
+        "after_passed": 92,
+        "compare_exit": 0
+      },
+      {
+        "scope": "new",
+        "total": 59,
+        "before_passed": 59,
+        "after_passed": 59,
+        "compare_exit": 0
+      },
+      {
+        "scope": "new-target",
+        "total": 14,
+        "before_passed": 14,
+        "after_passed": 14,
+        "compare_exit": 0
+      },
+      {
+        "scope": "super",
+        "total": 94,
+        "before_passed": 94,
+        "after_passed": 94,
+        "compare_exit": 0
+      },
+      {
+        "scope": "object-expression",
+        "total": 1170,
+        "before_passed": 1170,
+        "after_passed": 1170,
+        "compare_exit": 0
+      },
+      {
+        "scope": "optional",
+        "total": 38,
+        "before_passed": 38,
+        "after_passed": 38,
+        "compare_exit": 0
+      },
+      {
+        "scope": "for",
+        "total": 385,
+        "before_passed": 385,
+        "after_passed": 385,
+        "compare_exit": 0
+      },
+      {
+        "scope": "for-in",
+        "total": 115,
+        "before_passed": 115,
+        "after_passed": 115,
+        "compare_exit": 0
+      },
+      {
+        "scope": "for-of",
+        "total": 751,
+        "before_passed": 751,
+        "after_passed": 751,
+        "compare_exit": 0
+      },
+      {
+        "scope": "for-await",
+        "total": 1234,
+        "before_passed": 1234,
+        "after_passed": 1234,
+        "compare_exit": 0
+      },
+      {
+        "scope": "class-declaration",
+        "total": 4367,
+        "before_passed": 4367,
+        "after_passed": 4367,
+        "compare_exit": 0
+      },
+      {
+        "scope": "generator-declaration",
+        "total": 266,
+        "before_passed": 266,
+        "after_passed": 266,
+        "compare_exit": 0
+      },
+      {
+        "scope": "Function",
+        "total": 509,
+        "before_passed": 509,
+        "after_passed": 509,
+        "compare_exit": 0
+      },
+      {
+        "scope": "GeneratorFunction",
+        "total": 23,
+        "before_passed": 23,
+        "after_passed": 23,
+        "compare_exit": 0
+      },
+      {
+        "scope": "GeneratorPrototype",
+        "total": 61,
+        "before_passed": 61,
+        "after_passed": 61,
+        "compare_exit": 0
+      },
+      {
+        "scope": "AsyncFunction",
+        "total": 18,
+        "before_passed": 18,
+        "after_passed": 18,
+        "compare_exit": 0
+      },
+      {
+        "scope": "AsyncGeneratorFunction",
+        "total": 23,
+        "before_passed": 23,
+        "after_passed": 23,
+        "compare_exit": 0
+      },
+      {
+        "scope": "AsyncGeneratorPrototype",
+        "total": 48,
+        "before_passed": 48,
+        "after_passed": 48,
+        "compare_exit": 0
+      },
+      {
+        "scope": "ShadowRealm",
+        "total": 64,
+        "before_passed": 64,
+        "after_passed": 64,
+        "compare_exit": 0
+      },
+      {
+        "scope": "exports",
+        "total": 3,
+        "before_passed": 3,
+        "after_passed": 3,
+        "compare_exit": 0
+      },
+      {
+        "scope": "imports",
+        "total": 127,
+        "before_passed": 127,
+        "after_passed": 127,
+        "compare_exit": 0
+      },
+      {
+        "scope": "modules",
+        "total": 599,
+        "before_passed": 599,
+        "after_passed": 599,
+        "compare_exit": 0
+      },
+      {
+        "scope": "FinalizationRegistry",
+        "total": 47,
+        "before_passed": 47,
+        "after_passed": 47,
+        "compare_exit": 0
+      },
+      {
+        "scope": "WeakMap",
+        "total": 141,
+        "before_passed": 141,
+        "after_passed": 141,
+        "compare_exit": 0
+      },
+      {
+        "scope": "WeakRef",
+        "total": 29,
+        "before_passed": 29,
+        "after_passed": 29,
+        "compare_exit": 0
+      },
+      {
+        "scope": "WeakSet",
+        "total": 85,
+        "before_passed": 85,
+        "after_passed": 85,
+        "compare_exit": 0
+      }
+    ],
+    "distinct": {
+      "total": 20013,
+      "before_passed": 20008,
+      "after_passed": 20012,
+      "gains": [
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-with.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/unscopables-global.js"
+        ],
+        [
+          "114",
+          "staging/sm/lexical-environment/var-in-catch-body-annex-b-eval.js"
+        ]
+      ],
+      "regressions": [],
+      "remaining_failures": [
+        [
+          "114",
+          "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+        ]
+      ]
+    },
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "comparison": "58 matching inventories with compare-runs --reports; no full Test262 run"
+  },
+  "internal_checks": {
+    "decoder": 19,
+    "ownership": 1,
+    "continuation": 1,
+    "numeric": 3,
+    "wasm-internals": 12
+  },
+  "consumer_check": "cargo check -p quench-runtime-next -p quench-node-test -p quench-wasm-test",
+  "node_oracle": {
+    "version": "v26.10.0",
+    "ordinary_matches": 22,
+    "lifecycle_matches": 11,
+    "modes": [
+      "normal",
+      "generic"
+    ],
+    "preexisting_differences": [
+      "assignment-before-rhs",
+      "resolved-before-rhs"
+    ],
+    "description": "Runtime guest semantics controls; no implemented Node compat suite completion claim."
+  },
+  "wasm": "12 internal lowering/decoding/activation checks pass. This port retains the existing Wasm operation inventory and adapts its shared frame/residual ABI; no full pinned Wasm suite qualification.",
+  "rejected_candidate": {
+    "regressions": 356,
+    "cause": "Unported super-constructor and async-resume contracts; corrected before qualification.",
+    "raw": "target/iteration/task20-binding-model-commit/rejected-candidate"
+  },
+  "performance": "Not measured; no speed/RSS or Stage B claim.",
+  "open": "Annex B arguments conflict remains in this selected scope; other pinned conflicts, production legacy removal, Wasm qualification and implemented-only Node compatibility remain open.",
+  "raw_artifacts": "target/iteration/task20-binding-model-commit"
+}

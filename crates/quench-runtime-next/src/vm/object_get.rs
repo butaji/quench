@@ -6,10 +6,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
         let environment = self.programs.module_environment(program)?;
-        let Some(Cell::Environment { slots, .. }) = self.heap.get(environment) else {
-            return None;
-        };
-        slots.get(slot as usize).copied()
+        self.heap.environment_slot(environment, slot as usize)
     }
 
     pub(super) fn module_namespace_value(
@@ -246,9 +243,8 @@ impl<H: Host> Vm<H> {
                             !self.same_value(self.heap.root_value(value).unwrap(), target_value)
                         })
                 {
-                    return Err(
-                        self.type_error(p, "proxy set trap changed a frozen target property".into())
-                    );
+                    return Err(self
+                        .type_error(p, "proxy set trap changed a frozen target property".into()));
                 }
                 if !is_data
                     && self
@@ -431,7 +427,10 @@ impl<H: Host> Vm<H> {
                     None => Ok(Value::UNDEFINED),
                 };
             }
-            if self.object_data(object).is_some_and(Object::is_module_namespace) {
+            if self
+                .object_data(object)
+                .is_some_and(Object::is_module_namespace)
+            {
                 return Ok(self
                     .module_namespace_value(p, object, atom)?
                     .unwrap_or(Value::UNDEFINED));
@@ -638,12 +637,13 @@ impl<H: Host> Vm<H> {
         let mut homes = Vec::with_capacity(home_atoms.len());
         while let Some(Cell::Environment {
             parent,
+            program,
             function,
             slots,
-            dynamic_bindings,
             ..
         }) = self.heap.get(environment)
         {
+            let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()
                 .rev()
@@ -660,7 +660,12 @@ impl<H: Host> Vm<H> {
                     .then_some(*home);
             }
             if *function != u32::MAX {
-                let visible_homes = p
+                let owner = program.and_then(|program| {
+                    self.programs
+                        .get(super::program_store::ProgramId::from_raw(program))
+                });
+                let owner = owner.as_deref().unwrap_or(p);
+                let visible_homes = owner
                     .functions
                     .get(*function as usize)
                     .into_iter()
@@ -672,10 +677,10 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                     if let Some(slot) = self
-                        .local_binding_slot(p, *function, *atom)
+                        .local_binding_slot(owner, *function, *atom)
                         .filter(|slot| *slot < slots.len())
                     {
-                        homes.push((*atom, slots[slot]));
+                        homes.push((*atom, self.heap.environment_slot(environment, slot)?));
                     }
                 }
             }

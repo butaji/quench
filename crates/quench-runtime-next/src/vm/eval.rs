@@ -1,7 +1,7 @@
-use std::borrow::Cow;
-
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
+
+use crate::compile::eval_context_source;
 
 impl<H: Host> Vm<H> {
     pub(super) fn eval_script_native(
@@ -34,12 +34,14 @@ impl<H: Host> Vm<H> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let residual = match crate::Engine::specialize_eval_unspecialized_with_atom_prefix(
+        let residual = match crate::Engine::specialize_eval_with_context(
             &source,
             &source_name,
             &atom_prefix,
             false,
-            false,
+            crate::compile::EvalContext::default(),
+            &[],
+            &[],
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
@@ -97,7 +99,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
-            && let Some((pattern_units, flag_units)) = eval_regexp_literal_units(source_text.units())
+            && let Some((pattern_units, flag_units)) =
+                eval_regexp_literal_units(source_text.units())
         {
             if let (Ok(pattern), Ok(flags)) = (
                 String::from_utf16(&pattern_units),
@@ -110,7 +113,9 @@ impl<H: Host> Vm<H> {
             let pattern = self
                 .heap
                 .alloc(Cell::String(JsString::from_units(pattern_units)));
-            let flags = self.heap.alloc(Cell::String(JsString::from_units(flag_units)));
+            let flags = self
+                .heap
+                .alloc(Cell::String(JsString::from_units(flag_units)));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
         if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
@@ -121,7 +126,6 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(value)) => value.host_string().to_owned(),
             _ => return Ok(source),
         };
-        let text = strip_eval_comments(&text);
         let trimmed = text.trim();
         if let Some(rest) = trimmed.strip_prefix("#!") {
             let rest = rest
@@ -138,22 +142,29 @@ impl<H: Host> Vm<H> {
             };
         }
         let inherited_strict = self.direct_eval
-            && self
-                .frames
-                .last()
-                .and_then(|frame| p.functions.get(frame.function as usize))
-                .is_some_and(|function| function.strict);
+            && (self.in_class_field_initializer(p)
+                || self
+                    .frames
+                    .last()
+                    .and_then(|frame| p.functions.get(frame.function as usize))
+                    .is_some_and(|function| function.strict));
         if inherited_strict
             && let Some(error) = crate::Engine::strict_octal_numeric_early_error(trimmed)
         {
             return self
                 .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error));
         }
+        self.validate_eval_arguments_context(p, &text)?;
+        if self.direct_eval
+            && (self.in_class_field_initializer(p) || self.eval_super_context(p).is_some())
+        {
+            return self.eval_global_script(p, &text, inherited_strict);
+        }
         if self.direct_eval && text.contains('#') {
             let private_names = self
                 .direct_eval_private_names(p)
                 .map_or_else(Vec::new, |(_, names)| names);
-            let context_source = eval_method_context_source(&text, &private_names);
+            let context_source = eval_context_source(&text, &private_names, false);
             if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
                 return self.eval_compiled_expression(p, expression, inherited_strict);
             }
@@ -194,15 +205,42 @@ impl<H: Host> Vm<H> {
         {
             return self.eval_compiled_expression_named(p, expression, strict, &source_name);
         }
+        let context = self.direct_eval_context(p).unwrap_or_default();
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let residual = crate::Engine::specialize_eval_unspecialized_with_atom_prefix(
+        let private_names = if context.home_atom.is_some() {
+            self.direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        let caller_has_global_variables = self
+            .frames
+            .last()
+            .is_none_or(|frame| frame.function == super::ROOT_FUNCTION_ID);
+        let annex_b_forbidden_names = atom_prefix
+            .iter()
+            .enumerate()
+            .filter(|(atom, _)| {
+                let atom = *atom as Atom;
+                self.direct_eval
+                    && ((caller_has_global_variables
+                        && self.realm.global_lexical_declarations.contains(&atom))
+                        || self
+                            .direct_eval_binding(atom)
+                            .is_some_and(|binding| binding.conflicts_with_var()))
+            })
+            .map(|(_, name)| name.clone())
+            .collect::<Vec<_>>();
+        let residual = crate::Engine::specialize_eval_with_context(
             source,
             &source_name,
             &atom_prefix,
             strict,
-            self.direct_eval_function_context(p),
+            context,
+            &private_names,
+            &annex_b_forbidden_names,
         )
         .map_err(|diagnostics| {
             if diagnostics
@@ -255,8 +293,8 @@ impl<H: Host> Vm<H> {
                     if (!caller_scope && self.realm.global_lexical_declarations.contains(atom))
                         || (direct_eval
                             && self
-                                .direct_eval_lexical_binding(p, *atom)
-                                .is_some_and(|binding| !binding.catch_parameter))
+                                .direct_eval_binding(*atom)
+                                .is_some_and(|binding| binding.conflicts_with_var()))
                     {
                         return self.syntax_error_result(
                             p,
@@ -295,8 +333,8 @@ impl<H: Host> Vm<H> {
                     if (!caller_scope && self.realm.global_lexical_declarations.contains(&atom))
                         || (direct_eval
                             && self
-                                .direct_eval_lexical_binding(p, atom)
-                                .is_some_and(|binding| !binding.catch_parameter))
+                                .direct_eval_binding(atom)
+                                .is_some_and(|binding| binding.conflicts_with_var()))
                     {
                         return self.syntax_error_result(
                             p,
@@ -353,16 +391,25 @@ impl<H: Host> Vm<H> {
                 .last()
                 .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
             let parent = if direct_eval {
-                self.frames
-                    .len()
-                    .checked_sub(1)
-                    .map_or(Value::NULL, |frame| self.promote_frame_environment(frame))
+                if let Some(frame) = self.frames.len().checked_sub(1) {
+                    self.capture_binding_environment(frame)?
+                } else {
+                    Value::NULL
+                }
             } else {
                 Value::NULL
             };
             let parent = if direct_eval && (root_scope || field_initializer) {
                 let dynamic_bindings = if field_initializer {
-                    vec![(self.intern_atom("\0rqj:new-target"), Value::UNDEFINED)]
+                    vec![
+                        (self.intern_atom("\0rqj:new-target"), Value::UNDEFINED),
+                        (
+                            self.intern_atom("\0rqj:lexical-this"),
+                            self.frames
+                                .last()
+                                .map_or(self.realm.globals, |frame| frame.this),
+                        ),
+                    ]
                 } else {
                     Vec::new()
                 };
@@ -370,15 +417,15 @@ impl<H: Host> Vm<H> {
                     parent,
                     program: None,
                     root_eval_scope: root_scope,
+                    binding_site_pc: None,
                     function: u32::MAX,
-                    slots: Box::new([]),
-                    dynamic_bindings,
+                    slots: Vec::<Value>::new().into_boxed_slice().into(),
+                    dynamic_bindings: dynamic_bindings.into(),
                     with_objects: Vec::new(),
                 })
             } else {
                 parent
             };
-            let root = self.closure(&residual, super::ROOT_FUNCTION_ID, parent)?;
             let this = if direct_eval {
                 self.frames
                     .last()
@@ -386,12 +433,86 @@ impl<H: Host> Vm<H> {
             } else {
                 self.realm.globals
             };
-            self.call_value(&residual, root, this, &[])
+            let callee = self.closure(&residual, super::ROOT_FUNCTION_ID, parent)?;
+            self.call_eval_closure(&residual, callee, this, direct_eval)
         })();
         self.direct_eval_var_program = previous_eval_var_program;
         self.direct_eval = direct_eval;
         self.active_program = active_program;
         result
+    }
+
+    pub(super) fn capture_binding_environment(&mut self, frame: usize) -> Result<Value, JsError> {
+        let binding_site_pc = self.frames[frame].binding_site_pc.filter(|pc| {
+            self.programs
+                .get(self.frames[frame].program)
+                .is_some_and(|program| {
+                    program
+                        .functions
+                        .get(self.frames[frame].function as usize)
+                        .and_then(|function| {
+                            function
+                                .binding_sites
+                                .binary_search_by_key(pc, |site| site.resume_pc)
+                                .ok()
+                                .map(|index| &function.binding_sites[index])
+                        })
+                        .is_some_and(|site| !site.bindings.is_empty())
+                })
+        });
+        let environment = self.promote_frame_environment(frame);
+        let Some(binding_site_pc) = binding_site_pc else {
+            return Ok(environment);
+        };
+        let slots = self
+            .heap
+            .clone_environment_slots(environment, &[])
+            .ok_or_else(|| JsError("invalid eval scope slots".into()))?;
+        let owner = self
+            .heap
+            .environment_binding_owner(environment)
+            .ok_or_else(|| JsError("invalid eval scope owner".into()))?;
+        let Some(Cell::Environment {
+            parent,
+            program,
+            root_eval_scope,
+            function,
+            with_objects,
+            ..
+        }) = self.heap.get(environment)
+        else {
+            return Err(JsError("invalid eval scope environment".into()));
+        };
+        let scope = Cell::Environment {
+            parent: *parent,
+            program: *program,
+            root_eval_scope: *root_eval_scope,
+            binding_site_pc: Some(binding_site_pc),
+            function: *function,
+            slots,
+            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+            with_objects: with_objects.clone(),
+        };
+        Ok(self.heap.alloc(scope))
+    }
+
+    fn validate_eval_arguments_context(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+    ) -> Result<(), JsError> {
+        if self.direct_eval
+            && self.in_class_field_initializer(p)
+            && crate::Engine::field_eval_references_arguments(source)
+        {
+            return self
+                .syntax_error_result(
+                    p,
+                    "arguments is not allowed in class field initializer eval",
+                )
+                .map(drop);
+        }
+        Ok(())
     }
 
     pub(super) fn eval_source_simple(
@@ -400,74 +521,13 @@ impl<H: Host> Vm<H> {
         source: &str,
         inherited_strict: bool,
     ) -> Result<Value, JsError> {
-        let binding_count = self
-            .frames
-            .last()
-            .map_or(0, |frame| frame.dynamic_bindings.len());
-        let eval_source_strict =
-            inherited_strict || crate::Engine::eval_has_use_strict_directive(source);
-        let eval_var_names = if self.direct_eval && !eval_source_strict {
-            crate::Engine::eval_var_names(source).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-        let check_lexical_conflicts = self.direct_eval && !eval_source_strict;
-        let mut retained_var_bindings = Vec::with_capacity(eval_var_names.len());
-        let mut lexical_conflict = false;
-        for name in eval_var_names {
-            let atom = self.intern_atom(&name);
-            lexical_conflict |= check_lexical_conflicts
-                && (self.realm.global_lexical_declarations.contains(&atom)
-                    || self
-                        .direct_eval_lexical_binding(p, atom)
-                        .is_some_and(|binding| !binding.catch_parameter)
-                    || (!self.parameter_eval
-                        && self
-                            .frames
-                            .last()
-                            .and_then(|frame| p.functions.get(frame.function as usize))
-                            .is_some_and(|function| function.lexical_atoms.contains(&atom))));
-            retained_var_bindings.push(atom);
-        }
-        let result = if lexical_conflict {
-            self.syntax_error_result(p, "eval var declaration conflicts with lexical binding")
-        } else {
-            self.eval_source_simple_body(p, source, inherited_strict)
-        };
-        if let Some(frame) = self.frames.last_mut() {
-            let mut index = 0;
-            frame.dynamic_bindings.retain(|(atom, _)| {
-                let keep = index < binding_count || retained_var_bindings.contains(atom);
-                index += 1;
-                keep
-            });
-        }
-        self.sync_dynamic_bindings();
-        result
-    }
-
-    fn eval_source_simple_body(
-        &mut self,
-        p: &ResidualProgram,
-        source: &str,
-        inherited_strict: bool,
-    ) -> Result<Value, JsError> {
         if source.trim().is_empty() {
             return Ok(Value::UNDEFINED);
         }
-        if self.direct_eval
-            && contains_eval_identifier(source, "arguments")
-            && (self.in_class_field_initializer(p)
-                || self
-                    .frames
-                    .last()
-                    .and_then(|frame| p.functions.get(frame.function as usize))
-                    .is_some_and(|function| function.class_field_initializer))
-        {
-            return self.syntax_error_result(
-                p,
-                "arguments is not allowed in class field initializer eval",
-            );
+        self.validate_eval_arguments_context(p, source)?;
+        // OXC owns comments and grammar; compiled paths retain the original source.
+        if crate::Engine::eval_requires_compiled_program(source) {
+            return self.eval_global_script(p, source, inherited_strict);
         }
         if let Some(rest) = source.trim().strip_prefix("with ({}) {}") {
             if inherited_strict {
@@ -497,9 +557,6 @@ impl<H: Host> Vm<H> {
         {
             return self.syntax_error_result(p, "invalid statement in eval code");
         }
-        if crate::Engine::eval_requires_compiled_program(source) {
-            return self.eval_global_script(p, source, inherited_strict);
-        }
         if is_empty_eval_statement(source.trim()) {
             return Ok(Value::UNDEFINED);
         }
@@ -521,13 +578,10 @@ impl<H: Host> Vm<H> {
             return self.syntax_error_result(p, message);
         }
         let strict = source_strict;
-        let mut result = crate::Engine::eval_directives(source)
-            .and_then(|directives| directives.last().cloned())
-            .map(|directive| self.heap.alloc(Cell::String(directive.into())))
-            .unwrap_or(Value::UNDEFINED);
+        let mut result = Value::UNDEFINED;
         for statement in statements {
             let statement = statement.trim();
-            if statement.is_empty() || is_use_strict(statement) {
+            if statement.is_empty() {
                 continue;
             }
             if is_empty_eval_statement(statement) {
@@ -548,37 +602,16 @@ impl<H: Host> Vm<H> {
                 let value = self.eval_simple_expression(p, expression, strict)?;
                 return Err(JsError::thrown(value, "eval throw".into()));
             }
-            if let Some((name, expression)) = split_assignment(statement) {
-                if strict && is_strict_reserved(name) {
-                    return self.syntax_error_result(p, "reserved assignment in strict eval");
-                }
-                let atom = self.intern_atom(name);
-                let value = self.eval_simple_expression(p, expression, strict)?;
-                self.store_eval_name(p, atom, value, strict, false)?;
-                if !self.direct_eval && !strict {
-                    self.store_frame_local(p, atom, value);
-                    self.store_eval_outer_local(p, atom, value);
-                } else if self.direct_eval && !strict {
-                    self.store_eval_outer_local(p, atom, value);
-                }
-                result = value;
-                continue;
-            }
             result = self.eval_simple_expression(p, statement, strict)?;
         }
         Ok(result)
     }
 
     fn in_class_field_initializer(&mut self, p: &ResidualProgram) -> bool {
-        p.atoms.iter().enumerate().any(|(index, name)| {
-            if !name.starts_with("\0rqj:class-field-eval:") {
-                return false;
-            }
-            let atom = index as Atom;
-            self.load_eval_capture_atom(p, atom)
-                .or_else(|| self.load_eval_frame_local(p, atom))
-                == Some(Value::TRUE)
-        })
+        self.frames
+            .last()
+            .and_then(|frame| p.functions.get(frame.function as usize))
+            .is_some_and(|function| function.class_field_initializer)
     }
 
     fn direct_eval_function_context(&mut self, p: &ResidualProgram) -> bool {
@@ -617,7 +650,7 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(());
         };
-        if function && !attributes.configurable && (!attributes.writable || attributes.accessor) {
+        if function && !attributes.permits_global_function_declaration() {
             return Err(self.type_error(p, format!("cannot redefine global {name}")));
         }
         Ok(())
@@ -650,14 +683,9 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom("\0rqj:new-target");
             return Ok(self
                 .frames
-                .last()
-                .and_then(|frame| {
-                    frame
-                        .dynamic_bindings
-                        .iter()
-                        .rev()
-                        .find_map(|(candidate, value)| (*candidate == atom).then_some(*value))
-                })
+                .len()
+                .checked_sub(1)
+                .and_then(|frame| self.dynamic_binding(frame, atom))
                 .unwrap_or(Value::UNDEFINED));
         }
         if expression.starts_with("new ") {
@@ -738,101 +766,32 @@ impl<H: Host> Vm<H> {
                 self.realm.globals
             });
         }
-        if let Some(key) = eval_super_property_key(expression) {
-            if !self.direct_eval {
-                return self.syntax_error_result(p, "super property is not valid in eval code");
-            }
-            let Some((home, receiver)) = self.eval_super_context(p) else {
-                return self.syntax_error_result(p, "super property is not valid in eval code");
-            };
-            let base = self
-                .object_data(home)
-                .map_or(Value::NULL, |object| object.proto);
-            let key = self.intern_atom(&key);
-            return self.get_property_with_receiver(p, base, key, receiver);
-        }
-        if let Some(body) = expression.strip_prefix("() =>")
-            && let Some(key) = eval_super_property_key(body.trim().trim_end_matches(';').trim())
-        {
-            if !self.direct_eval {
-                return self.syntax_error_result(p, "super property is not valid in eval code");
-            }
-            let Some((home, receiver)) = self.eval_super_context(p) else {
-                return self.syntax_error_result(p, "super property is not valid in eval code");
-            };
-            let key = Value::number(self.intern_atom(&key) as f64);
-            let marker = self
-                .heap
-                .alloc(Cell::String("\0rqj:eval-super-arrow".into()));
-            let env = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![marker, key, home, receiver]),
-            });
-            return Ok(self.native_with_env(Native::DynamicFunction, env));
-        }
-        if let Some(rest) = expression.strip_prefix("typeof") {
-            let separated = rest
-                .chars()
-                .next()
-                .is_some_and(is_ecmascript_whitespace)
-                .then(|| rest.trim_start_matches(is_ecmascript_whitespace));
-            let syntax = separated.unwrap_or(rest);
-            let parenthesized = syntax
-                .strip_prefix('(')
-                .and_then(|operand| operand.strip_suffix(')'));
-            let operand = parenthesized
-                .or(separated)
-                .filter(|operand| !operand.trim().is_empty());
-            if let Some(operand) = operand {
-                let is_identifier =
-                    operand.chars().next().is_some_and(|character| {
-                        character == '_' || character == '$' || character.is_ascii_alphabetic()
-                    }) && operand.chars().all(|character| {
-                        character == '_' || character == '$' || character.is_ascii_alphanumeric()
-                    }) && !matches!(operand, "undefined" | "null" | "true" | "false" | "this");
-                let value = if is_identifier {
-                    let atom = self.intern_atom(operand);
-                    self.load_eval_name(p, atom)?
-                } else {
-                    self.eval_simple_expression(p, operand, strict)?
-                };
-                return Ok(self.typeof_value(value));
-            }
+        if expression.starts_with("typeof") {
+            return self.eval_compiled_expression(p, expression, strict);
         }
         if expression.len() >= 2
             && matches!(expression.as_bytes().first(), Some(b'\'' | b'"'))
             && expression.as_bytes().last() == expression.as_bytes().first()
         {
-            let text = &expression[1..expression.len() - 1];
-            return Ok(self.heap.alloc(Cell::String(
-                text.replace("\\'", "'").replace("\\\"", "\"").into(),
-            )));
-        }
-        if simple_eval_call(expression).is_some_and(|(name, _)| name == "import") {
-            return self.eval_compiled_expression_named(p, expression, strict, &p.source_name);
-        }
-        if let Some((name, argument_text)) = simple_eval_call(expression) {
-            let atom = self.intern_atom(name);
-            let callee = self.load_eval_name(p, atom)?;
-            let arguments = if argument_text.trim().is_empty() {
-                Vec::new()
-            } else {
-                vec![self.eval_simple_expression(p, argument_text, strict)?]
+            return match crate::Engine::eval_single_string_constant(expression) {
+                Some(constant) => Ok(self.materialize_constant(&constant)),
+                None => self.eval_compiled_expression(p, expression, strict),
             };
-            let previous_direct_eval = self.direct_eval;
-            let previous_parameter_eval = self.parameter_eval;
-            self.direct_eval = false;
-            self.parameter_eval = false;
-            let result = self.call_value(p, callee, Value::UNDEFINED, &arguments);
-            self.direct_eval = previous_direct_eval;
-            self.parameter_eval = previous_parameter_eval;
-            return result;
         }
-        let atom = self.intern_atom(expression);
-        match self.load_eval_name(p, atom) {
-            Ok(value) => Ok(value),
-            Err(_) if self.direct_eval => self.eval_global_script(p, expression, strict),
-            Err(_) => self.eval_compiled_expression(p, expression, strict),
+        match crate::Engine::eval_expression_kind(expression) {
+            crate::compile::EvalExpressionKind::Identifier(name) => {
+                let atom = self.intern_atom(&name);
+                self.load_eval_name(p, atom)
+            }
+            crate::compile::EvalExpressionKind::Import => {
+                self.eval_compiled_expression_named(p, expression, strict, &p.source_name)
+            }
+            crate::compile::EvalExpressionKind::Other if self.direct_eval => {
+                self.eval_global_script(p, expression, strict)
+            }
+            crate::compile::EvalExpressionKind::Other => {
+                self.eval_compiled_expression(p, expression, strict)
+            }
         }
     }
 
@@ -904,12 +863,7 @@ impl<H: Host> Vm<H> {
             .functions
             .iter()
             .enumerate()
-            .find(|(_, function)| {
-                function.parent == Some(0)
-                    && function
-                        .name
-                        .is_some_and(|name| &residual.atoms[name as usize] == "anonymous")
-            })
+            .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
             .map(|(id, _)| id as u32)
             .ok_or_else(|| self.type_error(p, "dynamic eval body is unavailable".into()))?;
         let this = self
@@ -921,19 +875,19 @@ impl<H: Host> Vm<H> {
                 .frames
                 .last()
                 .is_some_and(|frame| frame.function == super::ROOT_FUNCTION_ID);
-            let parent = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .map_or(Value::NULL, |frame| self.promote_frame_environment(frame));
+            let parent = match self.frames.len().checked_sub(1) {
+                Some(frame) => self.capture_binding_environment(frame)?,
+                None => Value::NULL,
+            };
             if root_scope {
                 self.heap.alloc(Cell::Environment {
                     parent,
                     program: None,
                     root_eval_scope: true,
+                    binding_site_pc: None,
                     function: u32::MAX,
-                    slots: Box::new([]),
-                    dynamic_bindings: Vec::new(),
+                    slots: Vec::<Value>::new().into_boxed_slice().into(),
+                    dynamic_bindings: Vec::new().into(),
                     with_objects: Vec::new(),
                 })
             } else {
@@ -943,7 +897,7 @@ impl<H: Host> Vm<H> {
             Value::NULL
         };
         if let Some((home, names)) = private_eval_context {
-            let bindings = names
+            let bindings: Vec<_> = names
                 .iter()
                 .map(|(_, identity)| {
                     let private_atom = self.intern_atom(identity);
@@ -955,9 +909,10 @@ impl<H: Host> Vm<H> {
                 parent: parent_environment,
                 program: None,
                 root_eval_scope: false,
+                binding_site_pc: None,
                 function: u32::MAX,
-                slots: Box::new([]),
-                dynamic_bindings: bindings,
+                slots: Vec::<Value>::new().into_boxed_slice().into(),
+                dynamic_bindings: bindings.into(),
                 with_objects: Vec::new(),
             });
         }
@@ -965,13 +920,41 @@ impl<H: Host> Vm<H> {
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
         let parameter_eval = std::mem::replace(&mut self.parameter_eval, false);
         let result = (|| {
-            let closure = self.closure(&residual, function, parent_environment)?;
-            self.call_value(p, closure, this, &[])
+            let callee = self.closure(&residual, function, parent_environment)?;
+            self.call_eval_closure(&residual, callee, this, direct_eval)
         })();
         self.active_program = active_program;
         self.direct_eval = direct_eval;
         self.parameter_eval = parameter_eval;
         result
+    }
+
+    fn call_eval_closure(
+        &mut self,
+        program: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        direct: bool,
+    ) -> Result<Value, JsError> {
+        let (function, environment) = match self.call_target(callee)? {
+            CallTarget::User(_, function, environment)
+            | CallTarget::NumericUser(_, function, environment) => (function, environment),
+            CallTarget::Native(_) => return Err(JsError("eval body is not a user closure".into())),
+        };
+        self.with_call_roots([callee, this], |vm| {
+            vm.call_user(
+                program,
+                function,
+                environment,
+                this,
+                &[],
+                if direct {
+                    CallContext::DirectEval(callee)
+                } else {
+                    CallContext::IndirectEval(callee)
+                },
+            )
+        })
     }
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
@@ -1008,14 +991,22 @@ impl<H: Host> Vm<H> {
         } else {
             Vec::new()
         };
-        let super_property = self.direct_eval && self.eval_super_context(p).is_some();
-        let context_source = if super_property || !private_names.is_empty() {
-            Some(eval_method_context_source(source, &private_names))
+        let method_context = self.direct_eval_context(p);
+        let context_source = if method_context.is_some_and(|context| context.home_atom.is_some())
+            || !private_names.is_empty()
+        {
+            Some(eval_context_source(
+                source,
+                &private_names,
+                method_context.is_some_and(|context| context.super_calls),
+            ))
         } else {
             None
         };
+        let in_function = method_context.is_some_and(|context| context.in_function);
         if let Some(error) = crate::Engine::strict_eval_syntax_error(
             context_source.as_deref().unwrap_or(source),
+            in_function,
         ) {
             return self
                 .syntax_error_result(p, error.strip_prefix("SyntaxError: ").unwrap_or(&error))
@@ -1028,22 +1019,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
     ) -> Option<(Value, Vec<(String, String)>)> {
-        let Some(frame) = self.frames.last() else {
-            return None;
-        };
-        let Some(home_atom) = p
-            .functions
-            .get(frame.function as usize)
-            .and_then(|function| function.super_home_atom)
-        else {
-            return None;
-        };
-        let home = self
-            .load_eval_capture_atom(p, home_atom)
-            .or_else(|| self.load_eval_frame_local(p, home_atom));
-        let Some(home) = home else {
-            return None;
-        };
+        let home = self.eval_home_binding(p)?;
         let names = self
             .object_data(home)
             .into_iter()
@@ -1061,66 +1037,53 @@ impl<H: Host> Vm<H> {
         (!names.is_empty()).then_some((home, names))
     }
 
-    fn eval_super_context(&mut self, p: &ResidualProgram) -> Option<(Value, Value)> {
-        let frame = self.frames.last()?;
-        let function = p.functions.get(frame.function as usize)?;
-        let home_atom = function.super_home_atom?;
-        let receiver = frame.this;
-        let home = self
-            .load_eval_capture_atom(p, home_atom)
-            .or_else(|| self.load_eval_frame_local(p, home_atom))?;
-        Some((home, receiver))
+    fn direct_eval_context(&mut self, p: &ResidualProgram) -> Option<crate::compile::EvalContext> {
+        if !self.direct_eval {
+            return None;
+        }
+        let frame = self.frames.len().checked_sub(1)?;
+        let home_atom = p
+            .functions
+            .get(self.frames[frame].function as usize)?
+            .super_home_atom;
+        let field_initializer = self.in_class_field_initializer(p);
+        let atom = self.intern_atom("\0rqj:lexical-this");
+        let super_calls = home_atom.is_some()
+            && !field_initializer
+            && self
+                .lexical_this_owner(frame, atom)
+                .and_then(|(program, function, _)| {
+                    self.programs.get(program).and_then(|program| {
+                        program
+                            .functions
+                            .get(function as usize)
+                            .map(|f| f.derived_constructor)
+                    })
+                })
+                .unwrap_or(false);
+        Some(crate::compile::EvalContext {
+            in_function: self.direct_eval_function_context(p),
+            home_atom,
+            super_calls,
+            field_initializer,
+        })
     }
 
-    pub(super) fn call_eval_super_arrow(
-        &mut self,
-        p: &ResidualProgram,
-        env: Value,
-    ) -> Result<Option<Value>, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
-            return Ok(None);
-        };
-        let elements = elements.as_ref().clone();
-        if elements.len() != 4
-            || !matches!(self.heap.get(elements[0]), Some(Cell::String(value)) if value.host_string() == "\0rqj:eval-super-arrow")
-        {
-            return Ok(None);
-        }
-        let Some(atom) = elements[1].as_number().map(|value| value as Atom) else {
-            return Err(JsError("invalid eval super-arrow property key".into()));
-        };
-        let home = elements[2];
-        let receiver = elements[3];
-        let base = self
-            .object_data(home)
-            .map_or(Value::NULL, |object| object.proto);
-        self.get_property_with_receiver(p, base, atom, receiver)
-            .map(Some)
+    fn eval_home_binding(&mut self, p: &ResidualProgram) -> Option<Value> {
+        let function = self.frames.last()?.function;
+        let home_atom = p.functions.get(function as usize)?.super_home_atom?;
+        // Use the same binding operation as compiled super access. Its retained
+        // metadata resolves captures across both scope views and eval programs.
+        self.load_name(p, home_atom, None).ok()
+    }
+
+    fn eval_super_context(&mut self, p: &ResidualProgram) -> Option<(Value, Value)> {
+        let receiver = self.frames.last()?.this;
+        Some((self.eval_home_binding(p)?, receiver))
     }
 
     fn load_eval_name(&mut self, p: &ResidualProgram, atom: Atom) -> Result<Value, JsError> {
         if self.direct_eval {
-            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-            let with_base = self
-                .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
-            for object in with_objects.into_iter().rev() {
-                if self.with_binding(p, object, key, atom)? {
-                    return self.get_property(p, object, atom);
-                }
-            }
-            if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
-                return self.checked_binding_read(p, atom, value);
-            }
-            if let Some(value) = self.direct_eval_lexical_value(p, atom) {
-                return self.checked_binding_read(p, atom, value);
-            }
-            if let Some(value) = self.load_eval_frame_local(p, atom) {
-                return self.checked_binding_read(p, atom, value);
-            }
             return self.load_name(p, atom, None);
         }
         if let Some(frame) = self.frames.iter().find(|frame| frame.function == 0)
@@ -1132,10 +1095,9 @@ impl<H: Host> Vm<H> {
                 .position(|candidate| *candidate == atom)
         {
             let value = if frame.captured {
-                match self.heap.get(frame.env) {
-                    Some(Cell::Environment { slots, .. }) => slots[slot],
-                    _ => Value::UNDEFINED,
-                }
+                self.heap
+                    .environment_slot(frame.env, slot)
+                    .unwrap_or(Value::UNDEFINED)
             } else {
                 frame.locals[slot]
             };
@@ -1150,132 +1112,35 @@ impl<H: Host> Vm<H> {
             }
             return Ok(value);
         }
-        let value = self.get_property(p, self.realm.globals, atom)?;
-        if value.is_undefined() && self.own_property(self.realm.globals, atom).is_none() {
+        if !self.has_global_object_binding(p, atom)? {
             return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
         }
-        Ok(value)
+        self.get_property(p, self.realm.globals, atom)
     }
 
-    fn direct_eval_lexical_binding(
-        &self,
-        p: &ResidualProgram,
-        atom: Atom,
-    ) -> Option<crate::bytecode::EvalBinding> {
-        let frame = self.frames.last()?;
-        let function = p.functions.get(frame.function as usize)?;
-        function
-            .binding_sites
-            .iter()
-            .find(|site| site.resume_pc as usize == frame.pc)?
-            .bindings
-            .iter()
-            .find(|binding| binding.atom == atom)
-            .copied()
+    fn direct_eval_binding(&self, atom: Atom) -> Option<crate::bytecode::EvalBinding> {
+        self.name_binding(self.frames.len().checked_sub(1)?, atom)
     }
 
     fn prepare_direct_eval_var_bindings(&mut self, atoms: &[Atom]) {
         let Some(frame_index) = self.frames.len().checked_sub(1) else {
             return;
         };
-        let frame = &self.frames[frame_index];
+        let Some(bindings) = self.own_dynamic_bindings(frame_index) else {
+            return;
+        };
         let mut additions = atoms
             .iter()
             .copied()
             .filter(|atom| {
-                !frame
-                    .dynamic_bindings
-                    .iter()
-                    .any(|(candidate, _)| candidate == atom)
+                (self.parameter_eval || self.activation_binding_slot(frame_index, *atom).is_none())
+                    && !bindings.iter().any(|(candidate, _)| candidate == atom)
             })
-            .map(|atom| {
-                (
-                    atom,
-                    self.activation_binding_value(frame_index, atom)
-                        .unwrap_or(Value::UNDEFINED),
-                )
-            })
+            .map(|atom| (atom, Value::UNDEFINED))
             .collect::<Vec<_>>();
-        self.frames[frame_index]
-            .dynamic_bindings
-            .append(&mut additions);
-        let bindings = self.frames[frame_index].dynamic_bindings.clone();
-        if self.frames[frame_index].captured {
-            let env = self.frames[frame_index].env;
-            if let Some(Cell::Environment {
-                dynamic_bindings, ..
-            }) = self.heap.get_mut(env)
-            {
-                *dynamic_bindings = bindings;
-            }
+        if let Some(bindings) = self.own_dynamic_bindings_mut(frame_index) {
+            bindings.append(&mut additions);
         }
-    }
-
-    fn direct_eval_lexical_value(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
-        let binding = self.direct_eval_lexical_binding(p, atom)?;
-        let frame_index = self.frames.len().checked_sub(1)?;
-        let frame = &self.frames[frame_index];
-        let (environment, slot) = match binding.location {
-            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => (
-                Some(self.capture_env(frame_index, depth)?),
-                usize::from(slot),
-            ),
-            crate::bytecode::EvalBindingLocation::Local(slot) => {
-                (frame.captured.then_some(frame.env), usize::from(slot))
-            }
-        };
-        if let Some(environment) = environment {
-            match self.heap.get(environment)? {
-                Cell::Environment { slots, .. } => slots.get(slot).copied(),
-                _ => None,
-            }
-        } else {
-            frame.locals.get(slot).copied()
-        }
-    }
-
-    fn store_direct_eval_lexical_value(
-        &mut self,
-        p: &ResidualProgram,
-        atom: Atom,
-        value: Value,
-        strict: bool,
-    ) -> Result<bool, JsError> {
-        let Some(binding) = self.direct_eval_lexical_binding(p, atom) else {
-            return Ok(false);
-        };
-        if let Some(current) = self.direct_eval_lexical_value(p, atom) {
-            self.checked_binding_read(p, atom, current)?;
-        }
-        if !self.check_named_binding_assignment(p, binding.kind, strict)? {
-            return Ok(true);
-        }
-        let Some(frame_index) = self.frames.len().checked_sub(1) else {
-            return Ok(false);
-        };
-        let (environment, slot) = match binding.location {
-            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => {
-                (self.capture_env(frame_index, depth), usize::from(slot))
-            }
-            crate::bytecode::EvalBindingLocation::Local(slot) => (
-                self.frames[frame_index]
-                    .captured
-                    .then_some(self.frames[frame_index].env),
-                usize::from(slot),
-            ),
-        };
-        if let Some(environment) = environment {
-            if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(environment)
-                && let Some(local) = slots.get_mut(slot)
-            {
-                *local = value;
-                return Ok(true);
-            }
-        } else if let Some(local) = self.frames[frame_index].locals.get_mut(slot) {
-            *local = value;
-            return Ok(true);
-        }
-        Ok(false)
     }
 
     pub(super) fn syntax_error_result(
@@ -1286,161 +1151,6 @@ impl<H: Host> Vm<H> {
         let text = self.heap.alloc(Cell::String(message.into()));
         let error = self.construct_error_native(p, Native::SyntaxError, &[text])?;
         Err(JsError::thrown(error, format!("SyntaxError: {message}")))
-    }
-
-    fn store_eval_name(
-        &mut self,
-        p: &ResidualProgram,
-        atom: Atom,
-        value: Value,
-        strict: bool,
-        declaration: bool,
-    ) -> Result<(), JsError> {
-        if strict {
-            let with_base = self
-                .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-            let with_objects = self.with_stack[with_base..].to_vec();
-            for object in with_objects.into_iter().rev() {
-                if self.with_binding(p, object, key, atom)? {
-                    return self.set_property_with_program_mode(p, object, atom, value, true);
-                }
-            }
-            if self.current_frame_has_lexical_alias(p, atom) {
-                return Err(self.type_error(p, "assignment to function name binding".into()));
-            }
-            if self.direct_eval
-                && let Some(frame) = self.frames.last_mut()
-                && let Some((_, current)) = frame
-                    .dynamic_bindings
-                    .iter_mut()
-                    .rev()
-                    .find(|(candidate, _)| *candidate == atom)
-            {
-                *current = value;
-                self.sync_dynamic_bindings();
-                return Ok(());
-            }
-            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value, strict)? {
-                return Ok(());
-            }
-            if !self.parameter_eval && self.store_frame_local(p, atom, value) {
-                return Ok(());
-            }
-            if let Some(frame) = self.frames.last_mut()
-                && let Some((_, current)) = frame
-                    .dynamic_bindings
-                    .iter_mut()
-                    .rev()
-                    .find(|(candidate, _)| *candidate == atom)
-            {
-                *current = value;
-                self.sync_dynamic_bindings();
-                return Ok(());
-            }
-            if self.own_property(self.realm.globals, atom).is_some() {
-                self.store_frame_local(p, atom, value);
-                return self.set_property_with_program_mode(
-                    p,
-                    self.realm.globals,
-                    atom,
-                    value,
-                    strict,
-                );
-            }
-            return Err(self.reference_error(p, format!("{} is not defined", self.atom_name(atom))));
-        }
-        if self.direct_eval {
-            if !declaration && self.current_frame_has_lexical_alias(p, atom) {
-                return Ok(());
-            }
-            if !declaration
-                && let Some(frame) = self.frames.last_mut()
-                && let Some((_, current)) = frame
-                    .dynamic_bindings
-                    .iter_mut()
-                    .rev()
-                    .find(|(candidate, _)| *candidate == atom)
-            {
-                *current = value;
-                self.sync_dynamic_bindings();
-                return Ok(());
-            }
-            if self.direct_eval && self.store_direct_eval_lexical_value(p, atom, value, strict)? {
-                return Ok(());
-            }
-            let global_frame = self.frames.last().is_some_and(|frame| frame.function == 0);
-            if global_frame {
-                self.store_frame_local(p, atom, value);
-                if self.own_property(self.realm.globals, atom).is_some() {
-                    return self.set_property_with_program_mode(
-                        p,
-                        self.realm.globals,
-                        atom,
-                        value,
-                        strict,
-                    );
-                }
-                return self.define_global_eval_binding(p, atom, value);
-            }
-            if !self.parameter_eval && self.store_frame_local(p, atom, value) {
-            } else if !self.parameter_eval && self.own_property(self.realm.globals, atom).is_some()
-            {
-                self.store_frame_local(p, atom, value);
-                self.store_eval_outer_local(p, atom, value);
-                return self.set_property_with_program_mode(
-                    p,
-                    self.realm.globals,
-                    atom,
-                    value,
-                    strict,
-                );
-            } else if let Some(frame) = self.frames.last_mut()
-                && let Some((_, current)) = frame
-                    .dynamic_bindings
-                    .iter_mut()
-                    .rev()
-                    .find(|(candidate, _)| *candidate == atom)
-            {
-                *current = value;
-                self.sync_dynamic_bindings();
-            } else if declaration {
-                let frame = self
-                    .frames
-                    .last_mut()
-                    .expect("direct eval runs inside an activation");
-                frame.dynamic_bindings.push((atom, value));
-                self.sync_dynamic_bindings();
-            } else {
-                return self
-                    .set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
-                    .map_err(|_| self.type_error(p, "cannot define global eval binding".into()));
-            }
-        } else {
-            // Indirect eval targets the realm global environment, never the
-            // caller's activation locals.
-        }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-        let with_base = self
-            .frames
-            .last()
-            .map_or(self.with_stack.len(), |frame| frame.with_base)
-            .min(self.with_stack.len());
-        let with_objects = self.with_stack[with_base..].to_vec();
-        for object in with_objects.into_iter().rev() {
-            if self.with_binding(p, object, key, atom)? {
-                return self.set_property_with_program_mode(p, object, atom, value, true);
-            }
-        }
-        if self.direct_eval {
-            Ok(())
-        } else {
-            self.set_property_with_program_mode(p, self.realm.globals, atom, value, strict)
-                .map_err(|_| self.type_error(p, "cannot define global eval binding".into()))
-        }
     }
 
     fn define_global_eval_binding(
@@ -1460,193 +1170,6 @@ impl<H: Host> Vm<H> {
         );
         self.heap.release_root(value_root);
         result
-    }
-
-    fn store_eval_outer_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) {
-        let current = self.frames.len().saturating_sub(1);
-        if self.frames.get(current).is_some_and(|frame| {
-            p.functions
-                .get(frame.function as usize)
-                .is_some_and(|function| function.local_atoms.contains(&atom))
-        }) {
-            return;
-        }
-        for index in (0..current).rev() {
-            let (captured, env, slot) = {
-                let frame = &self.frames[index];
-                let Some(function) = p.functions.get(frame.function as usize) else {
-                    continue;
-                };
-                let Some(slot) = function
-                    .local_atoms
-                    .iter()
-                    .position(|candidate| *candidate == atom)
-                else {
-                    continue;
-                };
-                (frame.captured, frame.env, slot)
-            };
-            if captured {
-                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) {
-                    if let Some(local) = slots.get_mut(slot) {
-                        *local = value;
-                        return;
-                    }
-                }
-            } else if let Some(local) = self.frames[index].locals.get_mut(slot) {
-                *local = value;
-                return;
-            }
-        }
-    }
-
-    pub(super) fn load_eval_frame_local(
-        &mut self,
-        p: &ResidualProgram,
-        atom: Atom,
-    ) -> Option<Value> {
-        let program = self.frames.last()?.program;
-        let name = self.atom_name(atom).to_owned();
-        let mut best: Option<(String, Value)> = None;
-        for index in (0..self.frames.len()).rev() {
-            let frame = &self.frames[index];
-            if frame.program != program {
-                continue;
-            }
-            if index != self.frames.len().saturating_sub(1)
-                && (frame.function != super::ROOT_FUNCTION_ID
-                    || frame.this != self.realm.globals
-                    || self.own_property(self.realm.globals, atom).is_none())
-            {
-                continue;
-            }
-            let Some(function) = p.functions.get(frame.function as usize) else {
-                continue;
-            };
-            for (slot, candidate) in function.local_atoms.iter().enumerate() {
-                if self.root_global_var_atom(p, frame.function, slot).is_some() {
-                    // Object-environment bindings must read the property,
-                    // including its accessor, rather than a frame-local copy.
-                    continue;
-                }
-                let candidate_name = self.atom_name(*candidate);
-                if candidate_name != name
-                    && !name.starts_with('\0')
-                    && !(candidate_name.starts_with(&name)
-                        && candidate_name[name.len()..]
-                            .chars()
-                            .all(|character| character == '_'))
-                {
-                    continue;
-                }
-                if best
-                    .as_ref()
-                    .is_some_and(|(best_name, _)| best_name.len() >= candidate_name.len())
-                {
-                    continue;
-                }
-                let value = if frame.captured {
-                    self.heap.get(frame.env).and_then(|cell| match cell {
-                        Cell::Environment { slots, .. } => slots.get(slot).copied(),
-                        _ => None,
-                    })
-                } else {
-                    frame.locals.get(slot).copied()
-                }?;
-                if value.is_deleted() {
-                    continue;
-                }
-                best = Some((candidate_name.to_owned(), value));
-            }
-        }
-        best.map(|(_, value)| value)
-    }
-
-    pub(super) fn load_eval_capture_atom(&self, p: &ResidualProgram, atom: Atom) -> Option<Value> {
-        let frame_index = self.frames.len().checked_sub(1)?;
-        let frame = self.frames.get(frame_index)?;
-        let function = p.functions.get(frame.function as usize)?;
-        let parent = function.parent?;
-        let slot = self.local_binding_slot(p, parent, atom)?;
-        let env = self.capture_env(frame_index, 0)?;
-        match self.heap.get(env)? {
-            Cell::Environment { slots, .. } => slots.get(slot).copied(),
-            _ => None,
-        }
-    }
-
-    fn current_frame_has_lexical_alias(&self, p: &ResidualProgram, atom: Atom) -> bool {
-        let name = self.atom_name(atom);
-        let Some(frame) = self.frames.last() else {
-            return false;
-        };
-        let Some(function) = p.functions.get(frame.function as usize) else {
-            return false;
-        };
-        function.local_atoms.iter().any(|candidate| {
-            let candidate_name = self.atom_name(*candidate);
-            candidate_name.strip_prefix(name).is_some_and(|suffix| {
-                suffix.starts_with("\0rqj:self-binding:")
-                    || (!suffix.is_empty() && suffix.chars().all(|character| character == '_'))
-            })
-        })
-    }
-
-    pub(super) fn sync_dynamic_bindings(&mut self) {
-        let Some(frame) = self.frames.last() else {
-            return;
-        };
-        if !frame.captured {
-            return;
-        }
-        let env = frame.env;
-        let bindings = frame.dynamic_bindings.clone();
-        if let Some(Cell::Environment {
-            dynamic_bindings, ..
-        }) = self.heap.get_mut(env)
-        {
-            *dynamic_bindings = bindings;
-        }
-    }
-
-    fn store_frame_local(&mut self, p: &ResidualProgram, atom: Atom, value: Value) -> bool {
-        for index in (0..self.frames.len()).rev() {
-            let (captured, env, slot) = {
-                let frame = &self.frames[index];
-                if index != self.frames.len().saturating_sub(1)
-                    && (frame.function != 0
-                        || self.own_property(self.realm.globals, atom).is_none())
-                {
-                    continue;
-                }
-                let Some(function) = p.functions.get(frame.function as usize) else {
-                    continue;
-                };
-                let Some(slot) = function
-                    .local_atoms
-                    .iter()
-                    .position(|candidate| *candidate == atom)
-                else {
-                    continue;
-                };
-                if self.root_global_var_atom(p, frame.function, slot).is_some() {
-                    return false;
-                }
-                (frame.captured, frame.env, slot)
-            };
-            if captured {
-                if let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env)
-                    && let Some(local) = slots.get_mut(slot)
-                {
-                    *local = value;
-                    return true;
-                }
-            } else if let Some(local) = self.frames[index].locals.get_mut(slot) {
-                *local = value;
-                return true;
-            }
-        }
-        false
     }
 }
 
@@ -1668,17 +1191,8 @@ fn private_eval_method_body(
     };
     format!(
         "return {}.prototype.__eval.call(this);",
-        eval_method_context_source(&statements, private_names),
+        eval_context_source(&statements, private_names, false),
     )
-}
-
-fn eval_method_context_source(source: &str, private_names: &[(String, String)]) -> String {
-    let declarations = private_names
-        .iter()
-        .map(|(label, _)| format!("#{label};"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("(class {{\n{declarations}\n__eval() {{\n{source}\n}}\n}})")
 }
 
 fn eval_regexp_literal_units(source: &[u16]) -> Option<(&[u16], &[u16])> {
@@ -1708,11 +1222,14 @@ fn eval_regexp_literal_units(source: &[u16]) -> Option<(&[u16], &[u16])> {
             unit if unit == right_bracket => in_character_class = false,
             unit if unit == slash && !in_character_class => {
                 let flags = &source[index + 1..];
-                return flags.iter().all(|unit| {
-                    char::from_u32(u32::from(*unit)).is_some_and(|character| {
-                        character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                return flags
+                    .iter()
+                    .all(|unit| {
+                        char::from_u32(u32::from(*unit)).is_some_and(|character| {
+                            character.is_ascii_alphanumeric() || matches!(character, '_' | '$')
+                        })
                     })
-                }).then_some((&source[1..index], flags));
+                    .then_some((&source[1..index], flags));
             }
             _ => {}
         }
@@ -1747,74 +1264,6 @@ fn eval_new_expression(expression: &str) -> Option<(&str, Option<&str>)> {
     }
     let arguments = tail.strip_prefix('(')?.strip_suffix(')')?.trim();
     Some((name, (!arguments.is_empty()).then_some(arguments)))
-}
-
-fn is_use_strict(statement: &str) -> bool {
-    matches!(statement.trim(), "'use strict'" | "\"use strict\"")
-}
-
-fn strip_eval_comments(source: &str) -> Cow<'_, str> {
-    let mut output = String::with_capacity(source.len());
-    let mut input = source.chars().peekable();
-    let mut quote = None;
-    let mut escaped = false;
-    let mut changed = false;
-    while let Some(character) = input.next() {
-        if let Some(delimiter) = quote {
-            output.push(character);
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == delimiter {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(character, '\'' | '"' | '`') {
-            quote = Some(character);
-            output.push(character);
-            continue;
-        }
-        if character == '/' && input.peek() == Some(&'/') {
-            input.next();
-            changed = true;
-            for character in input.by_ref() {
-                if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
-                    output.push(character);
-                    break;
-                }
-            }
-            continue;
-        }
-        if character == '/' && input.peek() == Some(&'*') {
-            input.next();
-            changed = true;
-            let mut previous = '\0';
-            let mut closed = false;
-            for character in input.by_ref() {
-                if matches!(character, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
-                    output.push(character);
-                }
-                if previous == '*' && character == '/' {
-                    closed = true;
-                    break;
-                }
-                previous = character;
-            }
-            if !closed {
-                return Cow::Borrowed(source);
-            }
-            output.push(' ');
-            continue;
-        }
-        output.push(character);
-    }
-    if changed {
-        Cow::Owned(output)
-    } else {
-        Cow::Borrowed(source)
-    }
 }
 
 fn eval_source_has_no_tokens(source: &[u16]) -> bool {
@@ -1873,50 +1322,6 @@ fn is_ecmascript_whitespace(character: char) -> bool {
             | '\u{2000}'
             ..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}'
     )
-}
-
-fn simple_eval_call(expression: &str) -> Option<(&str, &str)> {
-    let open = expression.find('(')?;
-    let name = expression[..open].trim();
-    if !is_eval_identifier(name) {
-        return None;
-    }
-
-    let mut depth = 0usize;
-    let mut quote = None;
-    let mut escaped = false;
-    for (offset, character) in expression[open..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if quote.is_some() && character == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(current) = quote {
-            if current == character {
-                quote = None;
-            }
-            continue;
-        }
-        match character {
-            '\'' | '"' => quote = Some(character),
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.checked_sub(1)?;
-                if depth == 0 {
-                    let close = open + offset;
-                    return expression[close + 1..]
-                        .trim()
-                        .is_empty()
-                        .then_some((name, &expression[open + 1..close]));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -2060,116 +1465,6 @@ fn is_empty_eval_statement(statement: &str) -> bool {
     )
 }
 
-fn contains_eval_identifier(source: &str, target: &str) -> bool {
-    let bytes = source.as_bytes();
-    let target = target.as_bytes();
-    let mut index = 0;
-    let mut quote = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = (index + 2).min(bytes.len());
-                continue;
-            }
-            if byte == delimiter {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if matches!(byte, b'\'' | b'"' | b'`') {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        if bytes[index..].starts_with(b"//") {
-            index = bytes[index..]
-                .iter()
-                .position(|byte| *byte == b'\n')
-                .map_or(bytes.len(), |offset| index + offset + 1);
-            continue;
-        }
-        if bytes[index..].starts_with(b"/*") {
-            index = bytes[index + 2..]
-                .windows(2)
-                .position(|pair| pair == b"*/")
-                .map_or(bytes.len(), |offset| index + offset + 4);
-            continue;
-        }
-        if bytes[index..].starts_with(target) {
-            let end = index + target.len();
-            let identifier =
-                |byte: u8| byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric();
-            let starts_identifier = index == 0 || !identifier(bytes[index - 1]);
-            let ends_identifier = end == bytes.len() || !identifier(bytes[end]);
-            let mut previous = index;
-            while previous > 0 && bytes[previous - 1].is_ascii_whitespace() {
-                previous -= 1;
-            }
-            if starts_identifier
-                && ends_identifier
-                && (previous == 0 || !matches!(bytes[previous - 1], b'.' | b'?'))
-            {
-                return true;
-            }
-            index = end;
-            continue;
-        }
-        index += 1;
-    }
-    false
-}
-
-fn is_strict_reserved(name: &str) -> bool {
-    matches!(
-        name,
-        "implements"
-            | "interface"
-            | "let"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
-            | "static"
-            | "yield"
-    )
-}
-
-fn split_assignment(statement: &str) -> Option<(&str, &str)> {
-    let mut quote = None;
-    for (index, character) in statement.char_indices() {
-        match (quote, character) {
-            (None, '\'' | '"') => quote = Some(character),
-            (Some(current), character) if current == character => quote = None,
-            (None, '=') => {
-                let previous = statement[..index].chars().next_back();
-                let next = statement[index + character.len_utf8()..].chars().next();
-                if matches!(previous, Some('=' | '!' | '<' | '>'))
-                    || matches!(next, Some('=' | '>'))
-                {
-                    continue;
-                }
-                let name = statement[..index].trim();
-                if is_eval_identifier(name) {
-                    return Some((name, statement[index + 1..].trim()));
-                }
-                return None;
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn is_eval_identifier(name: &str) -> bool {
-    let mut characters = name.chars();
-    characters.next().is_some_and(|character| {
-        character == '_' || character == '$' || character.is_ascii_alphabetic()
-    }) && characters
-        .all(|character| character == '_' || character == '$' || character.is_ascii_alphanumeric())
-}
-
 fn split_statements(source: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut start = 0;
@@ -2209,21 +1504,4 @@ fn split_statements(source: &str) -> Vec<&str> {
     }
     result.push(source[start..].trim());
     result
-}
-
-fn eval_super_property_key(source: &str) -> Option<String> {
-    let property = source.strip_prefix("super.").and_then(|property| {
-        property
-            .chars()
-            .all(|character| {
-                character == '_' || character == '$' || character.is_ascii_alphanumeric()
-            })
-            .then(|| property.to_owned())
-    });
-    property.or_else(|| {
-        let key = source.strip_prefix("super[")?.strip_suffix(']')?.trim();
-        let quote = key.chars().next()?;
-        (matches!(quote, '\'' | '"') && key.chars().last() == Some(quote))
-            .then(|| key[1..key.len() - 1].to_owned())
-    })
 }

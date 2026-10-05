@@ -241,7 +241,7 @@ impl FunctionCompiler<'_, '_> {
             }
         }
     }
-    fn emit_return(&mut self, value: Register) {
+    pub(super) fn emit_return(&mut self, value: Register) {
         self.close_active_iterators();
         let Some(context) = self.finally_contexts.last() else {
             self.emit(Op::Return, value, 0, 0, 0);
@@ -282,12 +282,11 @@ impl FunctionCompiler<'_, '_> {
             self.patch(check_undefined);
 
             let undefined = self.literal(Constant::Undefined);
-            let is_undefined =
-                self.emit_binary(
-                    BinaryOperator::StrictEquality as u32,
-                    Operand::register(left),
-                    Operand::register(undefined),
-                );
+            let is_undefined = self.emit_binary(
+                BinaryOperator::StrictEquality as u32,
+                Operand::register(left),
+                Operand::register(undefined),
+            );
             let return_left = self.emit(Op::JumpFalse, is_undefined, 0, 0, 0);
             self.return_expression(&value.right);
             self.patch(return_left);
@@ -477,9 +476,10 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => false,
         };
+        let per_iteration = matches!(item.init.as_ref(), Some(ForStatementInit::VariableDeclaration(declaration)) if declaration.kind == VariableDeclarationKind::Let);
         self.for_initializer(item.init.as_ref());
-        if scoped {
-            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+        if per_iteration {
+            self.clone_lexical_environment();
         }
         let head = self.code.len() as u32;
         let condition_end = item.test.as_ref().map(|test| self.condition(test));
@@ -488,8 +488,8 @@ impl FunctionCompiler<'_, '_> {
         let control = self.controls.pop().unwrap();
         let update = self.code.len() as u32;
         self.patch_edges(&control.continues, update);
-        if scoped {
-            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+        if per_iteration {
+            self.clone_lexical_environment();
         }
         if let Some(expression) = &item.update {
             self.expression(expression);
@@ -537,7 +537,9 @@ impl FunctionCompiler<'_, '_> {
 
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         self.clear_statement_completion();
+        let discriminant_binding = self.hidden_local("\0rqj:switch-discriminant");
         let discriminant = self.expression(&item.discriminant);
+        self.store_atom(discriminant_binding, discriminant);
         self.push_switch_lexical_scope(&item.cases);
         for case in &item.cases {
             self.emit_hoisted(&case.consequent);
@@ -546,6 +548,7 @@ impl FunctionCompiler<'_, '_> {
         for case in &item.cases {
             case_edges.push(case.test.as_ref().map(|test| {
                 let test = self.expression(test);
+                let discriminant = self.load_atom(discriminant_binding);
                 let matched = self.emit_binary(
                     STRICT_EQUAL_OPERATOR,
                     Operand::register(discriminant),

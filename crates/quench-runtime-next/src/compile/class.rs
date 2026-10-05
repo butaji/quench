@@ -19,6 +19,12 @@ impl FunctionCompiler<'_, '_> {
         bind_name: bool,
         inferred_name: Option<&str>,
     ) -> Register {
+        // Emit before heritage/TDZ evaluation, then fill from the class's allocated
+        // locals. This preserves earlier class evaluations before their slots change.
+        let first_class_slot = self.locals.len();
+        let clone_plan = self.environment_clones.len();
+        self.environment_clones.push(Vec::new());
+        self.emit(Op::CloneEnv, 0, 0, 0, clone_plan as u32);
         let class_binding = class.id.as_ref().map(|identifier| {
             let source = self.owner.atom(identifier.name.as_str());
             let binding = self.hidden_local(&format!(
@@ -62,20 +68,11 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => {}
             }
-            if let ClassElement::PropertyDefinition(field) = element
-                && field.r#static
-                && field.value.is_some()
-            {
-                self.hidden_local(&class_field_eval_marker_name(field.span.start));
-            }
             if let ClassElement::AccessorProperty(accessor) = element {
                 self.owner.reserve_auto_accessor_name(accessor.span);
                 if !accessor.decorators.is_empty() {
                     self.owner
                         .reject(accessor.span, "decorated class accessors are unsupported");
-                }
-                if accessor.r#static && accessor.value.is_some() {
-                    self.hidden_local(&class_field_eval_marker_name(accessor.span.start));
                 }
             }
         }
@@ -86,36 +83,45 @@ impl FunctionCompiler<'_, '_> {
                 method_home_atoms.insert(method.span.start, atom);
             }
         }
-        let instance_fields: Vec<_> = class
+        let fields: Vec<_> = class
             .body
             .body
             .iter()
             .filter_map(|element| match element {
-                ClassElement::PropertyDefinition(field) if !field.r#static => {
+                ClassElement::PropertyDefinition(field) => {
                     Some(ClassField::Property(field.as_ref()))
                 }
-                ClassElement::AccessorProperty(accessor) if !accessor.r#static => {
+                ClassElement::AccessorProperty(accessor) => {
                     let backing = self.owner.private_name_atom(accessor.span);
                     Some(ClassField::AutoAccessor { accessor, backing })
                 }
                 _ => None,
             })
             .collect();
+        let instance_fields: Vec<_> = fields
+            .iter()
+            .copied()
+            .filter(|field| !class_field_static(*field))
+            .collect();
         let instance_private_method_spans: Vec<_> = class
             .body
             .body
             .iter()
-            .filter_map(|element| match element {
-                ClassElement::MethodDefinition(method)
-                    if !method.r#static
-                        && matches!(&method.key, PropertyKey::PrivateIdentifier(_)) =>
-                {
-                    Some(method.key.span())
-                }
-                ClassElement::AccessorProperty(accessor) if !accessor.r#static => {
-                    Some(accessor.span)
-                }
-                _ => None,
+            .flat_map(|element| {
+                let (name, backing) = match element {
+                    ClassElement::MethodDefinition(method) if !method.r#static => (
+                        matches!(&method.key, PropertyKey::PrivateIdentifier(_))
+                            .then(|| method.key.span()),
+                        None,
+                    ),
+                    ClassElement::AccessorProperty(accessor) if !accessor.r#static => (
+                        matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+                            .then(|| accessor.key.span()),
+                        Some(accessor.span),
+                    ),
+                    _ => (None, None),
+                };
+                name.into_iter().chain(backing)
             })
             .collect();
         let mut installed_private_names = FxHashSet::default();
@@ -141,7 +147,49 @@ impl FunctionCompiler<'_, '_> {
                 ))
             });
         let class_home_atom = self.hidden_local(&format!("\0rqj:home:class:{}", class.span.start));
+        for field in &fields {
+            if class_field_value(*field).is_some() {
+                self.hidden_local(&class_field_initializer_name(
+                    class_field_span(*field).start,
+                ));
+            }
+        }
+        self.environment_clones[clone_plan] = (first_class_slot..self.locals.len())
+            .map(|slot| slot as u16)
+            .collect();
         let scopes = self.capture_scopes();
+        for field in &fields {
+            let Some(expression) = class_field_value(*field) else {
+                continue;
+            };
+            let id = self.owner.compile_function(
+                None,
+                &[],
+                FunctionBody::Expression(expression),
+                &scopes,
+                Some(self.function_id),
+                FunctionOptions {
+                    class_field_initializer: true,
+                    non_constructible: true,
+                    super_home: true,
+                    super_home_atom: Some(if class_field_static(*field) {
+                        class_home_atom
+                    } else {
+                        constructor_home_atom
+                    }),
+                    super_static: class_field_static(*field),
+                    strict: true,
+                    with_depth: self.with_depth,
+                    ..FunctionOptions::default()
+                },
+            );
+            let initializer = self.reg();
+            self.emit(Op::MakeClosure, initializer, 0, 0, id);
+            let atom = self.owner.atom(&class_field_initializer_name(
+                class_field_span(*field).start,
+            ));
+            self.store_atom(atom, initializer);
+        }
         let implicit_super = constructor.is_none() && heritage.is_some();
         let constructor_id = constructor
             .map(|(method, source_span)| {
@@ -150,8 +198,10 @@ impl FunctionCompiler<'_, '_> {
                     Some(source_span),
                     &scopes,
                     Some(self.function_id),
-                    Some(&instance_fields),
-                    Some(&instance_private_methods),
+                    heritage.is_none().then_some(instance_fields.as_slice()),
+                    heritage
+                        .is_none()
+                        .then_some(instance_private_methods.as_slice()),
                     heritage.is_some(),
                     method_home_atoms[&method.span.start],
                     self.with_depth,
@@ -166,22 +216,21 @@ impl FunctionCompiler<'_, '_> {
                 self.owner.compile_function(
                     None,
                     &params,
-                    &[],
+                    FunctionBody::Statements(&[]),
                     &scopes,
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: None,
-                        source_text: None,
+                        source_text: self.owner.source_text(class.span),
                         name_binding: None,
                         async_function: false,
                         generator: false,
                         class_constructor: true,
-                        derived_constructor: false,
+                        derived_constructor: implicit_super,
                         non_constructible: false,
                         class_field_initializer: false,
                         instance_fields: Some(&instance_fields),
                         instance_private_methods: Some(&instance_private_methods),
-                        defer_instance_fields: false,
                         super_static: false,
                         super_home: true,
                         super_home_atom: Some(constructor_home_atom),
@@ -192,6 +241,32 @@ impl FunctionCompiler<'_, '_> {
                     },
                 )
             });
+        if heritage.is_some()
+            && (!instance_fields.is_empty() || !instance_private_methods.is_empty())
+        {
+            let initializer = self.owner.compile_function(
+                None,
+                &[],
+                FunctionBody::Statements(&[]),
+                &scopes,
+                Some(self.function_id),
+                FunctionOptions {
+                    instance_fields: Some(&instance_fields),
+                    instance_private_methods: Some(&instance_private_methods),
+                    class_field_initializer: true,
+                    non_constructible: true,
+                    super_home: true,
+                    super_home_atom: Some(constructor_home_atom),
+                    strict: true,
+                    with_depth: self.with_depth,
+                    ..FunctionOptions::default()
+                },
+            );
+            self.owner.functions[constructor_id as usize]
+                .as_mut()
+                .expect("compiled class constructor")
+                .instance_initializer = Some(initializer);
+        }
         let class_value = self.reg();
         self.emit(Op::MakeClosure, class_value, 0, 0, constructor_id);
         if let Some(super_atom) = super_atom {
@@ -239,7 +314,14 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => (None, false),
             };
-            if let Some(name) = name {
+            let accessor_name = match element {
+                ClassElement::AccessorProperty(accessor) => {
+                    matches!(&accessor.key, PropertyKey::PrivateIdentifier(_))
+                        .then(|| accessor.key.span())
+                }
+                _ => None,
+            };
+            for name in name.into_iter().chain(accessor_name) {
                 let target = if is_static { class_value } else { prototype };
                 let atom = self.owner.private_name_atom(name);
                 if self.owner.private_name_is_overridden(atom) {
@@ -319,7 +401,7 @@ impl FunctionCompiler<'_, '_> {
                     Self::unit_key(self, &accessor.key)
                 };
                 let name_text = if computed_key.is_none() {
-                    let Some(name) = class_method_name(&accessor.key) else {
+                    let Some(name) = class_field_storage_name(self.owner, &accessor.key) else {
                         self.owner
                             .reject(accessor.span, "class accessor key is unsupported");
                         continue;
@@ -354,7 +436,13 @@ impl FunctionCompiler<'_, '_> {
                     if let Some(key) = computed_key {
                         self.emit(Op::SetFunctionNameKey, function, key, 0, prefix);
                     } else if let Some(name) = name_text.as_deref() {
-                        let atom = self.owner.atom(&format!("{kind} {name}"));
+                        let visible_name = match &accessor.key {
+                            PropertyKey::PrivateIdentifier(identifier) => {
+                                format!("#{}", identifier.name)
+                            }
+                            _ => name.to_owned(),
+                        };
+                        let atom = self.owner.atom(&format!("{kind} {visible_name}"));
                         self.emit(Op::SetFunctionName, function, 0, 0, atom);
                     }
                     self.define_class_accessor(
@@ -461,68 +549,49 @@ impl FunctionCompiler<'_, '_> {
 
         for element in &class.body.body {
             match element {
-                ClassElement::PropertyDefinition(field) if field.r#static => {
-                    let computed_key = if field.computed {
-                        Some(self.load_name(&computed_field_key_name(field.span.start)))
-                    } else {
-                        Self::unit_key(self, &field.key)
+                ClassElement::PropertyDefinition(_) | ClassElement::AccessorProperty(_) => {
+                    let field = match element {
+                        ClassElement::PropertyDefinition(field) if field.r#static => {
+                            ClassField::Property(field)
+                        }
+                        ClassElement::AccessorProperty(accessor) if accessor.r#static => {
+                            let backing = self.owner.private_name_atom(accessor.span);
+                            ClassField::AutoAccessor { accessor, backing }
+                        }
+                        _ => continue,
                     };
-                    let name = if computed_key.is_none() {
-                        let Some(name) = class_field_storage_name(self.owner, &field.key) else {
-                            self.owner
-                                .reject(field.span, "class field key is unsupported");
+                    let span = class_field_span(field);
+                    let initializer = class_field_value(field);
+                    let key = class_field_key(field);
+                    let computed_key = if class_field_computed(field) {
+                        Some(self.load_name(&computed_field_key_name(span.start)))
+                    } else {
+                        Self::unit_key(self, key)
+                    };
+                    let name = if let ClassField::AutoAccessor { backing, .. } = field {
+                        Some(backing)
+                    } else if computed_key.is_none() {
+                        let Some(name) = class_field_storage_name(self.owner, key) else {
+                            self.owner.reject(span, "class field key is unsupported");
                             continue;
                         };
                         Some(self.owner.atom(&name))
                     } else {
                         None
                     };
-                    let previous_this = self.this_override.replace(class_value);
-                    let previous_field_initializer =
-                        std::mem::replace(&mut self.class_field_initializer, true);
-                    let previous_super_static = std::mem::replace(&mut self.super_static, true);
-                    let previous_super_home = std::mem::replace(&mut self.super_home, true);
-                    let previous_super_home_atom = self.super_home_atom.replace(class_home_atom);
-                    let eval_marker = self
-                        .owner
-                        .atom(&class_field_eval_marker_name(field.span.start));
-                    let active = self.literal(Constant::Boolean(true));
-                    self.store_atom(eval_marker, active);
-                    let value = match field.value.as_ref() {
-                        Some(value) => self.expression(value),
-                        None => self.literal(Constant::Undefined),
+                    let value = if initializer.is_some() {
+                        let atom = self.owner.atom(&class_field_initializer_name(span.start));
+                        let callee = self.load_atom(atom);
+                        let value = self.reg();
+                        self.emit(Op::Call, value, callee, class_value, 0);
+                        value
+                    } else {
+                        self.literal(Constant::Undefined)
                     };
-                    if field
-                        .value
-                        .as_ref()
-                        .is_some_and(Self::anonymous_function_definition)
+                    self.set_class_field_function_name(field, value);
+                    if let Some(key) =
+                        computed_key.filter(|_| matches!(field, ClassField::Property(_)))
                     {
-                        let name = match &field.key {
-                            PropertyKey::PrivateIdentifier(identifier) => {
-                                Some(self.owner.atom(&format!("#{}", identifier.name.as_str())))
-                            }
-                            _ => name,
-                        };
-                        if let Some(name) = name {
-                            self.emit(Op::SetFunctionName, value, 0, 0, name);
-                        } else if let Some(key) = computed_key {
-                            self.emit(
-                                Op::SetFunctionNameKey,
-                                value,
-                                key,
-                                0,
-                                crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
-                            );
-                        }
-                    }
-                    let inactive = self.literal(Constant::Boolean(false));
-                    self.store_atom(eval_marker, inactive);
-                    self.this_override = previous_this;
-                    self.class_field_initializer = previous_field_initializer;
-                    self.super_static = previous_super_static;
-                    self.super_home = previous_super_home;
-                    self.super_home_atom = previous_super_home_atom;
-                    if let Some(key) = computed_key {
                         self.emit(Op::SetIndex, value, class_value, key, 1);
                     } else {
                         let cache = self.owner.cache_site();
@@ -564,7 +633,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn initialize_class_binding(&mut self, binding: Atom, value: Register) {
         let slot = self.local_slots[&binding];
-        self.emit(Op::StoreLocal, value, 0, 0, u32::from(slot));
+        self.emit(Op::StoreLocal, value, 0, u16::from(true), u32::from(slot));
     }
 
     fn define_class_method(
@@ -583,7 +652,8 @@ impl FunctionCompiler<'_, '_> {
                 crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
             );
         }
-        let key = computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
+        let key =
+            computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
         let mode = if name.is_some_and(|name| name.starts_with("\0rqj:private:")) {
             crate::bytecode::PropertyDefinitionMode::ReadonlyMethod
         } else {
@@ -643,14 +713,6 @@ impl FunctionCompiler<'_, '_> {
         fields: &[ClassField<'_>],
         private_methods: &[Atom],
     ) {
-        for field in fields
-            .iter()
-            .filter(|field| class_field_value(**field).is_some())
-        {
-            self.hidden_local(&class_field_eval_marker_name(
-                class_field_span(*field).start,
-            ));
-        }
         let this = self.reg();
         self.emit(Op::LoadThis, this, 0, 0, 0);
         let home_atom = self
@@ -687,52 +749,16 @@ impl FunctionCompiler<'_, '_> {
                 }
                 _ => backing,
             };
-            let eval_marker = self.owner.atom(&class_field_eval_marker_name(span.start));
-            let has_initializer = initializer.is_some();
-            if has_initializer {
-                let active = self.literal(Constant::Boolean(true));
-                self.store_atom(eval_marker, active);
-            }
-            let previous_field_initializer = if has_initializer {
-                Some(std::mem::replace(&mut self.class_field_initializer, true))
+            let value = if initializer.is_some() {
+                let atom = self.owner.atom(&class_field_initializer_name(span.start));
+                let callee = self.load_atom(atom);
+                let value = self.reg();
+                self.emit(Op::Call, value, callee, this, 0);
+                value
             } else {
-                None
+                self.literal(Constant::Undefined)
             };
-            let value = match initializer {
-                Some(value) => self.expression(value),
-                None => self.literal(Constant::Undefined),
-            };
-            if initializer.is_some_and(Self::anonymous_function_definition) {
-                let name = match field {
-                    ClassField::Property(field) => match &field.key {
-                        PropertyKey::PrivateIdentifier(identifier) => {
-                            Some(self.owner.atom(&format!("#{}", identifier.name.as_str())))
-                        }
-                        _ => name,
-                    },
-                    ClassField::AutoAccessor { accessor, .. } => {
-                        class_method_name(&accessor.key).map(|name| self.owner.atom(&name))
-                    }
-                };
-                if let Some(name) = name {
-                    self.emit(Op::SetFunctionName, value, 0, 0, name);
-                } else if let Some(key) = computed_key {
-                    self.emit(
-                        Op::SetFunctionNameKey,
-                        value,
-                        key,
-                        0,
-                        crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
-                    );
-                }
-            }
-            if has_initializer {
-                let inactive = self.literal(Constant::Boolean(false));
-                self.store_atom(eval_marker, inactive);
-            }
-            if let Some(previous) = previous_field_initializer {
-                self.class_field_initializer = previous;
-            }
+            self.set_class_field_function_name(*field, value);
             let private = matches!(
                 field,
                 ClassField::Property(field)
@@ -756,6 +782,36 @@ impl FunctionCompiler<'_, '_> {
         }
     }
 
+    fn set_class_field_function_name(&mut self, field: ClassField<'_>, value: Register) {
+        if !class_field_value(field).is_some_and(Self::anonymous_function_definition) {
+            return;
+        }
+        let key = class_field_key(field);
+        let computed_key = if class_field_computed(field) {
+            Some(self.load_name(&computed_field_key_name(class_field_span(field).start)))
+        } else {
+            self.unit_key(key)
+        };
+        if let Some(key) = computed_key {
+            self.emit(
+                Op::SetFunctionNameKey,
+                value,
+                key,
+                0,
+                crate::bytecode::FUNCTION_NAME_PREFIX_NONE,
+            );
+        } else {
+            let name = match key {
+                PropertyKey::PrivateIdentifier(identifier) => Some(format!("#{}", identifier.name)),
+                _ => class_method_name(key),
+            };
+            if let Some(name) = name {
+                let atom = self.owner.atom(&name);
+                self.emit(Op::SetFunctionName, value, 0, 0, atom);
+            }
+        }
+    }
+
     fn unit_key(&mut self, key: &PropertyKey<'_>) -> Option<Register> {
         let PropertyKey::StringLiteral(value) = key else {
             return None;
@@ -767,11 +823,36 @@ impl FunctionCompiler<'_, '_> {
     }
 }
 
+fn class_field_key<'a>(field: ClassField<'a>) -> &'a PropertyKey<'a> {
+    match field {
+        ClassField::Property(field) => &field.key,
+        ClassField::AutoAccessor { accessor, .. } => &accessor.key,
+    }
+}
+
+fn class_field_static(field: ClassField<'_>) -> bool {
+    match field {
+        ClassField::Property(field) => field.r#static,
+        ClassField::AutoAccessor { accessor, .. } => accessor.r#static,
+    }
+}
+
+fn class_field_computed(field: ClassField<'_>) -> bool {
+    match field {
+        ClassField::Property(field) => field.computed,
+        ClassField::AutoAccessor { accessor, .. } => accessor.computed,
+    }
+}
+
 fn class_field_span(field: ClassField<'_>) -> Span {
     match field {
         ClassField::Property(field) => field.span,
         ClassField::AutoAccessor { accessor, .. } => accessor.span,
     }
+}
+
+fn class_field_initializer_name(start: u32) -> String {
+    format!("\0rqj:field-initializer:{start}")
 }
 
 fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
@@ -811,6 +892,7 @@ impl Compiler<'_> {
         let generated_private_names = private_name_ids(&semantic.semantic);
         for span in generated_private_names.keys() {
             self.private_name_ids.insert(*span, backing_id);
+            self.private_name_labels.insert(*span, String::new());
         }
         let Statement::ClassDeclaration(class) = &parsed.program.body[0] else {
             self.reject(accessor.span, "auto-accessor lowering produced no class");
@@ -842,6 +924,16 @@ impl Compiler<'_> {
         let setter = self.compile_class_method(
             methods[1], None, scopes, parent, None, None, false, home_atom, with_depth,
         );
+        // Generated parser names are scaffolding; the actual property key owns
+        // the accessor's name, including computed and private keys.
+        self.functions[getter as usize]
+            .as_mut()
+            .expect("compiled auto-accessor getter")
+            .name = None;
+        self.functions[setter as usize]
+            .as_mut()
+            .expect("compiled auto-accessor setter")
+            .name = None;
         Some((getter, setter))
     }
 
@@ -853,7 +945,7 @@ impl Compiler<'_> {
         parent: Option<u32>,
         instance_fields: Option<&[ClassField<'_>]>,
         instance_private_methods: Option<&[Atom]>,
-        defer_instance_fields: bool,
+        derived_constructor: bool,
         home_atom: Atom,
         with_depth: u16,
     ) -> u32 {
@@ -881,7 +973,7 @@ impl Compiler<'_> {
         self.compile_function(
             name.as_deref(),
             &params,
-            body,
+            FunctionBody::Statements(body),
             scopes,
             parent,
             FunctionOptions {
@@ -895,12 +987,11 @@ impl Compiler<'_> {
                 generator: method.value.generator,
                 class_constructor: method.kind == MethodDefinitionKind::Constructor,
                 derived_constructor: method.kind == MethodDefinitionKind::Constructor
-                    && defer_instance_fields,
+                    && derived_constructor,
                 non_constructible: method.kind != MethodDefinitionKind::Constructor,
                 class_field_initializer: false,
                 instance_fields,
                 instance_private_methods,
-                defer_instance_fields,
                 super_static: method.r#static,
                 super_home: true,
                 super_home_atom: Some(home_atom),
@@ -922,7 +1013,7 @@ impl Compiler<'_> {
         self.compile_function(
             None,
             &[],
-            &block.body,
+            FunctionBody::Statements(&block.body),
             scopes,
             parent,
             FunctionOptions {
@@ -937,7 +1028,6 @@ impl Compiler<'_> {
                 class_field_initializer: false,
                 instance_fields: None,
                 instance_private_methods: None,
-                defer_instance_fields: false,
                 super_static: true,
                 super_home: false,
                 super_home_atom: None,
@@ -1035,8 +1125,4 @@ fn class_field_storage_name(compiler: &mut Compiler<'_>, key: &PropertyKey<'_>) 
 
 pub(super) fn computed_field_key_name(start: u32) -> String {
     format!("\0rqj:computed-field-key:{start}")
-}
-
-pub(super) fn class_field_eval_marker_name(start: u32) -> String {
-    format!("\0rqj:class-field-eval:{start}")
 }

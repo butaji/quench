@@ -211,19 +211,27 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
-        let with_objects = self
-            .frames
-            .last()
-            .map(|frame| self.with_stack[frame.with_base.min(self.with_stack.len())..].to_vec())
-            .unwrap_or_default();
+        let with_objects = if env.is_null() {
+            Vec::new()
+        } else {
+            let inherited = self.captured_with_objects(env);
+            let active = self.frames.last().map_or(&[][..], |frame| {
+                &self.with_stack[frame.with_base.min(self.with_stack.len())..]
+            });
+            active
+                .strip_prefix(inherited.as_slice())
+                .unwrap_or(active)
+                .to_vec()
+        };
         if !with_objects.is_empty() {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
                 program: None,
                 root_eval_scope: false,
+                binding_site_pc: None,
                 function: u32::MAX,
-                slots: Box::new([]),
-                dynamic_bindings: Vec::new(),
+                slots: Vec::<Value>::new().into_boxed_slice().into(),
+                dynamic_bindings: Vec::new().into(),
                 with_objects,
             });
         }
@@ -235,9 +243,10 @@ impl<H: Host> Vm<H> {
                 parent: env,
                 program: None,
                 root_eval_scope: false,
+                binding_site_pc: None,
                 function: u32::MAX,
-                slots: Box::new([]),
-                dynamic_bindings: Vec::new(),
+                slots: Vec::<Value>::new().into_boxed_slice().into(),
+                dynamic_bindings: Vec::new().into(),
                 with_objects: Vec::new(),
             });
         }
@@ -309,10 +318,11 @@ impl<H: Host> Vm<H> {
             self.set_function_source(function, source)?;
         }
         let program = self.active_program;
-        self.function_values
-            .entry((program, id))
-            .or_default()
-            .push(self.heap.weak_handle(function).expect("new closure is live"));
+        self.function_values.entry((program, id)).or_default().push(
+            self.heap
+                .weak_handle(function)
+                .expect("new closure is live"),
+        );
         let length = self.intern_atom("length");
         self.set_property(
             function,
@@ -777,21 +787,9 @@ impl<H: Host> Vm<H> {
     pub(super) fn construct_super_value(
         &mut self,
         p: &ResidualProgram,
-        active_constructor: Value,
+        superclass: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let active_constructor = if active_constructor.is_undefined() {
-            self.frames
-                .last()
-                .and_then(|frame| {
-                    self.cached_functions_in_environment(frame.program, frame.function, frame.env)
-                        .next_back()
-                })
-                .unwrap_or(active_constructor)
-        } else {
-            active_constructor
-        };
-        let superclass = self.object_get_prototype_of(p, active_constructor)?;
         if !self.is_constructable(p, superclass) {
             return Err(self.type_error(p, "superclass is not a constructor".into()));
         }

@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
         parent: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<Value, JsError> {
         self.profile.function(id as usize);
         let parameter_eval_arguments_error =
@@ -75,6 +76,7 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+            context: CallContext::Internal,
             program: self.active_program,
             function: 0,
             pc: 0,
@@ -107,31 +109,30 @@ impl<H: Host> Vm<H> {
             .iter()
             .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
         {
-            frame.locals[slot] = self.cached_functions_in_environment(self.active_program, id, parent)
-                .next_back()
-                .unwrap_or(Value::UNDEFINED);
+            frame.locals[slot] = context.callee().unwrap_or(Value::UNDEFINED);
         }
-        if let Some(encoded_slot) = function.arguments_slot {
-            let mapped = encoded_slot & crate::bytecode::MAPPED_ARGUMENTS_BIT != 0;
-            let slot = encoded_slot & !crate::bytecode::MAPPED_ARGUMENTS_BIT;
+        if let Some(slot) = function.arguments_slot {
+            let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
                 object: Self::empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(p, arguments, id, parent, args, mapped)?;
+            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
                 if let Some(object) = self.object_data_mut(arguments) {
                     object.set_arguments_map((0..function.params.min(args.len() as u16)).collect());
                 }
             }
         }
+        frame.context = context;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
         frame.this = self.call_this_value(this, function.strict)?;
+        self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
@@ -159,14 +160,17 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        let function_object = self
-            .cached_functions_in_environment(self.active_program, id, parent)
-            .next_back();
+        let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))
             .transpose()?
             .unwrap_or(self.realm.globals);
-        let realm_prototypes = self.realm.intrinsics.iterator_prototypes.get(&realm).copied();
+        let realm_prototypes = self
+            .realm
+            .intrinsics
+            .iterator_prototypes
+            .get(&realm)
+            .copied();
         let default_prototype = realm_prototypes
             .map(|prototypes| {
                 if function.is_async {
@@ -211,7 +215,7 @@ impl<H: Host> Vm<H> {
             *slot = Some(Box::new(GeneratorRecord {
                 continuation: Some(Continuation::from_frame(
                     &mut frame,
-                    Completion::Yield(Value::UNDEFINED),
+                    Completion::GeneratorStart,
                     None,
                     Value::UNDEFINED,
                 )),
@@ -331,7 +335,7 @@ impl<H: Host> Vm<H> {
             self.async_generator_throw_ready(p, generator, reason, promise)?;
             return Ok(());
         }
-        if self.prepare_generator_return(p, generator, value)? {
+        if self.prepare_generator_return(generator, value)? {
             self.async_generator_next_with_promise(p, generator, Value::UNDEFINED, promise, None)?;
             return Ok(());
         }
@@ -490,7 +494,9 @@ impl<H: Host> Vm<H> {
         source: Value,
         target: Value,
     ) -> Result<(), JsError> {
-        let record = self.realm.promise
+        let record = self
+            .realm
+            .promise
             .records
             .get(&source)
             .cloned()
@@ -501,7 +507,8 @@ impl<H: Host> Vm<H> {
             next: target,
         };
         if record.state == PromiseState::Pending {
-            self.realm.promise
+            self.realm
+                .promise
                 .records
                 .get_mut(&source)
                 .expect("source Promise record exists")
@@ -596,7 +603,7 @@ impl<H: Host> Vm<H> {
         if record.done {
             return self.iterator_result(value, true);
         }
-        if self.prepare_generator_return(p, generator, value)? {
+        if self.prepare_generator_return(generator, value)? {
             return self.resume_generator(p, generator, &[], None);
         }
         let continuation = self
@@ -614,18 +621,28 @@ impl<H: Host> Vm<H> {
 
     fn prepare_generator_return(
         &mut self,
-        p: &ResidualProgram,
         generator: Value,
         value: Value,
     ) -> Result<bool, JsError> {
         let unwind = {
-            let Some(record) = self.generator_record_mut(generator) else {
+            let Some(Cell::Iterator {
+                generator: Some(record),
+                ..
+            }) = self.heap.get(generator)
+            else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             let Some(continuation) = record.continuation.as_ref() else {
                 return Err(JsError("generator is suspended".into()));
             };
-            let Some(function) = p.functions.get(continuation.function as usize) else {
+            if matches!(continuation.completion, Completion::GeneratorStart) {
+                return Ok(false);
+            }
+            let program = self
+                .programs
+                .get(continuation.program)
+                .ok_or_else(|| JsError("generator continuation program is unavailable".into()))?;
+            let Some(function) = program.functions.get(continuation.function as usize) else {
                 return Err(JsError("generator function is invalid".into()));
             };
             let suspended_instruction = continuation.pc.saturating_sub(1) as u32;
@@ -652,10 +669,7 @@ impl<H: Host> Vm<H> {
         };
 
         if captured {
-            let Some(Cell::Environment { slots, .. }) = self.heap.get_mut(env) else {
-                return Err(JsError("invalid generator return environment".into()));
-            };
-            let Some(target_slot) = slots.get_mut(usize::from(slot)) else {
+            let Some(target_slot) = self.heap.environment_slot_mut(env, usize::from(slot)) else {
                 return Err(JsError("generator return slot is out of bounds".into()));
             };
             *target_slot = value;
@@ -995,7 +1009,9 @@ impl<H: Host> Vm<H> {
         };
         let value = if self.truthy(adapter) {
             let resolved = self.promise_for_value(p, value)?;
-            let state = self.realm.promise
+            let state = self
+                .realm
+                .promise
                 .records
                 .get(&resolved)
                 .cloned()
@@ -1255,6 +1271,15 @@ impl<H: Host> Vm<H> {
             return self.iterator_result(Value::UNDEFINED, true);
         }
         let continuation = continuation.ok_or_else(|| JsError("generator is suspended".into()))?;
+        if matches!(continuation.completion, Completion::GeneratorStart)
+            && let Some(error) = initial_error
+        {
+            self.frame_pool.push(Self::recycle_frame(
+                continuation.into_frame(self.with_stack.len()),
+            ));
+            self.close_generator(generator)?;
+            return Err(error);
+        }
         let execution_program = self
             .programs
             .get(continuation.program)
