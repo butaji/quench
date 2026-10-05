@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "fbc040b47b0d505e1a11dd8034f640cc86e39296",
+  "qualification": "One buffer lifecycle owner qualified independently; pending Error, function reflection, Node and Wasm changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/array_buffer.rs": "e0fa806d89b958e121c1d399e66418f946c9e135e42464f6652a62d8f5162653"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "realm": "Default slice backing, transfer and immutable slicing derive the intrinsic prototype from the native method execution realm. Borrowed methods keep that realm; explicit species construction remains observable and retains its constructor realm. Global constructor replacement cannot replace the intrinsic owner.",
+    "index": "Ordinary and immutable slicing share array_buffer_slice_index for ToNumber, truncation and clamping. Removed the duplicate closure, which incorrectly mapped negative zero to the buffer end.",
+    "species": "Sharedness validation uses result_shared != receiver_shared, rejecting both ArrayBuffer-to-SharedArrayBuffer and reverse species substitution. No new flags, side maps, production JS shims or benchmark/fixture identities."
+  },
+  "specs": [
+    "https://tc39.es/ecma262/multipage/structured-data.html#sec-arraybuffer.prototype.slice",
+    "https://tc39.es/ecma262/multipage/structured-data.html#sec-sharedarraybuffer.prototype.slice",
+    "https://tc39.es/proposal-immutable-arraybuffer/"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-arraybuffer.cc": "4df12a6ea8385d978d2978613deac39fa921860d4256d026398c5db58b467a38"
+  },
+  "build": {
+    "profile": "release; correctness qualification, no Stage B performance claim",
+    "log": "target/iteration/task13-buffer-lifecycle-realm/build-final.log",
+    "before_binary_sha256": "8ffd6d0322c0b5c32cadefe9407468f4dd92cd4987a5d82ea1a77732ef8d3f1f",
+    "after_binary_sha256": "b1bd6f55ba05b0c2000689dac2ae448c85b190ceb06cb2ccb55c47edf65d22ab"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "ArrayBuffer, SharedArrayBuffer and DataView stages; staged ArrayBuffer-named cases; realm-named cases across stages 0-114 only.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1120,
+    "passed_before": 1120,
+    "passed_after": 1120,
+    "gained": [],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "array-buffer",
+        "total": 221,
+        "passed_before": 221,
+        "passed_after": 221,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task13-buffer-lifecycle-realm/before-array-buffer.json": "7619a98411f64e66dfbdf20927b010c9508c007395312935660f1888d2a23219",
+          "target/iteration/task13-buffer-lifecycle-realm/after-array-buffer.json": "5997e531ec1fbea82cd2f015d73c076dc210309e4bf85dff492cf0bee762debe",
+          "target/iteration/task13-buffer-lifecycle-realm/compare-array-buffer.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "shared-array-buffer",
+        "total": 104,
+        "passed_before": 104,
+        "passed_after": 104,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task13-buffer-lifecycle-realm/before-shared-array-buffer.json": "596b2c8067d84f1d5a9b7def010b0f24ab062812bd9eb439c71bf125538ee16c",
+          "target/iteration/task13-buffer-lifecycle-realm/after-shared-array-buffer.json": "cbd28c378c85ae7a87d99c77e88ed1635b92f02f9c65cdea512c87f0b12d4311",
+          "target/iteration/task13-buffer-lifecycle-realm/compare-shared-array-buffer.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "data-view",
+        "total": 561,
+        "passed_before": 561,
+        "passed_after": 561,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task13-buffer-lifecycle-realm/before-data-view.json": "b50a40a179bf6ce1746206fe58a05ad4c27c4da2f0f59812128fe13b287213d9",
+          "target/iteration/task13-buffer-lifecycle-realm/after-data-view.json": "8e7d1365ecaf92db4a52d51ca37684bc59dbf12408c007a075512d52a9f8b658",
+          "target/iteration/task13-buffer-lifecycle-realm/compare-data-view.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-buffer",
+        "total": 8,
+        "passed_before": 8,
+        "passed_after": 8,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task13-buffer-lifecycle-realm/before-staged-buffer.json": "b08ec1497deb537256c755a14242a68c1c2d6059a59636a8705b16042f34d051",
+          "target/iteration/task13-buffer-lifecycle-realm/after-staged-buffer.json": "3aadd5e788ac66af80432fa903bd700f3d039e977a365e9be00124788d12a96c",
+          "target/iteration/task13-buffer-lifecycle-realm/compare-staged-buffer.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "realm",
+        "total": 230,
+        "passed_before": 230,
+        "passed_after": 230,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task13-buffer-lifecycle-realm/before-realm.json": "eb79aa259d3af4d31bb661c3f2ddde52fce050a6eb0d92d9b82c73d670b8e23f",
+          "target/iteration/task13-buffer-lifecycle-realm/after-realm.json": "f5ffc5a2c189813e2648543e8e7b2fd5113c3f4d89ac5f786a49465922a6ba93",
+          "target/iteration/task13-buffer-lifecycle-realm/compare-realm.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "realm": {
+      "sources": 96,
+      "before_matches": 65,
+      "after_matches": 96,
+      "losses": 0,
+      "report": "target/iteration/task13-buffer-lifecycle-realm/node-controls.json",
+      "sha256": "0b3f09529ce2470fb6923c776c12872b745721e403dca9110de2e56b9562001c"
+    },
+    "normal_generic": {
+      "sources": 32,
+      "observations_per_build": 64,
+      "before_matches": 54,
+      "after_matches": 64,
+      "losses": 0,
+      "report": "target/iteration/task13-buffer-lifecycle-realm/node-ordinary-controls.json",
+      "sha256": "d5ad7d1f5d8613c027863e1efcb3aeefa1533a627c726d36b2230cb1b7707b79"
+    },
+    "coverage": "Default versus explicit species, borrowed primary/child methods and receivers, fixed/resizable transfers, global replacement, wrong sharedness, coercion order, signed zero, NaN and infinities."
+  },
+  "immutable_controls": {
+    "sources": 8,
+    "before_matches": 4,
+    "after_matches": 8,
+    "losses": 0,
+    "oracle": "Immutable ArrayBuffer proposal. Local Node lacks these methods; no Node shim or claimed Node parity.",
+    "report": "target/iteration/task13-buffer-lifecycle-realm/immutable-controls.json",
+    "sha256": "7b8732ac12fbf6e2b75ff8bccd820f2a9f2a837840f577f3b89d03b7197916e5"
+  },
+  "limits": [
+    "No suite pins, discovery, inputs, harnesses, deadlines, exclusions or expectations changed. No full suite run or duplicate unit tests added.",
+    "Prior TypedArray timeouts and immutable-alias conflict remain open; these buffer-only selections do not qualify the complete Test262 suite.",
+    "Stage A, task 13, task 20 and production single-VM cutover remain open. Frozen implemented Node suite, Wasm and Stage B are not qualified."
+  ]
+}
