@@ -340,3 +340,101 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         assert!(heap.get(regexp).is_none());
     }
 }
+
+#[test]
+fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
+    let mut heap = Heap::new();
+    let key = heap.alloc(Cell::Object(plain_object()));
+    let value = heap.alloc(Cell::Object(plain_object()));
+    let mut entries = WeakMapEntries::default();
+    entries.insert(key, value);
+    let map = heap.alloc(Cell::WeakMap {
+        object: plain_object(),
+        entries,
+    });
+    heap.collect([key]);
+    assert!(heap.get(key).is_some());
+    assert!(heap.get(map).is_none());
+    assert!(heap.get(value).is_none());
+}
+
+#[test]
+fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
+    let mut heap = Heap::new();
+    let left = heap.alloc(Cell::Object(plain_object()));
+    let right = heap.alloc(Cell::Object(plain_object()));
+    let mut entries = WeakMapEntries::default();
+    entries.insert(left, right);
+    entries.insert(right, left);
+    let map = heap.alloc(Cell::WeakMap {
+        object: plain_object(),
+        entries,
+    });
+    heap.collect([map]);
+    assert!(heap.get(map).is_some());
+    assert!(heap.get(left).is_none());
+    assert!(heap.get(right).is_none());
+    assert!(
+        matches!(heap.get(map), Some(Cell::WeakMap { entries, .. }) if entries.iter().next().is_none())
+    );
+}
+
+#[test]
+fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
+    for keys_first in [false, true] {
+        let mut heap = Heap::new();
+        let outer_key = heap.alloc(Cell::Object(plain_object()));
+        let inner_key = heap.alloc(Cell::Object(plain_object()));
+        let value = heap.alloc(Cell::Object(plain_object()));
+        let mut inner_entries = WeakMapEntries::default();
+        inner_entries.insert(inner_key, value);
+        let inner = heap.alloc(Cell::WeakMap {
+            object: plain_object(),
+            entries: inner_entries,
+        });
+        let mut outer_entries = WeakMapEntries::default();
+        outer_entries.insert(outer_key, inner);
+        let outer = heap.alloc(Cell::WeakMap {
+            object: plain_object(),
+            entries: outer_entries,
+        });
+        let roots = if keys_first {
+            [outer, outer_key, inner_key]
+        } else {
+            [outer_key, inner_key, outer]
+        };
+        heap.collect(roots);
+        assert!(heap.get(inner).is_some());
+        assert!(heap.get(value).is_some());
+        heap.collect([outer, outer_key]);
+        assert!(heap.get(inner).is_some());
+        assert!(heap.get(inner_key).is_none());
+        assert!(heap.get(value).is_none());
+        heap.collect([outer]);
+        assert!(heap.get(inner).is_none());
+    }
+}
+
+#[test]
+fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections() {
+    let mut heap = Heap::new();
+    let key = heap.alloc(Cell::Object(plain_object()));
+    let mut maps = Vec::new();
+    let mut values = Vec::new();
+    for _ in 0..3 {
+        let value = heap.alloc(Cell::Object(plain_object()));
+        let mut entries = WeakMapEntries::default();
+        entries.insert(key, value);
+        maps.push(heap.alloc(Cell::WeakMap {
+            object: plain_object(),
+            entries,
+        }));
+        values.push(value);
+    }
+    heap.collect(std::iter::once(key).chain(maps.iter().copied()));
+    assert!(values.iter().all(|value| heap.get(*value).is_some()));
+    heap.collect(maps.iter().copied());
+    assert!(heap.get(key).is_none());
+    assert!(values.iter().all(|value| heap.get(*value).is_none()));
+    assert!(maps.iter().all(|map| heap.get(*map).is_some()));
+}
