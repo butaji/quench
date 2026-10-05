@@ -1,0 +1,284 @@
+{
+  "task": "20",
+  "scope": "Sparse changed-owner stages plus representative cross-cutting canaries; not a full Test262 run.",
+  "stage_ids": [
+    9,
+    10,
+    11,
+    14,
+    16,
+    20,
+    26,
+    31,
+    35,
+    36,
+    37,
+    38,
+    39,
+    46,
+    47,
+    49,
+    50,
+    53,
+    58,
+    60,
+    61,
+    66,
+    79,
+    80,
+    81
+  ],
+  "stages": [
+    {
+      "id": 9,
+      "path": "language/export",
+      "total": 3,
+      "passed": 3,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 10,
+      "path": "language/expressions",
+      "total": 11101,
+      "passed": 11101,
+      "failed": 0,
+      "selection": "cross-cutting-canary"
+    },
+    {
+      "id": 11,
+      "path": "language/function-code",
+      "total": 217,
+      "passed": 217,
+      "failed": 0,
+      "selection": "cross-cutting-canary"
+    },
+    {
+      "id": 14,
+      "path": "language/identifier-resolution",
+      "total": 14,
+      "passed": 14,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 16,
+      "path": "language/import",
+      "total": 127,
+      "passed": 127,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 20,
+      "path": "language/module-code",
+      "total": 599,
+      "passed": 599,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 26,
+      "path": "language/statements",
+      "total": 9337,
+      "passed": 9337,
+      "failed": 0,
+      "selection": "cross-cutting-canary"
+    },
+    {
+      "id": 31,
+      "path": "built-ins/Array",
+      "total": 3081,
+      "passed": 3081,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 35,
+      "path": "built-ins/AsyncFromSyncIteratorPrototype",
+      "total": 38,
+      "passed": 38,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 36,
+      "path": "built-ins/AsyncFunction",
+      "total": 18,
+      "passed": 18,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 37,
+      "path": "built-ins/AsyncGeneratorFunction",
+      "total": 23,
+      "passed": 23,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 38,
+      "path": "built-ins/AsyncGeneratorPrototype",
+      "total": 48,
+      "passed": 48,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 39,
+      "path": "built-ins/AsyncIteratorPrototype",
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 46,
+      "path": "built-ins/Error",
+      "total": 93,
+      "passed": 93,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 47,
+      "path": "built-ins/FinalizationRegistry",
+      "total": 47,
+      "passed": 47,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 49,
+      "path": "built-ins/GeneratorFunction",
+      "total": 23,
+      "passed": 23,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 50,
+      "path": "built-ins/GeneratorPrototype",
+      "total": 61,
+      "passed": 61,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 53,
+      "path": "built-ins/JSON",
+      "total": 165,
+      "passed": 165,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 58,
+      "path": "built-ins/NativeErrors",
+      "total": 94,
+      "passed": 94,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 60,
+      "path": "built-ins/Object",
+      "total": 3411,
+      "passed": 3411,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 61,
+      "path": "built-ins/Promise",
+      "total": 729,
+      "passed": 728,
+      "failed": 1,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 66,
+      "path": "built-ins/Set",
+      "total": 383,
+      "passed": 383,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 79,
+      "path": "built-ins/WeakMap",
+      "total": 141,
+      "passed": 141,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 80,
+      "path": "built-ins/WeakRef",
+      "total": 29,
+      "passed": 29,
+      "failed": 0,
+      "selection": "direct-owner"
+    },
+    {
+      "id": 81,
+      "path": "built-ins/WeakSet",
+      "total": 85,
+      "passed": 85,
+      "failed": 0,
+      "selection": "direct-owner"
+    }
+  ],
+  "result": {
+    "cases": 29880,
+    "passed": 29879,
+    "failed": 1,
+    "gains": 0,
+    "regressions": 0,
+    "matching_exact_inventory": true,
+    "matching_outcomes": true,
+    "input_manifest_sha256": "de7bdb37ab08dcc396f6078cdb331c189989b8d8655874e7caa70bc08f97683d",
+    "outcome_manifest_sha256": "92694b91d20e5f19755fb13c9d0da8b6174041976af3bcd17053f221551ffc01",
+    "current_outcome_manifest_sha256": "92694b91d20e5f19755fb13c9d0da8b6174041976af3bcd17053f221551ffc01",
+    "baseline_report_manifest_sha256": "ca748dda4b4faf795781c9616415c44a613b52bfff1c99e1c4bb76c9e2ecc34b",
+    "current_report_manifest_sha256": "d7d0ff5057d5c96fbd3839a81c791aa1f7d4599a423f0abb2349d608510fc2ba"
+  },
+  "known_failure": {
+    "path": "built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+    "baseline": "fail",
+    "current": "fail",
+    "existing_evidence": "tasks/evidence/task20-all-settled-keyed-conflict.json"
+  },
+  "inputs": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage_definitions": {
+      "path": "docs/STAGES.md",
+      "sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+    }
+  },
+  "comparison": {
+    "baseline_runner": {
+      "path": "target/iteration/task20-intl-frontier-run-stages-next",
+      "sha256": "08af672d08da67465a109b5f080a03534a1d65c0b905fcbaff4e0ca6db4f84a0",
+      "source_revision": "7e60169df033dd247f34199e084e3e8080a92a29",
+      "source_dirty": true
+    },
+    "current_runner": {
+      "path": "target/iteration/run-stages-next",
+      "sha256": "ad7a3b4973d71c4d7d5a2085e2dc10bde7b2790a44d917a66bea5ff546fbf8ba",
+      "source_revision": "35dadc3c418c78ebc00079692ea096e3f3edcf8d",
+      "source_dirty": true
+    },
+    "timeout_ms": 10000,
+    "jobs": 8,
+    "host": "macos-aarch64"
+  },
+  "limitations": "This direct-owner stage slice leaves other changed compiler/VM paths under audit. Stages 94, 114 and 115 have separate current evidence. No full Test262 inventory was run; task 20 and Stage A remain open.",
+  "manifest_encoding": {
+    "input": "SHA-256 over stage<TAB>path<LF> records sorted by numeric stage then path.",
+    "outcome": "SHA-256 over stage<TAB>path<TAB>outcome<LF> records sorted by numeric stage then path.",
+    "report": "SHA-256 over stage<TAB>SHA-256(raw stage report)<LF> records sorted by stage."
+  },
+  "selection_note": "Stages 10, 11 and 26 are representative canaries for generic validation, liveness and dispatch execution paths. All other listed stages map directly to changed runtime owners, including Array (31) and Object (60)."
+}
