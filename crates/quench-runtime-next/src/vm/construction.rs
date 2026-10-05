@@ -538,6 +538,7 @@ impl<H: Host> Vm<H> {
                     let result = result?;
                     let result = if vm.intl_constructor_prototypes(native).is_none()
                         && !native.is_typed_array_constructor()
+                        && !native.is_error_constructor()
                         && !matches!(
                             native,
                             Native::Proxy
@@ -545,7 +546,6 @@ impl<H: Host> Vm<H> {
                                 | Native::ArrayBuffer
                                 | Native::SharedArrayBuffer
                                 | Native::RegExp
-                                | Native::AggregateError
                         )
                         && !(native == Native::Object
                             && new_target == vm.native_value(Native::Object)
@@ -952,7 +952,9 @@ impl<H: Host> Vm<H> {
             | Native::SyntaxError
             | Native::TypeError
             | Native::URIError
-            | Native::RealmTypeError => self.construct_error_native(p, native, args),
+            | Native::RealmTypeError => {
+                self.construct_error_with_new_target(p, native, args, new_target)
+            }
             Native::String => {
                 let value = self.string_constructor_value(p, args)?;
                 self.box_primitive_object(value)

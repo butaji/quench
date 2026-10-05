@@ -1,0 +1,252 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "2e6d14ec3a2ea5a1528088e3b5acb99f595b6281",
+  "qualification": "Error creation/call ordering, foreign intrinsic metadata and function integrity qualified independently; pending Wasm error variants, activation model, reflection and Node migration excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/construction.rs": "ff5c1774d806388cc29a082555dfd1fd18ac48a756fde3aca77aca37d0692817",
+    "crates/quench-runtime-next/src/vm/error.rs": "42ed45f5ab8534d6a9b3e2e556e2131421b3d8cea7cbafd14de4bcd49b2d36a4",
+    "crates/quench-runtime-next/src/vm/object_integrity.rs": "d8eb6d94f2e86d8dd17a2b6be851e00b16c75e924efe4adb8ea929b0c5e94f1a",
+    "crates/quench-runtime-next/src/vm/operations.rs": "d977154776266558b5c1b44a62f1c471b591ddc6c8882a60a02ecf348dd77898",
+    "crates/quench-runtime-next/src/vm/tests.rs": "a33d42aef1d90f0663bf785d8592b4a811160682fac0f396d1ee559e4b768fda"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "initialization": "Constructor prototype selection precedes message/cause/iterator effects; internal errors select their intrinsic directly, then share branded object initialization. AggregateError allocates directly with the selected prototype instead of allocating and resetting it.",
+    "call": "Error calls derive the target from the active native callable and share the existing construction operation, retaining foreign prototype and realm. No added callee side map.",
+    "installation": "Foreign constructor names derive from ERROR_CONSTRUCTORS. Primary/foreign prototype properties use set_named_constant, replacing a separate descriptor literal; foreign prototypes reject writes/deletion.",
+    "integrity": "Functions join proxies, typed arrays and namespaces in the existing descriptor-driven TestIntegrityLevel. Queries observe the same descriptors as reflection, including virtual function metadata; no ThrowTypeError identity exception.",
+    "internals": "Extended the retained root-count and weak-lifetime check to exercise explicit new targets as well as internal creation; no duplicated suite-semantic units."
+  },
+  "specs": [
+    "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-error-message",
+    "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-object.isfrozen",
+    "https://tc39.es/ecma262/multipage/abstract-operations.html#sec-testintegritylevel"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-error.cc": "a14c5bf0e48f429ef2b2737b296bf03218a9d673944072a45ef95a5ef4968686",
+    "tests/node/deps/v8/src/execution/messages.cc": "5b0bdd8d33ae23670292c878b7c3808c22375df8bac750bbdb9495c9dc4a6378"
+  },
+  "build": {
+    "profile": "release; correctness qualification, no Stage B performance claim",
+    "log": "target/iteration/task14-error-construction-order/build-final-qualified.log",
+    "before_binary_sha256": "b1bd6f55ba05b0c2000689dac2ae448c85b190ceb06cb2ccb55c47edf65d22ab",
+    "after_binary_sha256": "1f7cb3470e39414e64c7bf4710c90481f4c835723f17b2b111156435095a61c1"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Error, NativeErrors, AggregateError, SuppressedError, ThrowTypeError, Reflect and Function stages; Object/is* inventory; staged Error and realm-named cases only.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1265,
+    "passed_before": 1263,
+    "passed_after": 1265,
+    "gained": [
+      "built-ins/ThrowTypeError/frozen.js",
+      "staging/sm/Error/constructor-ordering.js"
+    ],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "error",
+        "total": 93,
+        "passed_before": 93,
+        "passed_after": 93,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-error.json": "fd692dfdb44a236a22889313ed2247bce57aec34dfdff14f40f953cd861019d1",
+          "target/iteration/task14-error-construction-order/after-error.json": "7e8137b399f41c151d16dfb607b390e77251cd845bd2e9d2e4165498b13ee51c",
+          "target/iteration/task14-error-construction-order/compare-error.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "native-errors",
+        "total": 94,
+        "passed_before": 94,
+        "passed_after": 94,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-native-errors.json": "c100afef768d31ac359f2fc5e6a52bae170c118a66d6fc5c5f6baabb85609517",
+          "target/iteration/task14-error-construction-order/after-native-errors.json": "963972dd4edfae7182a02afa372f1e5fd41bef2cd601c9e106c181b29e7e7023",
+          "target/iteration/task14-error-construction-order/compare-native-errors.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "aggregate-error",
+        "total": 25,
+        "passed_before": 25,
+        "passed_after": 25,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-aggregate-error.json": "275cecd0fb9c22f0d2b07f9afae466ed9a9ad28e47d0262874b67f6eae40cf16",
+          "target/iteration/task14-error-construction-order/after-aggregate-error.json": "420f4218bbf60cd0317f1597187afe42684419805193be4c817c6681bacdd915",
+          "target/iteration/task14-error-construction-order/compare-aggregate-error.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "suppressed-error",
+        "total": 22,
+        "passed_before": 22,
+        "passed_after": 22,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-suppressed-error.json": "c079abe314292c14948f5ad23b936c476829c27a8879943e4aae3dc328f1bf4b",
+          "target/iteration/task14-error-construction-order/after-suppressed-error.json": "c44f94499a4c906b78a351e61d2ad140e28188bf83a0d66786821128aaccf36a",
+          "target/iteration/task14-error-construction-order/compare-suppressed-error.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "throw-type-error",
+        "total": 14,
+        "passed_before": 13,
+        "passed_after": 14,
+        "gained": [
+          "built-ins/ThrowTypeError/frozen.js"
+        ],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-throw-type-error.json": "2a33e9529b1187b1a8ab69d705343998adf3bc0ef8b6172ce4554b06ccc41386",
+          "target/iteration/task14-error-construction-order/after-throw-type-error.json": "dc8ec971cb1fdc97ff80d6872ce6d1c49ab628b8e911536ffcc99316e7818838",
+          "target/iteration/task14-error-construction-order/compare-throw-type-error.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "reflect",
+        "total": 153,
+        "passed_before": 153,
+        "passed_after": 153,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-reflect.json": "e3c2895c4b40317d88008ae94b5e01be1ac5f633dc15a53402a2e9e30cf80258",
+          "target/iteration/task14-error-construction-order/after-reflect.json": "d8e13920e751d00a5952151474246a685d2effcd2f92bec82936c2178c66af3c",
+          "target/iteration/task14-error-construction-order/compare-reflect.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-error",
+        "total": 3,
+        "passed_before": 2,
+        "passed_after": 3,
+        "gained": [
+          "staging/sm/Error/constructor-ordering.js"
+        ],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-staged-error.json": "526d59fe864cbeb03bc3a6d715b28149d635e34c4920777f5086895b6f74872c",
+          "target/iteration/task14-error-construction-order/after-staged-error.json": "3816036f4c52d8737f462dd335fd15e240dd96d5b4495a338f71d39364a259d1",
+          "target/iteration/task14-error-construction-order/compare-staged-error.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "realm",
+        "total": 230,
+        "passed_before": 230,
+        "passed_after": 230,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-realm.json": "813f38010622c85a0d411cbd39c0e732b44d65056c2a605e66811dcf77230da2",
+          "target/iteration/task14-error-construction-order/after-realm.json": "7b1f5f9972479342ec4f339db5251aa5b9ec4eb1c21fd396c33caa08482c5355",
+          "target/iteration/task14-error-construction-order/compare-realm.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "function",
+        "total": 509,
+        "passed_before": 509,
+        "passed_after": 509,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-function.json": "9603b439522cb794d7bb9ce2f5d7ed394c38346c26cfdf1f999d74ee49f85030",
+          "target/iteration/task14-error-construction-order/after-function.json": "e607197a4425749b4515792eb8c22d8db9b316cb7071dac44506d162e15f4c39",
+          "target/iteration/task14-error-construction-order/compare-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "object-integrity",
+        "total": 152,
+        "passed_before": 152,
+        "passed_after": 152,
+        "gained": [],
+        "regressions": [],
+        "remaining_failures": [],
+        "reports": {
+          "target/iteration/task14-error-construction-order/before-object-integrity.json": "c0e01d213355d867d50870f40447ff633654a462a4c5be03a8a599871eb13180",
+          "target/iteration/task14-error-construction-order/after-object-integrity.json": "03d3737b47485c5bb2652db6c3b37f9fdb62c1b63cfa7584a4840d82bf708fe2",
+          "target/iteration/task14-error-construction-order/compare-object-integrity.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "realm": {
+      "sources": 129,
+      "before_matches": 70,
+      "after_matches": 125,
+      "losses": 0,
+      "report": "target/iteration/task14-error-construction-order/node-controls.json",
+      "sha256": "ff739d2a41af20b6b4ba4b1c849eb2823ec60bc3534ce03e8b57f07d13c439c9"
+    },
+    "normal_generic": {
+      "sources": 66,
+      "observations_per_build": 132,
+      "before_matches": 50,
+      "after_matches": 124,
+      "losses": 0,
+      "report": "target/iteration/task14-error-construction-order/node-ordinary-controls.json",
+      "sha256": "1811353c245c60e740663c2f185161f39214a5748d978492232adce0ed859ee1"
+    },
+    "remaining_differences": "Four controls per mode observe Node v26.10.0 reporting sealed ordinary/strict functions as frozen despite a writable prototype descriptor and successful assignment. Node proxy query reports false. Quench returns false for both, following TestIntegrityLevel. All controls retained, with four realm and eight normal/generic unmatched observations and zero losses; no claimed universal Node parity.",
+    "coverage": "All nine Error kinds; prototype/message/cause effect order and abrupt identity; direct calls, cross-realm targets and receivers; constructor prototype descriptors, strict write/delete results; generic/specialized modes; function preventExtensions/seal/freeze and writable-prototype controls."
+  },
+  "limits": [
+    "Pinned discovery, fixtures, harnesses, expectations, exclusions and deadlines remain unchanged. No full suite run.",
+    "Complete Test262, the frozen implemented Node suite, Wasm and production single-VM cutover remain unqualified. Task 12, task 20 and Stage A stay open."
+  ],
+  "internal_checks": [
+    {
+      "name": "error_constructor_and_call_scopes_release_after_coercion",
+      "passed": 1,
+      "failed": 0,
+      "profile": "iteration; optimized without LTO, internal correctness only",
+      "log": "target/iteration/task14-error-construction-order/internal-qualified.log",
+      "sha256": "312e57c1d64bda8d76de417267d5de6439ca94e8f3f393a014b4c7e435344cfa"
+    },
+    {
+      "name": "spread_and_aggregate_roots_release_after_guest_failures",
+      "passed": 1,
+      "failed": 0,
+      "profile": "iteration; optimized without LTO, internal correctness only",
+      "log": "target/iteration/task14-error-construction-order/internal-aggregate.log",
+      "sha256": "ea2b3ffe0fe0fa9640404ac6353eb9321b14ba69842e3d360b4434cd95620f3d"
+    },
+    {
+      "name": "aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm",
+      "passed": 1,
+      "failed": 0,
+      "profile": "iteration; optimized without LTO, internal correctness only",
+      "log": "target/iteration/task14-error-construction-order/internal-realm.log",
+      "sha256": "497475e9251f9b8d3bd250de7d750ab00754e7e4198f29b32ea1da2882416113"
+    }
+  ]
+}

@@ -2375,19 +2375,26 @@ fn error_constructor_and_call_scopes_release_after_coercion() {
                 } else {
                     vec![message, options]
                 };
-                let roots = vm.heap.root_count_for_test();
-                let calls = vm.active_call_roots.len();
-                let result = vm.construct_error_native(&program, native, &args);
-                assert_eq!(
-                    result.is_err(),
-                    fails && (native != Native::SuppressedError || !message.is_undefined())
-                );
-                assert_eq!(vm.heap.root_count_for_test(), roots);
-                assert_eq!(vm.active_call_roots.len(), calls);
-                if let Ok(value) = result {
-                    let handle = vm.heap.weak_handle(value).unwrap();
-                    vm.collect_now(&program);
-                    assert!(vm.heap.weak_value(handle).is_none());
+                for with_new_target in [false, true] {
+                    let roots = vm.heap.root_count_for_test();
+                    let calls = vm.active_call_roots.len();
+                    let result = if with_new_target {
+                        let new_target = vm.native_value(native);
+                        vm.construct_error_with_new_target(&program, native, &args, new_target)
+                    } else {
+                        vm.construct_error_native(&program, native, &args)
+                    };
+                    assert_eq!(
+                        result.is_err(),
+                        fails && (native != Native::SuppressedError || !message.is_undefined())
+                    );
+                    assert_eq!(vm.heap.root_count_for_test(), roots);
+                    assert_eq!(vm.active_call_roots.len(), calls);
+                    if let Ok(value) = result {
+                        let handle = vm.heap.weak_handle(value).unwrap();
+                        vm.collect_now(&program);
+                        assert!(vm.heap.weak_value(handle).is_none());
+                    }
                 }
             }
         }
