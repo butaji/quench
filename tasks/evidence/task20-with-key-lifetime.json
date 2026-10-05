@@ -1,0 +1,200 @@
+{
+  "schema": 1,
+  "tasks": [
+    "11",
+    "20"
+  ],
+  "baseline_source_head": "d98fa092b8c4194371ba7efafe2658749264a0f5",
+  "qualification": "Isolated shared with-binding selection and GC ownership; pending main-tree Wasm, Node and other VM changes excluded. The API addition is test-only and was added after release qualification.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/environment.rs": "483e73e5db298c39a4c9561f9bc045e76094ccb0afa037531b231dbf70833eb6",
+    "crates/quench-runtime-next/src/api.rs": "c6fd3ba3dcb71b93d0654bc06e03656a4b707940f2746631ad4e087fd7b229c3"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Existing ordered with-object projection and binding facts; find_with_binding shares selection across name loads, writes, strict existence checks and resolved references.",
+    "allocation": "Guest string keys are created only for nonempty with-object candidate lists. Removed four eager allocations and duplicated loops; no cache, new state or bytecode layout.",
+    "ownership": "Scoped call roots retain the key and candidate objects across has/unscopables guest callbacks. The same key survives into GetBindingValue.",
+    "effects": "HasBinding, unscopables lookup and GetBindingValue checks preserve their order and receiver; local/global fallback unchanged."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-object-environment-records-hasbinding-n",
+    "https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-object-environment-records-getbindingvalue-n-s"
+  ],
+  "census": {
+    "purpose": "Diagnosis only, not suite qualification or Stage B evidence.",
+    "source_head": "d98fa092b8c4194371ba7efafe2658749264a0f5",
+    "build_command": "cargo rustc --release -p quench-test262 --bin run-stages-next -- -C strip=none",
+    "build_log": "target/iteration/task20-date-stress-current/census-build.log",
+    "sample": "target/iteration/task20-date-stress-current/census.sample",
+    "terminal": {
+      "exit": 0
+    },
+    "finding": "Hot name loads and heap string construction in the Date stress call chain motivated auditing eager with-binding keys. No timezone algorithm changed."
+  },
+  "build": {
+    "profile": "release; correctness only",
+    "log": "target/iteration/task20-date-stress-current/build.log",
+    "binaries": {
+      "before-quench-next": "377f8dc286072d870b311a464249415af777c5f585e8507fb1d777d04d3401e7",
+      "before-run-stages-next": "f26b4d7db2a70cca6ec684b9707af6da96eda720af8333e9906d692591cf4682",
+      "after-quench-next": "0ffe0c67fdaa2f7f9f7a403faf78826bad6d233403594d93e70f7031bf80ae75",
+      "after-run-stages-next": "10e3f1ae9419903288bb29047c5c30152e348248f9a822528aa4331af996679f"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "timeout_ms": 10000,
+    "jobs_per_scope": 2,
+    "distinct_cases": 1965,
+    "passed_before": 1956,
+    "passed_after": 1956,
+    "gained": [],
+    "regressions": [],
+    "remaining": [
+      "staging/sm/Date/dst-offset-caching-1-of-8.js",
+      "staging/sm/Date/dst-offset-caching-2-of-8.js",
+      "staging/sm/Date/dst-offset-caching-3-of-8.js",
+      "staging/sm/Date/dst-offset-caching-4-of-8.js",
+      "staging/sm/Date/dst-offset-caching-5-of-8.js",
+      "staging/sm/Date/dst-offset-caching-6-of-8.js",
+      "staging/sm/Date/dst-offset-caching-7-of-8.js",
+      "staging/sm/Date/dst-offset-caching-8-of-8.js",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+    ],
+    "scopes": [
+      {
+        "scope": "date",
+        "before_report": "target/iteration/task20-date-stress-current/before-date.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-date.json",
+        "passed_before": 20,
+        "passed_after": 20,
+        "failed_after": 8
+      },
+      {
+        "scope": "with",
+        "before_report": "target/iteration/task20-date-stress-current/before-with.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-with.json",
+        "passed_before": 181,
+        "passed_after": 181,
+        "failed_after": 0
+      },
+      {
+        "scope": "eval",
+        "before_report": "target/iteration/task20-date-stress-current/before-eval.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-eval.json",
+        "passed_before": 347,
+        "passed_after": 347,
+        "failed_after": 0
+      },
+      {
+        "scope": "function",
+        "before_report": "target/iteration/task20-date-stress-current/before-function.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-function.json",
+        "passed_before": 217,
+        "passed_after": 217,
+        "failed_after": 0
+      },
+      {
+        "scope": "global",
+        "before_report": "target/iteration/task20-date-stress-current/before-global.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-global.json",
+        "passed_before": 56,
+        "passed_after": 56,
+        "failed_after": 0
+      },
+      {
+        "scope": "assignment",
+        "before_report": "target/iteration/task20-date-stress-current/before-assignment.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-assignment.json",
+        "passed_before": 485,
+        "passed_after": 485,
+        "failed_after": 0
+      },
+      {
+        "scope": "staged-lexical",
+        "before_report": "target/iteration/task20-date-stress-current/before-staged-lexical.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-staged-lexical.json",
+        "passed_before": 33,
+        "passed_after": 33,
+        "failed_after": 1
+      },
+      {
+        "scope": "compound-assignment",
+        "before_report": "target/iteration/task20-date-stress-current/before-compound-assignment.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-compound-assignment.json",
+        "passed_before": 456,
+        "passed_after": 456,
+        "failed_after": 0
+      },
+      {
+        "scope": "update",
+        "before_report": "target/iteration/task20-date-stress-current/before-update.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-update.json",
+        "passed_before": 145,
+        "passed_after": 145,
+        "failed_after": 0
+      },
+      {
+        "scope": "typeof",
+        "before_report": "target/iteration/task20-date-stress-current/before-typeof.json",
+        "after_report": "target/iteration/task20-date-stress-current/after-typeof.json",
+        "passed_before": 16,
+        "passed_after": 16,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for all matching inventories"
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "summary": {
+      "sources": 17,
+      "observations_per_build": 34,
+      "before_matches": 34,
+      "after_matches": 34,
+      "losses": 0
+    },
+    "gc_summary": {
+      "sources": 7,
+      "before_matches": 1,
+      "after_matches": 7,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-date-stress-current/node-controls.json",
+    "coverage": [
+      "unscopables flags, getters, mutation and throws",
+      "lexical/captured with environments",
+      "eval reads/writes, strict globals and typeof",
+      "method receiver and resolved assignments",
+      "collection during unscopables for loads, calls, eval, stores and updates"
+    ]
+  },
+  "gc_diagnosis": {
+    "source": "target/iteration/task20-date-stress-current/with-key-gc-control.js",
+    "before": "Lookup key is reclaimed during the unscopables getter; later has trap sees [object Object], and the read returns undefined.",
+    "after": "Read returns 3 and later trap retains key x.",
+    "oracle": "Node returns 3. Trap order/count differs from Node in both builds; retained ECMAScript LHS-resolution and GetBindingValue checks, not claimed as a full trace match."
+  },
+  "limits": [
+    "Bounded checks do not establish complete Test262 or Stage A closure.",
+    "All eight Date stress timeouts remain at ten seconds; unchanged Annex B arguments corpus conflict remains.",
+    "No full suite, pinned Wasm/implemented Node closure, single-VM cutover or Score/RSS claim.",
+    "Pins, guest fixtures, harness, discovery, expectations, exclusions and deadlines unchanged."
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/objects/contexts.cc": "726a591e99d3aa0902cdf9d26cfe7400e66befbdd84bd55c19da9e3e791a339d"
+  },
+  "internal_checks": {
+    "profile": "iteration; correctness only",
+    "test": "api::tests::regression_with_binding_key_survives_collecting_unscopables",
+    "passed": 1,
+    "failed": 0,
+    "modes": [
+      "specialized",
+      "unspecialized"
+    ],
+    "log": "target/iteration/task20-date-stress-current/regression-test.log",
+    "scope": "Complicated GC interaction absent from the pinned guest suites; retains key identity and observable read after collecting unscopables getter."
+  }
+}

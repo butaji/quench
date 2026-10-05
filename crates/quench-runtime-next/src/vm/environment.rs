@@ -731,6 +731,30 @@ impl<H: Host> Vm<H> {
         objects
     }
 
+    fn find_with_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        atom: Atom,
+    ) -> Result<Option<(Value, Value)>, JsError> {
+        if self.atom_name(atom).starts_with('\0') {
+            return Ok(None);
+        }
+        let objects = self.with_objects_before_binding(frame, atom);
+        if objects.is_empty() {
+            return Ok(None);
+        }
+        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
+        self.with_call_roots(std::iter::once(key).chain(objects.iter().copied()), |vm| {
+            for object in objects.iter().rev().copied() {
+                if vm.with_binding(p, object, key, atom)? {
+                    return Ok(Some((object, key)));
+                }
+            }
+            Ok(None)
+        })
+    }
+
     pub(super) fn store_with_binding(
         &mut self,
         p: &ResidualProgram,
@@ -739,18 +763,11 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        if self.atom_name(atom).starts_with('\0') {
+        let Some((object, _)) = self.find_with_binding(p, frame, atom)? else {
             return Ok(false);
-        }
-        let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-        let with_objects = self.with_objects_before_binding(frame, atom);
-        for object in with_objects.into_iter().rev() {
-            if self.with_binding(p, object, key, atom)? {
-                self.set_property_with_program_mode(p, object, atom, value, strict)?;
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        };
+        self.set_property_with_program_mode(p, object, atom, value, strict)?;
+        Ok(true)
     }
 
     fn get_with_binding_value(
@@ -1163,20 +1180,10 @@ impl<H: Host> Vm<H> {
         if name.starts_with('\0') {
             return Ok(true);
         }
-        if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.into()));
-            let with_objects = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .map_or_else(Vec::new, |frame| {
-                    self.with_objects_before_binding(frame, atom)
-                });
-            for object in with_objects.into_iter().rev() {
-                if self.with_binding(p, object, key, atom)? {
-                    return Ok(true);
-                }
-            }
+        if let Some(frame) = self.frames.len().checked_sub(1)
+            && self.find_with_binding(p, frame, atom)?.is_some()
+        {
+            return Ok(true);
         }
         if self
             .dynamic_binding(self.frames.len().saturating_sub(1), atom)
@@ -1227,22 +1234,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         atom: Atom,
     ) -> Result<(Value, bool), JsError> {
-        let name = self.atom_name(atom);
-        if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.into()));
-            let with_objects = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .map_or_else(Vec::new, |frame| {
-                    self.with_objects_before_binding(frame, atom)
-                });
-            for object in with_objects.into_iter().rev() {
-                let has_binding = self.with_binding(p, object, key, atom)?;
-                if has_binding {
-                    return Ok((object, true));
-                }
-            }
+        if let Some(frame) = self.frames.len().checked_sub(1)
+            && let Some((object, _)) = self.find_with_binding(p, frame, atom)?
+        {
+            return Ok((object, true));
         }
         if let Some(frame) = self.frames.len().checked_sub(1) {
             if self
@@ -1649,22 +1644,10 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<(Value, Value), JsError> {
-        let name = self.atom_name(atom);
-        if !name.starts_with('\0') {
-            let key = self.heap.alloc(Cell::String(name.into()));
-            let with_objects = self
-                .frames
-                .len()
-                .checked_sub(1)
-                .map_or_else(Vec::new, |frame| {
-                    self.with_objects_before_binding(frame, atom)
-                });
-            for object in with_objects.into_iter().rev() {
-                if !self.with_binding(p, object, key, atom)? {
-                    continue;
-                }
-                return Ok((self.get_with_binding_value(p, object, key, atom)?, object));
-            }
+        if let Some(frame) = self.frames.len().checked_sub(1)
+            && let Some((object, key)) = self.find_with_binding(p, frame, atom)?
+        {
+            return Ok((self.get_with_binding_value(p, object, key, atom)?, object));
         }
         Ok((
             self.load_name_without_with(p, atom, cache, allow_unresolvable)?,

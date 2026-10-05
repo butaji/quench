@@ -248,6 +248,27 @@ mod tests {
     }
 
     #[test]
+    fn regression_with_binding_key_survives_collecting_unscopables() {
+        assert_output_in_execution_modes(
+            r#"
+            var keys = [];
+            var object = new Proxy({x: 3}, {
+                has(target, key) { keys.push(String(key)); return Reflect.has(target, key); },
+                get(target, key, receiver) {
+                    if (key === Symbol.unscopables) { $262.gc(); return {}; }
+                    return Reflect.get(target, key, receiver);
+                }
+            });
+            var result;
+            with (object) { result = x; }
+            print(result);
+            print(keys.join(','));
+            "#,
+            &["3", "result,x,x"],
+        );
+    }
+
+    #[test]
     fn regression_dynamic_eval_bindings_survive_yield_and_await() {
         assert_output_in_execution_modes(
             r#"
