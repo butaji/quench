@@ -1,0 +1,64 @@
+{
+  "task": "37",
+  "source_head": "9e31942efe8dd03717967765f1c2bf80b6b296b5",
+  "source_state": "dirty shared worktree",
+  "source_hashes": {
+    "crates/quench-runtime-next/src/wasm/gc.rs": "72ffd80a01d85f86ed880a190d4fcce204f09de19885e43f6162ad44d8225c73",
+    "crates/quench-runtime-next/src/vm/wasm_gc.rs": "9db096b2e1d1c81d4452a3e1d1610bbc42c0de92200a5fa3bdae9adac5019555",
+    "crates/quench-runtime-next/src/vm/gc.rs": "35f4c7041c3c734ef57de335f09385adc6c0c6fad38220f5aabee9c695534a17",
+    "crates/quench-runtime-next/src/vm/wasm.rs": "700784f78eb6784921ced57c545386c12d5e21005106dea3df5c8f0d31063f78",
+    "crates/quench-runtime-next/src/wasm.rs": "267f9dce1fbe29a524ddf048d5dc67f089384dee55d013915dca703a4a41c918",
+    "crates/quench-runtime-next/src/bytecode.rs": "3b10fb60a59f3f9e25c9d41a63a1ec12dd50808c0ee2d713018c56d73a66ecce",
+    "crates/quench-runtime-next/src/heap/cell.rs": "cc68cda31f04d85b797c286b40dfc1d6830e3cb1011ef31b4eee360f9892bdab"
+  },
+  "suite_head": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
+  "suite_clean": true,
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "iteration",
+  "timeout_ms_per_file": 60000,
+  "scope": {
+    "kind": "affected pinned WAST files",
+    "files": 17,
+    "directives": 686,
+    "paths": [
+      "array.wast",
+      "array_copy.wast",
+      "array_fill.wast",
+      "array_init_data.wast",
+      "array_init_elem.wast",
+      "array_new_data.wast",
+      "array_new_elem.wast",
+      "br_on_cast.wast",
+      "br_on_cast_fail.wast",
+      "br_on_null.wast",
+      "i31.wast",
+      "ref_as_non_null.wast",
+      "ref_cast.wast",
+      "ref_eq.wast",
+      "ref_null.wast",
+      "ref_test.wast",
+      "struct.wast"
+    ]
+  },
+  "result": {
+    "passed": 686,
+    "failed": 0,
+    "inventory_complete": true,
+    "all_workers_completed": true,
+    "before_projection": null,
+    "regressions_claimed": false
+  },
+  "runner": {
+    "path": "target/iteration/run-shared",
+    "sha256": "7eaa60ee8f72aca29af2298754a0e91b308ffc088fbbf2b3b1d96383936b48e0"
+  },
+  "report": {
+    "path": "target/iteration/task37-wasm-gc-current.json",
+    "sha256": "baf7dd809b865a762b395d91ed81804d8f3351360b8847d1f93497cd14b2e85e"
+  },
+  "limits": [
+    "No matched before projection was available for this dirty-tree snapshot.",
+    "This is not a complete pinned Wasm suite result.",
+    "Production Wasm still uses legacy runtime paths until task 27."
+  ]
+}
