@@ -333,18 +333,11 @@ impl<H: Host> Vm<H> {
                 let end = if end_arg.is_none() { length } else { end };
                 let start = begin.min(end);
                 let count = end.saturating_sub(begin);
-                let target = self.typed_array_species_create(p, this, count)?;
+                let target = self.typed_array_species_create_for_writing(p, this, count)?;
                 let target_buffer = match self.heap.get(target) {
                     Some(Cell::TypedArray { buffer, .. }) => *buffer,
                     _ => unreachable!("species result was validated as a typed array"),
                 };
-                let target_immutable = matches!(
-                    self.heap.get(target_buffer),
-                    Some(Cell::ArrayBuffer { immutable: true, .. })
-                );
-                if target_immutable && target_buffer != buffer {
-                    return Err(self.type_error(p, "typed array species result is not writable".into()));
-                }
                 let current_length = self.typed_array_length(this).unwrap_or_default();
                 if count > 0
                     && (self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer))
@@ -352,11 +345,44 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "typed array receiver is invalid".into()));
                 }
                 let copy_count = count.min(current_length.saturating_sub(start));
-                for index in 0..copy_count {
-                    let value = self
-                        .typed_array_get(this, start + index)
-                        .unwrap_or(Value::UNDEFINED);
-                    self.typed_array_set(p, target, index, value)?;
+                let source_kind = self.typed_array_kind(this).unwrap();
+                if copy_count > 0 && self.typed_array_kind(target) == Some(source_kind) {
+                    let source_offset =
+                        self.typed_array_byte_offset(this).unwrap() + start * source_kind.width();
+                    let target_offset = self.typed_array_byte_offset(target).unwrap();
+                    let byte_count = copy_count * source_kind.width();
+                    if buffer == target_buffer {
+                        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer)
+                        else {
+                            unreachable!("validated typed array backing buffer");
+                        };
+                        let bytes = Rc::make_mut(bytes);
+                        // Slice copies forward even when species returns an overlapping view.
+                        for index in 0..byte_count {
+                            bytes[target_offset + index] = bytes[source_offset + index];
+                        }
+                    } else {
+                        let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get(buffer) else {
+                            unreachable!("validated typed array backing buffer");
+                        };
+                        let source_bytes = Rc::clone(bytes);
+                        let Some(Cell::ArrayBuffer { bytes, .. }) =
+                            self.heap.get_mut(target_buffer)
+                        else {
+                            unreachable!("validated species backing buffer");
+                        };
+                        Rc::make_mut(bytes)[target_offset..target_offset + byte_count]
+                            .copy_from_slice(
+                                &source_bytes[source_offset..source_offset + byte_count],
+                            );
+                    }
+                } else {
+                    for index in 0..copy_count {
+                        let value = self
+                            .typed_array_get(this, start + index)
+                            .unwrap_or(Value::UNDEFINED);
+                        self.typed_array_set(p, target, index, value)?;
+                    }
                 }
                 Ok(target)
             }

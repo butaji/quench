@@ -1,0 +1,160 @@
+{
+  "schema": 1,
+  "tasks": [
+    "13",
+    "20"
+  ],
+  "baseline_source_head": "de26fd79eaa9bf9bd50530786eaf211ce54f7c2d",
+  "qualification": "Isolated slice byte copying and writable species validation; pending constructor/prototype ownership, Node and Wasm changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/typed_array.rs": "0bebb30936617485b0906f6c708c7e87bcc31485f284997fc7b018cb63f9fa28",
+    "crates/quench-runtime-next/src/vm/typed_array_construct.rs": "80e69e6f918dc50c32b2bbdbc9a72810c8433e5defc69136be1258afd268ea1a"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "bytes": "Same-kind slices retain exact backing bytes. Different buffers use direct byte copying; same-buffer species copies forward, preserving the observable feedback required by slice. It does not use set snapshots or overlap-safe memmove.",
+    "writability": "The existing shared writable-species validator rejects every immutable destination, including an alias of the source. Removed the same-buffer exception that mutated immutable bytes.",
+    "content_type": "Species checks derive numeric content from TypedArrayKind::is_bigint, the same kind classification used by set copying.",
+    "reduction": "Removed duplicate target immutability inspection and the source-alias exception. Kind equality selects raw encoding preservation; different kinds retain shared element conversions. No new side maps, suite changes or unit duplicates."
+  },
+  "spec_sources": [
+    "https://tc39.es/ecma262/multipage/indexed-collections.html#sec-%typedarray%.prototype.slice",
+    "https://tc39.es/proposal-immutable-arraybuffer/"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/typed-array-slice.tq": "d50fa2fd4225296ab1d05da05aec0b7834fdd18ad82fd88d8d4a0763ac68d811"
+  },
+  "build": {
+    "profile": "release; correctness qualification, no Stage B performance claim",
+    "log": "target/iteration/task13-typed-array-slice/build.log",
+    "before_binary_sha256": "d0903a92eef8128512537e1eaf6c7736f7e3277c717521f8672619cfaa8e3b96",
+    "after_binary_sha256": "955fd870ab50f576c1a1e1db5935448b9a0fe3c7bba22c797c216206541dcdc2"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1542,
+    "passed_before": 1534,
+    "passed_after": 1534,
+    "gained": [
+      "staging/sm/TypedArray/slice-bitwise-same.js"
+    ],
+    "regressions": [
+      "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js"
+    ],
+    "scopes": [
+      {
+        "scope": "typed-array",
+        "total": 1446,
+        "passed_before": 1443,
+        "passed_after": 1442,
+        "gained": [],
+        "regressions": [
+          "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js"
+        ],
+        "remaining_failures": [
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "timed_out",
+            "path": "built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js",
+            "reason": "test timed out after 10000ms",
+            "stage": "76"
+          },
+          {
+            "outcome": "failed",
+            "path": "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js",
+            "reason": "next runtime: TypeError: typed array constructor result is not writable (Testing with Float64Array and makeImmutableArrayBuffer.)",
+            "stage": "76"
+          }
+        ],
+        "reports": {
+          "target/iteration/task13-typed-array-slice/before-typed-array.json": "21e8e2fcefe035c549ad77669519f38fce30791224a3423c1a40685ecafd5af2",
+          "target/iteration/task13-typed-array-slice/after-typed-array.json": "81b6af050a9a343bb60a9f83e12d29361c7de9f17facfd2475f9e2fa56923907",
+          "target/iteration/task13-typed-array-slice/compare-typed-array.log": "9444bb5e2ca89dc9e0eaf0597ee4b3f5f0edd524599556d655dcd3f491f32c69"
+        }
+      },
+      {
+        "scope": "staged-typed-array",
+        "total": 96,
+        "passed_before": 91,
+        "passed_after": 92,
+        "gained": [
+          "staging/sm/TypedArray/slice-bitwise-same.js"
+        ],
+        "regressions": [],
+        "remaining_failures": [
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-ArrayBuffer-species-wrap.js",
+            "reason": "next runtime: TypeError: property descriptor is not an object",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/constructor-buffer-sequence.js",
+            "reason": "next runtime: Test262Error: Expected a ExpectedError but got a Error",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/iterator-next-with-detached.js",
+            "reason": "next runtime: TypeError: cannot read properties of undefined",
+            "stage": "114"
+          },
+          {
+            "outcome": "failed",
+            "path": "staging/sm/TypedArray/set-wrapped.js",
+            "reason": "next runtime: TypeError: cannot read properties of undefined",
+            "stage": "114"
+          }
+        ],
+        "reports": {
+          "target/iteration/task13-typed-array-slice/before-staged-typed-array.json": "63e29ed0a5ae11866782ded02563309e8f8345b919fa5e6f857cf4441e4575da",
+          "target/iteration/task13-typed-array-slice/after-staged-typed-array.json": "bcdbc26d117aa98c5cede66f38c2857c4cdddf125a0c7cb0f4343684ce9cdc12",
+          "target/iteration/task13-typed-array-slice/compare-staged-typed-array.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "version": "v26.10.0",
+    "sources": 185,
+    "observations_per_build": 370,
+    "before_matches": 340,
+    "after_matches": 370,
+    "losses": 0,
+    "report": "target/iteration/task13-typed-array-slice/node-controls.json",
+    "sha256": "129dbe127536800ca02f922b5915a57fbd6534db65bcdb570dcc9cf7e06a78de"
+  },
+  "immutable_alias_conflict": {
+    "fixture_sha256": {
+      "tests/test262/test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js": "2136a50c608ac2dd74815ca4cb4ec6e0eb7bd54d1fc102bec5fe53b322563a6b",
+      "tests/test262/test/built-ins/TypedArray/prototype/slice/speciesctor-destination-backed-by-immutable-buffer.js": "7e84c15b51fc6a1c7b0ad5c4d25c0e050f1c3d478caf4041f4b767a49fa05b47",
+      "tests/test262/harness/testTypedArray.js": "51eb50e53e6215f31f14d64d249bea2d08ad943c77835f63ba52ec694de2189a"
+    },
+    "observed_regression": "The unchanged overlap fixture selects makeImmutableArrayBuffer and expects writes into the immutable source backing through species. The destination fixture and proposal require a TypeError for immutable species backing. These cannot both be satisfied with immutable backing semantics.",
+    "prior_behavior": "The removed identity exception let slice mutate immutable backing; the direct control demonstrates changed bytes. No fixture/benchmark identity was involved in the fix.",
+    "decision": "Keep immutable bytes immutable and reject writable species aliases. Preserve both fixtures, their expectations and the failing comparison. Do not claim zero regressions or 100% conformance.",
+    "control": "target/iteration/task13-typed-array-slice/immutable-alias-control.json",
+    "control_sha256": "3f5ba55c6df9cadaf4ca328d82245cdcddb0b7a4b8542f27c0e9079c87fb29b8",
+    "node_feature": "Local Node reports transferToImmutable undefined; this control is verified against the proposal, not Node."
+  },
+  "limits": [
+    "One staged bit-preservation case gained, one official immutable-alias case lost; 1,534/1,542 selected passes remain.",
+    "Three official timeouts, one explicit immutable conflict and four staged failures remain.",
+    "Task 13, task 20, Stage A and production single-VM cutover remain open. Wasm, the implemented Node suite and Stage B are not qualified."
+  ]
+}

@@ -308,12 +308,7 @@ impl<H: Host> Vm<H> {
                 self.type_error(p, "typed array species result is not a typed array".into())
             );
         };
-        if matches!(kind, TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64)
-            != matches!(
-                target_kind,
-                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64
-            )
-        {
+        if kind.is_bigint() != target_kind.is_bigint() {
             return Err(self.type_error(p, "typed array species content type differs".into()));
         }
         self.validate_typed_array_result(p, target, minimum_length, false)?;
