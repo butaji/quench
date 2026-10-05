@@ -1213,6 +1213,11 @@ pub(crate) enum Cell {
         env: Value,
         realm: Value,
     },
+    BindingReference {
+        environment: Value,
+        slot: u16,
+        kind: crate::bytecode::LexicalBindingKind,
+    },
     Environment {
         parent: Value,
         program: Option<u32>,

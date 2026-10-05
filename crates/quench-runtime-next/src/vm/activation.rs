@@ -109,6 +109,7 @@ impl Continuation {
             program: self.program,
             function: self.function,
             pc: self.pc,
+            binding_site_pc: None,
             env: self.env,
             this: self.this,
             locals: self.locals,

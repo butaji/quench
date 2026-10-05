@@ -250,6 +250,40 @@ impl FunctionCompiler<'_, '_> {
         result
     }
 
+    fn lexical_binding_projection(
+        &self,
+        scope: &LexicalScope,
+        atom: Atom,
+    ) -> Option<crate::bytecode::EvalBinding> {
+        let target = scope.bindings.get(&atom)?;
+        let slot = *self.local_slots.get(target)?;
+        Some(crate::bytecode::EvalBinding {
+            atom,
+            location: crate::bytecode::EvalBindingLocation::Local(slot),
+            with_depth: scope.with_depth.saturating_sub(self.inherited_with_depth),
+            kind: scope
+                .kinds
+                .get(&atom)
+                .copied()
+                .unwrap_or(LexicalBindingKind::Mutable),
+            catch_parameter: scope.catch_parameter,
+        })
+    }
+
+    pub(super) fn record_name_binding_site(&mut self, pc: usize, atom: Atom) {
+        if let Some(binding) = self
+            .lexical_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| self.lexical_binding_projection(scope, atom))
+        {
+            self.binding_sites.push(crate::bytecode::BindingSite {
+                resume_pc: (pc + 1) as u32,
+                bindings: vec![binding],
+            });
+        }
+    }
+
     fn record_lexical_binding_site(&mut self, pc: usize) {
         let mut visible = rustc_hash::FxHashSet::default();
         let mut bindings = Vec::new();
@@ -257,20 +291,11 @@ impl FunctionCompiler<'_, '_> {
             if self.with_depth != 0 && scope.with_depth < self.with_depth {
                 continue;
             }
-            for (atom, binding) in &scope.bindings {
+            for atom in scope.bindings.keys() {
                 if visible.insert(*atom)
-                    && let Some(slot) = self.local_slots.get(binding)
+                    && let Some(binding) = self.lexical_binding_projection(scope, *atom)
                 {
-                    bindings.push(crate::bytecode::EvalBinding {
-                        atom: *atom,
-                        location: crate::bytecode::EvalBindingLocation::Local(*slot),
-                        kind: scope
-                            .kinds
-                            .get(atom)
-                            .copied()
-                            .unwrap_or(LexicalBindingKind::Mutable),
-                        catch_parameter: scope.catch_parameter,
-                    });
+                    bindings.push(binding);
                 }
             }
         }
@@ -299,6 +324,7 @@ impl FunctionCompiler<'_, '_> {
                 bindings.push(crate::bytecode::EvalBinding {
                     atom,
                     location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
+                    with_depth: 0,
                     kind,
                     catch_parameter: self
                         .owner

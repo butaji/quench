@@ -291,6 +291,18 @@ impl ResidualProgram {
                 return Err(format!("function {index} has an invalid parent"));
             }
             let code_len = function.code.len() as u32;
+            if function.binding_sites.windows(2).any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+                || function.binding_sites.iter().any(|site| {
+                    site.resume_pc == 0 || site.resume_pc > code_len
+                        || site.bindings.windows(2).any(|pair| pair[0].atom >= pair[1].atom)
+                        || site.bindings.iter().any(|binding| {
+                            !atom_in_bounds(binding.atom, self.atoms.len())
+                                || matches!(binding.location, super::EvalBindingLocation::Local(slot) if slot >= function.locals)
+                        })
+                })
+            {
+                return Err(format!("function {index} has invalid binding-site metadata"));
+            }
             let bounds = ValidationBounds {
                 registers: function.registers,
                 locals: function.locals,

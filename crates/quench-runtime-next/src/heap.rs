@@ -672,6 +672,7 @@ impl Heap {
                 work.extend(dynamic_bindings.iter().map(|(_, value)| *value));
                 work.extend(with_objects.iter().copied());
             }
+            Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
@@ -707,7 +708,7 @@ impl Heap {
             Cell::WeakSet { .. } => CellKind::WeakSet,
             Cell::WeakRef { .. } | Cell::FinalizationRegistry { .. } => CellKind::WeakRef,
             Cell::Function { .. } => CellKind::Function,
-            Cell::Environment { .. } => CellKind::Environment,
+            Cell::Environment { .. } | Cell::BindingReference { .. } => CellKind::Environment,
             Cell::String(_) => CellKind::String,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmBits64(_) => CellKind::WasmBits64,
@@ -745,6 +746,7 @@ impl Heap {
                 | Cell::DataView { .. }
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
+                | Cell::BindingReference { .. }
                 | Cell::WasmBits64(_) => 0,
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
