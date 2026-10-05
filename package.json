@@ -3,7 +3,8 @@
   "type": "module",
   "scripts": {
     "lint:js": "eslint --max-warnings=0 .",
-    "lint:all": "npm run format:check && npm run lint:js && tools/lint-rust.sh",
+    "lint:tasks": "node tools/check-task-coherence.mjs",
+    "lint:all": "npm run lint:tasks && npm run format:check && npm run lint:js && tools/lint-rust.sh",
     "format:check": "deno fmt --check tools README.md package.json eslint.config.js crates/quench-runtime/src/native_core/PROVENANCE.md crates/quench-node/src/modules/stream_prelude.js",
     "format:write": "deno fmt tools README.md package.json eslint.config.js crates/quench-runtime/src/native_core/PROVENANCE.md crates/quench-node/src/modules/stream_prelude.js"
   },
