@@ -7,7 +7,8 @@ use quench_runtime::ops::RealmId;
 use quench_runtime::value::Value;
 use quench_runtime::vm::VmContext;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "outcome", rename_all = "lowercase")]
 pub enum NodeOutcome {
     Pass,
     Fail { reason: String },
@@ -89,11 +90,13 @@ impl NodeRunner {
         // Fresh host per fixture with `node <file>` argv semantics.
         let _cwd_guard = FixtureCwdGuard::capture();
         let script = fixture.path.to_string_lossy().into_owned();
+        let exec_argv = fixture_flags(&fixture.source);
         let (host, context) = quench_node::host::install_script_with_args(
             RealmId::ROOT,
             self.sink.clone(),
             &script,
             &fixture.argv,
+            &exec_argv,
         );
         let fixture_source = strip_v8_native_probes(&fixture.source);
         self.host = host;
@@ -114,7 +117,7 @@ impl NodeRunner {
             .state()
             .borrow_mut()
             .process
-            .unhandled_rejection_mode = rejection_mode(&fixture.source);
+            .unhandled_rejection_mode = rejection_mode(&exec_argv);
         let is_module = fixture
             .path
             .extension()
@@ -127,7 +130,10 @@ impl NodeRunner {
         } else {
             quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture_source)
         };
-        let source = if fixture.source.contains("--experimental-eventsource") {
+        let source = if exec_argv
+            .iter()
+            .any(|flag| flag == "--experimental-eventsource")
+        {
             format!("globalThis.EventSource = globalThis.__quench_event_source;\n{source}")
         } else {
             source
@@ -148,20 +154,13 @@ impl NodeRunner {
         } else {
             String::new()
         };
-        // Node exposes WHATWG stream constructors globally. Install the
-        // shared surface before the fixture so globals and `stream/web`
-        // resolve to one constructor identity.
-        let web_streams_surface = ["web-streams"]
-            .into_iter()
-            .filter_map(|name| quench_node::polyfills::bootstrap::lookup(name))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let entry_globals_surface = quench_node::polyfills::bootstrap::entry_globals_source();
         let url_pattern_surface =
             quench_node::polyfills::post_bootstrap::lookup("module-surface-06").unwrap_or("");
         let source = format!(
             "globalThis.URL = URL; Object.defineProperty(globalThis, '__nodeURL', {{ value: globalThis.URL, configurable: true }}); Object.defineProperty(globalThis, '__nodeURLSearchParams', {{ value: globalThis.URLSearchParams, configurable: true }});\n{url_pattern_surface}\ndelete globalThis.__quenchURLPatternFactory; delete globalThis.__quenchURLInstallCanParse; delete globalThis.__quenchURLInstallToString; delete globalThis.__nodeThrowReadonlyURLSetter; delete globalThis.__quenchURLPattern;\nif (globalThis.process) {{ const flags = new Set(['--perf_basic_prof', '--perf-basic-prof', '--perf_basic-prof', '-r', '--stack-trace-limit', '--inspect-brk']); const has = flags.has; flags.has = (flag) => flag === 'perf-basic-prof' || flag === 'perf_basic-prof' || flag === 'perf_basic_prof' || flag === 'r' || flag === 'inspect-brk' || flag === '--inspect_brk' || (typeof flag === 'string' && flag.startsWith('--stack-trace-limit=')) || has.call(flags, flag); process.allowedNodeEnvironmentFlags = Object.freeze(flags); }}\n{source}"
         );
-        let source = format!("{web_streams_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
+        let source = format!("{entry_globals_surface}\n{dgram_surface}\n{dns_surface}\n{source}");
         self.host
             .state()
             .borrow_mut()
@@ -306,7 +305,10 @@ fn normalize_script_completion(
 /// Quench has no V8 optimizing tier, so remove only those eval statements when
 /// the upstream fixture explicitly requests `--allow-natives-syntax`.
 fn strip_v8_native_probes(source: &str) -> String {
-    if !source.contains("--allow-natives-syntax") {
+    if !fixture_flags(source)
+        .iter()
+        .any(|flag| flag == "--allow-natives-syntax")
+    {
         return source.to_string();
     }
     source
@@ -319,15 +321,19 @@ fn strip_v8_native_probes(source: &str) -> String {
         .join("\n")
 }
 
-fn rejection_mode(source: &str) -> quench_node::modules::process::UnhandledRejectionMode {
-    let mode = source
+fn fixture_flags(source: &str) -> Vec<String> {
+    source
         .lines()
-        .find_map(|line| line.trim().strip_prefix("// Flags:"))
-        .and_then(|flags| {
-            flags
-                .split_whitespace()
-                .find_map(|flag| flag.strip_prefix("--unhandled-rejections="))
-        });
+        .filter_map(|line| line.trim().strip_prefix("// Flags:"))
+        .flat_map(str::split_whitespace)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn rejection_mode(exec_argv: &[String]) -> quench_node::modules::process::UnhandledRejectionMode {
+    let mode = exec_argv
+        .iter()
+        .find_map(|flag| flag.strip_prefix("--unhandled-rejections="));
     match mode {
         Some("none") => quench_node::modules::process::UnhandledRejectionMode::None,
         Some("warn") => quench_node::modules::process::UnhandledRejectionMode::Warn,
@@ -360,7 +366,7 @@ mod tests {
 
     #[test]
     fn keeps_native_probe_without_capability_flag() {
-        let source = "eval('%PrepareFunctionForOptimization(f)');\n";
+        let source = "const mention = '--allow-natives-syntax';\neval('%PrepareFunctionForOptimization(f)');\n";
         assert_eq!(strip_v8_native_probes(source), source);
     }
 }

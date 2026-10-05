@@ -38,7 +38,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     let argv = arguments.into_iter().skip(1).collect();
-    let child_mode = std::env::var_os("QUENCH_CHILD_RUNNER").is_some();
+    let child_mode = std::env::var_os(quench_node::modules::process::CHILD_RUNNER_ENV).is_some();
     let captured = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink_capture = Arc::clone(&captured);
     let sink: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |line| {
@@ -103,7 +103,7 @@ fn main() -> ExitCode {
     }
     match outcome {
         quench_node_test::NodeOutcome::Pass => {
-            if std::env::var_os("QUENCH_CHILD_RUNNER").is_none() {
+            if std::env::var_os(quench_node::modules::process::CHILD_RUNNER_ENV).is_none() {
                 println!("PASS {}", path.display());
             }
             ExitCode::SUCCESS

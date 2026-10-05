@@ -14,13 +14,18 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const RESULT_MARKER: &str = "__QUENCH_RESULT__";
+use quench_node_test::case_process::{
+    observe_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
+};
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
 const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = worker_entry(&args) {
+        return code;
+    }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return ExitCode::SUCCESS;
@@ -32,21 +37,9 @@ fn main() -> ExitCode {
     {
         return run_one(PathBuf::from(path));
     }
-    if let Some(path) = args
-        .iter()
-        .position(|a| a == "--triage-one")
-        .and_then(|i| args.get(i + 1))
-    {
-        // Child mode: run one fixture so a fatal abort (e.g. stack
-        // overflow) cannot take down the parent triage sweep.
-        let outcome = quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path));
-        let (status, code) = match outcome {
-            quench_node_test::NodeOutcome::Pass => ("pass", ExitCode::SUCCESS),
-            quench_node_test::NodeOutcome::Skip { .. } => ("skip", ExitCode::SUCCESS),
-            quench_node_test::NodeOutcome::Fail { .. } => ("fail", ExitCode::from(1)),
-        };
-        println!("{RESULT_MARKER} {status}");
-        return code;
+    if args.iter().any(|arg| arg == "--triage-one") {
+        eprintln!("error: obsolete private worker invocation");
+        return ExitCode::from(2);
     }
     if args.iter().any(|a| a == "--triage") {
         let filter = args
@@ -58,7 +51,7 @@ fn main() -> ExitCode {
             .position(|a| a == "--timeout-secs")
             .and_then(|i| args.get(i + 1))
             .and_then(|value| value.parse().ok())
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
         return triage(filter, timeout);
     }
     if args.iter().any(|a| a == "--all") {
@@ -71,7 +64,7 @@ fn main() -> ExitCode {
             .position(|a| a == "--timeout-secs")
             .and_then(|i| args.get(i + 1))
             .and_then(|value| value.parse().ok())
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
         let results = args
             .iter()
             .position(|a| a == "--results")
@@ -97,18 +90,36 @@ fn print_help() {
 }
 
 fn run_one(path: PathBuf) -> ExitCode {
-    match quench_node_test::NodeTestRunner::new().run_file(&path) {
-        quench_node_test::NodeOutcome::Pass => {
-            println!("PASS {}", path.display());
-            ExitCode::SUCCESS
+    let executable = match std::env::current_exe() {
+        Ok(executable) => executable,
+        Err(error) => {
+            eprintln!("worker executable: {error}");
+            return ExitCode::from(2);
         }
-        quench_node_test::NodeOutcome::Skip { reason } => {
-            println!("SKIP {}: {reason}", path.display());
-            ExitCode::SUCCESS
+    };
+    match observe_case(
+        &executable,
+        &path,
+        std::time::Duration::from_secs(DEFAULT_CASE_TIMEOUT_SECS),
+    ) {
+        Ok(observation) => {
+            use std::io::Write;
+            if std::io::stdout().write_all(&observation.stdout).is_err()
+                || std::io::stderr().write_all(&observation.stderr).is_err()
+            {
+                return ExitCode::from(2);
+            }
+            let result = observation.outcome();
+            println!("{} {}", result.label().to_uppercase(), path.display());
+            if result == RunResult::Pass {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
         }
-        quench_node_test::NodeOutcome::Fail { reason } => {
-            println!("FAIL {}: {reason}", path.display());
-            ExitCode::from(1)
+        Err(error) => {
+            eprintln!("worker {}: {error}", path.display());
+            ExitCode::from(2)
         }
     }
 }
@@ -141,14 +152,14 @@ fn run_manifest() -> ExitCode {
         eprintln!("invalid {MANIFEST}: {error}");
         return ExitCode::from(2);
     }
-    let mut counts = [0usize; 6];
+    let mut counts = [0usize; RunResult::COUNT];
     // Resolve fixture paths against the startup CWD and isolate every fixture
     // in a child process. A manifest entry must not be able to retain module
     // state, change the runner's CWD, crash the gate, or hang it indefinitely.
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     for name in &names {
         let path = root.join(PARALLEL_DIR).join(name);
-        let result = triage_one(&exe, &path, 30);
+        let result = triage_one(&exe, &path, DEFAULT_CASE_TIMEOUT_SECS);
         counts[result as usize] += 1;
         println!("{}  {name}", result.label().to_uppercase());
     }
@@ -162,16 +173,20 @@ fn run_manifest() -> ExitCode {
         counts[5],
         names.len()
     );
-    if counts[2..].iter().all(|count| *count == 0) {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    }
+    gate_exit(counts[RunResult::Pass as usize], names.len())
 }
 
 fn validate_manifest(names: &[String], parallel_root: &std::path::Path) -> Result<(), String> {
     let mut seen = std::collections::HashSet::with_capacity(names.len());
     for name in names {
+        if std::path::Path::new(name)
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "fixture must be relative to the parallel suite: {name}"
+            ));
+        }
         if !seen.insert(name) {
             return Err(format!("duplicate fixture entry: {name}"));
         }
@@ -197,18 +212,24 @@ fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let mut entries: Vec<PathBuf> =
-        quench_node_test::stages::discover_fixtures(&PathBuf::from(PARALLEL_DIR))
-            .into_iter()
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| {
-                        name.starts_with("test-")
-                            && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
-                    })
-            })
-            .collect();
+    let entries = match quench_node_test::stages::discover_fixtures(&PathBuf::from(PARALLEL_DIR)) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: fixture discovery: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let mut entries: Vec<PathBuf> = entries
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("test-")
+                        && filter.as_ref().is_none_or(|f| name.contains(f.as_str()))
+                })
+        })
+        .collect();
     entries.sort();
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
@@ -222,93 +243,25 @@ fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Run one fixture in a child process (crash isolation) with a
-/// 30-second timeout; report pass only on a clean zero exit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RunResult {
-    Pass,
-    Skip,
-    Fail,
-    Timeout,
-    Crash,
-    Unclassified,
-}
-
-impl RunResult {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Pass => "pass",
-            Self::Skip => "skip",
-            Self::Fail => "fail",
-            Self::Timeout => "timeout",
-            Self::Crash => "crash",
-            Self::Unclassified => "unclassified",
+fn triage_one(exe: &std::path::Path, path: &std::path::Path, timeout_secs: u64) -> RunResult {
+    match observe_case(exe, path, std::time::Duration::from_secs(timeout_secs)) {
+        Ok(observation) => observation.outcome(),
+        Err(error) => {
+            eprintln!("worker {}: {error}", path.display());
+            RunResult::Unclassified
         }
     }
-}
-
-fn triage_one(exe: &PathBuf, path: &PathBuf, timeout_secs: u64) -> RunResult {
-    if !path.is_file() {
-        return RunResult::Unclassified;
-    }
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    let mut command = Command::new(exe);
-    command
-        .arg("--triage-one")
-        .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setpgid(0, 0) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-    let Ok(mut child) = command.spawn() else {
-        return RunResult::Crash;
-    };
-    for _ in 0..timeout_secs.saturating_mul(20) {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut output = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut output);
-                }
-                let marker = output
-                    .lines()
-                    .find_map(|line| line.strip_prefix(RESULT_MARKER).map(str::trim));
-                return match marker {
-                    Some("pass") if status.success() => RunResult::Pass,
-                    Some("skip") if status.success() => RunResult::Skip,
-                    Some("fail") if !status.success() => RunResult::Fail,
-                    Some(_) | None if status.code().is_none() => RunResult::Crash,
-                    Some(_) | None => RunResult::Unclassified,
-                };
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(_) => return RunResult::Crash,
-        }
-    }
-    #[cfg(unix)]
-    unsafe {
-        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-    }
-    #[cfg(not(unix))]
-    let _ = child.kill();
-    let _ = child.wait();
-    RunResult::Timeout
 }
 
 fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&String>) -> ExitCode {
     let root = PathBuf::from(PARALLEL_DIR);
-    let mut entries = quench_node_test::stages::discover_fixtures(&root);
+    let mut entries = match quench_node_test::stages::discover_fixtures(&root) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("error: fixture discovery: {error}");
+            return ExitCode::from(2);
+        }
+    };
     entries.retain(|path| {
         path.file_name()
             .and_then(|name| name.to_str())
@@ -320,12 +273,16 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
             })
     });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    let mut counts = [0usize; 6];
+    let mut counts = [0usize; RunResult::COUNT];
     let mut results = Vec::with_capacity(entries.len());
     for path in &entries {
-        let result = triage_one(&exe, path, timeout_secs);
+        let observation = observe_case(&exe, path, std::time::Duration::from_secs(timeout_secs));
+        let result = observation
+            .as_ref()
+            .map(|record| record.outcome())
+            .unwrap_or(RunResult::Unclassified);
         counts[result as usize] += 1;
-        results.push((path, result));
+        results.push((path, observation));
         println!("{:?} {}", result, path.display());
     }
     let inventory_hash = inventory_hash(&entries);
@@ -340,7 +297,11 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
             return ExitCode::from(2);
         }
     }
-    if failed == 0 && timeout == 0 && crash == 0 && unclassified == 0 {
+    gate_exit(passed, entries.len())
+}
+
+fn gate_exit(passed: usize, total: usize) -> ExitCode {
+    if total != 0 && passed == total {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -349,34 +310,33 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
 
 fn write_results(
     path: &str,
-    results: &[(&PathBuf, RunResult)],
+    results: &[(
+        &PathBuf,
+        Result<quench_node_test::case_process::CaseObservation, String>,
+    )],
     inventory_hash: u64,
     timeout_secs: u64,
 ) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut file = std::fs::File::create(path)?;
-    let node_version = command_output("node", &["--version"]);
-    let runtime_commit = command_output("git", &["rev-parse", "HEAD"]);
-    let tests_node_commit = command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]);
-    let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
-    writeln!(
-        file,
-        "{{\"schema_version\":2,\"inventory_hash\":\"{inventory_hash:016x}\",\"timeout_secs\":{timeout_secs},\"node_version\":\"{}\",\"runtime_commit\":\"{}\",\"tests_node_commit\":\"{}\",\"platform\":\"{}\",\"results\":[",
-        json_escape(&node_version),
-        json_escape(&runtime_commit),
-        json_escape(&tests_node_commit),
-        json_escape(&platform),
-    )?;
-    for (index, (fixture, result)) in results.iter().enumerate() {
-        let comma = if index + 1 == results.len() { "" } else { "," };
-        writeln!(
-            file,
-            "  {{\"fixture\":\"{}\",\"status\":\"{}\"}}{comma}",
-            json_escape(&fixture.to_string_lossy()),
-            result.label()
-        )?;
-    }
-    writeln!(file, "]}}")
+    let records: Vec<_> = results
+        .iter()
+        .map(|(fixture, observation)| {
+            let result = observation
+                .as_ref()
+                .map(|record| record.outcome())
+                .unwrap_or(RunResult::Unclassified);
+            serde_json::json!({"fixture":fixture,"status":result.label(),"observation":observation})
+        })
+        .collect();
+    let report = serde_json::json!({
+        "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,
+        "node_version":command_output("node", &["--version"]),
+        "runtime_commit":command_output("git", &["rev-parse", "HEAD"]),
+        "tests_node_commit":command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]),
+        "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
+        "results":records,
+    });
+    let bytes = serde_json::to_vec_pretty(&report).map_err(std::io::Error::other)?;
+    std::fs::write(path, bytes)
 }
 
 fn inventory_hash(entries: &[PathBuf]) -> u64 {
@@ -404,14 +364,6 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-}
-
 #[cfg(test)]
 mod tests {
     use super::validate_manifest;
@@ -428,6 +380,13 @@ mod tests {
         assert!(validate_manifest(&duplicate, &root).is_err());
         let unsupported = vec!["test-b.txt".to_string()];
         assert!(validate_manifest(&unsupported, &root).is_err());
+        for name in [
+            "../test-a.js".to_string(),
+            root.join("test-a.js").display().to_string(),
+        ] {
+            let error = validate_manifest(&[name], &root).unwrap_err();
+            assert!(error.contains("relative to the parallel suite"));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
