@@ -12,6 +12,10 @@ use crate::host::HostState;
 
 use super::*;
 
+#[cfg(test)]
+#[path = "pump_read_tests.rs"]
+mod read_tests;
+
 /// Poll every server and socket once: accept connections, announce
 /// connects, read available bytes, flush writes, and finalize closes.
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -890,7 +894,7 @@ fn read_sockets(state: &Rc<RefCell<HostState>>) -> SocketEvents {
     events
 }
 
-/// Drain available readable bytes into `datas`; returns true on EOF.
+/// Read one kernel chunk into `datas`; report EOF or a terminal read failure.
 fn read_available(
     sock: &Rc<RefCell<NetSocket>>,
     guard: &mut std::cell::RefMut<'_, NetSocket>,
@@ -899,43 +903,27 @@ fn read_available(
     if guard.stream.is_none() || guard.read_eof {
         return false;
     }
-    let mut had_eof = false;
-    loop {
-        let mut buf = [0u8; READ_CHUNK];
-        let result = guard
-            .stream
-            .as_mut()
-            .expect("stream checked above")
-            .read(&mut buf);
-        match result {
-            Ok(0) => {
-                guard.read_eof = true;
-                had_eof = true;
-                guard.state = SocketState::Closing;
-                // Keep the write side open until the queued `data`/`end`
-                // callbacks have run.  A single read turn can contain both
-                // the final bytes and the peer FIN; shutting down here would
-                // discard writes produced by those callbacks.
-                break;
-            }
-            Ok(n) => {
-                guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
-                datas.push((sock.clone(), buf[..n].to_vec()));
-                // Deliver one kernel chunk per pump turn.  A `data` observer
-                // may pause the socket; reading ahead here would bypass that
-                // observable backpressure boundary before the callback runs.
-                break;
-            }
-            Err(ref error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
-            Err(_) => {
-                guard.read_eof = true;
-                had_eof = true;
-                guard.state = SocketState::Closing;
-                break;
-            }
+    let mut buf = [0u8; READ_CHUNK];
+    let result = guard
+        .stream
+        .as_mut()
+        .expect("stream checked above")
+        .read(&mut buf);
+    match result {
+        Ok(n) if n != 0 => {
+            guard.bytes_read = guard.bytes_read.saturating_add(n as u64);
+            datas.push((sock.clone(), buf[..n].to_vec()));
+            // Deliver one chunk before callbacks can pause the socket.
+            false
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+        _ => {
+            guard.read_eof = true;
+            guard.state = SocketState::Closing;
+            // Callbacks may still write before the write side shuts down.
+            true
         }
     }
-    had_eof
 }
 
 fn poll_listening(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
