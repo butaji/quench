@@ -1,20 +1,12 @@
 //! Shared-VM bindings for the existing process state, extended as APIs migrate.
 
 use crate::host::{NodeHost, ProcessModule};
-use rqj::{HostFunction, HostFunctionId, NativeContext, RootId, RootedError};
-
-pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
-    rqj::host_functions![method "uptime" (0) => uptime]
-}
+use rqj::{NativeContext, RootId, RootedError};
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let process = context.object_rooted()?;
-    for (index, binding) in bindings().iter().enumerate() {
-        let index = u32::try_from(index)
-            .map_err(|_| RootedError::host("process binding table exceeds index space"))?;
-        let function = context.host_function(HostFunctionId(index))?;
-        install(context, process, binding.name, function)?;
-    }
+    let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
+    install(context, process, "uptime", function)?;
     let global = context.global_root()?;
     install(context, global, "process", process)?;
     let retained = context.retain(process)?;
@@ -46,7 +38,7 @@ fn install(
     }
 }
 
-fn uptime(
+pub(crate) fn uptime(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     _: &[RootId],

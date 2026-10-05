@@ -1951,6 +1951,20 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(crate) fn module_evaluation_pending(&self, p: &ResidualProgram) -> Result<bool, JsError> {
+        if !p.is_module() {
+            return Ok(false);
+        }
+        let key = module_cache_key(&p.source_name, "javascript");
+        let record = self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .ok_or_else(|| JsError::validation("module evaluation has not started".into()))?;
+        Ok(matches!(record.outcome, ModuleOutcome::Pending(_)))
+    }
+
     fn finish_async_main_module(
         &mut self,
         p: &ResidualProgram,
