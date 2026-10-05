@@ -95,7 +95,7 @@ impl JsError {
         })
     }
 
-    pub(crate) fn thrown_value(&self) -> Option<Value> {
+    pub fn thrown_value(&self) -> Option<Value> {
         self.0.payload.thrown
     }
 

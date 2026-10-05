@@ -49,6 +49,7 @@ mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
 mod dynamic_strings;
+mod embedding;
 mod environment;
 mod equality;
 mod error;
