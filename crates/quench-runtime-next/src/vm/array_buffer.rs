@@ -538,6 +538,34 @@ impl<H: Host> Vm<H> {
         Ok(Rc::new(bytes))
     }
 
+    fn array_buffer_intrinsic_prototype(&self, shared: bool) -> Value {
+        let native = if shared {
+            Native::SharedArrayBuffer
+        } else {
+            Native::ArrayBuffer
+        };
+        self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, native)]
+    }
+
+    pub(super) fn new_fixed_array_buffer(
+        &mut self,
+        p: &ResidualProgram,
+        length: usize,
+        shared: bool,
+    ) -> Result<Value, JsError> {
+        let prototype = self.array_buffer_intrinsic_prototype(shared);
+        let bytes = self.array_buffer_zeroed_bytes(p, length)?;
+        Ok(self.heap.alloc(Cell::ArrayBuffer {
+            object: Self::empty_object(prototype),
+            bytes,
+            shared,
+            detached: false,
+            max_byte_length: length,
+            resizable: false,
+            immutable: false,
+        }))
+    }
+
     pub(super) fn array_buffer_slice_native(
         &mut self,
         p: &ResidualProgram,

@@ -1,3 +1,4 @@
+use super::typed_array_install::TYPED_ARRAY_INSTALLS;
 use super::*;
 
 impl<H: Host> Vm<H> {
@@ -536,6 +537,7 @@ impl<H: Host> Vm<H> {
                     vm.switch_realm_global(previous_global);
                     let result = result?;
                     let result = if vm.intl_constructor_prototypes(native).is_none()
+                        && !native.is_typed_array_constructor()
                         && !matches!(
                             native,
                             Native::Proxy
@@ -694,50 +696,68 @@ impl<H: Host> Vm<H> {
         target_root: crate::heap::RootId,
         native: Native,
     ) -> Result<(), JsError> {
-        let prototype_atom = self.intern_atom("prototype");
         let new_target = self.heap.root_value(target_root).unwrap();
+        let Some(prototype) = self.native_constructor_prototype(p, new_target, native)? else {
+            return Ok(());
+        };
+        let result = self
+            .heap
+            .root_value(result_root)
+            .expect("constructed object root remains live");
+        self.object_set_prototype_of(p, result, prototype)?;
+        if native == Native::DataView
+            && let Some((buffer, offset, length)) = self.data_view_view(result)
+        {
+            if self.array_buffer_detached(buffer) {
+                return Err(self.type_error(p, "Cannot use a detached ArrayBuffer".into()));
+            }
+            if self.array_buffer_out_of_bounds(buffer, offset, length) {
+                return Err(self.range_error(p, "Invalid DataView byte length".into()));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn native_constructor_prototype(
+        &mut self,
+        p: &ResidualProgram,
+        new_target: Value,
+        native: Native,
+    ) -> Result<Option<Value>, JsError> {
+        let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
-            let Some(intrinsic) = (match native {
-                Native::Object => Some("Object"),
-                Native::Function => Some("Function"),
-                Native::AsyncFunction => Some("AsyncFunction"),
-                Native::GeneratorFunction => Some("GeneratorFunction"),
-                Native::AsyncGeneratorFunction => Some("AsyncGeneratorFunction"),
-                Native::RegExp => Some("RegExp"),
-                Native::Number => Some("Number"),
-                Native::String => Some("String"),
-                Native::Iterator => Some("Iterator"),
-                Native::Boolean => Some("Boolean"),
-                Native::DataView => Some("DataView"),
-                Native::Uint8Array => Some("Uint8Array"),
-                Native::Uint8ClampedArray => Some("Uint8ClampedArray"),
-                Native::Uint16Array => Some("Uint16Array"),
-                Native::Uint32Array => Some("Uint32Array"),
-                Native::Int8Array => Some("Int8Array"),
-                Native::Int16Array => Some("Int16Array"),
-                Native::Int32Array => Some("Int32Array"),
-                Native::BigInt64Array => Some("BigInt64Array"),
-                Native::BigUint64Array => Some("BigUint64Array"),
-                Native::Float16Array => Some("Float16Array"),
-                Native::Float32Array => Some("Float32Array"),
-                Native::Float64Array => Some("Float64Array"),
-                Native::Date => Some("Date"),
-                Native::Promise => Some("Promise"),
-                Native::Error => Some("Error"),
-                Native::AggregateError => Some("AggregateError"),
-                Native::SuppressedError => Some("SuppressedError"),
-                Native::EvalError => Some("EvalError"),
-                Native::RangeError => Some("RangeError"),
-                Native::ReferenceError => Some("ReferenceError"),
-                Native::SyntaxError => Some("SyntaxError"),
-                Native::TypeError | Native::RealmTypeError => Some("TypeError"),
-                Native::URIError => Some("URIError"),
-                _ => None,
-            }) else {
-                return Ok(());
+            let Some(intrinsic) = TYPED_ARRAY_INSTALLS
+                .iter()
+                .find_map(|(_, candidate, name)| (*candidate == native).then_some(*name))
+                .or_else(|| match native {
+                    Native::Object => Some("Object"),
+                    Native::Function => Some("Function"),
+                    Native::AsyncFunction => Some("AsyncFunction"),
+                    Native::GeneratorFunction => Some("GeneratorFunction"),
+                    Native::AsyncGeneratorFunction => Some("AsyncGeneratorFunction"),
+                    Native::RegExp => Some("RegExp"),
+                    Native::Number => Some("Number"),
+                    Native::String => Some("String"),
+                    Native::Iterator => Some("Iterator"),
+                    Native::Boolean => Some("Boolean"),
+                    Native::DataView => Some("DataView"),
+                    Native::Date => Some("Date"),
+                    Native::Promise => Some("Promise"),
+                    Native::Error => Some("Error"),
+                    Native::AggregateError => Some("AggregateError"),
+                    Native::SuppressedError => Some("SuppressedError"),
+                    Native::EvalError => Some("EvalError"),
+                    Native::RangeError => Some("RangeError"),
+                    Native::ReferenceError => Some("ReferenceError"),
+                    Native::SyntaxError => Some("SyntaxError"),
+                    Native::TypeError | Native::RealmTypeError => Some("TypeError"),
+                    Native::URIError => Some("URIError"),
+                    _ => None,
+                })
+            else {
+                return Ok(None);
             };
-            let new_target = self.heap.root_value(target_root).unwrap();
             let realm = self.function_realm(p, new_target)?;
             let prototype = if native == Native::RegExp {
                 self.realm
@@ -760,28 +780,13 @@ impl<H: Host> Vm<H> {
                 self.get_property(p, constructor, prototype_atom)?
             };
             if self.object_data(prototype).is_none() {
-                return Ok(());
+                return Ok(None);
             }
             prototype
         } else {
             prototype
         };
-        let result = self
-            .heap
-            .root_value(result_root)
-            .expect("constructed object root remains live");
-        self.object_set_prototype_of(p, result, prototype)?;
-        if native == Native::DataView
-            && let Some((buffer, offset, length)) = self.data_view_view(result)
-        {
-            if self.array_buffer_detached(buffer) {
-                return Err(self.type_error(p, "Cannot use a detached ArrayBuffer".into()));
-            }
-            if self.array_buffer_out_of_bounds(buffer, offset, length) {
-                return Err(self.range_error(p, "Invalid DataView byte length".into()));
-            }
-        }
-        Ok(())
+        Ok(Some(prototype))
     }
 
     pub(super) fn construct_super_value(
@@ -823,6 +828,18 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
+        if let Some(&(kind, _, name)) = TYPED_ARRAY_INSTALLS
+            .iter()
+            .find(|(_, candidate, _)| *candidate == native)
+        {
+            return self.construct_typed_array_with_new_target(
+                p,
+                args,
+                kind,
+                name,
+                Some(new_target),
+            );
+        }
         match native {
             Native::AbstractModuleSource => {
                 Err(self.type_error(p, "AbstractModuleSource cannot be constructed".into()))
@@ -881,18 +898,6 @@ impl<H: Host> Vm<H> {
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
                 self.construct_buffer_native(p, native, args, new_target)
             }
-            Native::Uint8Array => self.construct_uint8_array_native(p, args),
-            Native::Uint8ClampedArray => self.construct_uint8_clamped_array_native(p, args),
-            Native::Uint16Array => self.construct_uint16_array_native(p, args),
-            Native::Uint32Array => self.construct_uint32_array_native(p, args),
-            Native::Int8Array => self.construct_int8_array_native(p, args),
-            Native::Int16Array => self.construct_int16_array_native(p, args),
-            Native::Int32Array => self.construct_int32_array_native(p, args),
-            Native::BigInt64Array => self.construct_bigint64_array_native(p, args),
-            Native::BigUint64Array => self.construct_biguint64_array_native(p, args),
-            Native::Float16Array => self.construct_float16_array_native(p, args),
-            Native::Float32Array => self.construct_float32_array_native(p, args),
-            Native::Float64Array => self.construct_float64_array_native(p, args),
             Native::DataView => self.construct_data_view_native(p, args),
             Native::BigInt => Err(self.type_error(p, "BigInt cannot be called with new".into())),
             Native::Map | Native::Set => {
