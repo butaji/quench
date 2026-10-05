@@ -425,7 +425,15 @@ impl<H: Host> Vm<H> {
             }
         }
         let object = self.heap.root_value(source).unwrap();
-        self.array_like_length(p, object)
-            .map(TypedArrayInitialization::ArrayLike)
+        let length = self.array_like_length(p, object)?;
+        let object = self.heap.root_value(source).unwrap();
+        if length > 1
+            && let Some(shape) = self.object_data(object).map(Object::shape)
+        {
+            // Prepare the derived lookup for repeated array-like element reads.
+            // Getters still run normally; mutations select a new immutable shape.
+            self.shape_entries(shape);
+        }
+        Ok(TypedArrayInitialization::ArrayLike(length))
     }
 }
