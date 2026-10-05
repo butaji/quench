@@ -1,0 +1,433 @@
+//! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
+
+use crate::host::{ModuleCache, NodeHost, ProcessModule};
+use rqj::{NativeContext, RootId, RootedError};
+use std::path::{Path, PathBuf};
+
+type Context<'a> = NativeContext<'a, NodeHost>;
+
+// Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
+const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, __dirname) { ";
+const WRAPPER_SUFFIX: &str = "\n});";
+
+/// Node's explicit extension/package parse-goal policy, before guest execution.
+pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("mjs") => return Ok(rqj::SourceKind::Module),
+        Some("cjs") => return Ok(rqj::SourceKind::Script),
+        _ => {}
+    }
+    let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let resolution = oxc_resolver::Resolver::new(Default::default())
+        .resolve(
+            path.parent().unwrap_or(Path::new(".")),
+            &path.to_string_lossy(),
+        )
+        .map_err(|error| error.to_string())?;
+    let module = resolution
+        .package_json()
+        .and_then(|package| package.r#type.as_ref())
+        .and_then(serde_json::Value::as_str)
+        == Some("module");
+    Ok(
+        if path.extension().is_some_and(|extension| extension == "js") && module {
+            rqj::SourceKind::Module
+        } else {
+            rqj::SourceKind::Script
+        },
+    )
+}
+
+pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let state = context.host_mut().state();
+    let previous = std::mem::replace(
+        &mut state.borrow_mut().module_cache,
+        ModuleCache::Shared(Default::default()),
+    );
+    if let ModuleCache::Shared(cache) = previous {
+        for root in cache.into_values() {
+            context.release_root(root);
+        }
+    }
+    if context.is_module()? {
+        return Ok(());
+    }
+    if let Some(path) = context.host_mut().commonjs_entry.clone() {
+        let filename =
+            std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()))?;
+        load(context, &filename, None)?;
+    } else {
+        let filename = std::env::current_dir()
+            .map_err(|error| RootedError::host(error.to_string()))?
+            .join("[eval]");
+        let module = module_record(context, &filename, None)?;
+        let global = context.global_root()?;
+        for name in ["exports", "require"] {
+            let value = get(context, module, name)?;
+            set(context, global, name, value)?;
+        }
+        set(context, global, "module", module)?;
+        let filename = context.string_rooted(&filename.to_string_lossy());
+        set(context, global, "__filename", filename)?;
+        let cwd = std::env::current_dir().map_err(|error| RootedError::host(error.to_string()))?;
+        let dirname = context.string_rooted(&cwd.to_string_lossy());
+        set(context, global, "__dirname", dirname)?;
+    }
+    Ok(())
+}
+
+pub(super) fn require(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Require)?;
+    if matches!(specifier.as_str(), "process" | "node:process") {
+        return match context.host_mut().state().borrow().process_module.as_ref() {
+            Some(ProcessModule::Shared(root)) => Ok(*root),
+            _ => Err(RootedError::host(
+                "shared process module is not initialized",
+            )),
+        };
+    }
+    let parent = context.host_function_data()?;
+    let filename = resolve_filename(context, &specifier, parent)?;
+    load(context, &filename, Some(parent))
+}
+
+pub(super) fn resolve(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
+    if matches!(specifier.as_str(), "process" | "node:process") {
+        return Ok(context.string_rooted(&specifier));
+    }
+    let parent = context.host_function_data()?;
+    let filename = resolve_filename(context, &specifier, parent)?;
+    Ok(context.string_rooted(&filename.to_string_lossy()))
+}
+
+enum Request {
+    Require,
+    Resolve,
+}
+
+fn specifier(
+    context: &mut Context<'_>,
+    args: &[RootId],
+    request: Request,
+) -> Result<String, RootedError> {
+    let argument = args.first().copied().unwrap_or_else(|| context.undefined());
+    match context.string_text(argument)? {
+        Some(value) if !value.is_empty() || matches!(request, Request::Resolve) => Ok(value),
+        Some(_) => {
+            let error = context
+                .type_error_rooted("The argument 'id' must be a non-empty string. Received ''")?;
+            let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
+            set(context, error, "code", code)?;
+            Err(context.throw(error))
+        }
+        None => {
+            let value = context
+                .rooted_value(argument)
+                .ok_or_else(|| RootedError::host("invalid request root"))?;
+            let received = if value.is_undefined() || value.is_null() {
+                context.to_string(argument)?
+            } else if value.as_number().is_some() {
+                format!("type number ({})", context.to_string(argument)?)
+            } else if value.as_bool().is_some() {
+                format!("type boolean ({})", context.to_string(argument)?)
+            } else {
+                "an instance of Object".to_owned()
+            };
+            let name = match request {
+                Request::Require => "id",
+                Request::Resolve => "request",
+            };
+            let error = context.type_error_rooted(&format!(
+                "The \"{name}\" argument must be of type string. Received {received}"
+            ))?;
+            let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+            set(context, error, "code", code)?;
+            Err(context.throw(error))
+        }
+    }
+}
+
+fn resolve_filename(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+) -> Result<PathBuf, RootedError> {
+    let filename = get(context, parent, "filename")?;
+    let filename = context
+        .string_text(filename)?
+        .ok_or_else(|| RootedError::host("invalid parent module filename"))?;
+    let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".js".into(), ".json".into(), ".node".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "require".into(), "default".into()],
+        ..Default::default()
+    });
+    match resolver.resolve(
+        Path::new(&filename).parent().unwrap_or(Path::new(".")),
+        specifier,
+    ) {
+        Ok(resolution) => Ok(resolution.full_path()),
+        Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
+            let mut stack = Vec::new();
+            let mut module = parent;
+            loop {
+                let name = get(context, module, "filename")?;
+                if let Some(name) = context.string_text(name)? {
+                    stack.push(name);
+                }
+                module = get(context, module, "parent")?;
+                if context
+                    .rooted_value(module)
+                    .is_some_and(|value| value.is_null() || value.is_undefined())
+                {
+                    break;
+                }
+            }
+            let message = format!(
+                "Cannot find module '{specifier}'\nRequire stack:\n{}",
+                stack
+                    .iter()
+                    .map(|name| format!("- {name}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            let error = context.error_rooted(&message)?;
+            let code = context.string_rooted("MODULE_NOT_FOUND");
+            set(context, error, "code", code)?;
+            let names = stack
+                .iter()
+                .map(|name| context.string_rooted(name))
+                .collect::<Vec<_>>();
+            let stack = context.array_rooted(&names)?;
+            set(context, error, "requireStack", stack)?;
+            Err(context.throw(error))
+        }
+        Err(error) => Err(RootedError::host(error.to_string())),
+    }
+}
+
+fn module_record(
+    context: &mut Context<'_>,
+    filename: &Path,
+    parent: Option<RootId>,
+) -> Result<RootId, RootedError> {
+    let module = context.object_rooted()?;
+    let exports = context.object_rooted()?;
+    set(context, module, "exports", exports)?;
+    let main_file = context.host_mut().commonjs_entry.is_some();
+    let id = if parent.is_none() {
+        if main_file {
+            "."
+        } else {
+            "[eval]"
+        }
+    } else {
+        filename
+            .to_str()
+            .ok_or_else(|| RootedError::host("module filename is not UTF-8"))?
+    };
+    let id = context.string_rooted(id);
+    set(context, module, "id", id)?;
+    let name = context.string_rooted(&filename.to_string_lossy());
+    set(context, module, "filename", name)?;
+    let directory = filename.parent().unwrap_or(Path::new("."));
+    let path = context.string_rooted(&directory.to_string_lossy());
+    set(context, module, "path", path)?;
+    let parent = parent.unwrap_or_else(|| context.undefined());
+    set(context, module, "parent", parent)?;
+    let loaded = context.boolean(false);
+    set(context, module, "loaded", loaded)?;
+    let children = context.array_rooted(&[])?;
+    set(context, module, "children", children)?;
+    let paths = directory
+        .ancestors()
+        .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
+        .map(|path| context.string_rooted(&path.join("node_modules").to_string_lossy()))
+        .collect::<Vec<_>>();
+    let paths = context.array_rooted(&paths)?;
+    set(context, module, "paths", paths)?;
+    let process = match context.host_mut().state().borrow().process_module.as_ref() {
+        Some(ProcessModule::Shared(root)) => *root,
+        _ => {
+            return Err(RootedError::host(
+                "shared process module is not initialized",
+            ))
+        }
+    };
+    if main_file
+        && context
+            .rooted_value(parent)
+            .is_some_and(|value| value.is_undefined())
+    {
+        set(context, process, "mainModule", module)?;
+    }
+    let require = context.host_function_with_data(super::operation("require"), module)?;
+    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
+    set(context, require, "resolve", resolve)?;
+    let main = get(context, process, "mainModule")?;
+    set(context, require, "main", main)?;
+    set(context, module, "require", require)?;
+    Ok(module)
+}
+
+fn load(
+    context: &mut Context<'_>,
+    filename: &Path,
+    parent: Option<RootId>,
+) -> Result<RootId, RootedError> {
+    let key = filename.to_string_lossy().into_owned();
+    let state = context.host_mut().state();
+    let cached = match &state.borrow().module_cache {
+        ModuleCache::Shared(cache) => cache.get(&key).copied(),
+        ModuleCache::Legacy(_) => {
+            return Err(RootedError::host("CommonJS requires a shared module cache"))
+        }
+    };
+    if let Some(module) = cached {
+        if let Some(parent) = parent {
+            transition_child(context, parent, module, ChildTransition::Attach)?;
+        }
+        return get(context, module, "exports");
+    }
+    let module = module_record(context, filename, parent)?;
+    if let Some(parent) = parent {
+        transition_child(context, parent, module, ChildTransition::Attach)?;
+    }
+    let retained = context.retain(module)?;
+    if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
+        cache.insert(key.clone(), retained);
+    }
+    let result = (|| {
+        let bytes =
+            std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
+        let text = String::from_utf8_lossy(&bytes);
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        match filename
+            .extension()
+            .and_then(|extension| extension.to_str())
+        {
+            Some("json") => {
+                let exports = context.parse_json_rooted(text)?;
+                set(context, module, "exports", exports)?;
+            }
+            Some("mjs" | "node") => {
+                return Err(RootedError::host(
+                    "this module format is not implemented on the shared VM",
+                ))
+            }
+            _ => {
+                if source_kind(filename).map_err(RootedError::host)? == rqj::SourceKind::Module {
+                    return Err(RootedError::host(
+                        "requiring an ES module is not implemented on the shared VM",
+                    ));
+                }
+                let text = if text.starts_with("#!") {
+                    text.find('\n').map_or("", |end| &text[end..])
+                } else {
+                    text
+                };
+                let wrapper = context.evaluate_script_rooted(
+                    &format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}"),
+                    &key,
+                )?;
+                let exports = get(context, module, "exports")?;
+                let require = get(context, module, "require")?;
+                let name = context.string_rooted(&key);
+                let directory = context.string_rooted(
+                    &filename
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .to_string_lossy(),
+                );
+                context.call_rooted(
+                    wrapper,
+                    exports,
+                    &[exports, require, module, name, directory],
+                )?;
+            }
+        }
+        let loaded = context.boolean(true);
+        set(context, module, "loaded", loaded)?;
+        get(context, module, "exports")
+    })();
+    if result.is_err() {
+        if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
+            cache.remove(&key);
+        }
+        context.release_root(retained);
+        if let Some(parent) = parent {
+            transition_child(context, parent, module, ChildTransition::Detach)?;
+        }
+    }
+    result
+}
+
+enum ChildTransition {
+    Attach,
+    Detach,
+}
+
+fn transition_child(
+    context: &mut Context<'_>,
+    parent: RootId,
+    module: RootId,
+    transition: ChildTransition,
+) -> Result<(), RootedError> {
+    let children = get(context, parent, "children")?;
+    let length = get(context, children, "length")?;
+    let length = context
+        .rooted_value(length)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("invalid module children length"))?
+        as usize;
+    let mut position = None;
+    for index in 0..length {
+        let child = get(context, children, &index.to_string())?;
+        if context.rooted_value(child) == context.rooted_value(module) {
+            position = Some(index);
+            break;
+        }
+    }
+    match (transition, position) {
+        (ChildTransition::Attach, None) => set(context, children, &length.to_string(), module),
+        (ChildTransition::Detach, Some(position)) => {
+            for index in position..length - 1 {
+                let next = get(context, children, &(index + 1).to_string())?;
+                set(context, children, &index.to_string(), next)?;
+            }
+            let length = context.number((length - 1) as f64);
+            set(context, children, "length", length)
+        }
+        _ => Ok(()),
+    }
+}
+
+fn get(context: &mut Context<'_>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    context.get_property_rooted(object, key)
+}
+
+fn set(
+    context: &mut Context<'_>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.set_property_rooted(object, key, value, object)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!(
+            "cannot set module property {name}"
+        )))
+    }
+}

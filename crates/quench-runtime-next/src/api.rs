@@ -79,6 +79,12 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Query the main module's existing evaluation state after execution/jobs.
+    /// The host decides what an unsettled evaluation means when its event loop ends.
+    pub fn module_evaluation_pending(&self, program: &ResidualProgram) -> Result<bool, JsError> {
+        self.vm.module_evaluation_pending(program)
+    }
+
     /// Execute and retain the result under a generation-checked host root.
     pub fn execute_rooted(&mut self, program: &ResidualProgram) -> Result<RootId, JsError> {
         let value = self.execute_value(program)?;
