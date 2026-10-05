@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 const assert = require("assert");
 const { broadcast, text } = require("stream/iter");
 

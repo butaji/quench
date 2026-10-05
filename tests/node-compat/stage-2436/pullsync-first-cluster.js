@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 const assert = require("assert");
 const fs = require("fs");
 const { textSync, bytesSync, pipeToSync } = require("stream/iter");
