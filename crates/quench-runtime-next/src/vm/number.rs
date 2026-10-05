@@ -519,6 +519,32 @@ pub(super) fn parse_float(text: &str) -> f64 {
     text[..end].parse().unwrap_or(f64::NAN)
 }
 
+// The log1p forms meet at this magnitude. Below it, retain the correction
+// separately from 2x to avoid cancellation; above it, use 2x / (1 - x).
+const ATANH_LOG_REDUCTION_BOUNDARY: f64 = 0.5;
+const ATANH_DOMAIN_ENDPOINT: f64 = 1.0;
+const ATANH_LOG_SCALE: f64 = 0.5;
+
+fn math_atanh(value: f64) -> f64 {
+    if value.is_nan() || value == 0.0 {
+        return value;
+    }
+    let magnitude = value.abs();
+    if magnitude > ATANH_DOMAIN_ENDPOINT {
+        return f64::NAN;
+    }
+    if magnitude == ATANH_DOMAIN_ENDPOINT {
+        return f64::INFINITY.copysign(value);
+    }
+    let doubled = magnitude + magnitude;
+    let argument = if magnitude < ATANH_LOG_REDUCTION_BOUNDARY {
+        doubled + doubled * magnitude / (1.0 - magnitude)
+    } else {
+        doubled / (1.0 - magnitude)
+    };
+    (ATANH_LOG_SCALE * argument.ln_1p()).copysign(value)
+}
+
 pub(super) fn math_unary(native: Native, value: f64) -> f64 {
     match native {
         Native::MathAbs => value.abs(),
@@ -548,7 +574,7 @@ pub(super) fn math_unary(native: Native, value: f64) -> f64 {
         Native::MathTan => value.tan(),
         Native::MathAcosh => value.acosh(),
         Native::MathAsinh => value.asinh(),
-        Native::MathAtanh => value.atanh(),
+        Native::MathAtanh => math_atanh(value),
         Native::MathCbrt => value.cbrt(),
         Native::MathCosh => value.cosh(),
         Native::MathExpm1 => value.exp_m1(),

@@ -1,0 +1,138 @@
+{
+  "schema": 1,
+  "tasks": [
+    "15",
+    "20"
+  ],
+  "baseline_source_head": "856422f10910438735304f2ed71b06f50dbe8876",
+  "qualification": "One pure Math.atanh implementation qualified independently; pending Date, strings, function reflection, Node and Wasm work excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/number.rs": "6082551ebf59a0339dbddf47cfe85fbb17d19d9da8e94bdee7557d63fc6aac16"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "operation": "math_unary remains the single shared math dispatcher. Math.atanh uses odd symmetry and two cancellation-resistant log1p argument reductions instead of platform atanh. ToNumber and its observable effects remain at the existing native boundary.",
+    "invariants": "Return signed zero/NaN directly; magnitudes outside the named domain endpoint yield NaN; exact endpoints yield signed infinity. The reduction boundary and logarithmic scale have separate named meanings.",
+    "scope": "No new dependency, VM metadata, source/benchmark/fixture branch or duplicate semantic unit test. Numerical controls remain external diagnostics."
+  },
+  "spec": "https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-math.atanh",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/base/ieee754.cc": "badd30a2643ed785dcfbbce42f95c2522ccea3605cd39e2933467688aae1de14"
+  },
+  "build": {
+    "profile": "release; correctness qualification, no Stage B performance claim",
+    "log": "target/iteration/task15-atanh-log-reduction/build.log",
+    "before_binary_sha256": "1f7cb3470e39414e64c7bf4710c90481f4c835723f17b2b111156435095a61c1",
+    "after_binary_sha256": "4e27e9f1b1442199eb0629505f90bf266d4a1b86eb205b9b37fbf18ebff44b8e"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Math and Number stages; staged Math only.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 697,
+    "passed_before": 696,
+    "passed_after": 697,
+    "gained": [
+      "staging/sm/Math/atanh-approx.js"
+    ],
+    "regressions": [],
+    "scopes": [
+      {
+        "scope": "math",
+        "total": 327,
+        "passed_before": 327,
+        "passed_after": 327,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-atanh-log-reduction/before-math.json": "cb4e61f02549e50b65336a20c863d23ce75c4f5e99de90fb4c4e6a0f758779a7",
+          "target/iteration/task15-atanh-log-reduction/after-math.json": "eda78d1b04917127f69aa7efc9183d482481e1ab2d0850832342b22b5d979d8b",
+          "target/iteration/task15-atanh-log-reduction/compare-math.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "number",
+        "total": 340,
+        "passed_before": 340,
+        "passed_after": 340,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-atanh-log-reduction/before-number.json": "30fc5df0c3b8fa16a6ebf59161de9540aa65cc9b20319b1ec0794bc4f91ed63e",
+          "target/iteration/task15-atanh-log-reduction/after-number.json": "c6f7696a38e9fb1e8174d46a67259b7b5cda88046201842be419cbcd67b2a4b7",
+          "target/iteration/task15-atanh-log-reduction/compare-number.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-math",
+        "total": 30,
+        "passed_before": 29,
+        "passed_after": 30,
+        "gained": [
+          "staging/sm/Math/atanh-approx.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task15-atanh-log-reduction/before-staged-math.json": "b182318da8956a62ae13603cd6147697f8385c0a16eeff9286901b0886bdcade",
+          "target/iteration/task15-atanh-log-reduction/after-staged-math.json": "506673336d62855341b0b0ad0185fe3e7d1ebd9fef42f2725aea387638445664",
+          "target/iteration/task15-atanh-log-reduction/compare-staged-math.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "numeric_controls": {
+    "node_version": "v26.10.0",
+    "samples_per_mode": 1067,
+    "seed": 150020,
+    "reference": "Python Decimal atanh=(ln((1+x)/(1-x)))/2 at max(96,96-adjusted(x)) decimal digits; exact binary float inputs, rounded to f64.",
+    "engines": {
+      "before-normal": {
+        "exact_node_matches": 732,
+        "exact_reference_matches": 719,
+        "max_node_ulps": 97551793252584,
+        "max_reference_ulps": 97551793252584,
+        "special_value_mismatches": 0
+      },
+      "before-generic": {
+        "exact_node_matches": 732,
+        "exact_reference_matches": 719,
+        "max_node_ulps": 97551793252584,
+        "max_reference_ulps": 97551793252584,
+        "special_value_mismatches": 0
+      },
+      "after-normal": {
+        "exact_node_matches": 988,
+        "exact_reference_matches": 887,
+        "max_node_ulps": 1,
+        "max_reference_ulps": 1,
+        "special_value_mismatches": 0
+      },
+      "after-generic": {
+        "exact_node_matches": 988,
+        "exact_reference_matches": 887,
+        "max_node_ulps": 1,
+        "max_reference_ulps": 1,
+        "special_value_mismatches": 0
+      }
+    },
+    "report": "target/iteration/task15-atanh-log-reduction/numeric-controls.json",
+    "sha256": "c75c73627af472bd8d9021a7092ca39287171ab28d9ad7c5ad09eaea94a35781",
+    "limits": "Sampled accuracy, not proof of correct rounding over all f64 inputs. Candidate maximum one ULP against Node and independent Decimal reference in both modes. Exact Node matches 988/1067; remaining values differ by one ULP. Baseline near the negative endpoint loses about 0.35 in absolute value."
+  },
+  "node_semantic_controls": {
+    "sources": 8,
+    "observations_per_build": 16,
+    "before_matches": 14,
+    "after_matches": 14,
+    "losses": 0,
+    "report": "target/iteration/task15-atanh-log-reduction/node-controls.json",
+    "sha256": "376524002d9a970d0ab473bfd028d7b3cf1b5ec7713283712f5146c8a67b6de1",
+    "remaining_differences": "The coercion control has the same single number-hint effect in Node and Quench, but its Math.atanh(0.5) string differs by one ULP. Retained both unmatched normal/generic observations; 14/16 exact matches in both revisions and zero losses."
+  },
+  "limits": [
+    "No pinned discovery, fixture, harness, exclusion, deadline or expectation changed. No full suite run or duplicated unit tests.",
+    "Complete Test262, the frozen implemented Node suite, Wasm and production single-VM cutover remain unqualified. Task 15, task 20 and Stage A remain open."
+  ]
+}
