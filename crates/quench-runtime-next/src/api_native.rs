@@ -80,6 +80,35 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply ToBoolean without invoking guest coercion hooks.
+    pub fn truthy_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_truthy(root)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Compare with SameValue: NaN equals itself and signed zeros differ.
+    pub fn same_value_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_same_value(left, right)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Apply JavaScript abstract equality, preserving coercion effects and throws.
+    pub fn equal_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_equal(left, right)
+            .map_err(|error| self.error(error))
+    }
+
     /// Evaluate named guest Script code in the active realm, without resetting roots.
     /// Caller lexical bindings and direct-eval grammar are not inherited.
     pub fn evaluate_script_rooted(

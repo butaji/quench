@@ -41,6 +41,9 @@ fn captured(
     let receiver = context.undefined();
     let result = context.call_rooted(wrapper, receiver, &[data])?;
     assert_eq!(context.rooted_value(result), context.rooted_value(data));
+    assert!(context.truthy_rooted(result)?);
+    assert!(context.same_value_rooted(result, data)?);
+    assert!(context.equal_rooted(result, data)?);
     let restored = context.host_function_data()?;
     assert_eq!(context.rooted_value(restored), context.rooted_value(data));
     context.collect()?;
@@ -82,6 +85,7 @@ const REJECT: HostFunctionId = HostFunctionId(2);
 const ESCAPED: HostFunctionId = HostFunctionId(3);
 const TRAP: HostFunctionId = HostFunctionId(4);
 const CONSTRUCT: HostFunctionId = HostFunctionId(5);
+const COMPARE: HostFunctionId = HostFunctionId(6);
 
 #[derive(Clone, Copy, Default)]
 enum Initialization {
@@ -214,6 +218,7 @@ impl Host for TestHost {
             method "escaped" (0) => escaped,
             method "trap" (0) => typed_trap,
             method "construct" (2) => construct,
+            method "compare" (2) => compare,
         ]
     }
 }
@@ -468,4 +473,66 @@ fn callbacks_cannot_return_foreign_or_released_handles() {
     let error = runtime.call_rooted(trap, receiver, &[]).unwrap_err();
     assert_eq!(error.error.wasm_trap(), Some(crate::WasmTrap::Unreachable));
     assert!(error.exception.is_none());
+}
+
+fn compare(
+    context: &mut NativeContext<'_, TestHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let result = context.equal_rooted(args[0], args[1]);
+    context.collect()?;
+    if let Err(error) = &result {
+        context.host_mut().0.borrow_mut().borrowed.extend(error.exception);
+    }
+    result.map(|equal| context.boolean(equal))
+}
+
+#[test]
+fn native_comparison_preserves_coercion_exception_roots_through_collection() {
+    let (mut runtime, program, host) = initialized(
+        "var payload = {}; var input = { [Symbol.toPrimitive]() { throw echo(payload); } };",
+    );
+    let global = runtime.global_root().unwrap();
+    let payload = property(&mut runtime, global, "payload");
+    let input = property(&mut runtime, global, "input");
+    let primitive = runtime.root(Value::number(f64::NAN));
+    let receiver = runtime.root(Value::UNDEFINED);
+    let callback = runtime.host_function(COMPARE).unwrap();
+    for operands in [[input, primitive], [primitive, input]] {
+        let error = runtime.call_rooted(callback, receiver, &operands).unwrap_err();
+        let exception = error.exception.unwrap();
+        runtime.collect(&program).unwrap();
+        assert_eq!(runtime.rooted_value(exception), runtime.rooted_value(payload));
+        assert_eq!(runtime.rooted_value(exception), error.error.thrown_value());
+        assert!(runtime.release_root(exception));
+        for root in &host.0.borrow().borrowed {
+            assert!(!runtime.root_is_live(*root));
+        }
+    }
+}
+
+#[test]
+fn native_value_operations_reject_foreign_and_released_roots() {
+    let (mut runtime, _, _) = initialized("");
+    let mut other = Runtime::new(TestHost::default());
+    let foreign = other.root(Value::TRUE);
+    let stale = runtime.root(Value::TRUE);
+    assert!(runtime.release_root(stale));
+    let valid = runtime.root(Value::TRUE);
+    let mut context = NativeContext::new(&mut runtime.vm);
+    for invalid in [foreign, stale] {
+        for result in [
+            context.truthy_rooted(invalid),
+            context.same_value_rooted(invalid, valid),
+            context.same_value_rooted(valid, invalid),
+            context.equal_rooted(invalid, valid),
+            context.equal_rooted(valid, invalid),
+        ] {
+            let error = result.unwrap_err();
+            assert_eq!(error.to_string(), "released or foreign embedding root");
+            assert!(error.exception.is_none());
+        }
+    }
 }

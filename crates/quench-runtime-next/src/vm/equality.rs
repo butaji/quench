@@ -3,8 +3,8 @@ use num_bigint::BigInt;
 
 impl<H: Host> Vm<H> {
     pub(super) fn equal(&mut self, p: &ResidualProgram, a: Value, b: Value) -> Result<bool, JsError> {
-        if a.as_number().is_some_and(f64::is_nan) || b.as_number().is_some_and(f64::is_nan) {
-            return Ok(false);
+        if a.as_number().is_some() && b.as_number().is_some() {
+            return Ok(self.strict_equal(a, b));
         }
         if a == b {
             return Ok(true);
