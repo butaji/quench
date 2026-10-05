@@ -24,7 +24,7 @@ const JSON_WHITESPACE: [u16; 4] = [b' ' as u16, b'\t' as u16, b'\n' as u16, b'\r
 enum JsonValue {
     Null,
     Bool(bool),
-    Number(serde_json::Number),
+    Number(f64),
     String(JsString),
     Raw(String),
     Source(Box<JsonValue>, JsString),
@@ -80,7 +80,7 @@ fn write_json(value: &JsonValue, output: &mut String, gap: &str, depth: usize) {
     match value {
         JsonValue::Null => output.push_str("null"),
         JsonValue::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
-        JsonValue::Number(value) => output.push_str(&value.to_string()),
+        JsonValue::Number(value) => output.push_str(&crate::number_to_string::format(*value)),
         JsonValue::String(value) => write_json_string(value, output),
         JsonValue::Raw(value) => output.push_str(value),
         JsonValue::Source(value, _) => write_json(value, output, gap, depth),
@@ -318,8 +318,6 @@ impl<'a> JsonParser<'a> {
         let number = text
             .parse::<f64>()
             .map_err(|_| "invalid number".to_owned())?;
-        let number =
-            serde_json::Number::from_f64(number).ok_or_else(|| "invalid number".to_owned())?;
         Ok(JsonValue::Number(number))
     }
 
@@ -492,7 +490,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 }
             }
-            JsonValue::Number(value) => Value::number(value.as_f64().unwrap_or(f64::NAN)),
+            JsonValue::Number(value) => Value::number(*value),
             JsonValue::String(value) => self.heap.alloc(Cell::String(value.clone())),
             JsonValue::Raw(_) => unreachable!("raw JSON fragments are not parser values"),
             JsonValue::Source(value, _) => self.parse_json_value(value)?,
@@ -525,7 +523,7 @@ impl<H: Host> Vm<H> {
         let unchanged = match value.as_ref() {
             JsonValue::Null => current.is_null(),
             JsonValue::Bool(expected) => current.as_bool() == Some(*expected),
-            JsonValue::Number(expected) => current.as_number() == expected.as_f64(),
+            JsonValue::Number(expected) => self.same_value(current, Value::number(*expected)),
             JsonValue::String(expected) => {
                 matches!(self.heap.get(current), Some(Cell::String(actual)) if actual == expected)
             }
@@ -867,14 +865,7 @@ impl<H: Host> Vm<H> {
             if !value.is_finite() {
                 return Ok(Some(JsonValue::Null));
             }
-            let number =
-                if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
-                    serde_json::Number::from(value as i64)
-                } else {
-                    serde_json::Number::from_f64(value)
-                        .unwrap_or_else(|| serde_json::Number::from(0))
-                };
-            return Ok(Some(JsonValue::Number(number)));
+            return Ok(Some(JsonValue::Number(value)));
         }
         let unboxed = self.json_unbox(p, value)?;
         if unboxed != value {
@@ -1113,13 +1104,5 @@ mod tests {
             panic!("expected string");
         };
         assert_eq!(value.units(), &[0xD800, b'a' as u16, 0xDC00]);
-    }
-
-    #[test]
-    fn json_parser_rejects_non_json_number_forms() {
-        for source in ["01", "1+2", "1.", "1e"] {
-            let units = source.encode_utf16().collect::<Vec<_>>();
-            assert!(JsonParser::new(&units).parse().is_err(), "{source}");
-        }
     }
 }

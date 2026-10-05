@@ -26,9 +26,5 @@ pub(crate) fn format(value: f64) -> String {
         let exponent = exponent.parse::<i32>().expect("numeric exponent");
         return format!("{mantissa}e{exponent:+}");
     }
-    if value.fract() == 0.0 {
-        value.to_string()
-    } else {
-        value.to_string()
-    }
+    value.to_string()
 }
