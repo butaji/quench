@@ -5,7 +5,7 @@
 //! shared adapter re-enters the VM through rooted public operations; Node
 //! process and scheduling state remains in the existing Rust envelope.
 
-mod shared_vm;
+pub(crate) mod shared_vm;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -37,6 +37,7 @@ pub fn process_uptime_capability() -> Value {
 
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
+    pub(crate) commonjs_entry: Option<std::path::PathBuf>,
 }
 
 /// One canonical process identity in the active VM. The legacy variant is
@@ -51,6 +52,31 @@ impl ProcessModule {
         match self {
             Self::Legacy(value) => Some(value.clone()),
             Self::Shared(_) => None,
+        }
+    }
+}
+
+/// The active engine owns one cache. The legacy projection is removed at cutover.
+pub enum ModuleCache {
+    Legacy(std::collections::HashMap<String, Value>),
+    Shared(std::collections::HashMap<String, rqj::RootId>),
+}
+
+impl std::ops::Deref for ModuleCache {
+    type Target = std::collections::HashMap<String, Value>;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Legacy(cache) => cache,
+            Self::Shared(_) => panic!("legacy cache access in shared VM"),
+        }
+    }
+}
+
+impl std::ops::DerefMut for ModuleCache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Legacy(cache) => cache,
+            Self::Shared(_) => panic!("legacy cache access in shared VM"),
         }
     }
 }
@@ -76,7 +102,7 @@ pub struct HostState {
     /// Directory stack for the CJS loader: top is the requiring module's dir.
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
-    pub module_cache: std::collections::HashMap<String, Value>,
+    pub module_cache: ModuleCache,
     /// Module record handed to `__quench_cjs_wrap__` for the file
     /// currently being loaded by `require`.
     pub pending_module: Option<PendingModule>,
@@ -179,7 +205,7 @@ impl NodeHost {
             output: None,
             realm,
             dir_stack: Vec::new(),
-            module_cache: std::collections::HashMap::new(),
+            module_cache: ModuleCache::Legacy(std::collections::HashMap::new()),
             pending_module: None,
             module_stack: Vec::new(),
             pending_uncaught: None,
@@ -213,7 +239,19 @@ impl NodeHost {
         };
         Self {
             state: Rc::new(RefCell::new(state)),
+            commonjs_entry: None,
         }
+    }
+
+    /// Select Node's Script/Module parse goal from its filename and package type.
+    pub fn source_kind(path: &std::path::Path) -> Result<rqj::SourceKind, String> {
+        shared_vm::source_kind(path)
+    }
+
+    /// Execute a file through the CommonJS loader during shared-VM initialization.
+    pub fn with_commonjs_entry(mut self, path: std::path::PathBuf) -> Self {
+        self.commonjs_entry = Some(path);
+        self
     }
 
     pub fn with_output_sink(self, sink: OutputSink) -> Self {

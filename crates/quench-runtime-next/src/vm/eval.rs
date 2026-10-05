@@ -197,13 +197,23 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<Value, JsError> {
         let source_name = format!("<Eval:{}>", self.programs.len());
+        self.eval_global_script_named(p, source, strict, &source_name)
+    }
+
+    pub(super) fn eval_global_script_named(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        strict: bool,
+        source_name: &str,
+    ) -> Result<Value, JsError> {
         if strict {
             self.validate_strict_eval(p, source)?;
         }
         if !self.direct_eval
             && let Some(expression) = crate::Engine::eval_single_expression(source)
         {
-            return self.eval_compiled_expression_named(p, expression, strict, &source_name);
+            return self.eval_compiled_expression_named(p, expression, strict, source_name);
         }
         let context = self.direct_eval_context(p).unwrap_or_default();
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
@@ -235,7 +245,7 @@ impl<H: Host> Vm<H> {
             .collect::<Vec<_>>();
         let residual = crate::Engine::specialize_eval_with_context(
             source,
-            &source_name,
+            source_name,
             &atom_prefix,
             strict,
             context,

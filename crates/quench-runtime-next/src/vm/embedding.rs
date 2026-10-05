@@ -1,6 +1,57 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(match self.heap.get(value) {
+            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn embedding_to_string(&mut self, root: RootId) -> Result<String, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.to_string(&program, value)
+    }
+
+    pub(crate) fn evaluate_embedding_script(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let previous = std::mem::replace(&mut self.direct_eval, false);
+        let result = self.eval_global_script_named(&program, source, false, name);
+        self.direct_eval = previous;
+        result
+    }
+
+    pub(crate) fn parse_embedding_json(&mut self, source: &str) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let source = self.heap.alloc(Cell::String(source.into()));
+        self.json_parse(&program, &[source])
+    }
+
+    pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
+        self.embedding_program()?;
+        let elements = self.embedding_arguments(values)?;
+        Ok(self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_proto),
+            elements: Rc::new(elements),
+        }))
+    }
+
+    pub(crate) fn create_embedding_exception(
+        &mut self,
+        kind: Native,
+        message: &str,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let message = self.heap.alloc(Cell::String(message.into()));
+        self.construct_error_native(&program, kind, &[message])
+    }
+
     pub(crate) fn global_root(&mut self) -> Result<RootId, JsError> {
         self.embedding_program()?;
         Ok(self.root(self.realm.globals))

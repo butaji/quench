@@ -2,6 +2,80 @@ use super::*;
 use crate::{Engine, ResidualProgram};
 use std::{cell::RefCell, rc::Rc};
 
+#[derive(Default)]
+struct CapturingHost;
+
+impl Host for CapturingHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![method "captured" (0) => captured]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let data = context.object_rooted()?;
+        let key = context.string_rooted("answer");
+        let answer = context.number(42.0);
+        assert!(context.set_property_rooted(data, key, answer, data)?);
+        let operation = context.host_function_with_data(HostFunctionId(0), data)?;
+        let global = context.global_root()?;
+        let key = context.string_rooted("captured");
+        assert!(context.set_property_rooted(global, key, operation, global)?);
+        Ok(())
+    }
+}
+
+fn captured(
+    context: &mut NativeContext<'_, CapturingHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    context.collect()?;
+    // Named host re-entry must neither reset roots nor capture the calling frame.
+    let wrapper = context.evaluate_script_rooted(
+        "(function(value) { if (typeof callerLocal !== 'undefined') throw 1; return value; });",
+        "host-reentry.js",
+    )?;
+    let receiver = context.undefined();
+    let result = context.call_rooted(wrapper, receiver, &[data])?;
+    assert_eq!(context.rooted_value(result), context.rooted_value(data));
+    let restored = context.host_function_data()?;
+    assert_eq!(context.rooted_value(restored), context.rooted_value(data));
+    context.collect()?;
+    Ok(result)
+}
+
+#[test]
+fn captured_host_environment_survives_scope_drop_collection_and_guest_reentry() {
+    let mut runtime = Runtime::new(CapturingHost);
+    let program = Engine::specialize(
+        "function caller() { let callerLocal = 7; return captured(); } var result = caller();",
+        "host-capture.js",
+    )
+    .unwrap();
+    runtime.execute(&program).unwrap();
+    runtime.collect(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("result");
+    let data = runtime.get_property_rooted(global, key).unwrap();
+    let key = runtime.string_rooted("answer");
+    let answer = runtime.get_property_rooted(data, key).unwrap();
+    assert_eq!(
+        runtime.rooted_value(answer).unwrap().as_number(),
+        Some(42.0)
+    );
+    let key = runtime.string_rooted("captured");
+    let operation = runtime.get_property_rooted(global, key).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let again = runtime.call_rooted(operation, receiver, &[]).unwrap();
+    assert_eq!(runtime.rooted_value(again), runtime.rooted_value(data));
+    runtime.execute(&program).unwrap();
+    assert!(!runtime.root_is_live(data));
+    assert!(!runtime.root_is_live(operation));
+}
+
 const ECHO: HostFunctionId = HostFunctionId(0);
 const REENTER: HostFunctionId = HostFunctionId(1);
 const REJECT: HostFunctionId = HostFunctionId(2);

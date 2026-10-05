@@ -66,6 +66,84 @@ impl<'a, H: Host> NativeContext<'a, H> {
         }
     }
 
+    /// Read string contents without coercion; `None` denotes a non-string.
+    /// UTF-16 lone surrogates become replacement characters at this host-text boundary.
+    pub fn string_text(&mut self, root: RootId) -> Result<Option<String>, RootedError> {
+        self.vm
+            .embedding_string_text(root)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Apply the realm's ordinary ToString operation at a host boundary.
+    pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
+        let result = self.vm.embedding_to_string(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Evaluate named guest Script code in the active realm, without resetting roots.
+    /// Caller lexical bindings and direct-eval grammar are not inherited.
+    pub fn evaluate_script_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_script(source, name);
+        self.completion(result)
+    }
+
+    pub fn parse_json_rooted(&mut self, source: &str) -> Result<RootId, RootedError> {
+        let result = self.vm.parse_embedding_json(source);
+        self.completion(result)
+    }
+
+    pub fn array_rooted(&mut self, values: &[RootId]) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_array(values);
+        self.completion(result)
+    }
+
+    pub fn boolean(&mut self, value: bool) -> RootId {
+        self.scoped_value(if value { Value::TRUE } else { Value::FALSE })
+    }
+
+    pub fn error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .create_embedding_exception(crate::heap::Native::Error, message);
+        self.completion(result)
+    }
+
+    pub fn type_error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .create_embedding_exception(crate::heap::Native::TypeError, message);
+        self.completion(result)
+    }
+
+    pub fn is_module(&mut self) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_program()
+            .map(|program| program.is_module())
+            .map_err(|error| self.error(error))
+    }
+
+    /// Capture a guest value as private native environment data, traced by the VM.
+    pub fn host_function_with_data(
+        &mut self,
+        id: HostFunctionId,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .embedding_value(data)
+            .and_then(|value| self.vm.create_host_function_with_data(id, value));
+        self.completion(result)
+    }
+
+    pub fn host_function_data(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.host_function_data();
+        self.completion(result)
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
     }

@@ -64,7 +64,8 @@ observations on both sides: signals, timeouts, failed launches and missing
 statuses fail verification even if their outputs match. Completed nonzero exits
 remain comparable. The directory report derives `inventory_complete` from
 its records; this is process completion, not proof that Node APIs are implemented.
-The current `quench-node-next` entry executes bare shared-VM JavaScript. The
+The development `quench-node-next` entry runs shared-VM JavaScript with the
+existing Node host and a partial CommonJS migration. The
 implemented Node case set remains to be frozen by implemented-capability
 ownership, including existing failures, with helper inputs classified separately.
 Legacy/oracle outcomes establish observations, not inventory membership
@@ -188,12 +189,21 @@ Fresh execution invalidates promoted roots too. This mechanism currently covers
 nonconstructible functions; Node classes and host migration remain task 43 work.
 
 The development `quench-node-next` entry uses the existing `NodeHost` on this
-VM. Its current process namespace exposes `uptime`, backed by the same monotonic
-process state as the legacy adapter. The public method descriptors and callback
-behavior are qualified against local Node in script/module controls. Other
-process APIs, the process prototype/global accessors, CommonJS/module aliases,
-Node console formatting and scheduling remain open; this entry does not yet
-qualify the implemented Node suite. Production cutover remains task 27.
+VM. CommonJS files compile through the standard wrapper in the active runtime;
+relative/package resolution and file I/O stay in `quench-node`. The canonical
+process namespace exposes `uptime`; `require('process')` and
+`require('node:process')` return that same object. The shared cache retains
+module records through cycles and reads their current exports. Captured parent
+modules use the VM's existing traced environments; named script re-entry
+preserves active roots.
+
+The CLI selects Module for `.mjs` and package-scoped `.js` with `type: module`;
+CommonJS files and eval retain their respective scopes. The remaining Node APIs,
+public cache/extensions, resolve options, module prototypes, synchronous ESM
+interop, full diagnostics and host scheduling are unqualified. This entry does
+not yet qualify the implemented Node suite. Production cutover remains task 27.
+See
+[task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
 
 ## Shared Wasm scopes
 
