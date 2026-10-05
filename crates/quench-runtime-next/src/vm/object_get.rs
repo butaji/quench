@@ -276,8 +276,9 @@ impl<H: Host> Vm<H> {
         loop {
             if let Some(Cell::Proxy {
                 target, handler, ..
-            }) = self.heap.get(owner).cloned()
+            }) = self.heap.get(owner)
             {
+                let (target, handler) = (*target, *handler);
                 return self.proxy_get(p, target, handler, receiver, PropertyKey::symbol(key));
             }
             if let Some(value) = self.symbol_property(owner, key) {
@@ -403,8 +404,9 @@ impl<H: Host> Vm<H> {
             )?;
             if let Some(Cell::Proxy {
                 target, handler, ..
-            }) = self.heap.get(object).cloned()
+            }) = self.heap.get(object)
             {
+                let (target, handler) = (*target, *handler);
                 // Private names are not property keys observable through a
                 // Proxy. Forwarding here would incorrectly let the target's
                 // hidden storage satisfy a private access on the Proxy.

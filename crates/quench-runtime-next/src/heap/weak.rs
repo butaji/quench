@@ -20,41 +20,61 @@ impl Heap {
     }
 }
 
-impl Heap {
-    pub(super) fn mark_ephemerons(
+#[derive(Clone, Copy)]
+struct PendingWeakValue {
+    value: Value,
+    next: Option<usize>,
+}
+
+/// Collection-local conditional edges, indexed by their unmarked key.
+/// The flat edge list avoids an allocation for every waiting key.
+#[derive(Default)]
+pub(super) struct EphemeronWork {
+    heads: FxHashMap<u32, usize>,
+    values: Vec<PendingWeakValue>,
+}
+
+impl EphemeronWork {
+    pub(super) fn newly_marked(
         &mut self,
+        index: u32,
+        cell: &Cell,
+        marks: &[u64],
         work: &mut Vec<Value>,
-        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
     ) {
-        loop {
-            let mut discovered = false;
-            for index in 0..self.slots.len() {
-                if !Self::marked(&self.marks, index) {
+        let mut next = self.heads.remove(&index);
+        while let Some(index) = next {
+            let pending = self.values[index];
+            work.push(pending.value);
+            next = pending.next;
+        }
+        if let Cell::WeakMap { entries, .. } = cell {
+            for (key, value) in entries.iter() {
+                let Some(key) = key.heap_index() else {
+                    continue;
+                };
+                let Some(target) = value.heap_index() else {
+                    continue;
+                };
+                if Heap::marked(marks, target as usize) {
                     continue;
                 }
-                let cell = unsafe { self.slots.get_unchecked(index).cell.as_ref() };
-                if let Some(Cell::WeakMap { entries, .. }) = cell {
-                    for (key, value) in entries.iter() {
-                        if key
-                            .heap_index()
-                            .is_some_and(|key| Self::marked(&self.marks, key as usize))
-                            && value
-                                .heap_index()
-                                .is_some_and(|value| !Self::marked(&self.marks, value as usize))
-                        {
-                            work.push(*value);
-                            discovered = true;
-                        }
-                    }
+                if Heap::marked(marks, key as usize) {
+                    work.push(*value);
+                } else {
+                    let index = self.values.len();
+                    let next = self.heads.insert(key, index);
+                    self.values.push(PendingWeakValue {
+                        value: *value,
+                        next,
+                    });
                 }
             }
-            if !discovered {
-                break;
-            }
-            self.mark_work(work, shape_roots);
         }
     }
+}
 
+impl Heap {
     pub(super) fn prune_weak_entries(&mut self) -> Vec<(Value, Value)> {
         let mut finalization_jobs = Vec::new();
         let generations = &self.generations;
