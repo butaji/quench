@@ -9,7 +9,9 @@
     "failed": 0,
     "file_errors": 0,
     "inventory_complete": true,
-    "input_manifest_sha256": "4ae315d58192afe6ac6c926bf40f4bbee94d3e26ab13e2b029985e2449a20ef3"
+    "input_manifest_sha256": "4ae315d58192afe6ac6c926bf40f4bbee94d3e26ab13e2b029985e2449a20ef3",
+    "repeated_run_identical": true,
+    "outcome_manifest_sha256": "b2f7784b1869f237b93916caabca331c2652b83e3dadab1a8e16677e614fe1f3"
   },
   "inputs": {
     "suite_revision": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff",
@@ -27,8 +29,15 @@
       "path": "target/iteration/task23-shared-current.json",
       "sha256": "c8e73cec7b720f4c31805b7447663ad3b22c3a4326b148a114ed3dfede07c75c"
     },
+    "repeat_report": {
+      "path": "target/iteration/task23-shared-repeat.json",
+      "sha256": "b40c693213b674df51b8c98b257fc11a17a48fb4dfc02cc8d894cbedbabb5ccb",
+      "source_revision": "c66340ff195caf8ae1e925fc0ac2780f7c44870f",
+      "source_dirty": true,
+      "runner_sha256": "7eaa60ee8f72aca29af2298754a0e91b308ffc088fbbf2b3b1d96383936b48e0"
+    },
     "host": "macos-aarch64",
     "file_timeout_ms": 60000
   },
-  "limitations": "No matching complete prior report was available for a compare-runs baseline. This qualifies one complete shared-runner snapshot, not the integrated task24 build. Tasks 37 and 40 remain dependencies of task 23; production runner promotion and legacy removal remain at task 27."
+  "limitations": "No matching complete prior report was available for compare-runs. Two consecutive complete shared-runner reports have identical 288 input hashes and 67,124 path/kind/expected/got/outcome identities. This is not the integrated task24 build. Tasks 37 and 40 remain dependencies of task 23; production runner promotion and legacy removal remain at task 27."
 }
