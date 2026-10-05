@@ -16,6 +16,7 @@ const DISPOSAL_USE_MODE: i32 = 0;
 const DISPOSAL_ADOPT_MODE: i32 = 1;
 const DISPOSAL_DEFER_MODE: i32 = 2;
 const DISPOSAL_AWAIT_MODE: i32 = 3;
+const DISPOSAL_ASYNC_FROM_SYNC_MODE: i32 = 4;
 const DISPOSAL_INVALID_MODE: i32 = -1;
 
 pub(super) fn disposal_native_length(native: Native) -> Option<f64> {
@@ -647,15 +648,18 @@ impl<H: Host> Vm<H> {
             .copied()
             .ok_or_else(|| JsError("Symbol.dispose is unavailable".into()))?;
         let callback = self.get_index(p, value, async_symbol)?;
-        let callback = if callback.is_undefined() || callback.is_null() {
-            self.get_index(p, value, dispose_symbol)?
+        let (callback, mode) = if is_nullish(callback) {
+            (
+                self.get_index(p, value, dispose_symbol)?,
+                DISPOSAL_ASYNC_FROM_SYNC_MODE,
+            )
         } else {
-            callback
+            (callback, DISPOSAL_USE_MODE)
         };
         if !self.is_function(callback) {
             return Err(self.type_error(p, "async dispose method is not callable".into()));
         }
-        self.push_stack_entry(stack, callback, value, DISPOSAL_USE_MODE, true)?;
+        self.push_stack_entry(stack, callback, value, mode, true)?;
         Ok(value)
     }
 
@@ -958,6 +962,13 @@ impl<H: Host> Vm<H> {
                 };
                 let result = match mode {
                     DISPOSAL_USE_MODE => self.call_value(p, callback, value, &[]),
+                    DISPOSAL_ASYNC_FROM_SYNC_MODE => {
+                        let completion = match self.call_value(p, callback, value, &[]) {
+                            Ok(_) => Value::DELETED,
+                            Err(error) => self.thrown_value_for(p, error),
+                        };
+                        self.disposal_result_promise(p, completion)
+                    }
                     DISPOSAL_ADOPT_MODE => self.call_value(p, callback, Value::UNDEFINED, &[value]),
                     DISPOSAL_DEFER_MODE => self.call_value(p, callback, Value::UNDEFINED, &[]),
                     DISPOSAL_AWAIT_MODE => Ok(Value::UNDEFINED),
