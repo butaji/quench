@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn new_array(&mut self, values: Vec<Value>) -> Value {
-        self.new_array_with_prototype(values, self.array_proto)
+        self.new_array_with_prototype(values, self.array_prototype_for_realm(self.realm.globals))
     }
 
     /// Append an own data element to an unexposed dense array. No guest code runs.
@@ -178,19 +178,15 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    pub(super) fn array_create(&mut self, p: &ResidualProgram, length: usize) -> Result<Value, JsError> {
+    pub(super) fn array_create(
+        &mut self,
+        p: &ResidualProgram,
+        length: usize,
+    ) -> Result<Value, JsError> {
         if length > MAX_ARRAY_LENGTH {
             return Err(self.range_error(p, "invalid array length".into()));
         }
-        let array_atom = self.intern_atom("Array");
-        let array_constructor = self.get_property(p, self.realm.globals, array_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, array_constructor, prototype_atom)?;
-        let prototype = if self.object_data(prototype).is_some() {
-            prototype
-        } else {
-            self.array_proto
-        };
+        let prototype = self.array_prototype_for_realm(self.realm.globals);
         let array = self.heap.alloc(Cell::Array {
             object: Self::empty_object(prototype),
             elements: Rc::new(Vec::new()),
@@ -217,12 +213,7 @@ impl<H: Host> Vm<H> {
                 );
             }
             if target == ArrayFromTarget::TypedArray {
-                self.validate_typed_array_result(
-                    p,
-                    result,
-                    length.unwrap_or_default(),
-                    true,
-                )?;
+                self.validate_typed_array_result(p, result, length.unwrap_or_default(), true)?;
             }
             Ok(result)
         } else if target == ArrayFromTarget::TypedArray {
@@ -312,17 +303,7 @@ impl<H: Host> Vm<H> {
             return outcome;
         }
 
-        let length_atom = self.intern_atom("length");
-        let length_value = self.get_property(p, source, length_atom)?;
-        let length = self.to_number(p, length_value)?;
-        let length = if !length.is_finite() || length <= 0.0 {
-            if length.is_infinite() && length.is_sign_positive() {
-                return Err(JsError("Array.from length is too large".into()));
-            }
-            0
-        } else {
-            length.floor().min(usize::MAX as f64) as usize
-        };
+        let length = self.array_like_length(p, source)?;
         let target = self.array_from_target(p, constructor, Some(length), target_kind)?;
         let root = self.heap.root(target);
         let outcome = (|| {
@@ -339,7 +320,11 @@ impl<H: Host> Vm<H> {
                     self.create_data_property_or_throw(p, target, index, value)?;
                 }
             }
-            Ok(self.heap.root_value(root).unwrap())
+            let target = self.heap.root_value(root).unwrap();
+            if target_kind == ArrayFromTarget::Array {
+                self.set_array_like_length(p, target, length)?;
+            }
+            Ok(target)
         })();
         self.heap.release_root(root);
         outcome
