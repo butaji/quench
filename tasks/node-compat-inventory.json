@@ -1,7 +1,7 @@
 {
   "schema": 2,
   "state": "input_sources_classified_capability_audit_pending",
-  "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the existing curated upstream manifest without adding new upstream selections. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; this stream/iter batch now records its required experimental flag there.",
+  "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the existing curated upstream manifest without adding new upstream selections. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
   "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
   "entries": [
     {
@@ -181,17 +181,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter pull sync stateful. Assertion evidence: L22 assert.strictEqual(; L29 assert.strictEqual(.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing fromSync, pullSync and bytesSync exports."
         ]
       }
     },
@@ -213,17 +205,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter from sync normalization. Assertion evidence: L9 assert.strictEqual(batches.length, 1);; L10 assert.deepStrictEqual(batches[0].map(bytes), [[1], [2]]);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing fromSync and textSync exports."
         ]
       }
     },
@@ -2724,17 +2708,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: broadcast sync write. Assertion evidence: L8 assert.strictEqual(writer.writeSync(\"test\"), true);; L9 assert.strictEqual(writer.writeSync(\"x\"), false);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing broadcast(), writer.writeSync/endSync() and broadcast.push() behavior."
         ]
       }
     },
@@ -3902,23 +3878,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: filehandle pull concurrency. Assertion evidence: L18 assert.strictEqual(await text(fh.pull()), \"hello\");; L26 assert.strictEqual((await bytes(fh.pull())).byteLength, 32);.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L18 assert.strictEqual(await text(fh.pull()), \"hello\");; L26 assert.strictEqual((await bytes(fh.pull())).byteLength, 32);.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L18 assert.strictEqual(await text(fh.pull()), \"hello\");; L26 assert.strictEqual((await bytes(fh.pull())).byteLength, 32);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies text/bytes consumers."
         ]
       }
     },
@@ -3933,23 +3895,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: filehandle pull lifecycle. Assertion evidence: L18 assert.strictEqual(data, \"auto close\");; L19 await assert.rejects(.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L18 assert.strictEqual(data, \"auto close\");; L19 await assert.rejects(.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L18 assert.strictEqual(data, \"auto close\");; L19 await assert.rejects(.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the text consumer."
         ]
       }
     },
@@ -3965,26 +3913,9 @@
         "zlib/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/zlib.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/iterators.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: filehandle pull zlib concurrency. Assertion evidence: L19 assert.strictEqual(await text(pull(compressed, decompressGzip())), value);; L27 console.log(\"concurrent pull zlib contracts passed\").",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L19 assert.strictEqual(await text(pull(compressed, decompressGzip())), value);; L27 console.log(\"concurrent pull zlib contracts passed\").",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L19 assert.strictEqual(await text(pull(compressed, decompressGzip())), value);; L27 console.log(\"concurrent pull zlib contracts passed\").",
-          "Additional asserted behavior: zlib iterable conversion/decompression behavior. Assertion evidence: L19 assert.strictEqual(await text(pull(compressed, decompressGzip())), value);; L27 console.log(\"concurrent pull zlib contracts passed\").",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies text/bytes consumers."
         ]
       }
     },
@@ -3998,21 +3929,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: filehandle pull large range. Assertion evidence: L14 assert.strictEqual(data.byteLength, 200 * 1024);; L19 console.log(\"large ranged pull passed\");.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L14 assert.strictEqual(data.byteLength, 200 * 1024);; L19 console.log(\"large ranged pull passed\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the bytes consumer."
         ]
       }
     },
@@ -4027,23 +3946,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: filehandle pull many. Assertion evidence: L13 assert.strictEqual(await text(handle.pull()), `value-${index}`);; L19 Promise.all(jobs).then(() => console.log(\"many concurrent pulls passed\"));.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L13 assert.strictEqual(await text(handle.pull()), `value-${index}`);; L19 Promise.all(jobs).then(() => console.log(\"many concurrent pulls passed\"));.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L13 assert.strictEqual(await text(handle.pull()), `value-${index}`);; L19 Promise.all(jobs).then(() => console.log(\"many concurrent pulls passed\"));.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the text consumer."
         ]
       }
     },
@@ -4329,17 +4234,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter sync adapter. Assertion evidence: L10 assert.strictEqual(textSync(source), \"hello\");; L11 console.log(\"stream iter sync adapter passed\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no textSync() export."
         ]
       }
     },
@@ -4353,21 +4250,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: pullsync stream iter. Assertion evidence: L10 assert.strictEqual(textSync(handle.pullSync()), \"hello from sync file read\");; L12 console.log(\"pullSync stream iter passed\");.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L10 assert.strictEqual(textSync(handle.pullSync()), \"hello from sync file read\");; L12 console.log(\"pullSync stream iter passed\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pullSync(); active stream/iter exposes no textSync() export."
         ]
       }
     },
@@ -4382,24 +4267,9 @@
         "zlib/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/zlib.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/iterators.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: pullsync first cluster. Assertion evidence: L11 assert.strictEqual(textSync(h.pullSync()), \"hello\");; L16 assert.deepStrictEqual(Buffer.from(bytesSync(h.pullSync())), input);.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L11 assert.strictEqual(textSync(h.pullSync()), \"hello\");; L16 assert.deepStrictEqual(Buffer.from(bytesSync(h.pullSync())), input);.",
-          "Additional asserted behavior: zlib iterable conversion/decompression behavior. Assertion evidence: L11 assert.strictEqual(textSync(h.pullSync()), \"hello\");; L16 assert.deepStrictEqual(Buffer.from(bytesSync(h.pullSync())), input);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns FileHandles without pullSync()/writer(); active stream/iter exposes no textSync(), bytesSync() or pipeToSync() exports."
         ]
       }
     },
@@ -5720,20 +5590,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/stream.rs",
-          "crates/quench-node/src/modules/stream_prelude.js",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream construction, state, lifecycle, read/write, pipe, pipeline, finished, operators and compose behavior; case-specific behavior: stream iter writable methods. Assertion evidence: L12 assert.strictEqual(writer.writeSync(new Uint8Array(1)), false);; L13 assert.strictEqual(writer.writevSync([new Uint8Array(1)]), false);.",
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter writable methods. Assertion evidence: L12 assert.strictEqual(writer.writeSync(new Uint8Array(1)), false);; L13 assert.strictEqual(writer.writevSync([new Uint8Array(1)]), false);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no fromWritable() or ondrain() exports."
         ]
       }
     },
@@ -5747,20 +5606,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/stream.rs",
-          "crates/quench-node/src/modules/stream_prelude.js",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream construction, state, lifecycle, read/write, pipe, pipeline, finished, operators and compose behavior; case-specific behavior: stream iter writev validation. Assertion evidence: L13 assert.throws(() => writer.writev(\"no\"), { code: \"ERR_INVALID_ARG_TYPE\" });; L14 assert.throws(() => writer.writev([new Uint8Array(1), 42]), {.",
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter writev validation. Assertion evidence: L13 assert.throws(() => writer.writev(\"no\"), { code: \"ERR_INVALID_ARG_TYPE\" });; L14 assert.throws(() => writer.writev([new Uint8Array(1), 42]), {.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no fromWritable() export."
         ]
       }
     },
@@ -5774,20 +5622,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/stream.rs",
-          "crates/quench-node/src/modules/stream_prelude.js",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream construction, state, lifecycle, read/write, pipe, pipeline, finished, operators and compose behavior; case-specific behavior: stream iter readable protocol. Assertion evidence: L9 assert.strictEqual(source.stream, readable);; L10 assert.strictEqual(typeof source[Symbol.asyncIterator], \"function\");.",
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter readable protocol. Assertion evidence: L9 assert.strictEqual(source.stream, readable);; L10 assert.strictEqual(typeof source[Symbol.asyncIterator], \"function\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no from() export."
         ]
       }
     },
@@ -5800,17 +5637,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter to writable. Assertion evidence: L14 assert.strictEqual(writable.writableHighWaterMark, Number.MAX_SAFE_INTEGER);; L15 assert.strictEqual(writable._writev, null);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no toWritable() export."
         ]
       }
     },
@@ -5823,17 +5652,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter to writable basic. Assertion evidence: L10 assert.strictEqual(await text(readable), \"hello world\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no push() or toWritable() exports."
         ]
       }
     },
@@ -5846,17 +5667,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter to writable writev. Assertion evidence: L24 assert.strictEqual(batches.length, 1);; L25 assert.strictEqual(batches[0].length, 2);.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no toWritable() export."
         ]
       }
     },
@@ -5869,17 +5682,9 @@
         "stream/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: stream iter to writable sync errors. Assertion evidence: L21 throw new Error(\"end should not run\");; L24 assert.strictEqual(error.message, \"boom\");.",
-          "Invocation: --experimental-stream-iter is required by the Node module gate and is declared in the fixture Flags header."
+        "status": "excluded",
+        "missing_capabilities": [
+          "Active require(\"stream/iter\") exposes no toWritable() export."
         ]
       }
     },
@@ -14692,25 +14497,9 @@
         "zlib/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/zlib.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/iterators.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: fs promises file handle pull. Assertion evidence: L28 assert.strictEqual(data, 'hello from file');; L44 assert.strictEqual(data.byteLength, 256);.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L28 assert.strictEqual(data, 'hello from file');; L44 assert.strictEqual(data.byteLength, 256);.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L28 assert.strictEqual(data, 'hello from file');; L44 assert.strictEqual(data.byteLength, 256);.",
-          "Additional asserted behavior: zlib iterable conversion/decompression behavior. Assertion evidence: L28 assert.strictEqual(data, 'hello from file');; L44 assert.strictEqual(data.byteLength, 256);."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pull(); text/bytes consumers alone do not implement the asserted pull behavior."
         ]
       }
     },
@@ -14728,25 +14517,9 @@
         "zlib/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/zlib.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/iterators.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: fs promises file handle pullsync. Assertion evidence: L36 assert.strictEqual(data, 'hello from sync file read');; L54 assert.strictEqual(data, input);.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L36 assert.strictEqual(data, 'hello from sync file read');; L54 assert.strictEqual(data, input);.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L36 assert.strictEqual(data, 'hello from sync file read');; L54 assert.strictEqual(data, input);.",
-          "Additional asserted behavior: zlib iterable conversion/decompression behavior. Assertion evidence: L36 assert.strictEqual(data, 'hello from sync file read');; L54 assert.strictEqual(data, input);."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without pullSync(); active stream/iter also lacks textSync(), bytesSync() and pipeToSync()."
         ]
       }
     },
@@ -14776,25 +14549,9 @@
         "zlib/iter"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/dispatch_fs.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/fs.rs",
-          "crates/quench-node/src/modules/path.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/zlib.rs",
-          "crates/quench-node/src/polyfills/bootstrap/cluster.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
-          "crates/quench-node/src/polyfills/bootstrap/iterators.rs",
-          "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs",
-          "crates/quench-node/src/registry.rs"
-        ],
-        "obligations": [
-          "stream iterator protocol, pull/pullSync and conversion/write behavior; case-specific behavior: fs promises file handle writer. Assertion evidence: L34 assert.strictEqual(totalBytes, 12);; L35 assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');.",
-          "Additional asserted behavior: FileHandle pull/pullSync/writer I/O, bytes and lifecycle. Assertion evidence: L34 assert.strictEqual(totalBytes, 12);; L35 assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');.",
-          "Additional asserted behavior: file/path resolution used by the asserted FileHandle behavior. Assertion evidence: L34 assert.strictEqual(totalBytes, 12);; L35 assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');.",
-          "Additional asserted behavior: zlib iterable conversion/decompression behavior. Assertion evidence: L34 assert.strictEqual(totalBytes, 12);; L35 assert.strictEqual(fs.readFileSync(filePath, 'utf8'), 'Hello World!');."
+        "status": "excluded",
+        "missing_capabilities": [
+          "fs.promises.open returns a FileHandle without writer(); active stream/iter lacks pipeTo()."
         ]
       }
     },

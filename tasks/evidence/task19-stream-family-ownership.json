@@ -3,24 +3,24 @@
   "task": "19",
   "kind": "node_stream_family_ownership_review",
   "reviewed_on": "2026-10-05",
-  "source_revision": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
-  "source_state": "dirty worktree; this review changed only Node fixture Flags headers and the inventory, alongside pre-existing runtime work",
+  "source_revision": "af56c9637c1465dc00f8b0db905b1bc6f7281861",
+  "source_state": "dirty worktree; this review changed Node fixture Flags headers and inventory alongside pre-existing runtime work",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "3d523769cbe67d15f95cfdfca65ab35ac7c4f61eed03c86310955e7b8ea42eeb",
+    "sha256": "2a665cf8d19291788432f473a02b8736b53358ead6df972bffe51fb071e9ce37",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "case_candidates": 1576,
     "stream_projection_cases": 228,
     "candidate_source_hashes_matched": 228,
     "membership": {
-      "included": 226,
-      "excluded": 2,
+      "included": 205,
+      "excluded": 23,
       "pending": 0
     },
     "membership_frozen": false
   },
   "projection": {
-    "rule": "case records whose static_module_specifiers, after stripping node:, contain one of the five Node stream family names; specifiers locate candidates only, owner review decides membership",
+    "rule": "case records whose static_module_specifiers, after stripping node:, contain one of five Node stream family names; specifiers locate review candidates only",
     "family_hits": {
       "stream": 200,
       "stream/iter": 21,
@@ -38,18 +38,175 @@
   },
   "exclusions": [
     {
+      "path": "tests/node-compat/stage-2014/stream-iter-pull-sync-stateful.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing fromSync, pullSync and bytesSync exports."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2015/stream-iter-from-sync-normalization.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing fromSync and textSync exports."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2256/broadcast-sync-write.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes only bytes/text; this case requires missing broadcast(), writer.writeSync/endSync() and broadcast.push() behavior."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2401/filehandle-pull-concurrency.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies text/bytes consumers."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2402/filehandle-pull-lifecycle.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the text consumer."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2403/filehandle-pull-zlib-concurrency.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies text/bytes consumers."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2404/filehandle-pull-large-range.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the bytes consumer."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2405/filehandle-pull-many.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); active stream/iter only supplies the text consumer."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2434/stream-iter-sync-adapter.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no textSync() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2435/pullsync-stream-iter.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pullSync(); active stream/iter exposes no textSync() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2436/pullsync-first-cluster.js",
+      "missing_capabilities": [
+        "fs.promises.open returns FileHandles without pullSync()/writer(); active stream/iter exposes no textSync(), bytesSync() or pipeToSync() exports."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2522/stream-iter-writable-methods.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no fromWritable() or ondrain() exports."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2523/stream-iter-writev-validation.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no fromWritable() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2524/stream-iter-readable-protocol.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no from() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2525/stream-iter-to-writable.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no toWritable() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2526/stream-iter-to-writable-basic.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no push() or toWritable() exports."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2527/stream-iter-to-writable-writev.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no toWritable() export."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2528/stream-iter-to-writable-sync-errors.js",
+      "missing_capabilities": [
+        "Active require(\"stream/iter\") exposes no toWritable() export."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-promises-file-handle-pull.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pull(); text/bytes consumers alone do not implement the asserted pull behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-promises-file-handle-pullsync.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without pullSync(); active stream/iter also lacks textSync(), bytesSync() and pipeToSync()."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-promises-file-handle-writer.js",
+      "missing_capabilities": [
+        "fs.promises.open returns a FileHandle without writer(); active stream/iter lacks pipeTo()."
+      ]
+    },
+    {
       "path": "tests/node/test/parallel/test-stream-finished-async-local-storage.js",
-      "missing_capability": "stream.finished() does not capture/bind AsyncResource callback context required to preserve AsyncLocalStorage context."
+      "missing_capabilities": [
+        "stream.finished callback AsyncResource capture/binding for AsyncLocalStorage context propagation is missing."
+      ]
     },
     {
       "path": "tests/node/test/parallel/test-stream-finished-bindAsyncResource-path.js",
-      "missing_capability": "stream.finished() does not capture/bind AsyncResource callback context or create STREAM_END_OF_STREAM init/trigger identity."
+      "missing_capabilities": [
+        "stream.finished callback AsyncResource capture/binding and STREAM_END_OF_STREAM async_hooks init/trigger identity are missing."
+      ]
     }
   ],
+  "active_route": {
+    "route_summary": "With --experimental-stream-iter, require.rs returns a module namespace backed by NodeSpecs only for text and bytes unless globalThis.__quenchRequireStreamIter exists. The live bootstrap ability table does not register cluster.rs. fs.rs::promises_open installs read/readFile/write/close/createWriteStream, but not pull/pullSync/writer. The implementations in cluster.rs and writes_tail.rs are source-only for this host.",
+    "observed_stream_iter_exports": [
+      "bytes",
+      "text"
+    ],
+    "surface_probe": {
+      "source": "target/iteration/task19-stream-iter-surface/surface.js",
+      "source_sha256": "ed41619e4e895080e7ca8c0181e979042aef229abb63e60d906f71e082b0dc07",
+      "command": "cargo run --profile iteration -p quench-node-test --bin run-compat -- target/iteration/task19-stream-iter-surface",
+      "outcome": "pass",
+      "observed_exports": [
+        "bytes",
+        "text"
+      ]
+    },
+    "active_source_sha256": {
+      "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+      "crates/quench-node/src/modules/fs.rs": "ec14dad041b3cf1232ae1853faa2e26c9cca56114a275347bd9b1386b619f6a9",
+      "crates/quench-node/src/polyfills/bootstrap.rs": "902b38eb2396cee6119fa417b7148cf46a883f8d2308691d7d1dbb7303a88798",
+      "crates/quench-node/src/polyfills/bootstrap/dispatch.rs": "65a71f76caad952d7baae940303ee1c596dc33b38c48e926c7b5ce608d7db3f9"
+    },
+    "dormant_source_sha256": {
+      "crates/quench-node/src/polyfills/bootstrap/cluster.rs": "5d96532163969166d45753ea25c23b749fc5fe0a0d0c1c1cd595fd981487f7c5",
+      "crates/quench-node/src/polyfills/bootstrap/writes_tail.rs": "8b786c9a33e8b83b489b0fa671bd86ad7fbe1747e8b3f67778ded6729a3b10f8"
+    }
+  },
   "observation_qualification": {
     "included": true,
     "matched_node_trace": false,
-    "reason": "Node completes these observation fixtures and the legacy runner aborts; exact local Node output traces are still missing.",
+    "reason": "Node completes these observation fixtures and legacy aborts; exact local Node output traces remain missing.",
     "paths": [
       "tests/node-compat/stage-2344/stream-backpressure-trace.js",
       "tests/node-compat/stage-2442/stream-backpressure-trace.js",
@@ -59,10 +216,10 @@
   },
   "invocation": {
     "required_flag": "--experimental-stream-iter",
-    "upstream_flagged_cases": 3,
     "local_flagged_cases": 18,
-    "declaration": "fixture Flags headers are the authority; reader.rs parses them and installs execArgv before VM bootstrap; the stream/iter require gate checks that invocation state.",
-    "runner_sources": {
+    "all_projected_flagged_cases": 21,
+    "declaration": "Fixture Flags headers carry invocation metadata; reader.rs parses them and installs execArgv before bootstrap. Keep upstream-required flags even for excluded cases.",
+    "runner_sources_sha256": {
       "crates/quench-node-test/src/reader.rs": "17d531efd7dedbb750d5abd8addb6bca941e791b0455d8789abd35217b621558",
       "crates/quench-node-test/src/case_process.rs": "898b3b8d6fca32799bca0d780a7b2c1a264630c594a6a4ab93b26a0ff4dcccbf",
       "crates/quench-node-test/src/runner.rs": "687ad3f38c726d75e759e8242957249b144e96e6e2e04b7304357fb2cccd7bba",
@@ -106,11 +263,10 @@
         "tests/node-compat/stage-2524/stream-iter-readable-protocol.js"
       ]
     },
-    "qualification": "diagnostic of the current legacy execution only; the worktree runtime is dirty, this outcome does not establish membership or the shared-VM Stage A gate"
+    "qualification": "diagnostic only; the missing active exports and FileHandle methods are independently verified above; this legacy run does not decide membership or qualify the shared-VM gate"
   },
   "owner_sources_sha256": {
     "crates/quench-node/src/dispatch_fs.rs": "de7b29037c83df61576dfc99e5879c7ec8d378836e8ded6973993a1c5ec24067",
-    "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
     "crates/quench-node/src/js_runtime_require_stream_http.rs": "1afc7bf201eec7dcb89f98d888e2383100345628988cb7837a671290e9c4e9c3",
     "crates/quench-node/src/modules/async_hooks.rs": "0cba3cae47932ac34c43f7df1e9f07952b71de0903c68d7813201cbcd243efbc",
     "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
@@ -121,7 +277,6 @@
     "crates/quench-node/src/modules/http.rs": "193ed21a2a38920d8f86979dd69f1645c776425ddff282dbb7a4ea4d0b1e2c87",
     "crates/quench-node/src/modules/http_client.rs": "1c360160b4d98d2fec0b27f35ba9807c607ea29ee3dc1c4ce6b5b1c6202be1a5",
     "crates/quench-node/src/modules/http_res.rs": "55717912772d3f45935ad568a5af27dab58ae9cf17d44613285ad1b66933fa31",
-    "crates/quench-node/src/modules/path.rs": "ec50f94786edcc23b345bfd30ad8b5f4235dca07001aa08ff4efa8d1886197bf",
     "crates/quench-node/src/modules/readline.rs": "b041a0fd9794caa1a764559e2280140b09541f89917d372fe3fe898b79bc1895",
     "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
     "crates/quench-node/src/modules/stream.rs": "2e0109f4a937700d60fe960d102bd6e46f371093c4bbdce530d2a19131966c12",
@@ -131,7 +286,6 @@
     "crates/quench-node/src/modules/timers_promises.rs": "523786e8655276ca8b79d4d7ef788cdee931da44bff8535f50cf747f47cb7050",
     "crates/quench-node/src/modules/tls.rs": "023be348bf3833c16eb67dc915df6f052142b39b58b772613783cdb5059e3f0b",
     "crates/quench-node/src/modules/util.rs": "4d2046c9fd7421c97ccbf8db1026e4aaf8322e42a3a2a420dad4cae9fac1d040",
-    "crates/quench-node/src/modules/zlib.rs": "3d38a3da244abf3ae71ed952406764ecf97742cda3e1f1e455c0b150dff61e90",
     "crates/quench-node/src/polyfills/bootstrap/child_process.rs": "3817d1d0ef2b3caafab9b29e63698e32c37d770653e05f20ff4e8191d7d73ae4",
     "crates/quench-node/src/polyfills/bootstrap/child_process_encoding.rs": "e35e3fbdb6e95c2fff35b0091ee434ce57db589b4a81b060740a9d79e2d3d833",
     "crates/quench-node/src/polyfills/bootstrap/child_process_events.rs": "5aa774f4a8c656c718adca6a2d619992b7c31486e3dc600e81c49797bd059477",
@@ -139,10 +293,8 @@
     "crates/quench-node/src/polyfills/bootstrap/child_process_spawn_errors.rs": "aad2b59b0ec34f562ebe1b5bd2c5a2fa3ecd8381480d4fd8d7ba8943da9bd296",
     "crates/quench-node/src/polyfills/bootstrap/child_process_streams.rs": "a3b6b8432189a55c5016ae9bfa00098d55b1fcfb15738ca34744a4532a3958a0",
     "crates/quench-node/src/polyfills/bootstrap/child_process_validation.rs": "3182fcc98196c6c587a841c983053ec0b5ffdc3bec289741c84eb91e8830db2b",
-    "crates/quench-node/src/polyfills/bootstrap/cluster.rs": "5d96532163969166d45753ea25c23b749fc5fe0a0d0c1c1cd595fd981487f7c5",
     "crates/quench-node/src/polyfills/bootstrap/console.rs": "45b0a10ade97600917649144a021ac7b0fc3c89a4d120339ce6e9a7dcd56bd71",
     "crates/quench-node/src/polyfills/bootstrap/dispatch.rs": "65a71f76caad952d7baae940303ee1c596dc33b38c48e926c7b5ce608d7db3f9",
-    "crates/quench-node/src/polyfills/bootstrap/iterators.rs": "4ad7798c84b5cf8ee02f947e0d961634fcfa9e102c968ffa96179f01c170b2c8",
     "crates/quench-node/src/polyfills/bootstrap/readline_promises.rs": "cf66fb61994f750b1d5a250e1520c05914062abbed8702bb490a7e6f407d96b3",
     "crates/quench-node/src/polyfills/bootstrap/util.rs": "ed43450fa0c7682c2113bb2a84381d2daddb7ae7269788dfb4987ce794db58d5",
     "crates/quench-node/src/polyfills/bootstrap/vfs.rs": "e94e6dfca3dad63e530d557d32fa5cbb19c04c71b8663416c5a72c2f03641249",
@@ -154,8 +306,9 @@
     "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7"
   },
   "limits": [
-    "The full 228-path roster and per-case owner/obligation records live only in tasks/node-compat-inventory.json.",
-    "The 18 local legacy failures remain included because the API obligations are implemented; they need migration/runtime repair, not reclassification.",
-    "This is an owner/membership audit, not a Node suite pass claim or Stage A qualification."
+    "The full candidate roster and per-case obligations live only in tasks/node-compat-inventory.json.",
+    "The larger stream/iter and FileHandle-pull source fragments are not installed by the live bootstrap and do not count as implemented API surface.",
+    "Three included observation cases remain unqualified until matched Node traces are recorded.",
+    "This is an owner/membership audit, not Node suite pass evidence or Stage A qualification."
   ]
 }
