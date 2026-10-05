@@ -1,0 +1,111 @@
+{
+  "schema": 1,
+  "task": "20",
+  "scope": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stages": ["94", "114"],
+    "full_test262_run": false,
+    "inputs_changed": false
+  },
+  "source": {
+    "revision": "38fe28b4c583dc20a8a2b5cb0d8b52c414a5aaad",
+    "dirty": true,
+    "changed_file_sha256": {
+      "crates/quench-runtime-next/src/compile.rs": "6a471484f2e121065ef29556a5d65cba4cb12524377a5cd7c7cc615659a13446",
+      "crates/quench-runtime-next/src/compile/ast.rs": "6a93736ff045b9613324981674310c27361bd8246c91eaaf5e05faca07145f18",
+      "crates/quench-runtime-next/src/compile/ast/expression.rs": "9ba1bd4bebc6dc7919597d8904a42c5bea2eb7d5089fe34dd363cd1cea63a86a",
+      "crates/quench-runtime-next/src/compile/arrow.rs": "766e7e52accbf9078fbd7e742a73e11ed71ee7b595795224f059161eb18832d7"
+    }
+  },
+  "change": {
+    "owner": "FunctionCompiler::annex_b_outer_binding_allowed",
+    "rule": "An Annex B block function named arguments assigns to the existing implicit binding when evaluated; a formal parameter named arguments remains excluded.",
+    "reduction": "Removed the separate implicit-arguments boolean and constructor plumbing. Local collection still avoids a duplicate binding."
+  },
+  "build": {
+    "command": "cargo build --release -p quench-test262 --bin run-stages-next",
+    "runner_sha256": "7b4bd2d50e473d2f49085801931a4c6ec2f05d4ea8628f1bce97a2c1c1719bd5",
+    "generic_control_command": "cargo build --profile dev -p quench-runtime-next --bin quench-next",
+    "generic_runner_sha256": "107527643b9c908b54b9492e9b8f6beffc37c35a27455a55a6011c47dde843d2"
+  },
+  "test262": {
+    "stage94_annexb_function_declaration_cohort": {
+      "selection": "run-stages-next 94 94 block-decl-func",
+      "passed": 19,
+      "failed": 1,
+      "total": 20,
+      "failed_path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "report": "target/iteration/task20-annexb-function-cohort-after.json",
+      "report_sha256": "9b95eec00bc38d27a1e215fc34a17b4321246a363879a47b4ff7dfcafe6f251b"
+    },
+    "stage114_annexb_function_family": {
+      "selection": "run-stages-next 114 114 block-scoped-functions-annex-b-",
+      "passed": 9,
+      "failed": 0,
+      "total": 9,
+      "report": "target/iteration/task20-staged-annexb-family-after.json",
+      "report_sha256": "35b8625cbd99c4a99783283f7bf87636dd0f9541d09e655efee33e258491fae2"
+    },
+    "stage114_direct_eval_regression": {
+      "selection": "run-stages-next 114 114 regress-602621.js",
+      "passed": 1,
+      "failed": 0,
+      "total": 1,
+      "report": "target/iteration/task20-regress-602621-after.json",
+      "report_sha256": "c299fad6cb5c0ce909d34cb1ac5bb0e46d8140d275ccd406ffe473f7108f5a50"
+    },
+    "matched_stage114_subset": {
+      "cases": 10,
+      "before_passed": 8,
+      "before_failed": 2,
+      "after_passed": 10,
+      "after_failed": 0,
+      "compare_command": "target/debug/compare-runs --reports target/iteration/task20-annex-b-stage114-before-projection.json target/iteration/task20-annex-b-stage114-after-projection.json",
+      "compare_output": "regressions=0",
+      "before_report_sha256": "0bc9a349d2d6fa4c65d697554825a4f4133806a789fe69e68536e72bfabe6c3e",
+      "after_report_sha256": "8bc013a9be022b2e92b72da35ca5dcf63e456cc6ebe8055d49743bdfcdc536f4",
+      "baseline_projection_source": "target/iteration/task20-date-current/stage114-release.json",
+      "baseline_source_report_sha256": "64e9e023b681b4ad895eb94471e0b310e1efc98814b34a406940c4592280fb64"
+    },
+    "stale_stage94_fixture": {
+      "before_outcome": "pass",
+      "after_outcome": "fail",
+      "compare_command": "target/debug/compare-runs --reports target/iteration/task20-annex-b-official-arguments-before.json target/iteration/task20-annex-b-official-arguments-after.json",
+      "compare_output": "regressions=1: annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "before_report_sha256": "73e1ebb5e4a58f59dc0e4aa4db0db2fa958ef02c73901466493dd23b6c1b5761",
+      "after_report_sha256": "de606fb7772a2a675840373d38c831a4d52844cc2944842956d5028df8e9ad78"
+    }
+  },
+  "node_oracle": {
+    "version": "v26.10.0",
+    "report": "target/iteration/task20-annex-b-node-oracle.json",
+    "report_sha256": "4d52a915029ec71fd42ae784fde357fca1be0c1553514752af56ca1be5babcb5",
+    "outcomes": {
+      "annexB/language/function-code/block-decl-func-skip-arguments.js": "fail: stale expectation",
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js": "pass",
+      "staging/sm/regress/regress-602621.js": "pass"
+    }
+  },
+  "execution_modes": {
+    "control_script": "target/iteration/task20-annex-b-arguments-control.cjs",
+    "control_script_sha256": "a2f48a4e29e8221fcf824a8ec5872bc9b4df6c234699198f370297d20fbad705",
+    "report": "target/iteration/task20-annex-b-diff-next.json",
+    "report_sha256": "d3403ef411ce29b17de1b7242c01471318d46e98118ac2337e16366b3d8393e2",
+    "specialized_matches_generic": true,
+    "specialized_matches_node": true,
+    "generic_matches_node": true,
+    "legacy_matches_control": false
+  },
+  "upstream": {
+    "spec": "https://tc39.es/ecma262/2025/multipage/additional-ecmascript-features-for-web-browsers.html#sec-web-legacy-compatibility-semantics-block-level-function-declarations",
+    "test262_issue": "https://github.com/tc39/test262/issues/5113",
+    "test262_correction_pr": "https://github.com/tc39/test262/pull/5112",
+    "status_checked": "2026-10-05",
+    "pin_contains_pre-correction_fixture": true
+  },
+  "limits": [
+    "Focused Stage94 and Stage114 selections only; neither full stage nor full Test262 was run.",
+    "The current Test262 pin cannot pass all cases until its upstream-confirmed stale expectation is corrected.",
+    "Stage A remains open."
+  ]
+}
