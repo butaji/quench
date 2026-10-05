@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "8083d000f27a26d4a266d8279cabb18cee81fb2d",
+  "qualification": "One isolated intrinsic installation change on the committed baseline; broader pending main-tree changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/error.rs": "6e90ce6f0c64b93d60e9c12064e1a5a7f3ffbe42c0dcb22b25a9f9cf274511f9"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": "Root Symbol.prototype now uses set_named_constant, the existing authority already used by foreign-realm Symbol installation. Its value and descriptor are installed together; no descriptor table, special-case mutation branch or new allocation.",
+  "contract": "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-symbol.prototype",
+  "build": {
+    "profile": "release, correctness only; no speed/RSS claim",
+    "log": "target/iteration/task12-symbol-intrinsics/qualified-build.log",
+    "before_binary_sha256": "cb2ec1f35f247021a3e30ebdf6900a70dbcaa209dc8f908038b378be9849fd74",
+    "after_binary_sha256": "989a0e237ec5fedcf88334d4a89bd0e5c9c071a059743588e342c12375ee668a",
+    "discarded_build": "An accidental build in the broader main checkout was interrupted; its results are excluded. Only the subsequent isolated qualified build supplies candidate binaries."
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 128,
+    "passed_before": 127,
+    "passed_after": 128,
+    "gained": [
+      "staging/sm/Symbol/surfaces.js"
+    ],
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "symbol",
+        "total": 98,
+        "before_passed": 98,
+        "after_passed": 98,
+        "compare_exit": 0,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task12-symbol-intrinsics/before-symbol.json": "652d049e75b164a12b93bc98a6c3f50c0d1199549ee510d5e0ee91578b58fd78",
+          "target/iteration/task12-symbol-intrinsics/after-symbol.json": "70d53a4887df21682754431e78176465767cb9c7987afef05a12eeff86981c78",
+          "target/iteration/task12-symbol-intrinsics/compare-symbol.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-symbol",
+        "total": 30,
+        "before_passed": 29,
+        "after_passed": 30,
+        "compare_exit": 0,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task12-symbol-intrinsics/before-staged-symbol.json": "28fb7a7b4f18138d3b457c938331aa0955f1bf25a6a1d6abf76ca962ca113136",
+          "target/iteration/task12-symbol-intrinsics/after-staged-symbol.json": "e5155efaf4c0c2b9a683ca592c9804c587213727fd5be6954b98adccfe4786a8",
+          "target/iteration/task12-symbol-intrinsics/compare-staged-symbol.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "controls": 13,
+    "observations_per_build": 26,
+    "before_matches": 4,
+    "after_matches": 26,
+    "oracle": "v26.10.0",
+    "report": "target/iteration/task12-symbol-intrinsics/node-controls.json",
+    "report_sha256": "0f357e5341afdcc2ea166bb07c2d375f6d9895ac0c884f5dd586b523f16a3217",
+    "scope": "Descriptor/identity, sloppy/strict assignment and deletion, same-value and changed-value definitions, descriptor changes, boxing, proxy read/descriptor/key invariants; normal and generic execution.",
+    "oracle_setup": "Print is installed before indirect eval of the original Script source, preserving its strict-mode directive."
+  },
+  "units": "No new unit tests; this descriptor behavior is covered by the affected suite and Node observations.",
+  "limits": [
+    "The selected Symbol family now passes, but Stage A, complete current Test262, Wasm and implemented Node qualification remain open.",
+    "The prior Date/non-iso failure and eight matching ten-second Date stress timeouts are unchanged observations outside this Symbol selection."
+  ]
+}
