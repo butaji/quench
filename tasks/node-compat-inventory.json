@@ -6986,7 +6986,18 @@
       "static_module_specifiers": [
         "assert",
         "child_process"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "Requires generic process.execPath -p child execution and filename-sensitive Buffer DEP0005 stderr; the current child path fabricates output by matching source text and filename."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2706/buffer-pending-deprecation-modules.js",
@@ -6995,7 +7006,18 @@
       "static_module_specifiers": [
         "assert",
         "child_process"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "Requires real CJS/ESM child status and Buffer DEP0005 stderr with and without --pending-deprecation; the current child path fabricates output for the fixture paths."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2707/typed-array-of-view.js",
@@ -7251,7 +7273,22 @@
       "static_module_specifiers": [
         "assert",
         "buffer"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_buffer.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/buffer_from.rs",
+          "crates/quench-node/src/modules/buffer_proto.rs"
+        ],
+        "obligations": [
+          "Buffer.allocUnsafeSlow and Buffer.from(ArrayBuffer) results carry the Buffer prototype brand required by instanceof; assertions at L4-L5. This does not assert equality between the global and module constructors."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2737/buffer-search-stress.js",
@@ -12532,7 +12569,23 @@
         "assert",
         "buffer",
         "internal/test/binding"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_buffer.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/buffer_from.rs",
+          "crates/quench-node/src/modules/buffer_proto.rs",
+          "crates/quench-node/src/js_runtime_internal_binding.rs"
+        ],
+        "obligations": [
+          "Buffer.allocUnsafe/allocUnsafeSlow alignment arguments, physical alignment, pool bounds and allocation errors; assertions at L30-L40, L49-L58 and L114-L157. Active allocation methods exist; the current internal aligned-offset helper returns zero, so membership does not imply the physical-alignment obligation passes."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js",
@@ -12542,7 +12595,18 @@
         "../common",
         "assert",
         "internal/test/binding"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/js_runtime_internal_binding.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/buffer.rs"
+        ],
+        "obligations": [
+          "Requires internalBinding(debug).getGenericUsageCount deltas for NodeArrayBufferAllocator.Allocate.ZeroFilled; the active debug binding and allocator usage counters are absent."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-alloc-unsafe-is-uninitialized.js",
@@ -12552,7 +12616,18 @@
         "../common",
         "assert",
         "internal/test/binding"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/js_runtime_internal_binding.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/buffer.rs"
+        ],
+        "obligations": [
+          "Requires internalBinding(debug).getGenericUsageCount deltas for NodeArrayBufferAllocator.Allocate.Uninitialized; the active debug binding and allocator usage counters are absent."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-ascii.js",
@@ -12648,7 +12723,18 @@
         "../common",
         "assert",
         "child_process"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "Requires generic process.execPath -p execution for filename-sensitive Buffer DEP0005 suppression; the current child path fabricates stderr by parsing embedded source and filename."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-constructor-node-modules.js",
@@ -12658,7 +12744,18 @@
         "../common",
         "../common/child_process",
         "../common/fixtures"
-      ]
+      ],
+      "implementation": {
+        "status": "excluded",
+        "owners": [
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "Requires real CJS/ESM child execution and observed Buffer DEP0005 stderr under --pending-deprecation; the current child path fabricates results for warning_node_modules fixture paths."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-constructor-outside-node-modules.js",

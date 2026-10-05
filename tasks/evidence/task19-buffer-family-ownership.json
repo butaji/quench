@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_api_family_ownership",
+  "reviewed_on": "2026-10-05",
+  "source_revision": "52b37f36cc971137182500b4dc9f6e535baf62ad",
+  "source_state": "dirty; owner hashes bind this partial review to the current source snapshot",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "c9268c8232b782c02a7486452ba72300a127cdd0afa624371684214292c6c032",
+    "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+    "candidate_assertions": 106,
+    "candidate_observations": 1
+  },
+  "projection": {
+    "family": "Buffer",
+    "candidate_assertions": 106,
+    "candidate_observations": 1,
+    "already_included_assertions": 1,
+    "newly_classified_assertions": 7,
+    "newly_included_assertions": 2,
+    "newly_excluded_assertions": 5,
+    "newly_excluded_observations": 1,
+    "remaining_pending_assertions": 98,
+    "remaining_pending_observations": 0,
+    "membership_frozen": false
+  },
+  "active_route": {
+    "legacy_summary": "The legacy Node host installs global Buffer and NodeBuffer from registry.rs; require.rs exposes cached bare and node:buffer aliases and builds the module surface. Buffer operations route through dispatch_buffer.rs and modules/buffer*.rs.",
+    "shared_vm_gap": "host/shared_vm.rs and host/shared_vm/commonjs.rs do not yet register Buffer; task 21 owns migration of the implemented surface.",
+    "source_specific_child_output": "modules/child_process.rs fabricates Buffer deprecation output for warning_node_modules fixture paths and parses new Buffer source/filename in -p commands. Those paths are excluded until generic child execution supports the assertions; task 21 already owns this cleanup."
+  },
+  "selected_cases": [
+    {
+      "path": "tests/node/test/parallel/test-buffer-alloc-alignment.js",
+      "role": "assertion_case",
+      "sha256": "0dc43bcd67f14c6a09d63548295164a8b26963131a587fab67a13fda06d0c672",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs"
+      ],
+      "obligations": [
+        "Buffer.allocUnsafe/allocUnsafeSlow alignment arguments, physical alignment, pool bounds and allocation errors; assertions at L30-L40, L49-L58 and L114-L157. Active allocation methods exist; the current internal aligned-offset helper returns zero, so membership does not imply the physical-alignment obligation passes."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2736/buffer-constructor-identity.js",
+      "role": "assertion_case",
+      "sha256": "adbaa7b70ff2466a3e3eeb99bfb4235cb4fffa993bffb3cb786f34bda1683623",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs"
+      ],
+      "obligations": [
+        "Buffer.allocUnsafeSlow and Buffer.from(ArrayBuffer) results carry the Buffer prototype brand required by instanceof; assertions at L4-L5. This does not assert equality between the global and module constructors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-alloc-unsafe-is-initialized-with-zero-fill-flag.js",
+      "role": "assertion_case",
+      "sha256": "9b0262b7be7b9c07ba817be71f200edbf74d3b64e6dcc6567f18f4f7aaeea9ba",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "Requires internalBinding(debug).getGenericUsageCount deltas for NodeArrayBufferAllocator.Allocate.ZeroFilled; the active debug binding and allocator usage counters are absent."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-alloc-unsafe-is-uninitialized.js",
+      "role": "assertion_case",
+      "sha256": "271c47fb1ff5b0b8c8c409693016f0667861c35a44dc4440384ab14ed6fcfa89",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "Requires internalBinding(debug).getGenericUsageCount deltas for NodeArrayBufferAllocator.Allocate.Uninitialized; the active debug binding and allocator usage counters are absent."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2705/buffer-deprecation-subprocess.js",
+      "role": "assertion_case",
+      "sha256": "d0bdc9560eb6455e57184f7b8a4b58a33f9fe836b0693c4e6541cd5379c12d3e",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs"
+      ],
+      "obligations": [
+        "Requires generic process.execPath -p child execution and filename-sensitive Buffer DEP0005 stderr; the current child path fabricates output by matching source text and filename."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2706/buffer-pending-deprecation-modules.js",
+      "role": "assertion_case",
+      "sha256": "79a4a37c13e8ec61f52b417a7309a0df91ad06dc6d63554847f7cf57a7a410cc",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs"
+      ],
+      "obligations": [
+        "Requires real CJS/ESM child status and Buffer DEP0005 stderr with and without --pending-deprecation; the current child path fabricates output for the fixture paths."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-constructor-node-modules-paths.js",
+      "role": "assertion_case",
+      "sha256": "780b22796d115c93aed9e3de78d1b6701deb0d3dbefeb1819bba4ef64b4899a5",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs"
+      ],
+      "obligations": [
+        "Requires generic process.execPath -p execution for filename-sensitive Buffer DEP0005 suppression; the current child path fabricates stderr by parsing embedded source and filename."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-constructor-node-modules.js",
+      "role": "observation_case",
+      "sha256": "9735dc9710e52f67e55dea4b0aab05039f586b7fc11ec4fbcb03520d638718f5",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs"
+      ],
+      "obligations": [
+        "Requires real CJS/ESM child execution and observed Buffer DEP0005 stderr under --pending-deprecation; the current child path fabricates results for warning_node_modules fixture paths."
+      ]
+    }
+  ],
+  "owner_sources_sha256": {
+    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
+    "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+    "crates/quench-node/src/dispatch_buffer.rs": "38fef1a9f33bae31572ca840d17f48227450b75c8fc40d7d5fa20de5b34d96e6",
+    "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
+    "crates/quench-node/src/modules/buffer_from.rs": "9762a39be4a212b8cfe68a8651b5020601e6d40d90c5f0c911fc2f17d5e404fa",
+    "crates/quench-node/src/modules/buffer_enc.rs": "1634e27a9874b93163b13b666c8b2ee2376d1b654c397ab54eb82f5c1488fbff",
+    "crates/quench-node/src/modules/buffer_proto.rs": "5170e2a88b691e178d405cc81de17163cf5fdde4474a2425d250005a53715a38",
+    "crates/quench-node/src/modules/buffer_methods.rs": "62847833d9932c67d17dc4ac9c31417c4f045a7c97acadb9a6288e272644a510",
+    "crates/quench-node/src/modules/buffer_methods/buffer_search.rs": "858c93587ed64e7a706d22709620509fee1094f679b351ae704a05a53db7b7e4",
+    "crates/quench-node/src/modules/buffer_rw.rs": "a6813661e7bd80ad9d6f782041f48c555a56039340a00906dec48035ab5fa903",
+    "crates/quench-node/src/modules/buffer_write.rs": "d575cb335b9dcd8ca884bf3406ec0cc8c6d63d455d301f80078e9c175a5e270b",
+    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
+    "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+    "crates/quench-node/src/host/shared_vm.rs": "0abcbfc503aa5f336b82e5701f5ffa2f22180f3a3a4179cc36917066eb470394",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "0659e2f5fe672a8875013b192249e8b16b0bca81a999b6ef444c726afd5e8e1e"
+  },
+  "limits": [
+    "This is a partial audit of seven newly classified assertions and one observation; 98 Buffer assertion candidates remain pending.",
+    "Candidate membership is based on asserted behavior and active capability, not import presence or pass outcome.",
+    "The alignment case remains included despite an incomplete physical-alignment implementation.",
+    "No suite was run for this metadata-only review."
+  ]
+}

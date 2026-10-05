@@ -7,7 +7,7 @@
   "source_state": "dirty worktree; this review changed Node fixture Flags headers and inventory alongside pre-existing runtime work",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "2a665cf8d19291788432f473a02b8736b53358ead6df972bffe51fb071e9ce37",
+    "sha256": "c9268c8232b782c02a7486452ba72300a127cdd0afa624371684214292c6c032",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "case_candidates": 1576,
     "stream_projection_cases": 228,
