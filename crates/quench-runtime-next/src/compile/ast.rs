@@ -323,6 +323,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn emit_hoisted(&mut self, body: &[Statement<'_>]) {
         for statement in body {
+            let statement = super::early::statement_without_labels(statement);
             let (function, default_export) = match statement {
                 Statement::FunctionDeclaration(function) => (Some(function), false),
                 Statement::ExportDeclaration(export) => match &export.declaration {
@@ -394,14 +395,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     self.store_atom_with_initialization(atom, dst, true);
                 } else if let Some(identifier) = &function.id {
                     let atom = self.owner.atom(identifier.name.as_str());
-                    let block_binding = self.active_lexical_binding(atom).is_some();
-                    self.store_atom(atom, dst);
-                    if block_binding
-                        && !self.strict
-                        && super::early::annex_b_function_eligible(function)
-                    {
-                        self.store_annex_b_outer(atom, dst, function.span.start);
-                    }
+                    self.initialize_atom(atom, dst);
                 } else {
                     continue;
                 }
@@ -777,7 +771,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         scope: &mut FxHashMap<Atom, Atom>,
         immutable: &mut FxHashSet<Atom>,
     ) {
-        match statement {
+        match super::early::statement_without_labels(statement) {
             Statement::VariableDeclaration(declaration)
                 if super::is_lexical_binding_declaration(declaration.kind) =>
             {

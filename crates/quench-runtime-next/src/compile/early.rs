@@ -8,6 +8,16 @@ use oxc_syntax::scope::ScopeFlags;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
 
+/// Labels preserve the enclosing declaration scope of an Annex B function.
+pub(super) fn statement_without_labels<'a, 's>(
+    mut statement: &'s Statement<'a>,
+) -> &'s Statement<'a> {
+    while let Statement::LabeledStatement(labelled) = statement {
+        statement = &labelled.body;
+    }
+    statement
+}
+
 pub(super) fn normalize_hashbang(source: &str) -> Cow<'_, str> {
     if !source.starts_with("#!") {
         return Cow::Borrowed(source);
@@ -852,7 +862,7 @@ fn annex_b_function_name(function: &oxc_ast::ast::Function<'_>) -> Option<String
 fn block_function_names(statements: &[Statement<'_>]) -> Vec<String> {
     statements
         .iter()
-        .filter_map(|statement| match statement {
+        .filter_map(|statement| match statement_without_labels(statement) {
             Statement::FunctionDeclaration(function) => annex_b_function_name(function),
             _ => None,
         })
@@ -946,6 +956,7 @@ fn collect_annex_b_collisions(
                 nested_visible.extend(direct_functions);
                 for case in &statement.cases {
                     for nested_statement in &case.consequent {
+                        let nested_statement = statement_without_labels(nested_statement);
                         if let Statement::FunctionDeclaration(function) = nested_statement {
                             if let Some(identifier) = &function.id
                                 && function_visible
@@ -990,6 +1001,7 @@ fn collect_block_collisions(
     let mut nested_visible = function_visible.clone();
     nested_visible.extend(block_function_names(statements));
     for statement in statements {
+        let statement = statement_without_labels(statement);
         if let Statement::FunctionDeclaration(function) = statement {
             if let Some(identifier) = &function.id
                 && function_visible
