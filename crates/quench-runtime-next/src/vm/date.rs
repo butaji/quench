@@ -432,21 +432,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::String(hint)) if hint.host_string() == "number" => "number",
             _ => return Err(self.type_error(p, "Invalid hint".into())),
         };
-        for name in if hint == "string" {
-            ["toString", "valueOf"]
-        } else {
-            ["valueOf", "toString"]
-        } {
-            let atom = self.intern_atom(name);
-            let method = self.get_property(p, receiver, atom)?;
-            if self.is_function(method) {
-                let value = self.call_value(p, method, receiver, &[])?;
-                if !self.is_object_like(value) {
-                    return Ok(value);
-                }
-            }
-        }
-        Err(self.type_error(p, "Cannot convert object to primitive value".into()))
+        self.ordinary_to_primitive(p, receiver, hint)
     }
 
     fn date_setter(
