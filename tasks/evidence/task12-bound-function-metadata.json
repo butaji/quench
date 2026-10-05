@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "da3906ab8491e28de034fd195bf86eb1a81c8efb",
+  "qualification": "Isolated bound-function metadata operations and existing internal root-lifetime check; pending caller/arguments reflection, Node and Wasm changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/function.rs": "9253a90161df648446317b1f256bdca5ed22a610c498cac41cac0529ad634997",
+    "crates/quench-runtime-next/src/vm/tests.rs": "0fd1b3a36d6691cfe85bd8bcb86f859d78cbba3e755eec7cca07a476f9ecc954"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "operation": "Bound functions derive their prototype from the target through shared GetPrototypeOf before checking own length through shared GetOwnPropertyDescriptor, then ordinary length and name reads. Existing bound target and callable roots own liveness across all observable operations.",
+    "reduction": "No duplicate proxy/descriptor rules, metadata flag, wrapper or semantic unit test. Extend the existing internal root-count/weak-lifetime invariant with abrupt prototype/own-descriptor traps."
+  },
+  "spec": "https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-function.prototype.bind",
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/builtins-function.cc": "275fde6ec532949511b5c2990961c7e7017f999ddaf89f30cfa2be4a381bdf04",
+    "tests/node/deps/v8/src/objects/js-function.cc": "b665a35310a79dc7ab0ceb35c772ddec44dd3a0e00e8f110cc737a9dbea4acc5"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task12-bound-function-metadata/build.log",
+    "before_binary_sha256": "4e27e9f1b1442199eb0629505f90bf266d4a1b86eb205b9b37fbf18ebff44b8e",
+    "after_binary_sha256": "4f7811dad5fa4a6226ab9241534d827f68cbada1ae42af5165e964e15ec66c4a"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Function stage, staged Function directory, staged bound-function subclassing case.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 563,
+    "passed_before": 560,
+    "passed_after": 562,
+    "gained": [
+      "staging/sm/Function/bound-length-and-name.js",
+      "staging/sm/class/boundFunctionSubclassing.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "staging/sm/Function/function-caller-restrictions.js"
+    ],
+    "scopes": [
+      {
+        "scope": "function",
+        "total": 509,
+        "passed_before": 509,
+        "passed_after": 509,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-bound-function-metadata/before-function.json": "363b44fe02929ee89ec12a3f50e888127fa94848138401e81952354cc4c7e710",
+          "target/iteration/task12-bound-function-metadata/after-function.json": "fa8c7ddc3c8ab5d193f43e81555fcedc9852e60e94736884d9047277e7929d4e",
+          "target/iteration/task12-bound-function-metadata/compare-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-function",
+        "total": 53,
+        "passed_before": 51,
+        "passed_after": 52,
+        "gained": [
+          "staging/sm/Function/bound-length-and-name.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-bound-function-metadata/before-staged-function.json": "ecd10b092afbb478fe9a3c904db3286bcc669b1207d1ec8d9e5f71b52f3cf291",
+          "target/iteration/task12-bound-function-metadata/after-staged-function.json": "1e9ad1b5cdf2ee9fc40d57d9ec3f1ca5cf3d2a667e7c85e9f401e1264e12c7f0",
+          "target/iteration/task12-bound-function-metadata/compare-staged-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "bound-class",
+        "total": 1,
+        "passed_before": 0,
+        "passed_after": 1,
+        "gained": [
+          "staging/sm/class/boundFunctionSubclassing.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-bound-function-metadata/before-bound-class.json": "3a0d2e598cd7f59b77da31e0a61d436350d6c13d283b315985715147bcca927e",
+          "target/iteration/task12-bound-function-metadata/after-bound-class.json": "2b1f0ece80be5c7a67491bdaaa1a1cd2b207a965289d2a9309fbd2d0bdcc5322",
+          "target/iteration/task12-bound-function-metadata/compare-bound-class.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "sources": 31,
+    "observations_per_build": 62,
+    "before_matches": 46,
+    "after_matches": 62,
+    "losses": 0,
+    "report": "target/iteration/task12-bound-function-metadata/node-controls.json",
+    "sha256": "62826fec8c855244f09680ffc3a13b9a6ed99e9c66df594561adc39e0988b920",
+    "scope": "Proxy prototype/own-descriptor/get ordering, absent own and inherited length, custom/null prototypes, length/name types, nested binding, construction, arrows, subclassing and abrupt exits; normal and generic modes."
+  },
+  "limits": [
+    "No suite pin, fixture, harness, discovery, expectation, exclusion or deadline changed.",
+    "One staged caller-restrictions case remains; no full-suite claim. Single production VM, Test262, Wasm and implemented Node completion remain open."
+  ],
+  "internal_verification": {
+    "command": "cargo test --profile iteration -p quench-runtime-next --lib bound_function_metadata_roots_release_on_normal_and_abrupt_completion",
+    "passed": 1,
+    "failed": 0,
+    "scope": "Existing root-count and weak-lifetime invariant; ordinary success and abrupt length/name/getPrototypeOf/getOwnPropertyDescriptor exits in both compilation modes.",
+    "log": "target/iteration/task12-bound-function-metadata/internal.log",
+    "sha256": "8e70483b16ab5f0c2bbe23b9c370aa93175e23432d91ca9d1278342feff4a673"
+  }
+}
