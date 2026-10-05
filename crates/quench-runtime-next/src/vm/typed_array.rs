@@ -219,6 +219,9 @@ impl<H: Host> Vm<H> {
             let length = self.typed_array_length(this).unwrap_or_default();
             return self.array_to_locale_string_with_length(p, this, length, args);
         }
+        if native == Native::Uint8ArraySet {
+            return self.typed_array_set_native(p, this, args);
+        }
         if native == Native::Uint8ArraySubarray {
             return self.typed_array_subarray_native(p, this, args);
         }
@@ -268,7 +271,6 @@ impl<H: Host> Vm<H> {
             Native::Uint8ArrayReverse
                 | Native::Uint8ArrayFill
                 | Native::Uint8ArrayCopyWithin
-                | Native::Uint8ArraySet
         ) && matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
         {
             return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
@@ -322,60 +324,7 @@ impl<H: Host> Vm<H> {
                 }
                 Ok(this)
             }
-            Native::Uint8ArraySet => {
-                let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let start = args
-                    .get(1)
-                    .map(|value| self.to_number(p, *value))
-                    .transpose()?
-                    .unwrap_or(0.0);
-                let start = if start.is_nan() { 0.0 } else { start.trunc() };
-                if start < 0.0 || start.is_infinite() {
-                    return Err(self.range_error(p, "typed array set offset is invalid".into()));
-                }
-                let start = start as usize;
-                if self.typed_array_out_of_bounds(this) || self.array_buffer_detached(buffer) {
-                    return Err(self.type_error(p, "typed array receiver is invalid".into()));
-                }
-                let current_length = self.typed_array_length(this).unwrap_or_default();
-                let typed_source = matches!(self.heap.get(source), Some(Cell::TypedArray { .. }));
-                let source_object = if typed_source {
-                    source
-                } else {
-                    self.box_object_or_type_error(p, source)?
-                };
-                let source_length = if typed_source {
-                    if self.typed_array_out_of_bounds(source) {
-                        return Err(self.type_error(p, "typed array source is invalid".into()));
-                    }
-                    self.typed_array_length(source).unwrap_or_default()
-                } else {
-                    self.array_like_length(p, source_object)?
-                };
-                if start > current_length || source_length > current_length - start {
-                    return Err(self.range_error(p, "typed array set source is too large".into()));
-                }
-                if typed_source {
-                    let values = (0..source_length)
-                        .map(|index| {
-                            self.typed_array_get(source, index).unwrap_or(Value::UNDEFINED)
-                        })
-                        .collect::<Vec<_>>();
-                    for (index, value) in values.into_iter().enumerate() {
-                        self.typed_array_set(p, this, start + index, value)?;
-                    }
-                } else {
-                    for index in 0..source_length {
-                        let value = self.get_index(
-                            p,
-                            source_object,
-                            Value::number(index as f64),
-                        )?;
-                        self.typed_array_set(p, this, start + index, value)?;
-                    }
-                }
-                Ok(Value::UNDEFINED)
-            }
+            Native::Uint8ArraySet => unreachable!("set handled before common validation"),
             Native::Uint8ArraySubarray => unreachable!("subarray handled before common validation"),
             Native::Uint8ArraySlice => {
                 let begin = self.typed_array_relative_index(p, args.first(), length)?;
@@ -521,6 +470,93 @@ impl<H: Host> Vm<H> {
         for root in [Some(source), Some(value), start, end]
             .into_iter()
             .flatten()
+        {
+            self.heap.release_root(root);
+        }
+        outcome
+    }
+
+    fn typed_array_set_native(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let Some(Cell::TypedArray { buffer, .. }) = self.heap.get(this) else {
+            return Err(self.type_error(p, "typed array receiver is invalid".into()));
+        };
+        // The immutable-buffer proposal rejects writes before argument effects.
+        if matches!(
+            self.heap.get(*buffer),
+            Some(Cell::ArrayBuffer {
+                immutable: true,
+                ..
+            })
+        ) {
+            return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
+        }
+        let source_root = self
+            .heap
+            .root(args.first().copied().unwrap_or(Value::UNDEFINED));
+        let target_root = self.heap.root(this);
+        let offset_root = args.get(1).map(|value| self.heap.root(*value));
+        let mut object_root = None;
+        let outcome = (|| {
+            let start = offset_root
+                .and_then(|root| self.heap.root_value(root))
+                .map(|value| self.to_number(p, value))
+                .transpose()?
+                .unwrap_or(0.0);
+            let start = if start.is_nan() { 0.0 } else { start.trunc() };
+            if start < 0.0 {
+                return Err(self.range_error(p, "typed array set offset is invalid".into()));
+            }
+            let this = self.heap.root_value(target_root).unwrap();
+            self.typed_array_validate_current_write(p, this)?;
+            let current_length = self.typed_array_length(this).unwrap_or_default();
+            let source = self.heap.root_value(source_root).unwrap();
+            let typed_source = matches!(self.heap.get(source), Some(Cell::TypedArray { .. }));
+            let source_object = if typed_source {
+                source
+            } else {
+                self.box_object_or_type_error(p, source)?
+            };
+            object_root = Some(self.heap.root(source_object));
+            let source_length = if typed_source {
+                if self.typed_array_out_of_bounds(source) {
+                    return Err(self.type_error(p, "typed array source is invalid".into()));
+                }
+                self.typed_array_length(source).unwrap_or_default()
+            } else {
+                self.array_like_length(p, source_object)?
+            };
+            if start.is_infinite() {
+                return Err(self.range_error(p, "typed array set offset is invalid".into()));
+            }
+            let start = start as usize;
+            if start > current_length || source_length > current_length - start {
+                return Err(self.range_error(p, "typed array set source is too large".into()));
+            }
+            if typed_source {
+                self.typed_array_copy_elements(p, source, this, start, source_length)?;
+            } else {
+                for index in 0..source_length {
+                    let source_object = self.heap.root_value(object_root.unwrap()).unwrap();
+                    let value = self.get_index(p, source_object, Value::number(index as f64))?;
+                    let this = self.heap.root_value(target_root).unwrap();
+                    self.typed_array_set(p, this, start + index, value)?;
+                }
+            }
+            Ok(Value::UNDEFINED)
+        })();
+        for root in [
+            Some(target_root),
+            Some(source_root),
+            offset_root,
+            object_root,
+        ]
+        .into_iter()
+        .flatten()
         {
             self.heap.release_root(root);
         }
