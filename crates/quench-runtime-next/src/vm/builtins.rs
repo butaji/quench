@@ -828,7 +828,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
-        self.install_json(program)?;
+        self.install_json_for_realm(program, self.realm.globals)?;
         self.install_reflect(program)?;
         self.install_math(program)?;
         self.install_promise(program)?;
@@ -860,22 +860,18 @@ impl<H: Host> Vm<H> {
         self.set_named(program, console, "log", self.native_value(Native::Print))?;
         self.global(program, "console", console)
     }
-    fn install_json(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        let json = self.object();
+    pub(super) fn install_json_for_realm(&mut self, program: &ResidualProgram, global: Value) -> Result<(), JsError> {
+        let prototype = self.realm_object_prototype(global);
+        let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.install_builtin_to_string_tag(json, "JSON")?;
-        let parse = self.native_value(Native::JsonParse);
-        self.set_builtin_value_named(json, "parse", parse)?;
-        self.set_builtin_function_name(parse, "parse")?;
-        let stringify = self.native_value(Native::JsonStringify);
-        self.set_builtin_value_named(json, "stringify", stringify)?;
-        self.set_builtin_function_name(stringify, "stringify")?;
-        let raw_json = self.native_value(Native::JsonRawJson);
-        self.set_builtin_value_named(json, "rawJSON", raw_json)?;
-        self.set_builtin_function_name(raw_json, "rawJSON")?;
-        let is_raw_json = self.native_value(Native::JsonIsRawJson);
-        self.set_builtin_value_named(json, "isRawJSON", is_raw_json)?;
-        self.set_builtin_function_name(is_raw_json, "isRawJSON")?;
-        self.global(program, "JSON", json)
+        let realm = (global != self.realm.globals).then_some(global);
+        for (name, native) in [
+            ("parse", Native::JsonParse), ("stringify", Native::JsonStringify),
+            ("rawJSON", Native::JsonRawJson), ("isRawJSON", Native::JsonIsRawJson),
+        ] {
+            self.set_realm_builtin_named(program, json, name, native, realm)?;
+        }
+        self.set_builtin_value_named(global, "JSON", json)
     }
 
     fn install_reflect(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
