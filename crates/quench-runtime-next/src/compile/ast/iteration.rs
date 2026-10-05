@@ -228,12 +228,15 @@ impl FunctionCompiler<'_, '_> {
             }
             _ => None,
         };
-        if using_iteration.is_some() {
-            self.push_disposal_scope();
-        }
         self.iterator_closures.push(IteratorClosure {
             iterator: iterator_atom,
             control_depth: self.controls.len(),
+        });
+        self.push_control(ControlKind::Loop, label);
+        let disposal_error = using_iteration.map(|_| {
+            self.push_disposal_scope();
+            self.push_disposal_context();
+            self.hidden_local("\0rqj:for-of-using-error")
         });
         if clone_environment
             && matches!(
@@ -245,8 +248,16 @@ impl FunctionCompiler<'_, '_> {
             self.clone_lexical_environment();
         }
         self.bind_for_of_left(left, value);
-        self.push_control(ControlKind::Loop, label);
         self.statement(body);
+        if let Some(error) = disposal_error {
+            let end = self.code.len() as u32;
+            let context = self
+                .finally_contexts
+                .pop()
+                .expect("iteration disposal context");
+            self.emit_disposal_scope_exit(iteration_body_start, end, error, Some(context));
+            self.pop_disposal_scope();
+        }
         let iteration_body_end = self.code.len() as u32;
         self.emit_iterator_close_on_abrupt(
             iterator_atom,
@@ -261,18 +272,11 @@ impl FunctionCompiler<'_, '_> {
         if tracks_iterator_cleanup {
             self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         }
-        if using_iteration.is_some() {
-            self.emit_disposal();
-        }
         let skip_break_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let break_cleanup = self.code.len() as u32;
         self.patch_edges(&control.breaks, break_cleanup);
         if tracks_iterator_cleanup {
             self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
-        }
-        if using_iteration.is_some() {
-            self.emit_disposal();
-            self.pop_disposal_scope();
         }
         let break_close = self.emit(Op::Jump, 0, 0, 0, 0);
         let update = self.code.len() as u32;
