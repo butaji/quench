@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "isolated_commit_qualification",
+  "base_revision": "806374872785caa8cff8fe800760bcca02c7c370",
+  "source_files": {
+    "crates/quench-test262/src/reporting.rs": "bfb3e9bd48a2120f5a2b9a575540730426c6292566c615fc9aca0eec863a095c"
+  },
+  "checks": {
+    "reporting_internal_tests": {
+      "passed": 4,
+      "failed": 0
+    }
+  },
+  "log": {
+    "path": "target/iteration/task-direction-review/reporting-isolated.log",
+    "sha256": "60eb238da5ae7e159b89e38c68fc2c859c0962f627d03f9410bdcc0e5bc1d10f"
+  },
+  "scope": "Exact reporting source qualified on committed HEAD in isolated checkout. No guest suites were run."
+}

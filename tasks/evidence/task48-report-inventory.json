@@ -1,0 +1,118 @@
+{
+  "schema": 1,
+  "kind": "report_inventory_acceptance",
+  "date": "2026-10-04",
+  "source_revision": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+  "profile": "iteration",
+  "source_files": {
+    "crates/quench-test262/src/reporting.rs": "bfb3e9bd48a2120f5a2b9a575540730426c6292566c615fc9aca0eec863a095c"
+  },
+  "binary": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/compare-runs",
+    "sha256": "0850430bd196124142fcc74fbbefa7bbde0f551803cf82300e7f0d1c971c4d50"
+  },
+  "checks": {
+    "reporting_internal_tests": {
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    "full_runner_internal_tests": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    "pass_set_internal_tests": {
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    "saved_report_cli_controls": [
+      {
+        "name": "genuine_affected_pair",
+        "exit": 0,
+        "expected_exit": 0
+      },
+      {
+        "name": "historical_identical_inventory",
+        "exit": 0,
+        "expected_exit": 0
+      },
+      {
+        "name": "removed_known_failure",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "added_case",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "removed_pass",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "wrong_pass_count",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "truncated_total",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "duplicate_case",
+        "exit": 1,
+        "expected_exit": 1
+      },
+      {
+        "name": "empty_path",
+        "exit": 1,
+        "expected_exit": 1
+      }
+    ],
+    "crate_only_clippy": "passed",
+    "dependency_wide_clippy": "failed: existing quench-stack result_unit_err at src/lib.rs:33,64"
+  },
+  "raw_artifacts": [
+    {
+      "path": "target/iteration/task48-inventory-reporting-units.log",
+      "sha256": "6a919cc09ed48ce39e7cf7dea03a130b6288aa1318338f77fbc97cac2b5b3f5d"
+    },
+    {
+      "path": "target/iteration/task48-inventory-ratchet-units.log",
+      "sha256": "e52fa29613879ec551cf8d366aac6a99eb6577ec1b47dcbb4b5402d1854b2b7e"
+    },
+    {
+      "path": "target/iteration/task48-inventory-pass-set-units.log",
+      "sha256": "d6da52e3d3323974cc2bc50bb03b65fc254c63be129eb2923fa5da68301b6b36"
+    },
+    {
+      "path": "target/iteration/task48-inventory-reporting-local-clippy.log",
+      "sha256": "580a89e61e4f1b6e8a208d9cc6636dd59d0258999398f81c80b3cd13ae9263a2"
+    },
+    {
+      "path": "target/iteration/task48-inventory-reporting-clippy.log",
+      "sha256": "35528a621d1e37f02d9c1926344246f4669240c2703e3e52d86b770191b3cc7f"
+    },
+    {
+      "path": "target/iteration/task48-inventory-comparator-build.log",
+      "sha256": "edd88d935f37a7236a2a31bea6b68f613295df72b4c600914cd36fd0380bb92e"
+    },
+    {
+      "path": "target/iteration/task48-inventory-controls/results.json",
+      "sha256": "e3ba9ff5306b827e3a7408494aaa833634beabb4b777fa2ada624bd39c26e6ef"
+    }
+  ],
+  "contract": "Case outcomes are authoritative. Validate derived counts and nonempty unique identities; a clean comparison requires identical inventories, including failed cases. Lost formerly passing cases remain regressions.",
+  "limits": [
+    "Saved guest outcomes were reused only to verify comparator acceptance; no guest case or full suite ran.",
+    "Diagnostic control JSON files are deliberately altered reports, not observed suite evidence.",
+    "This closes task 48 tooling only. The complete 100% observed baseline remains task 20/24/27/86 qualification work.",
+    "Crate-only lint does not establish dependency-wide or workspace lint closure."
+  ]
+}
