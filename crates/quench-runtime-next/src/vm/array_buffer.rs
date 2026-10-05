@@ -2,68 +2,39 @@ use super::property_key::PropertyKey;
 use super::*;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn array_buffer_virtual_property(&self, object: Value, atom: Atom) -> Option<Value> {
-        let Some(Cell::ArrayBuffer {
-            bytes,
-            shared,
-            detached,
-            max_byte_length,
-            resizable,
-            immutable,
-            ..
-        }) = self.heap.get(object)
-        else {
-            return None;
-        };
-        let max_atom = self.lookup_atom("maxByteLength");
-        let resizable_atom = self.lookup_atom("resizable");
-        let growable_atom = self.lookup_atom("growable");
-        let immutable_atom = self.lookup_atom("immutable");
-        let length = if *detached { 0 } else { bytes.len() };
-        if max_atom == Some(atom) {
-            return Some(Value::number(if *detached {
-                0.0
-            } else if *resizable || *shared {
-                *max_byte_length as f64
-            } else {
-                length as f64
-            }));
-        }
-        if resizable_atom == Some(atom) {
-            return Some(if !*shared && *resizable {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            });
-        }
-        if growable_atom == Some(atom) {
-            return Some(if *shared && *resizable && !*detached {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            });
-        }
-        if immutable_atom == Some(atom) {
-            return Some(if *immutable {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            });
-        }
-        None
-    }
-
     pub(super) fn install_array_buffer(
         &mut self,
         program: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let array_buffer = self.native_value(Native::ArrayBuffer);
-        self.array_buffer_proto = self.object();
+        let (array_buffer, prototype) =
+            self.install_array_buffer_for_realm(program, self.realm.globals, self.object_proto)?;
+        self.array_buffer_proto = prototype;
+        self.global(program, "ArrayBuffer", array_buffer)?;
+        let (shared_array_buffer, prototype) = self.install_shared_array_buffer_for_realm(
+            program,
+            self.realm.globals,
+            self.object_proto,
+        )?;
+        self.shared_array_buffer_proto = prototype;
+        self.global(program, "SharedArrayBuffer", shared_array_buffer)
+    }
+
+    pub(super) fn install_array_buffer_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+    ) -> Result<(Value, Value), JsError> {
+        let current_realm = global == self.realm.globals;
+        let array_buffer = self.realm_native_value(Native::ArrayBuffer, global, current_realm);
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
-            .insert((self.realm.globals, Native::ArrayBuffer), self.array_buffer_proto);
-        self.set_named(program, array_buffer, "prototype", self.array_buffer_proto)?;
+            .insert((global, Native::ArrayBuffer), prototype);
+        self.set_named(program, array_buffer, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
             array_buffer,
@@ -77,13 +48,8 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(
-            program,
-            self.array_buffer_proto,
-            "constructor",
-            array_buffer,
-        )?;
-        self.set_non_enumerable_property(self.array_buffer_proto, "constructor", true);
+        self.set_named(program, prototype, "constructor", array_buffer)?;
+        self.set_non_enumerable_property(prototype, "constructor", true);
         for (name, native) in [
             ("slice", Native::ArrayBufferSlice),
             ("sliceToImmutable", Native::ArrayBufferSliceToImmutable),
@@ -98,33 +64,24 @@ impl<H: Host> Vm<H> {
             ),
             ("resize", Native::ArrayBufferResize),
         ] {
-            self.set_named(
-                program,
-                self.array_buffer_proto,
-                name,
-                self.native_value(native),
-            )?;
-            self.set_non_enumerable_property(self.array_buffer_proto, name, true);
-            self.set_native_name(program, native, name)?;
+            let method = self.realm_native_value(native, global, current_realm);
+            self.set_named(program, prototype, name, method)?;
+            self.set_non_enumerable_property(prototype, name, true);
+            self.set_builtin_function_name(method, name)?;
         }
-        self.set_native_name(program, Native::ArrayBuffer, "ArrayBuffer")?;
-        self.set_named(
-            program,
-            array_buffer,
-            "isView",
-            self.native_value(Native::ArrayBufferIsView),
-        )?;
+        self.set_builtin_function_name(array_buffer, "ArrayBuffer")?;
+        let is_view = self.realm_native_value(Native::ArrayBufferIsView, global, current_realm);
+        self.set_named(program, array_buffer, "isView", is_view)?;
         self.set_non_enumerable_property(array_buffer, "isView", true);
-        self.set_native_name(program, Native::ArrayBufferIsView, "isView")?;
-        self.install_array_buffer_getters(program, self.array_buffer_proto, false)?;
-        self.global(program, "ArrayBuffer", array_buffer)?;
-        let (shared_array_buffer, prototype) = self.install_shared_array_buffer_for_realm(
-            program,
-            self.realm.globals,
-            self.object_proto,
+        self.set_builtin_function_name(is_view, "isView")?;
+        self.install_array_buffer_getters(prototype, global, current_realm)?;
+        self.install_buffer_species(
+            array_buffer,
+            prototype,
+            global,
+            "ArrayBuffer",
         )?;
-        self.shared_array_buffer_proto = prototype;
-        self.global(program, "SharedArrayBuffer", shared_array_buffer)
+        Ok((array_buffer, prototype))
     }
 
     pub(super) fn install_shared_array_buffer_for_realm(
@@ -177,26 +134,12 @@ impl<H: Host> Vm<H> {
             self.set_non_enumerable_property(prototype, name, true);
         }
         self.install_shared_array_buffer_getters(program, prototype, global, current_realm)?;
-        if self.well_known_symbols.contains_key("toStringTag") {
-            self.install_builtin_to_string_tag(prototype, "SharedArrayBuffer")?;
-        }
-        if let Some(species) = self.well_known_symbols.get("species").copied() {
-            let getter = self.realm_native_value(Native::ArrayBufferSpecies, global, current_realm);
-            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
-            self.set_symbol_property(constructor, species, getter)?;
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::symbol(species),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: true,
-                    getter: Some(getter),
-                    setter: None,
-                },
-            );
-        }
+        self.install_buffer_species(
+            constructor,
+            prototype,
+            global,
+            "SharedArrayBuffer",
+        )?;
         Ok((constructor, prototype))
     }
 
@@ -275,34 +218,21 @@ impl<H: Host> Vm<H> {
 
     fn install_array_buffer_getters(
         &mut self,
-        program: &ResidualProgram,
         prototype: Value,
-        shared: bool,
+        global: Value,
+        current_realm: bool,
     ) -> Result<(), JsError> {
-        let getters = if shared {
-            [
-                ("byteLength", Native::SharedArrayBufferByteLengthGetter),
-                (
-                    "maxByteLength",
-                    Native::SharedArrayBufferMaxByteLengthGetter,
-                ),
-                ("growable", Native::SharedArrayBufferGrowableGetter),
-            ]
-            .as_slice()
-        } else {
-            [
-                ("byteLength", Native::ArrayBufferByteLengthGetter),
-                ("detached", Native::ArrayBufferDetachedGetter),
-                ("immutable", Native::ArrayBufferImmutableGetter),
-                ("maxByteLength", Native::ArrayBufferMaxByteLengthGetter),
-                ("resizable", Native::ArrayBufferResizableGetter),
-            ]
-            .as_slice()
-        };
-        for (name, native) in getters {
-            let getter = self.native_value(*native);
-            self.set_named(program, prototype, name, getter)?;
+        for (name, native) in [
+            ("byteLength", Native::ArrayBufferByteLengthGetter),
+            ("detached", Native::ArrayBufferDetachedGetter),
+            ("immutable", Native::ArrayBufferImmutableGetter),
+            ("maxByteLength", Native::ArrayBufferMaxByteLengthGetter),
+            ("resizable", Native::ArrayBufferResizableGetter),
+        ] {
+            let getter = self.realm_native_value(native, global, current_realm);
+            self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
+            self.set_property(prototype, atom, Value::UNDEFINED)?;
             self.set_property_attributes(
                 prototype,
                 PropertyKey::string(atom),
@@ -315,7 +245,6 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
-            self.set_native_name(program, *native, &format!("get {name}"))?;
         }
         Ok(())
     }
@@ -361,21 +290,39 @@ impl<H: Host> Vm<H> {
         );
     }
 
-    pub(super) fn install_array_buffer_species(
+    pub(super) fn install_array_buffer_species(&mut self) -> Result<(), JsError> {
+        for (native, prototype, tag) in [
+            (Native::ArrayBuffer, self.array_buffer_proto, "ArrayBuffer"),
+            (
+                Native::SharedArrayBuffer,
+                self.shared_array_buffer_proto,
+                "SharedArrayBuffer",
+            ),
+        ] {
+            self.install_buffer_species(
+                self.native_value(native),
+                prototype,
+                self.realm.globals,
+                tag,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn install_buffer_species(
         &mut self,
-        program: &ResidualProgram,
+        constructor: Value,
+        prototype: Value,
+        global: Value,
+        tag: &str,
     ) -> Result<(), JsError> {
-        self.install_builtin_to_string_tag(self.array_buffer_proto, "ArrayBuffer")?;
-        self.install_builtin_to_string_tag(self.shared_array_buffer_proto, "SharedArrayBuffer")?;
-        let Some(species) = self.well_known_symbols.get("species").copied() else {
-            return Ok(());
-        };
-        let array_buffer = self.native_value(Native::ArrayBuffer);
-        let getter = self.native_value(Native::ArrayBufferSpecies);
-        self.set_native_name(program, Native::ArrayBufferSpecies, "get [Symbol.species]")?;
-        let shared_array_buffer = self.native_value(Native::SharedArrayBuffer);
-        for constructor in [array_buffer, shared_array_buffer] {
-            self.set_index(program, constructor, species, getter)?;
+        if self.well_known_symbols.contains_key("toStringTag") {
+            self.install_builtin_to_string_tag(prototype, tag)?;
+        }
+        if let Some(species) = self.well_known_symbols.get("species").copied() {
+            let getter = self.native_with_realm(Native::ArrayBufferSpecies, Value::NULL, global);
+            self.set_builtin_function_name(getter, "get [Symbol.species]")?;
+            self.set_symbol_property(constructor, species, getter)?;
             self.set_property_attributes(
                 constructor,
                 PropertyKey::symbol(species),

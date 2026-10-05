@@ -1220,20 +1220,9 @@ impl<H: Host> Vm<H> {
             async_disposable_stack,
         )?;
         self.set_builtin_value_named(global, "AsyncDisposableStack", async_disposable_stack)?;
-        let array_buffer = self.native_with_realm(Native::ArrayBuffer, global, global);
-        let array_buffer_prototype = self.object();
-        self.object_data_mut(array_buffer_prototype)
-            .expect("realm ArrayBuffer prototype")
-            .proto = self.array_buffer_proto;
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .insert((global, Native::ArrayBuffer), array_buffer_prototype);
-        self.set_builtin_value_named(array_buffer, "prototype", array_buffer_prototype)?;
-        self.set_builtin_value_named(array_buffer_prototype, "constructor", array_buffer)?;
-        let array_buffer_name = self.heap.alloc(Cell::String("ArrayBuffer".into()));
-        self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
-        self.set_named(program, global, "ArrayBuffer", array_buffer)?;
+        let (array_buffer, _) =
+            self.install_array_buffer_for_realm(program, global, object_prototype)?;
+        self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
         let realm_error_prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm
             .intrinsics
