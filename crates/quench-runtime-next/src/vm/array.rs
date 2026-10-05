@@ -8,11 +8,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<Option<usize>, JsError> {
         let number = self.to_number(p, value)?;
-        let integer = if number.is_nan() {
-            0.0
-        } else {
-            number.trunc()
-        };
+        let integer = if number.is_nan() { 0.0 } else { number.trunc() };
         let relative = if integer < 0.0 {
             length as f64 + integer
         } else {
@@ -450,9 +446,6 @@ impl<H: Host> Vm<H> {
             .transpose()?
             .unwrap_or(length);
         let count = end.saturating_sub(start);
-        if count > MAX_ARRAY_LENGTH {
-            return Err(self.range_error(p, "invalid array length".into()));
-        }
         let result = self.array_species_create(p, object, count)?;
         for (destination, source) in (start..end).enumerate() {
             let key = Value::number(source as f64);
@@ -461,6 +454,7 @@ impl<H: Host> Vm<H> {
                 self.create_data_property_or_throw(p, result, destination, value)?;
             }
         }
+        self.set_array_like_length(p, result, count)?;
         Ok(result)
     }
 
@@ -499,7 +493,7 @@ impl<H: Host> Vm<H> {
             }
         }
         if constructor.is_undefined() {
-            constructor = self.native_value(Native::Array);
+            return self.array_create(p, length);
         }
         if !self.is_constructable(p, constructor) {
             return Err(self.type_error(p, "array species is not a constructor".into()));
