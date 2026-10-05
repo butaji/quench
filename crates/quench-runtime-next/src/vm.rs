@@ -57,6 +57,7 @@ mod eval;
 mod field_cache;
 mod finalization;
 mod function;
+mod host_function;
 mod function_cache;
 mod gc;
 mod generator;
@@ -929,7 +930,8 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         self.materialize_program_constants(ProgramId::MAIN, program);
-        self.install_builtins(program)
+        self.install_builtins(program)?;
+        self.initialize_host(program)
     }
     fn materialize_program_constants(&mut self, id: ProgramId, program: &ResidualProgram) {
         let mut constants = Vec::with_capacity(program.constants.len());

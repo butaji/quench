@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "rooted_property_write_qualification",
+  "timestamp_utc": "2026-10-05T00:05:31.636870+00:00",
+  "git_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "worktree": "uncommitted; shared API slice only, no host migration closure",
+  "baseline_evidence": "tasks/evidence/task43-rooted-host-operations.json",
+  "baseline_sources": {
+    "crates/quench-runtime-next/src/api.rs": "5889d24b90ee78d6faeff65e569dd081be55a4ea5a69683f1f31f9a0c31cc95c",
+    "crates/quench-runtime-next/src/lib.rs": "61bd1282e072d309db1cbf5b95f9aa845bcb4f912582075cbb2624308059a16b",
+    "crates/quench-runtime-next/src/vm.rs": "4382aaec42558ced4a815b0d9153f4cc6a56d42e3761059e43c42523a8870898",
+    "crates/quench-runtime-next/src/api_embedding.rs": "39936e3a7a8f04628ef2fd4b12d929a47d1b91b904765f8d695d6d16dc35c3e1",
+    "crates/quench-runtime-next/src/api_embedding_tests.rs": "027f86f97283cb295827b703080a601013a3ff1c754156366e2894d084d161c0",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "e8fc22f264cf053683decd68d11a2943b1b11fa2a218600c6816b325f0d544b9"
+  },
+  "sources": {
+    "crates/quench-runtime-next/src/api.rs": "5889d24b90ee78d6faeff65e569dd081be55a4ea5a69683f1f31f9a0c31cc95c",
+    "crates/quench-runtime-next/src/lib.rs": "61bd1282e072d309db1cbf5b95f9aa845bcb4f912582075cbb2624308059a16b",
+    "crates/quench-runtime-next/src/vm.rs": "4382aaec42558ced4a815b0d9153f4cc6a56d42e3761059e43c42523a8870898",
+    "crates/quench-runtime-next/src/api_embedding.rs": "2506d5721d494b4fa324f374ebe77e905bbe9cf73332df047f9aa876dd4a65f6",
+    "crates/quench-runtime-next/src/api_embedding_tests.rs": "ea86748a9e14eada87119f0215986133ea92b2f28b9c6941fbdc27b725514811",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "47e147cca03d97f8894e54d25416c53a237e1bafdc8c7e1c4b3486fbe46dbdaf"
+  },
+  "shared_operation_sources": {
+    "crates/quench-runtime-next/src/vm/reflect.rs": "6aa945912da92c1af7a44533437dd170b6e297dd26880d071715a806c2aa066f",
+    "crates/quench-runtime-next/src/vm/object.rs": "dbc985f07cb9e0b810ce6f2bbc372eb3b497ba1a330c5035deaf4262544a4eda",
+    "crates/quench-runtime-next/src/vm/index.rs": "fee40ada6ecc608db961fead49a68a2157759bd42df4ccafb758616e82ec0ed7"
+  },
+  "operation": "set_property_rooted(object, key, value, receiver) -> Result<bool, RootedError>",
+  "contract": [
+    "Validate all four generation/owner-checked roots before coercion or guest effects.",
+    "Derive program context from the existing owned program store.",
+    "Delegate to the existing Native::ReflectSet operation; preserve explicit receiver, accessors, Proxy behavior and thrown identity.",
+    "Return boolean acceptance/refusal without allocating a result root or inventing Node policy.",
+    "Share one retained-error operation with reads/calls; release exception roots through the originating runtime."
+  ],
+  "internal_obligations_verified": [
+    "Eighteen foreign/released-root combinations across reads/calls/writes reject before guest effects; replacement root remains live.",
+    "All write input positions validate before property-key coercion, including value and receiver.",
+    "Property-key coercion and setters may collect; the host input remains identical after input-root release and subsequent collection.",
+    "Writes use the explicit receiver rather than the lookup target.",
+    "Setter-thrown object and host-created payload retain identity through collection; exception roots can be released.",
+    "Refusal returns false without throwing; fresh execution invalidates earlier property/call/write roots.",
+    "Existing callback arguments/results, dynamic callable ownership, realm restoration and root lifecycle checks still pass."
+  ],
+  "checks": [
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::embedding::tests -- --nocapture",
+      "exit": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "embedding-tests.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::root -- --nocapture",
+      "exit": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "existing-root-tests.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::explicit_collection_preserves_runtime_roots -- --nocapture",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "existing-collection-test.log"
+    },
+    {
+      "command": "cargo clippy -p quench-runtime-next --lib --no-deps --message-format=json -- -D warnings",
+      "exit": 101,
+      "diagnostics": 153,
+      "embedding_file_diagnostics": 0,
+      "categories": {
+        "clippy::unnecessary_cast": 18,
+        "clippy::useless_conversion": 19,
+        "clippy::too_many_arguments": 29,
+        "clippy::if_same_then_else": 6,
+        "clippy::collapsible_if": 33,
+        "clippy::len_zero": 1,
+        "clippy::redundant_closure_call": 1,
+        "clippy::wrong_self_convention": 6,
+        "clippy::needless_borrow": 11,
+        "clippy::while_let_loop": 1,
+        "clippy::needless_return": 1,
+        "clippy::only_used_in_recursion": 1,
+        "clippy::unnecessary_lazy_evaluations": 3,
+        "clippy::question_mark": 5,
+        "clippy::type_complexity": 3,
+        "clippy::useless_asref": 1,
+        "clippy::single_match": 1,
+        "clippy::double_ended_iterator_last": 1,
+        "clippy::chunks_exact_to_as_chunks": 1,
+        "clippy::needless_question_mark": 1,
+        "clippy::match_like_matches_macro": 2,
+        "clippy::unnecessary_filter_map": 1,
+        "clippy::op_ref": 1,
+        "clippy::needless_range_loop": 1,
+        "clippy::unnecessary_unwrap": 1,
+        "clippy::manual_is_multiple_of": 2,
+        "clippy::map_identity": 1,
+        "clippy::let_and_return": 1
+      },
+      "owner": "86"
+    }
+  ],
+  "scope": {
+    "test262": "Not run: existing guest property/call/GC and Reflect operation bodies are unchanged. New public embedding operations are covered by host ownership tests invisible to guest suites.",
+    "wasm": "Not run: no Wasm lowering, resources or execution semantics changed.",
+    "node": "Not run: no Node policy or production consumer changed. Native registration and actual shared-VM host migration remain open.",
+    "new_units": "One new host-root/receiver/exception lifecycle unit; existing boundary units extended. No duplicate ordinary suite-case units.",
+    "full_suites_run": false,
+    "benchmark_campaign_run": false,
+    "suite_inputs_expectations_or_inventories_changed": false
+  },
+  "raw_artifacts": {
+    "target/iteration/task43-property-writes/before/crates/quench-runtime-next/src/api_embedding.rs": "39936e3a7a8f04628ef2fd4b12d929a47d1b91b904765f8d695d6d16dc35c3e1",
+    "target/iteration/task43-property-writes/before/crates/quench-runtime-next/src/api_embedding_tests.rs": "027f86f97283cb295827b703080a601013a3ff1c754156366e2894d084d161c0",
+    "target/iteration/task43-property-writes/before/crates/quench-runtime-next/src/vm/embedding.rs": "e8fc22f264cf053683decd68d11a2943b1b11fa2a218600c6816b325f0d544b9",
+    "target/iteration/task43-property-writes/before/sources.json": "3dadf587aab25158b8aceb70ec764b4dc6f81b50743d6f8b52db01c7b6310ace",
+    "target/iteration/task43-property-writes/clippy.jsonl": "f2d95ddd3c870013fc5d78178d75cd5fe6320220841da28d6879da0bb0065e94",
+    "target/iteration/task43-property-writes/clippy.log": "0b54c939c31f413808b15db7360617e4afc69a5c2906177805fa990cf45b332d",
+    "target/iteration/task43-property-writes/embedding-tests.log": "c14728a4ce2b638df67c26c567be5423e0c017af03652927c4e3942adfc84178",
+    "target/iteration/task43-property-writes/existing-collection-test.log": "23efc96bc1c414177f3bab6c1377b1c3a6d199eb24e7a346dc72275ed0e4046f",
+    "target/iteration/task43-property-writes/existing-root-tests.log": "63733e8d1d3e16258c5afcca288a0d64a6050f4c9df3b336bdcf2320f321e72d"
+  },
+  "qualification_limits": [
+    "Task 43 and Stage A remain open.",
+    "Production Node still uses legacy; the new operation adds no Node behavior.",
+    "Runtime warning-denied Clippy still fails on the same 153 existing diagnostics; cleanup remains owned by task 86."
+  ]
+}

@@ -4,6 +4,9 @@ use crate::{Diagnostic, Engine, Host, JsError, ResidualProgram, RootId, Value};
 #[path = "api_embedding.rs"]
 mod embedding;
 pub use embedding::RootedError;
+#[path = "api_native.rs"]
+mod native;
+pub use native::{HostFunction, HostFunctionId, NativeContext};
 
 /// The syntax context used when compiling source.  The v2 compiler currently
 /// accepts the Script subset; the other contexts are explicit so callers do

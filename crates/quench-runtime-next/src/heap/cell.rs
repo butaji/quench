@@ -570,6 +570,7 @@ pub(crate) enum Native {
     PromiseAggregateJob,
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
+    HostFunction,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {

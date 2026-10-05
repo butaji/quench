@@ -31,6 +31,24 @@ pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
 
+    /// Stable native-operation table for this host's lifetime. Mutable host
+    /// state belongs in `Self`; operation indices must never be reassigned.
+    fn functions(&self) -> &[crate::HostFunction<Self>]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
+
+    /// Install host-owned objects after shared intrinsics and native globals,
+    /// before guest execution. Context roots expire when installation returns.
+    fn initialize(_context: &mut crate::NativeContext<'_, Self>) -> Result<(), crate::RootedError>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+
     /// Optional host-owned globals. The evaluator installs these only when
     /// the host explicitly advertises them; ordinary production hosts remain
     /// free of conformance or embedding-specific names.

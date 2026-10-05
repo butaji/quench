@@ -1,0 +1,155 @@
+{
+  "schema": 1,
+  "task": "43",
+  "kind": "native_host_registration_qualification",
+  "timestamp_utc": "2026-10-05T00:55:32.487049+00:00",
+  "git_head": "7e60169df033dd247f34199e084e3e8080a92a29",
+  "worktree": "uncommitted shared-VM mechanism; actual Node host migration remains open",
+  "baseline_evidence": "tasks/evidence/task43-rooted-property-writes.json",
+  "sources": {
+    "crates/quench-runtime-next/src/api.rs": "9ccf946ffac9fbae71a2a57ad80a0f2f0871b81569f98d97024842feaacf1876",
+    "crates/quench-runtime-next/src/api_native.rs": "51e1de425c76cca65e53c93598f48c2cdf03579c0a047ac603fc21eac91359c0",
+    "crates/quench-runtime-next/src/api_native_tests.rs": "1373d8a3461b3b94da18618d8651135be93c8690c0bdd4964020bfc763d31d6e",
+    "crates/quench-runtime-next/src/api_embedding.rs": "6d0ff994fc8136b087347eff7ccc1209c14268e51d4c5ccf2106a9fb26beac29",
+    "crates/quench-runtime-next/src/lib.rs": "9d59fa2530cc027b02b6013e80dd57c80aec9955fa9d414058f099d4e3805cf7",
+    "crates/quench-runtime-next/src/host.rs": "b94304ce72bd802764b7a94e49e07a4246cbb8ab1be2b1e3560361fd37724cc2",
+    "crates/quench-runtime-next/src/vm.rs": "43235cac4def11d24d8d3a1df5b97cf788ed38a9c3d2ca3136a0f796683ff51f",
+    "crates/quench-runtime-next/src/heap/cell.rs": "cc68cda31f04d85b797c286b40dfc1d6830e3cb1011ef31b4eee360f9892bdab",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "db4d96f7401608edb2520572cefc8ab2e0be5dceb749d92dea9385443fe6d02e",
+    "crates/quench-runtime-next/src/vm/host_function.rs": "0efb1d7454b207d6084141f2d30a85107376bb9f0e8176953ba05f02cc0d3654",
+    "crates/quench-runtime-next/src/vm/operations.rs": "1a374cd28a06cfa0d22b75f45e8b6e7e6b2ef4858817e77e4da00447df1d7b5b"
+  },
+  "contract": [
+    "Host::functions is the stable authority for Rust callbacks and name/arity/global descriptors; host_functions! derives records.",
+    "Guest callables use the existing Native environment with a private operation index, without a second registry or heap category.",
+    "NativeContext roots receiver, arguments, results and exceptions for the callback lifetime. Drop releases scoped roots; retain explicitly promotes host-owned roots.",
+    "Re-entry uses existing VM property/call/program/realm semantics and the shared retained-error operation.",
+    "Return and exception roots validate owner/generation before crossing the callback boundary; raw exceptions without a validated root are not trusted.",
+    "Fresh execution invalidates retained handles. Native functions are currently nonconstructible; native classes remain open."
+  ],
+  "internal_obligations_verified": [
+    "Borrowed callback inputs/results expire; promoted handles preserve identity through collection and expire on fresh execution.",
+    "Dynamic callable re-entry preserves program ownership; guest and native throws retain actual objects through collection and scope exit.",
+    "Foreign and released success/exception handles reject; invalid returns still release borrowed scopes; unknown operation indices reject."
+  ],
+  "checks": [
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::native::tests -- --nocapture",
+      "exit": 0,
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task43-native-host/native-tests-qualified.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::embedding::tests -- --nocapture",
+      "exit": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task43-native-host/existing-embedding-tests.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::root -- --nocapture",
+      "exit": 0,
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task43-native-host/existing-root-tests.log"
+    },
+    {
+      "command": "cargo test -p quench-runtime-next --lib api::tests::explicit_collection_preserves_runtime_roots -- --nocapture",
+      "exit": 0,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "raw": "target/iteration/task43-native-host/existing-collection-test.log"
+    },
+    {
+      "command": "cargo check -p quench-runtime-next --lib --features profile-memory,profile-aggregate",
+      "exit": 0,
+      "raw": "target/iteration/task43-native-host/features.log"
+    },
+    {
+      "command": "cargo build --release -p quench-test262 --bin run-stages-next",
+      "exit": 0,
+      "raw": "target/iteration/task43-native-host/release-build.log"
+    },
+    {
+      "command": "cargo clippy -p quench-runtime-next --lib --message-format=json",
+      "exit": 101,
+      "existing_runtime_diagnostics": 153,
+      "new_boundary_file_diagnostics": 0,
+      "owner": "86",
+      "raw": "target/iteration/task43-native-host/clippy.jsonl"
+    }
+  ],
+  "affected_test262": {
+    "pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage": 48,
+    "filter": "built-ins/Function/prototype/",
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "inventory_sha256": "a4e3c8ac09b7abd3ef3a629df1f2455dc18e88ae284056f2008efb8f4cb3574e",
+    "before": {
+      "binary": "target/iteration/task20-regexp-matcher-run-stages-next",
+      "binary_sha256": "06425edc9c8d0ef95424c1eea1e361d1e052fb3d19070def136c012b4aa203ca",
+      "passed": 309,
+      "failed": 0,
+      "report": "target/iteration/task43-native-host/before-function-qualified.json"
+    },
+    "after": {
+      "binary": "target/iteration/task43-native-host/run-stages-next-qualified",
+      "binary_sha256": "0b8b346f3a89b3c7719fb730c8cbc18473d5bc54a223336008740b77ee3b6f83",
+      "passed": 309,
+      "failed": 0,
+      "report": "target/iteration/task43-native-host/after-function-qualified.json"
+    },
+    "compare_runs": {
+      "exit": 0,
+      "regressions": 0,
+      "raw": "target/iteration/task43-native-host/compare-function.log"
+    },
+    "earlier_observations": "Baseline runs during release compilation timed out on intrinsic traversal (308/309 and 0/1). Idle matched qualification retained the same case and deadline and passed 309/309 on both binaries."
+  },
+  "scope": {
+    "full_suites_run": false,
+    "benchmark_campaign_run": false,
+    "suite_inputs_expectations_or_inventories_changed": false,
+    "node": "No production Node behavior changed; actual bindings and host migration remain open.",
+    "wasm": "No Wasm lowering, resource or execution semantics changed.",
+    "units": "Three callback ownership/re-entry boundary units invisible to guest suites, plus nine existing root checks; no duplicate ordinary conformance units."
+  },
+  "qualification_limits": [
+    "Task 43 and Stage A remain open; production Node still uses legacy.",
+    "Native classes, required conversions/jobs and Node consumers still need migration.",
+    "Workspace lint is not qualified: existing runtime diagnostics remain owned by task 86."
+  ],
+  "raw_artifacts": {
+    "target/iteration/task43-native-host/after-function-qualified.json": "4188951b396ed02fb9927d235083c8c5ce2b78181ec99da9145263c1c3ec3b5c",
+    "target/iteration/task43-native-host/after-function-qualified.log": "dc6e125ab035f5f30f91eda572161a5ad76203ff23fa741171dbb3f81bc0388a",
+    "target/iteration/task43-native-host/before-function-qualified.json": "0a6d52da517e2add50948cdbf297e4f999a839a5fcb058cdb4e93b2f1feddce1",
+    "target/iteration/task43-native-host/before-function-qualified.log": "dc6e125ab035f5f30f91eda572161a5ad76203ff23fa741171dbb3f81bc0388a",
+    "target/iteration/task43-native-host/before-function.json": "7584e6ce26fb12b1825d3c106dfc97d705bcba6718d94a21c8d96f246437a562",
+    "target/iteration/task43-native-host/before-function.log": "da3da7f901e789608de46ccb1f86fc0c463c4d633e4725680ac3bd37ea72668a",
+    "target/iteration/task43-native-host/before-intrinsic-isolated.json": "bb6bbb72dd0eb834ac57c607990a1167656da2cd515e90e1d827835110be7dfe",
+    "target/iteration/task43-native-host/before-intrinsic-isolated.log": "7ce89ccfa878198f44491ebf90f6534f85624a1451289e3f8e153184a083cf0d",
+    "target/iteration/task43-native-host/check.log": "9991083f73de639d0c32f5c50538b26a7642de834fce43d707ac4490c7c3c774",
+    "target/iteration/task43-native-host/clippy.jsonl": "d0ccd292dfb0fdd168e78ca91d0592364ae0ca18fa983405a3f7a7c575372f72",
+    "target/iteration/task43-native-host/clippy.log": "d77fa388bb76f7e876b9eca59b28d48b1ab58854df5e8ff10d60280583282edb",
+    "target/iteration/task43-native-host/compare-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd",
+    "target/iteration/task43-native-host/existing-collection-test.log": "28d30320c26a1e5b83a308963a28ef3dd1e2ea818331cc78b0e08e8a0c082904",
+    "target/iteration/task43-native-host/existing-embedding-tests.log": "2d47a32e3dd8ebcf62e51882fe3c6ea9abb716518e53c6926fe307434ed24754",
+    "target/iteration/task43-native-host/existing-root-tests.log": "0e1cc984297aa8dfe7249a6a5ec9574954b19648215bf3511c93559f807e90b5",
+    "target/iteration/task43-native-host/features.log": "2070a5e77082c00a95e3f63429f87ad0e370f8f4dd9362bb91af76ae2417be37",
+    "target/iteration/task43-native-host/format-docs.log": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20",
+    "target/iteration/task43-native-host/native-tests-final.log": "78d450f402f30c20e8d06ce77ee79e7d800ab1ee5e7ce9d07936ac967d300720",
+    "target/iteration/task43-native-host/native-tests-qualified.log": "e21b25c8746314112bb6b8d9d53680576da8fc52563be239d6e9bd5d53207f0d",
+    "target/iteration/task43-native-host/native-tests.log": "ca099692dc23f99426a340aa75b7c45a2c8c83a4469e14de1c25b48a2a1319ac",
+    "target/iteration/task43-native-host/release-build.log": "eb2ff36c50e054c84cda3cfc5db12da9dc5464b6403295ecf76bf76b55776fe3",
+    "target/iteration/task43-native-host/rust-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "target/iteration/task43-native-host/source-hashes.json": "e14d2a65a6a3b52335c6d31ea3de327093d5f8ab2ada1c6e9cccbae790ac82a4",
+    "target/iteration/task43-native-host/task-coherence.log": "09ec639461d3570e0ab3d94a8f6fae3f78e7f264fa0103de04fbcf42b12d031b",
+    "target/iteration/task43-native-host/whitespace.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}
