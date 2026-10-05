@@ -1,8 +1,7 @@
 use super::*;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
-    DateTime, Datelike, Duration, FixedOffset, Local, LocalResult, NaiveDate, Offset, TimeZone,
-    Timelike, Utc,
+    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, Offset, TimeZone, Timelike, Utc,
 };
 
 const DATE_PROTOTYPE_METHODS: &[(&str, Native)] = &[
@@ -78,6 +77,7 @@ const SECOND_COMPONENT: usize = 5;
 const MILLISECOND_COMPONENT: usize = 6;
 const REQUIRED_DATE_SETTER_ARGUMENTS: usize = 1;
 const EPOCH_MILLISECONDS: f64 = 0.0;
+const DATE_LOCAL_DISAMBIGUATION: &str = "compatible";
 const DATE_CONSTRUCTOR_MULTI_ARGUMENT_THRESHOLD: usize = 2;
 const DATE_SETTER_YEAR_ARGUMENT_LIMIT: usize = 3;
 const DATE_SETTER_MONTH_ARGUMENT_LIMIT: usize = 2;
@@ -295,7 +295,12 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if matches!(native, Native::DateToLocaleString | Native::DateToLocaleDateString | Native::DateToLocaleTimeString) {
+        if matches!(
+            native,
+            Native::DateToLocaleString
+                | Native::DateToLocaleDateString
+                | Native::DateToLocaleTimeString
+        ) {
             return self.date_to_locale_string(p, native, this, args);
         }
         if native == Native::DateToJSON {
@@ -483,7 +488,7 @@ impl<H: Host> Vm<H> {
             current
         };
         let parts = if setter.utc || current.is_nan() {
-        date_parts_utc(base_time)
+            date_parts_utc(base_time)
         } else {
             date_parts_local(base_time)
         };
@@ -737,8 +742,7 @@ pub(super) fn date_local(milliseconds: f64) -> Option<DateTime<FixedOffset>> {
         .single()
         .map(|date| date.offset().fix().local_minus_utc())
         .unwrap_or_else(|| Local::now().offset().fix().local_minus_utc());
-    let offset_seconds = offset_seconds / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE;
-    let offset = FixedOffset::east_opt(offset_seconds)?;
+    let offset = FixedOffset::east_opt(date_offset_seconds(offset_seconds))?;
     Utc.timestamp_millis_opt(timestamp)
         .single()
         .map(|date| date.with_timezone(&offset))
@@ -907,8 +911,7 @@ fn make_date_milliseconds(components: [f64; DATE_COMPONENT_COUNT], utc: bool) ->
         + second * MILLISECONDS_PER_SECOND)
         + millisecond;
     let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) else {
-        let offset =
-            Local::now().offset().fix().local_minus_utc() / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE;
+        let offset = date_offset_seconds(Local::now().offset().fix().local_minus_utc());
         return time_clip(
             day_ms + local_wall_time_ms - f64::from(offset) * MILLISECONDS_PER_SECOND,
         );
@@ -928,35 +931,28 @@ fn make_date_milliseconds(components: [f64; DATE_COMPONENT_COUNT], utc: bool) ->
         .and_then(|midnight| midnight.checked_add_signed(Duration::days(day_offset)))
         .and_then(|day| day.checked_add_signed(Duration::milliseconds(time_ms)))
     else {
-        let offset =
-            Local::now().offset().fix().local_minus_utc() / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE;
+        let offset = date_offset_seconds(Local::now().offset().fix().local_minus_utc());
         return time_clip(
             day_ms + local_wall_time_ms - f64::from(offset) * MILLISECONDS_PER_SECOND,
         );
     };
-    let milliseconds = if utc {
-        date_time.and_utc().timestamp_millis() as f64
-    } else {
-        match Local.from_local_datetime(&date_time) {
-            LocalResult::Single(date) => {
-                let offset =
-                    date.offset().fix().local_minus_utc() / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE;
-                date_time.and_utc().timestamp_millis() as f64
-                    - f64::from(offset) * MILLISECONDS_PER_SECOND
-            }
-            LocalResult::Ambiguous(first, second) => {
-                let wall_time = date_time.and_utc().timestamp_millis() as f64;
-                let first_offset = first.offset().fix().local_minus_utc() / SECONDS_PER_MINUTE
-                    * SECONDS_PER_MINUTE;
-                let second_offset = second.offset().fix().local_minus_utc() / SECONDS_PER_MINUTE
-                    * SECONDS_PER_MINUTE;
-                (wall_time - f64::from(first_offset) * MILLISECONDS_PER_SECOND)
-                    .min(wall_time - f64::from(second_offset) * MILLISECONDS_PER_SECOND)
-            }
-            LocalResult::None => return f64::NAN,
-        }
+    let Some(instant) =
+        super::local_time::resolve_local_datetime(date_time, &Local, DATE_LOCAL_DISAMBIGUATION)
+    else {
+        return f64::NAN;
     };
-    time_clip(milliseconds)
+    let wall_milliseconds = date_time.and_utc().timestamp_millis();
+    let offset_seconds =
+        (wall_milliseconds - instant.timestamp_millis()) / MILLISECONDS_PER_SECOND as i64;
+    time_clip(
+        wall_milliseconds as f64
+            - f64::from(date_offset_seconds(offset_seconds as i32)) * MILLISECONDS_PER_SECOND,
+    )
+}
+
+// Retain Date's existing minute precision independently of transition disambiguation.
+fn date_offset_seconds(offset_seconds: i32) -> i32 {
+    offset_seconds / SECONDS_PER_MINUTE * SECONDS_PER_MINUTE
 }
 
 fn finite_i64(value: f64) -> Option<i64> {
@@ -1116,15 +1112,14 @@ fn parse_date_string(text: &str) -> f64 {
         .as_bytes()
         .first()
         .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'));
-    let (date, time, strict) = if let Some((date, time)) =
-        text.split_once(['T', 't']).filter(|_| numeric_prefix)
-    {
-        (date, Some(time), true)
-    } else if let Some((date, time)) = text.split_once(' ') {
-        (date, Some(time), false)
-    } else {
-        (text, None, false)
-    };
+    let (date, time, strict) =
+        if let Some((date, time)) = text.split_once(['T', 't']).filter(|_| numeric_prefix) {
+            (date, Some(time), true)
+        } else if let Some((date, time)) = text.split_once(' ') {
+            (date, Some(time), false)
+        } else {
+            (text, None, false)
+        };
     if let Some(milliseconds) = parse_numeric_date_parts(date, time, strict) {
         return milliseconds;
     }
@@ -1164,7 +1159,9 @@ fn parse_numeric_date_parts(date: &str, time: Option<&str>, strict: bool) -> Opt
         (DATE_DEFAULT_MONTH_DAY_TEXT, DATE_DEFAULT_MONTH_DAY_TEXT)
     } else {
         let date_tail = date_tail.strip_prefix('-')?;
-        date_tail.split_once('-').unwrap_or((date_tail, DATE_DEFAULT_MONTH_DAY_TEXT))
+        date_tail
+            .split_once('-')
+            .unwrap_or((date_tail, DATE_DEFAULT_MONTH_DAY_TEXT))
     };
     let month = parse_date_digits(month_text, DATE_DAY_FIELD_WIDTH, strict)?;
     let day = parse_date_digits(day_text, DATE_DAY_FIELD_WIDTH, strict)?;
@@ -1190,7 +1187,9 @@ fn parse_numeric_date_parts(date: &str, time: Option<&str>, strict: bool) -> Opt
         (time, None)
     };
     let (hour, rest) = time.split_once(':')?;
-    let (minute, rest) = rest.split_once(':').unwrap_or((rest, DATE_DEFAULT_SECONDS_TEXT));
+    let (minute, rest) = rest
+        .split_once(':')
+        .unwrap_or((rest, DATE_DEFAULT_SECONDS_TEXT));
     let (second, fraction) = rest.split_once('.').unwrap_or((rest, "0"));
     let hour = parse_date_digits(hour, DATE_TIME_FIELD_WIDTH, strict)?;
     let minute = parse_date_digits(minute, DATE_TIME_FIELD_WIDTH, strict)?;

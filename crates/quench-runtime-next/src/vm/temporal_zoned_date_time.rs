@@ -3108,43 +3108,7 @@ pub(super) fn zoned_local_epoch_with_disambiguation(
             + i128::from(utc.timestamp_subsec_nanos())
     } else {
         let zone = zone.parse::<chrono_tz::Tz>().ok()?;
-        let instant = match zone.from_local_datetime(&local) {
-            chrono::LocalResult::Single(instant) => instant,
-            chrono::LocalResult::Ambiguous(first, second) => match disambiguation {
-                "reject" => return None,
-                "later" if first.timestamp() <= second.timestamp() => second,
-                "later" => first,
-                _ if first.timestamp() <= second.timestamp() => first,
-                _ => second,
-            },
-            chrono::LocalResult::None => {
-                if disambiguation == "reject" {
-                    return None;
-                }
-                let before = local.checked_sub_signed(Duration::days(1))?;
-                let after = local.checked_add_signed(Duration::days(1))?;
-                let before_offset = zone
-                    .offset_from_utc_datetime(&before)
-                    .fix()
-                    .local_minus_utc();
-                let after_offset = zone
-                    .offset_from_utc_datetime(&after)
-                    .fix()
-                    .local_minus_utc();
-                let offset = if disambiguation == "earlier" {
-                    after_offset
-                } else {
-                    before_offset
-                };
-                let utc = local
-                    .and_utc()
-                    .checked_sub_signed(Duration::seconds(i64::from(offset)))?;
-                return Some(
-                    i128::from(utc.timestamp()) * NANOSECONDS_PER_SECOND
-                        + i128::from(utc.timestamp_subsec_nanos()),
-                );
-            }
-        };
+        let instant = super::local_time::resolve_local_datetime(local, &zone, disambiguation)?;
         i128::from(instant.timestamp()) * NANOSECONDS_PER_SECOND
             + i128::from(instant.timestamp_subsec_nanos())
     };
