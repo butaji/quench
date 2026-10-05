@@ -89,6 +89,7 @@ impl<H: Host> Vm<H> {
             captured: false,
             registers: vec![],
             active_iterators: vec![],
+            with_objects: Vec::new(),
             with_base: self.with_stack.len(),
         });
         frame
@@ -161,6 +162,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
+        frame.with_objects = self.captured_with_objects(parent);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))
@@ -1305,6 +1307,7 @@ impl<H: Host> Vm<H> {
         }
         let previous_program = std::mem::replace(&mut self.active_program, frame.program);
         let previous_global = self.switch_realm_global(realm);
+        self.activate_frame(&mut frame);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
             &execution_program,
@@ -1312,6 +1315,7 @@ impl<H: Host> Vm<H> {
             initial_error,
         );
         let mut frame = self.frames.pop().expect("generator frame exists");
+        self.deactivate_frame(&mut frame, &result);
         self.active_program = previous_program;
         self.switch_realm_global(previous_global);
         let outcome = match result {
@@ -1534,6 +1538,7 @@ impl<H: Host> Vm<H> {
         }
         let previous_program = std::mem::replace(&mut self.active_program, frame.program);
         let previous_global = self.switch_realm_global(realm);
+        self.activate_frame(&mut frame);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
             &execution_program,
@@ -1541,6 +1546,7 @@ impl<H: Host> Vm<H> {
             initial_error,
         );
         let mut frame = self.frames.pop().expect("async generator frame exists");
+        self.deactivate_frame(&mut frame, &result);
         self.active_program = previous_program;
         self.switch_realm_global(previous_global);
         match result {

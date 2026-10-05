@@ -207,12 +207,14 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = value;
         }
+        self.activate_frame(&mut frame);
         self.frames.push(frame);
         let initial_error = resume
             .rejected
             .then(|| JsError::thrown(value, "await rejected".into()));
         let result = self.run_frame_general_with_error(p, self.frames.len() - 1, initial_error);
         let mut frame = self.frames.pop().expect("resumed frame exists");
+        self.deactivate_frame(&mut frame, &result);
         let result = match result {
             Ok(result) => result,
             Err(error) => {
