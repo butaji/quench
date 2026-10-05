@@ -1083,7 +1083,7 @@ pub(super) struct PromiseRuntime {
     pub(super) async_module_order: VecDeque<String>,
     pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
-    pub(super) active_native: Vec<Value>,
+    pub(super) active_native: Vec<super::activation::NativeActivation>,
 }
 
 impl<H: Host> Vm<H> {
@@ -1114,7 +1114,23 @@ impl<H: Host> Vm<H> {
             _ => self.realm.globals,
         };
         let previous_global = self.switch_realm_global(realm);
-        self.realm.promise.active_native.push(callee);
+        let boundary = match native {
+            Native::FunctionCall
+            | Native::FunctionApply
+            | Native::FunctionBoundCall
+            | Native::ReflectApply
+            | Native::ReflectConstruct => super::activation::NativeCallBoundary::Forward,
+            Native::Eval if self.direct_eval => super::activation::NativeCallBoundary::Forward,
+            _ => super::activation::NativeCallBoundary::Opaque,
+        };
+        self.realm
+            .promise
+            .active_native
+            .push(super::activation::NativeActivation {
+                callable: callee,
+                frame_depth: self.frames.len(),
+                boundary,
+            });
         let result = (|| {
             let _stack = self.enter_stack()?;
             self.call_native(p, native, this, args)
@@ -4305,8 +4321,16 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn active_native_callable(&self) -> Option<Value> {
+        self.realm
+            .promise
+            .active_native
+            .last()
+            .map(|activation| activation.callable)
+    }
+
     pub(super) fn active_native_env(&self) -> Option<Value> {
-        let callee = self.realm.promise.active_native.last().copied()?;
+        let callee = self.active_native_callable()?;
         match self.heap.get(callee) {
             Some(Cell::Function { env, .. }) if !env.is_null() => Some(*env),
             _ => None,
@@ -4531,11 +4555,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let function = *self
-            .realm
-            .promise
-            .active_native
-            .last()
+        let function = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise finally handler without callback".into()))?;
         let callback = *self
             .realm
@@ -4560,11 +4581,8 @@ impl<H: Host> Vm<H> {
         _p: &ResidualProgram,
         _args: &[Value],
     ) -> Result<Value, JsError> {
-        let function = *self
-            .realm
-            .promise
-            .active_native
-            .last()
+        let function = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
         let callback = *self
             .realm

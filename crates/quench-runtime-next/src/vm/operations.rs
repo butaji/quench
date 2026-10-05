@@ -148,11 +148,7 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::ProxyRevoke {
             let callee = self
-                .realm
-                .promise
-                .active_native
-                .last()
-                .copied()
+                .active_native_callable()
                 .ok_or_else(|| JsError("proxy revoke requires an active callee".into()))?;
             return self.proxy_revoke(callee);
         }
@@ -263,8 +259,7 @@ impl<H: Host> Vm<H> {
             Native::IntlRelativeTimeFormatSupportedLocalesOf => {
                 self.intl_supported_locales_of(p, args, super::intl_number::is_supported_locale)
             }
-            Native::IntlRelativeTimeFormatFormat
-            | Native::IntlRelativeTimeFormatFormatToParts => {
+            Native::IntlRelativeTimeFormatFormat | Native::IntlRelativeTimeFormatFormatToParts => {
                 self.intl_relative_time_format_native(p, native, this, args)
             }
             Native::IntlSegmenter => Err(self.type_error(p, "constructor requires new".into())),
@@ -953,7 +948,7 @@ impl<H: Host> Vm<H> {
                 if this == self.function_proto || self.function_caller_is_restricted(this) {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
-                    Ok(Value::UNDEFINED)
+                    Ok(self.function_caller(this))
                 }
             }
             Native::ErrorToString => self.error_to_string(p, this),
@@ -969,7 +964,8 @@ impl<H: Host> Vm<H> {
             Native::ArrayBufferSpecies => Ok(this),
             Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => {
-                let callee = self.realm.promise.active_native.last().copied()
+                let callee = self
+                    .active_native_callable()
                     .unwrap_or_else(|| self.native_value(native));
                 self.construct_value_with_new_target(p, callee, callee, args)
             }
@@ -1039,7 +1035,8 @@ impl<H: Host> Vm<H> {
             && let Some((a, b)) = Value::int_pair(left, right)
         {
             return Ok(Self::integrity_bool(
-                if op == BinaryOperator::Equality as u32 || op == BinaryOperator::StrictEquality as u32
+                if op == BinaryOperator::Equality as u32
+                    || op == BinaryOperator::StrictEquality as u32
                 {
                     a == b
                 } else {
@@ -1340,9 +1337,8 @@ impl<H: Host> Vm<H> {
                         Some(Cell::String(_) | Cell::Symbol(_))
                     )
                 {
-                    return Err(
-                        self.type_error(p, "array-like list contains an invalid property key".into())
-                    );
+                    return Err(self
+                        .type_error(p, "array-like list contains an invalid property key".into()));
                 }
                 elements.push(self.heap.root(element));
             }
@@ -1357,7 +1353,6 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(object);
         outcome
     }
-
 }
 
 fn exponentiate(base: f64, exponent: f64) -> f64 {
