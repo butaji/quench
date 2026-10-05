@@ -103,6 +103,23 @@ pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Opti
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn string_build_result(
+        &mut self,
+        p: &ResidualProgram,
+        result: Result<JsString, super::wtf16::StringBuildError>,
+    ) -> Result<JsString, JsError> {
+        result.map_err(|error| {
+            self.range_error(
+                p,
+                match error {
+                    super::wtf16::StringBuildError::InvalidLength => "Invalid string length",
+                    super::wtf16::StringBuildError::Allocation => "String allocation failed",
+                }
+                .into(),
+            )
+        })
+    }
+
     pub(super) fn string_method_receiver(
         &mut self,
         p: &ResidualProgram,
@@ -611,11 +628,15 @@ impl<H: Host> Vm<H> {
                     .well_known_symbols
                     .get("replace")
                     .copied()
-                    .ok_or_else(|| vm.type_error(p, "RegExp replace symbol is unavailable".into()))?;
+                    .ok_or_else(|| {
+                        vm.type_error(p, "RegExp replace symbol is unavailable".into())
+                    })?;
                 let method = vm.get_index(p, search_value, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
-                        return Err(vm.type_error(p, "String replace method is not callable".into()));
+                        return Err(
+                            vm.type_error(p, "String replace method is not callable".into())
+                        );
                     }
                     return vm.call_value(p, method, search_value, &[this, replacement_value]);
                 }
@@ -644,9 +665,9 @@ impl<H: Host> Vm<H> {
                 let advance = search_length.max(1);
                 let mut position = Some(first);
                 let mut cursor = 0;
-                let mut output = Vec::new();
+                let mut output = super::wtf16::JsStringBuilder::default();
                 while let Some(index) = position {
-                    output.extend_from_slice(&input.units()[cursor..index]);
+                    output.append_slice(&input, cursor..index);
                     let text = match &replacement {
                         StringReplacement::Callable(method) => {
                             let [matched, input] =
@@ -669,7 +690,7 @@ impl<H: Host> Vm<H> {
                             Value::UNDEFINED,
                         )?,
                     };
-                    output.extend_from_slice(text.units());
+                    output.append(&text);
                     cursor = index + search_length;
                     let next = index + advance;
                     position = if replace_all && next <= input.units().len() {
@@ -678,10 +699,10 @@ impl<H: Host> Vm<H> {
                         None
                     };
                 }
-                output.extend_from_slice(&input.units()[cursor..]);
-                vm.string_from_units(&output)
+                output.append_slice(&input, cursor..input.units().len());
+                let output = vm.string_build_result(p, output.finish())?;
+                Ok(vm.heap.alloc(Cell::String(output)))
             })
         })
     }
-
 }

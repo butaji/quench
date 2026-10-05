@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "tasks": [
+    "14",
+    "20"
+  ],
+  "baseline_source_head": "086af8b56bacdfb2c3b5dd5ba0c88972c0629338",
+  "qualification": "Isolated checked replacement assembly plus borrowing already-coerced numbered captures. Pending Node, Wasm, parser and other VM changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm/regexp.rs": "a2aa990f6a4e52cebdf3757b51182bea489b5f1e3238b804eac82a9c544bb1b7",
+    "crates/quench-runtime-next/src/vm/string.rs": "579d2ed6d4d6481be81b0847b55d5267151a8c651ffb35c3cb9b4e45a99a6e4b",
+    "crates/quench-runtime-next/src/vm/wtf16.rs": "b3954bb0dd4719537d2db62707a9ea48aeb40fb1dc0f39614c6463807f7e47d0"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "authority": "Canonical UTF-16 string storage; a transient slice plan derives the replacement result.",
+    "length_policy": "536870888 UTF-16 units, matching existing legacy policy and local Node buffer.constants.MAX_STRING_LENGTH; checked arithmetic before retaining new output parts.",
+    "failure_transition": "Length/reservation failure clears retained output slices and stays failed. Replacement callbacks, named getters and coercions still run before finish returns RangeError.",
+    "capture_projection": "Numbered captures are strings or undefined after RegExp result coercion; substitution borrows the existing string rather than re-coercing and cloning its host view.",
+    "lifecycle": "Plan slices own Rc references, survive guest callback collection, and materialize only a valid result. No persistent rope or side map."
+  },
+  "contracts": [
+    "https://tc39.es/ecma262/multipage/text-processing.html#sec-getsubstitution",
+    "https://tc39.es/ecma262/multipage/text-processing.html#sec-regexp.prototype-%symbol.replace%"
+  ],
+  "upstream_node_source": {
+    "tests/node/deps/v8/include/v8-primitive.h": "2bb059cc74a8da39494ea841aa6c11ea81f46fc42db79e8e67c9ee0ba73838d2",
+    "tests/node/deps/v8/src/strings/string-builder.cc": "a36444ada61f1cabe986ca941a9325c3792530fc73d2ea8f1e31a7ecf9d994f7"
+  },
+  "build": {
+    "profile": "release; correctness only, no Score/RSS claim",
+    "log": "target/iteration/task20-current-cost-frontier/build.log",
+    "binaries": {
+      "before-quench-next": "b988669fc05b9fb940840ff4e4b0e0b7b5eec0e12fb9ad927bf751503f55dcde",
+      "before-run-stages-next": "814d452bbad8fa35e8a33eaecd9ab596d36e6bb84eeccc9f45407f9cd3689cca",
+      "after-quench-next": "377f8dc286072d870b311a464249415af777c5f585e8507fb1d777d04d3401e7",
+      "after-run-stages-next": "f26b4d7db2a70cca6ec684b9707af6da96eda720af8333e9906d692591cf4682"
+    }
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1351,
+    "passed_before": 1350,
+    "passed_after": 1351,
+    "gained": [
+      "staging/sm/String/replace-math.js"
+    ],
+    "regressions": [],
+    "remaining": [],
+    "scopes": [
+      {
+        "scope": "string",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-string.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-string.json",
+        "passed_before": 1223,
+        "passed_after": 1223,
+        "failed_after": 0
+      },
+      {
+        "scope": "regexp-replace",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-regexp-replace.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-regexp-replace.json",
+        "passed_before": 70,
+        "passed_after": 70,
+        "failed_after": 0
+      },
+      {
+        "scope": "staged-string",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-staged-string.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-staged-string.json",
+        "passed_before": 45,
+        "passed_after": 46,
+        "failed_after": 1
+      },
+      {
+        "scope": "staged-replace",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-staged-replace.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-staged-replace.json",
+        "passed_before": 11,
+        "passed_after": 11,
+        "failed_after": 0
+      },
+      {
+        "scope": "annex-string",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-annex-string.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-annex-string.json",
+        "passed_before": 0,
+        "passed_after": 1,
+        "failed_after": 0
+      },
+      {
+        "scope": "from-code-point-recheck",
+        "before_report": "target/iteration/task20-current-cost-frontier/before-from-code-point-recheck.json",
+        "after_report": "target/iteration/task20-current-cost-frontier/after-from-code-point-recheck.json",
+        "passed_before": 1,
+        "passed_after": 1,
+        "failed_after": 0
+      }
+    ],
+    "comparison": "compare-runs --reports for every matching inventory",
+    "aggregation": "Distinct paths from paired frozen binaries; exact fromCodePoint recheck supersedes the initial contended outcome in both builds. Initial reports remain retained. No gained pass is attributed to that recheck."
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "summary": {
+      "sources": 55,
+      "observations_per_build": 110,
+      "before_matches": 110,
+      "after_matches": 110,
+      "losses": 0
+    },
+    "report": "target/iteration/task20-current-cost-frontier/node-controls.json",
+    "coverage": [
+      "numbered/named capture substitutions",
+      "undefined captures and literal dollar sequences",
+      "UTF-16 lone surrogates",
+      "string and RegExp replace/replaceAll",
+      "capture conversion count and named getter/throw order",
+      "backward match positions still invoke callbacks"
+    ]
+  },
+  "overflow_gc_controls": {
+    "matched_outputs": 15,
+    "engine_log": "target/iteration/task20-current-cost-frontier/after-growth-control.log",
+    "node_log": "target/iteration/task20-current-cost-frontier/node-growth-control.log",
+    "coverage": [
+      "oversized RegExp and plain-string replacement",
+      "named getter exception identity after output overflow",
+      "all 600 callback effects before overflow failure",
+      "callback coercion and named getter collection",
+      "lone surrogate and capture substitution output"
+    ],
+    "mode": "Existing test worker GC embedding; Node --expose-gc oracle.",
+    "source_sha256": "fd499c2ccff8dde5756808d0c3ae3642b62b47b1724327c4fdfef2b65c98082b"
+  },
+  "limits": [
+    "Bounded checks do not establish full suite or Stage A completion.",
+    "Initial fromCodePoint timeout occurs in both builds during unrelated CPU-intensive jobs. After those jobs and the internal compiler finish, the unchanged fixture passes in both frozen builds at the same ten-second limit. No timing/Score claim.",
+    "Pinned Wasm, implemented Node compatibility and production single-VM cutover remain unqualified.",
+    "Pins, discovery, guest inputs, harness, expectations, exclusions and deadlines unchanged."
+  ],
+  "internal_checks": {
+    "profile": "iteration; correctness only",
+    "passed": 6,
+    "failed": 0,
+    "new_tests": 2,
+    "log": "target/iteration/task20-current-cost-frontier/internal-tests.log",
+    "coverage": [
+      "checked length limit and arithmetic overflow",
+      "slice coalescing and retained canonical storage lifetime",
+      "existing lone-surrogate, scalar encoding, repetition and search/split storage checks"
+    ],
+    "scope": "Internal representation/lifecycle invariants; no unit tests duplicating guest suite cases."
+  }
+}

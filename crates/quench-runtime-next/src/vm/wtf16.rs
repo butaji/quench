@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::rc::Rc;
 
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
@@ -6,6 +7,93 @@ use std::rc::Rc;
 pub(crate) struct JsString {
     units: Rc<[u16]>,
     host: String,
+}
+
+/// Flat UTF-16 strings retain the existing Node-compatible length policy.
+/// V8's public String::kMaxLength on the supported 64-bit host is this limit;
+/// Node exposes it as buffer.constants.MAX_STRING_LENGTH.
+pub(crate) const MAX_STRING_UNITS: usize = 536_870_888;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StringBuildError {
+    InvalidLength,
+    Allocation,
+}
+
+fn checked_string_length(current: usize, additional: usize) -> Result<usize, StringBuildError> {
+    current
+        .checked_add(additional)
+        .filter(|length| *length <= MAX_STRING_UNITS)
+        .ok_or(StringBuildError::InvalidLength)
+}
+
+struct StringPart {
+    units: Rc<[u16]>,
+    range: Range<usize>,
+}
+
+/// A transient concatenation plan, not a guest rope. Slices retain only the
+/// canonical UTF-16 storage. Overflow stops storage growth, but callers still
+/// perform all replacement effects before finish reports the error.
+pub(super) struct JsStringBuilder {
+    parts: Vec<StringPart>,
+    length: Result<usize, StringBuildError>,
+}
+
+impl Default for JsStringBuilder {
+    fn default() -> Self {
+        Self {
+            parts: Vec::new(),
+            length: Ok(0),
+        }
+    }
+}
+
+impl JsStringBuilder {
+    pub(super) fn append(&mut self, string: &JsString) {
+        self.append_slice(string, 0..string.units.len());
+    }
+
+    pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        let Ok(current) = self.length else {
+            return;
+        };
+        self.length = checked_string_length(current, range.len());
+        if self.length.is_err() {
+            self.parts.clear();
+            return;
+        }
+        if let Some(previous) = self.parts.last_mut() {
+            if Rc::ptr_eq(&previous.units, &string.units) && previous.range.end == range.start {
+                previous.range.end = range.end;
+                return;
+            }
+        }
+        if self.parts.try_reserve(1).is_err() {
+            self.length = Err(StringBuildError::Allocation);
+            self.parts.clear();
+            return;
+        }
+        self.parts.push(StringPart {
+            units: Rc::clone(&string.units),
+            range,
+        });
+    }
+
+    pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
+        let length = self.length?;
+        let mut output = Vec::new();
+        output
+            .try_reserve_exact(length)
+            .map_err(|_| StringBuildError::Allocation)?;
+        for part in self.parts {
+            output.extend_from_slice(&part.units[part.range]);
+        }
+        Ok(JsString::from_units(&output))
+    }
 }
 
 impl JsString {
@@ -116,6 +204,38 @@ impl std::fmt::Display for JsString {
 #[cfg(test)]
 mod tests {
     use super::JsString;
+
+    #[test]
+    fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {
+        use super::{MAX_STRING_UNITS, StringBuildError, checked_string_length};
+        assert_eq!(
+            checked_string_length(MAX_STRING_UNITS - 1, 1),
+            Ok(MAX_STRING_UNITS)
+        );
+        assert_eq!(
+            checked_string_length(MAX_STRING_UNITS, 1),
+            Err(StringBuildError::InvalidLength)
+        );
+        assert_eq!(
+            checked_string_length(usize::MAX, 1),
+            Err(StringBuildError::InvalidLength)
+        );
+    }
+
+    #[test]
+    fn concatenation_plan_preserves_units_and_merges_adjacent_slices() {
+        let source = JsString::from_units(&[0xD800, b'a' as u16, 0xDC00]);
+        let mut plan = super::JsStringBuilder::default();
+        plan.append_slice(&source, 0..1);
+        plan.append_slice(&source, 1..3);
+        assert_eq!(plan.parts.len(), 1);
+        plan.append(&source);
+        drop(source);
+        assert_eq!(
+            plan.finish().unwrap().units(),
+            &[0xD800, b'a' as u16, 0xDC00, 0xD800, b'a' as u16, 0xDC00]
+        );
+    }
 
     #[test]
     fn preserves_lone_surrogates_until_host_conversion() {
