@@ -54,7 +54,6 @@
     "host": ["43", "53", "54", "55", "21", "22"],
     "performance": [
       "25",
-      "26",
       "50",
       "67",
       "78",
@@ -64,7 +63,9 @@
       "85",
       "80",
       "83",
-      "84"
+      "84",
+      "68",
+      "77"
     ],
     "specializers": [
       "29",
@@ -82,7 +83,7 @@
       "73",
       "76"
     ],
-    "gates": ["42", "68", "77"],
+    "gates": [],
     "deferred": [
       "44",
       "45",
@@ -106,7 +107,7 @@
     "Preserve Quench CLI behavior and observable ECMAScript, Node, and Wasm behavior; internal Rust APIs may change.",
     "Guide Stage B with Ershov binding-time analysis, Futamura specialization, and Self VM research on maps, customization, inline caches and type feedback, using the pinned ../v2 source and measured wins/rejections as the implementation reference. Adapt ideas to the single interpreter VM, proven facts or guards with exact fallback, and paired Score/RSS evidence; no sibling build dependency or extra architecture gate.",
     "Production behavior may not select between old and new engines through a runtime flag; pre-cutover comparison uses separate development binaries.",
-    "Efficiency completion (task 61, Apple M4/macOS) requires, on each of the eight V8-v7 fixtures, the highest median Score and the lowest median maximum RSS among Quench, QuickJS, Bun/JSC with its JIT disabled, and Node/V8 --jitless. Task 26 is an optional diagnostic comparison, not a gate.",
+    "Efficiency completion (task 61, Apple M4/macOS) requires, on each of the eight V8-v7 fixtures, the highest median Score and the lowest median maximum RSS among Quench, QuickJS, Bun/JSC with its JIT disabled, and Node/V8 --jitless. Consult pinned v2 measurements only when they explain a measured gap; no separate parity campaign is required.",
     "Completed task specifications remain in tasks/ with status done and a short completion record; Git history is the archive for progress logs and deleted legacy implementation material.",
     "Only two stages are active: A_correctness ends at task 86 after integrated correctness (24), production cutover and legacy removal (27), and audited cleanup plus final three-inventory verification (86); B_performance begins only after 86 and ends at 28 with task 61 performance qualification.",
     "Use Lisp mindset throughout both stages: one authority per fact, shared semantics, derived state, explicit effects, and exact generic fallback. There is no separate mandatory restructuring or kernel-watermark stage.",
@@ -147,7 +148,6 @@
         "16",
         "17",
         "18",
-        "42",
         "19",
         "43",
         "53",
@@ -198,7 +198,6 @@
         "80",
         "83",
         "84",
-        "26",
         "61",
         "28"
       ]
@@ -363,7 +362,7 @@
       "id": "88",
       "file": "88.md",
       "title": "Freeze the web-framework Node inventory",
-      "status": "in_progress",
+      "status": "pending",
       "depends_on": []
     },
     {
@@ -400,13 +399,6 @@
       "title": "Add two-mode residual execution and the v2 lab",
       "status": "pending",
       "depends_on": ["86"]
-    },
-    {
-      "id": "26",
-      "file": "26.md",
-      "title": "Optional v2 diagnostic for a measured V8-v7 gap",
-      "status": "pending",
-      "depends_on": ["86", "25", "50", "62"]
     },
     {
       "id": "27",
@@ -493,13 +485,6 @@
       "depends_on": ["37"]
     },
     {
-      "id": "42",
-      "file": "42.md",
-      "title": "Check existing specialization against the shared generic path",
-      "status": "pending",
-      "depends_on": ["19"]
-    },
-    {
       "id": "43",
       "file": "43.md",
       "title": "Adapt the existing Node host to the shared VM",
@@ -532,7 +517,7 @@
       "file": "47.md",
       "title": "Derive the generating extension from the watermark tables",
       "status": "pending",
-      "depends_on": ["08", "09", "10", "42", "44", "45", "46", "49", "52"]
+      "depends_on": ["08", "09", "10", "44", "45", "46", "49", "52"]
     },
     {
       "id": "48",
@@ -644,7 +629,7 @@
       "file": "66.md",
       "title": "Fuzz the front end and VM against differential oracles",
       "status": "pending",
-      "depends_on": ["19", "42"]
+      "depends_on": ["19"]
     },
     {
       "id": "67",
