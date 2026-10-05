@@ -101,8 +101,11 @@ measured gaps, not a mandatory implementation list. Prioritize applicable
 measured v2 wins: compact canonical specialization facts, the physical phase
 boundary, static lexical addressing/site-local caches, narrow local rules and
 deterministic corpus PGO. Census the current path first; prior success does not
-replace a Quench paired experiment. Remove rejected experiments. No v2-parity,
-watermark, broad restructuring or Wasm-speed requirement blocks either stage.
+replace a Quench paired experiment. Ordinary lexical access already uses
+`LoadLocal` and capture slots; task 49 is limited to activation facts still
+rediscovered at runtime and remains optional until a measured gap points there.
+Remove rejected experiments. No v2-parity, watermark, broad restructuring or
+Wasm-speed requirement blocks either stage.
 
 Stop when all eight benchmarks meet both targets and final correctness still
 passes. Unselected optimization proposals do not create more work to complete.
