@@ -1130,7 +1130,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.function_proto)),
+            object: Box::new(Self::empty_object(self.realm_function_prototype(realm))),
             kind: FunctionKind::Native(kind),
             env,
             realm,
