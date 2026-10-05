@@ -245,6 +245,15 @@ pub struct Regex {
     compiled_locations: RefCell<Option<regex::bytes::CaptureLocations>>,
 }
 
+impl std::fmt::Debug for Regex {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Regex")
+            .field("capture_names", &self.capture_names)
+            .field("has_named_groups", &self.has_named_groups)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Regex {
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();

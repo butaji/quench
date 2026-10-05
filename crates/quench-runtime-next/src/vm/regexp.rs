@@ -23,8 +23,6 @@ const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
     (&["rightContext", "$'"], false),
 ];
 
-pub(super) struct CompiledRegexp(quench_regexp::Regex);
-
 #[derive(Clone, Copy)]
 pub(super) struct RegExpIntrinsics {
     pub(super) constructor: Value,
@@ -42,20 +40,11 @@ enum RegExpConstructorInput {
     },
 }
 
-
-impl CompiledRegexp {
-    pub(super) fn find_from_utf16(
-        &self,
-        input: &[u16],
-        start: usize,
-    ) -> Option<quench_regexp::Match> {
-        self.0.find_from_utf16(input, start).next()
-    }
-}
-
 impl<H: Host> Vm<H> {
     pub(super) fn regexp_intrinsic_constructor(&self) -> Value {
-        self.realm.intrinsics.regexp_intrinsics
+        self.realm
+            .intrinsics
+            .regexp_intrinsics
             .get(&self.realm.globals)
             .expect("RegExp intrinsics are installed for the active realm")
             .constructor
@@ -133,7 +122,13 @@ impl<H: Host> Vm<H> {
         }
         for (names, has_setter) in REGEXP_LEGACY_ACCESSOR_GROUPS {
             for name in *names {
-                self.install_regexp_legacy_accessor(program, constructor, realm, name, *has_setter)?;
+                self.install_regexp_legacy_accessor(
+                    program,
+                    constructor,
+                    realm,
+                    name,
+                    *has_setter,
+                )?;
             }
         }
         Ok(())
@@ -149,7 +144,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let getter = self.native_with_realm(Native::RegExpLegacyGetter, realm, realm);
         self.set_builtin_function_name(getter, &format!("get RegExp.{name}"))?;
-        let setter = has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, realm, realm));
+        let setter =
+            has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, realm, realm));
         if let Some(setter) = setter {
             self.set_builtin_function_name(setter, &format!("set RegExp.{name}"))?;
         }
@@ -418,8 +414,10 @@ impl<H: Host> Vm<H> {
                             let atom = vm.intern_atom("index");
                             let position = vm.get_property(p, result, atom)?;
                             let position = vm.to_primitive(p, position, "number")?;
-                            let position = regexp_to_integer_or_infinity(vm.to_number(p, position)?);
-                            let position = position.max(0.0).min(input.units().len() as f64) as usize;
+                            let position =
+                                regexp_to_integer_or_infinity(vm.to_number(p, position)?);
+                            let position =
+                                position.max(0.0).min(input.units().len() as f64) as usize;
                             let mut captures = Vec::new();
                             for index in 1..length {
                                 let atom = vm.intern_atom(&index.to_string());
@@ -450,12 +448,13 @@ impl<H: Host> Vm<H> {
                                         vm.call_value(p, replacement, Value::UNDEFINED, &args)?;
                                     vm.coerce_js_string(p, value)
                                 } else {
-                                    let groups = if groups.is_undefined() || vm.is_object_like(groups) {
-                                        groups
-                                    } else {
-                                        vm.require_object_coercible(p, groups)?;
-                                        vm.box_primitive_object(groups)?
-                                    };
+                                    let groups =
+                                        if groups.is_undefined() || vm.is_object_like(groups) {
+                                            groups
+                                        } else {
+                                            vm.require_object_coercible(p, groups)?;
+                                            vm.box_primitive_object(groups)?
+                                        };
                                     vm.with_call_roots([groups], |vm| {
                                         vm.replacement_substitution(
                                             p,
@@ -536,7 +535,9 @@ impl<H: Host> Vm<H> {
                             first * REPLACEMENT_CAPTURE_RADIX + usize::from(*unit - u16::from(b'0'))
                         });
                     let selected = match (first, second) {
-                        (0, Some(index)) if index > 0 && index <= captures.len() => Some((index, 2)),
+                        (0, Some(index)) if index > 0 && index <= captures.len() => {
+                            Some((index, 2))
+                        }
                         (0, _) => None,
                         (_, Some(index)) if index <= captures.len() => Some((index, 2)),
                         (_, _) if first <= captures.len() => Some((first, 1)),
@@ -603,7 +604,13 @@ impl<H: Host> Vm<H> {
                 let previous = vm.get_property(p, receiver, atom)?;
                 vm.with_call_roots([previous], |vm| {
                     if !vm.same_value(previous, Value::number(0.0)) {
-                        vm.set_property_with_program_mode(p, receiver, atom, Value::number(0.0), true)?;
+                        vm.set_property_with_program_mode(
+                            p,
+                            receiver,
+                            atom,
+                            Value::number(0.0),
+                            true,
+                        )?;
                     }
                     let input = vm.heap.alloc(Cell::String(input));
                     let result = vm.regexp_exec_value(p, receiver, input)?;
@@ -746,7 +753,9 @@ impl<H: Host> Vm<H> {
                     .well_known_symbols
                     .get("species")
                     .copied()
-                    .ok_or_else(|| vm.type_error(p, "RegExp species symbol is unavailable".into()))?;
+                    .ok_or_else(|| {
+                        vm.type_error(p, "RegExp species symbol is unavailable".into())
+                    })?;
                 let species = vm.get_index(p, constructor, symbol)?;
                 if species.is_undefined() || species.is_null() {
                     return Ok(vm.regexp_intrinsic_constructor());
@@ -886,9 +895,16 @@ impl<H: Host> Vm<H> {
                     let input = vm.heap.alloc(Cell::String(input));
                     return vm.regexp_exec_value(p, receiver, input);
                 }
-                let unicode = flags.host_string().contains('u') || flags.host_string().contains('v');
+                let unicode =
+                    flags.host_string().contains('u') || flags.host_string().contains('v');
                 let last_index = vm.intern_atom("lastIndex");
-                vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+                vm.set_property_with_program_mode(
+                    p,
+                    receiver,
+                    last_index,
+                    Value::number(0.0),
+                    true,
+                )?;
                 let array = vm.new_array(Vec::new());
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
                 vm.with_call_roots([array, input_value], |vm| {
@@ -966,7 +982,10 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
             }
             (Native::RegExpSource, _)
-                if self.realm.intrinsics.regexp_intrinsics
+                if self
+                    .realm
+                    .intrinsics
+                    .regexp_intrinsics
                     .get(&self.realm.globals)
                     .is_some_and(|intrinsics| intrinsics.prototype == this) =>
             {
@@ -1057,7 +1076,10 @@ impl<H: Host> Vm<H> {
         if self.same_value(receiver, self.regexp_intrinsic_constructor()) {
             Ok(())
         } else {
-            Err(self.type_error(p, "RegExp legacy accessor called on incompatible receiver".into()))
+            Err(self.type_error(
+                p,
+                "RegExp legacy accessor called on incompatible receiver".into(),
+            ))
         }
     }
 
@@ -1080,7 +1102,8 @@ impl<H: Host> Vm<H> {
                     return Ok(pattern_value);
                 }
             }
-            let input = if let Some(Cell::RegExp { source, flags, .. }) = vm.heap.get(pattern_value) {
+            let input = if let Some(Cell::RegExp { source, flags, .. }) = vm.heap.get(pattern_value)
+            {
                 RegExpConstructorInput::Internal {
                     source: source.clone(),
                     original_flags: flags_omitted.then(|| flags.clone()),
@@ -1130,12 +1153,12 @@ impl<H: Host> Vm<H> {
                 }
             };
             let intrinsic = vm.regexp_intrinsic_constructor();
-            let legacy_constructor = if new_target.is_none_or(|target| vm.same_value(target, intrinsic))
-            {
-                intrinsic
-            } else {
-                Value::UNDEFINED
-            };
+            let legacy_constructor =
+                if new_target.is_none_or(|target| vm.same_value(target, intrinsic)) {
+                    intrinsic
+                } else {
+                    Value::UNDEFINED
+                };
             vm.regexp_from_source(prototype, pattern, flags, legacy_constructor)
         })
     }
@@ -1154,7 +1177,12 @@ impl<H: Host> Vm<H> {
             .expect("RegExp intrinsics are installed for the active realm")
             .prototype;
         let (source, flags) = self.regexp_initialization_strings(p, pattern, flags)?;
-        self.regexp_from_source(prototype, source, flags, self.regexp_intrinsic_constructor())
+        self.regexp_from_source(
+            prototype,
+            source,
+            flags,
+            self.regexp_intrinsic_constructor(),
+        )
     }
 
     fn regexp_initialization_strings(
@@ -1185,12 +1213,12 @@ impl<H: Host> Vm<H> {
         flags: String,
         legacy_constructor: Value,
     ) -> Result<Value, JsError> {
-        let regex = Self::compile_regexp(&source, &flags)?;
-        drop(regex);
+        let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
         let object = self.heap.alloc(Cell::RegExp {
             object: Self::empty_object(prototype),
             source,
             flags,
+            matcher,
             legacy_constructor,
         });
         let last_index_atom = self.intern_atom("lastIndex");
@@ -1248,14 +1276,18 @@ impl<H: Host> Vm<H> {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
 
-                if let Err(error) = Self::compile_regexp(&source, &flags) {
-                    let message = error.to_string();
-                    let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
-                    return vm.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
-                }
+                let matcher = match Self::compile_regexp(&source, &flags) {
+                    Ok(matcher) => Rc::new(matcher),
+                    Err(error) => {
+                        let message = error.to_string();
+                        let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
+                        return vm.syntax_error_result(p, message).map(|_| Value::UNDEFINED);
+                    }
+                };
                 let Some(Cell::RegExp {
                     source: current_source,
                     flags: current_flags,
+                    matcher: current_matcher,
                     ..
                 }) = vm.heap.get_mut(receiver)
                 else {
@@ -1263,6 +1295,7 @@ impl<H: Host> Vm<H> {
                 };
                 *current_source = source;
                 *current_flags = flags;
+                *current_matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
                 Ok(receiver)
@@ -1319,7 +1352,9 @@ impl<H: Host> Vm<H> {
             std::iter::once(receiver).chain(args.iter().copied()),
             |vm| {
                 if !vm.is_object_like(receiver) {
-                    return Err(vm.type_error(p, "RegExp.prototype.test called on non-object".into()));
+                    return Err(
+                        vm.type_error(p, "RegExp.prototype.test called on non-object".into())
+                    );
                 }
                 let input =
                     vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -1342,29 +1377,37 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             if !matches!(vm.heap.get(this), Some(Cell::RegExp { .. })) {
-                return Err(vm.type_error(p, "RegExp method called on incompatible receiver".into()));
+                return Err(
+                    vm.type_error(p, "RegExp method called on incompatible receiver".into())
+                );
             }
-            let input = vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+            let input =
+                vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
             let last_index_atom = vm.intern_atom("lastIndex");
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
-            let (source, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { source, flags, .. }) => (source.clone(), flags.clone()),
+            let (regex, flags) = match vm.heap.get(this) {
+                Some(Cell::RegExp { matcher, flags, .. }) => (Rc::clone(matcher), flags.clone()),
                 _ => {
                     return Err(
                         vm.type_error(p, "RegExp method called on incompatible receiver".into())
                     );
                 }
             };
-            let regex = Self::compile_regexp(&source, &flags)?;
             let stateful = flags.contains('g') || flags.contains('y');
             let sticky = flags.contains('y');
             let start = if stateful { last_index } else { 0 };
             if stateful && start > input.units().len() {
-                vm.set_property_with_program_mode(p, this, last_index_atom, Value::number(0.0), true)?;
+                vm.set_property_with_program_mode(
+                    p,
+                    this,
+                    last_index_atom,
+                    Value::number(0.0),
+                    true,
+                )?;
                 return Ok(Value::NULL);
             }
-            let matched = regex.find_from_utf16(input.units(), start);
+            let matched = regex.find_from_utf16(input.units(), start).next();
             let matched = matched.filter(|matched| !sticky || matched.range.start == start);
             let Some(matched) = matched else {
                 if stateful {
@@ -1489,10 +1532,14 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    pub(super) fn compile_regexp(source: &JsString, flags: &str) -> Result<CompiledRegexp, JsError> {
+    pub(super) fn compile_regexp(
+        source: &JsString,
+        flags: &str,
+    ) -> Result<quench_regexp::Regex, JsError> {
         quench_regexp::validate_flags(flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
-        let parser_source = regexp_parser_source(source, flags.contains('u') || flags.contains('v'))?;
+        let parser_source =
+            regexp_parser_source(source, flags.contains('u') || flags.contains('v'))?;
         crate::compile::regexp::validate_pattern(&parser_source, flags)
             .map_err(|error| JsError(format!("SyntaxError: {error}").into()))?;
         let regex = catch_unwind(AssertUnwindSafe(|| {
@@ -1502,15 +1549,21 @@ impl<H: Host> Vm<H> {
         .map_err(|error| {
             JsError(format!("SyntaxError: invalid regular expression: {error}").into())
         })?;
-        Ok(CompiledRegexp(regex))
+        Ok(regex)
     }
 }
 
-fn regexp_parser_source(source: &JsString, unicode: bool) -> Result<std::borrow::Cow<'_, str>, JsError> {
+fn regexp_parser_source(
+    source: &JsString,
+    unicode: bool,
+) -> Result<std::borrow::Cow<'_, str>, JsError> {
     let needs_projection = if unicode {
         char::decode_utf16(source.units().iter().copied()).any(|character| character.is_err())
     } else {
-        source.units().iter().any(|unit| (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit))
+        source
+            .units()
+            .iter()
+            .any(|unit| (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit))
     };
     if !needs_projection {
         return Ok(std::borrow::Cow::Borrowed(source.host_string()));

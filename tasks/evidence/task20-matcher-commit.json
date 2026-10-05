@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "kind": "isolated_regexp_matcher_ownership",
+  "timestamp_utc": "2026-10-05T04:00:39.439936+00:00",
+  "base_commit": "79094631bd378911beb4249709d5b27a53a76c5b",
+  "staged_sources": {
+    "crates/quench-regexp/src/lib.rs": "3b28b90b0161afcc357f10a7cbb99759e49b0712d2baa573c81f9199081acfb5",
+    "crates/quench-runtime-next/src/heap/cell.rs": "02469af182cff28080bd9b75129231559b8b26423cbfd29fded2c415ba3b0558",
+    "crates/quench-runtime-next/src/heap/tests.rs": "13784f08e18b3bdf68b46c4ba9333d47b5098f1865d8b44a55081e542d1ec097",
+    "crates/quench-runtime-next/src/vm/regexp.rs": "fa1f565585dd80ecdd713697b5aac2e19c12861252a723981fa163cd49f199a8"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "debug_affected": {
+    "distinct_cases": 1871,
+    "before_passed": 1863,
+    "after_passed": 1863,
+    "regressions": [],
+    "remaining": [
+      "annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+      "annexB/built-ins/RegExp/RegExp-trailing-escape-BMP.js",
+      "built-ins/Function/prototype/toString/built-in-function-object.js",
+      "staging/sm/RegExp/unicode-braced.js",
+      "staging/sm/RegExp/unicode-class-braced.js",
+      "staging/sm/RegExp/unicode-ignoreCase.js",
+      "staging/sm/statements/property-reference-self-assignment.js",
+      "staging/sm/statements/regress-642975.js"
+    ],
+    "scopes": [
+      {
+        "scope": "annex-regexp",
+        "total": 62,
+        "before_passed": 60,
+        "after_passed": 60,
+        "compare_exit": 0
+      },
+      {
+        "scope": "annex",
+        "total": 845,
+        "before_passed": 845,
+        "after_passed": 845,
+        "compare_exit": 0
+      },
+      {
+        "scope": "constructor-cases",
+        "total": 9,
+        "before_passed": 9,
+        "after_passed": 9,
+        "compare_exit": 0
+      },
+      {
+        "scope": "function-traversal",
+        "total": 1,
+        "before_passed": 0,
+        "after_passed": 0,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-iterator",
+        "total": 17,
+        "before_passed": 17,
+        "after_passed": 17,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-prototype",
+        "total": 487,
+        "before_passed": 487,
+        "after_passed": 487,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-realm",
+        "total": 10,
+        "before_passed": 10,
+        "after_passed": 10,
+        "compare_exit": 0
+      },
+      {
+        "scope": "regexp-subclass",
+        "total": 2,
+        "before_passed": 2,
+        "after_passed": 2,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-regexp",
+        "total": 91,
+        "before_passed": 88,
+        "after_passed": 88,
+        "compare_exit": 0
+      },
+      {
+        "scope": "staged-statements",
+        "total": 17,
+        "before_passed": 15,
+        "after_passed": 15,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-match",
+        "total": 51,
+        "before_passed": 51,
+        "after_passed": 51,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-matchAll",
+        "total": 25,
+        "before_passed": 25,
+        "after_passed": 25,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-replace",
+        "total": 55,
+        "before_passed": 55,
+        "after_passed": 55,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-replaceAll",
+        "total": 45,
+        "before_passed": 45,
+        "after_passed": 45,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-search",
+        "total": 43,
+        "before_passed": 43,
+        "after_passed": 43,
+        "compare_exit": 0
+      },
+      {
+        "scope": "string-split",
+        "total": 120,
+        "before_passed": 120,
+        "after_passed": 120,
+        "compare_exit": 0
+      }
+    ],
+    "jobs": 2,
+    "timeout_ms": 10000
+  },
+  "node_controls": {
+    "passed": 24,
+    "failed": 0,
+    "modes": ["normal", "generic"],
+    "raw": "target/iteration/task20-matcher-commit/controls.json"
+  },
+  "internal_checks": {
+    "heap_constructor_root_ownership": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "binaries": {
+    "before": {
+      "path": "target/iteration/task20-matcher-commit/before",
+      "sha256": "91a74b1988cad2668fc7cfa5dcef6297a2a1187a430aaf5bd87c881c8ecd6978"
+    },
+    "after": {
+      "path": "target/iteration/task20-matcher-commit/after",
+      "sha256": "e96c4da8b81fb6ea2a72e716c48c7afee0e5031637d08ed90f753a9cd4351d86"
+    },
+    "compare-runs": {
+      "path": "target/iteration/task20-matcher-commit/compare-runs",
+      "sha256": "a5b2d6ad78648bdca9238f0185520217cb9dd195232313005d24c7c1ebe8f132"
+    },
+    "production-before": {
+      "path": "target/iteration/task20-matcher-commit/production-before",
+      "sha256": "01add8e906906e7f3821d94181dfe6258cc45c501f99c19bfb840fba3f97ff67"
+    },
+    "production-after": {
+      "path": "target/iteration/task20-matcher-commit/production-after",
+      "sha256": "22eb199204f6e468c49d85ae4154bc1035d86cd01b27a61f93ff02fcea5ad365"
+    }
+  },
+  "limits": [
+    "Stage A and complete Test262 qualification remain open.",
+    "Cancelled broad debug Unicode selection and empty constructor filter are not qualification.",
+    "No suite inputs or pins were changed; no full suite or benchmark ran."
+  ],
+  "production_check": {
+    "profile": "release",
+    "case": "built-ins/Function/prototype/toString/built-in-function-object.js",
+    "total": 1,
+    "before_passed": 0,
+    "after_passed": 1,
+    "before_failure": "timed_out",
+    "timeout_ms": 10000,
+    "regressions": 0,
+    "comparison": "regressions=0"
+  },
+  "raw_artifacts": {
+    "target/iteration/task20-matcher-commit/after-annex-regexp.json": "aba4ed0514b4df25c90971909d26f69ac8eabda9b725b4d903498881b72f7c9e",
+    "target/iteration/task20-matcher-commit/after-annex.json": "9b361121271fa1633081bb07dbc01966022a8d9ed2530dbd022ae18773e00e19",
+    "target/iteration/task20-matcher-commit/after-constructor-cases.json": "154f092c7fc2978ed7f46b14c9bf8dc746360e2df0a15c5d947551db1b89949f",
+    "target/iteration/task20-matcher-commit/after-function-traversal.json": "204050eef5acdbb7ccb93baacbfde8262742600822259c0247fea9634ca9a216",
+    "target/iteration/task20-matcher-commit/after-regexp-constructor.json": "ddfc030abded40229be98d6f43aa81b175740052c3c3f9052724cd65f5d35b62",
+    "target/iteration/task20-matcher-commit/after-regexp-iterator.json": "4324d2839c17ef3cca9583ce58b633ec6c6f14e301b3be8503c71651459546c4",
+    "target/iteration/task20-matcher-commit/after-regexp-prototype.json": "ffa5a7c9aa8563024235291742056e4865a899b2a1f33c2221313146a24f7093",
+    "target/iteration/task20-matcher-commit/after-regexp-realm.json": "b637b2357c46ced134cefb78661eaa29d1cce5a0548b970384364a7d17269266",
+    "target/iteration/task20-matcher-commit/after-regexp-subclass.json": "d6701a7f0810a9e8e5b332d9e0a9ba077df4a2299a303c07af744cf7ff593562",
+    "target/iteration/task20-matcher-commit/after-staged-regexp.json": "aca2bc97d88767150ec56dcd21322d560ef7d775df2096d1a6bc96826b46a202",
+    "target/iteration/task20-matcher-commit/after-staged-statements.json": "57adc15ccf8032fc7228868f95af9030e5133c1869ad46d3d354a6dafdb546f7",
+    "target/iteration/task20-matcher-commit/after-string-match.json": "1c7c70dd1498b20db21bfe16f8e7cd899b252b60b1de821753dfa3daab5e6e86",
+    "target/iteration/task20-matcher-commit/after-string-matchAll.json": "473a930393b1efb093106d7c9e9f70e5d8eeefec51d2bf524272ba2824f416b3",
+    "target/iteration/task20-matcher-commit/after-string-replace.json": "bad78c5949b8691c5edea83fe8243374bf5fa8917f1d99d91bc89a994565d798",
+    "target/iteration/task20-matcher-commit/after-string-replaceAll.json": "d35374ff011e0beda89384bd69c9b66b4229bb1144f2b7c8b7ed7f49f82f09b3",
+    "target/iteration/task20-matcher-commit/after-string-search.json": "a551a2c13475e647d81d55f882716788cca95fcf32585bd772d1e84e7727c2a5",
+    "target/iteration/task20-matcher-commit/after-string-split.json": "b4f9d44000cd14564b0616af90620a4498fb398cea0356852d6e45abf505ac75",
+    "target/iteration/task20-matcher-commit/after-summary.json": "309c7bdfe2e8bf23342c3227ac8493c234df95f17ab0de13645e622f388e03e1",
+    "target/iteration/task20-matcher-commit/before-annex-regexp.json": "33f9e2a33f233dac5783e3527149f61b824ffe3e50fc738b2d261315ca235c7d",
+    "target/iteration/task20-matcher-commit/before-annex.json": "801971e6e4333873bb260c6e6508a90babe64280d08355fb0370ac23fa8f9299",
+    "target/iteration/task20-matcher-commit/before-constructor-cases.json": "93908d24d08d7bd08535ef622f3e50ac89ab1b96971a9d2396f30e48bcbe121e",
+    "target/iteration/task20-matcher-commit/before-function-traversal.json": "77f2e9108abd2d100faf71ada07fb59665c5364280757cbe42409160449ed58e",
+    "target/iteration/task20-matcher-commit/before-regexp-constructor.json": "f5a676b73d74ada3b1df5548a67fa695340215a5e4190a7f112680196b5cb262",
+    "target/iteration/task20-matcher-commit/before-regexp-iterator.json": "e1607c15c3fb90b0910ffd1b4861a25cd5def136212ebcbf3b7f5bdbe5f0cf72",
+    "target/iteration/task20-matcher-commit/before-regexp-prototype.json": "2adedbf52139e864e981eaa9f0849d206fd1c71f98f3da6f23d419aab70215ca",
+    "target/iteration/task20-matcher-commit/before-regexp-realm.json": "df94a894d3045ebad913053e98884365b3e9601f732f48127665375a2f32bd8c",
+    "target/iteration/task20-matcher-commit/before-regexp-subclass.json": "b9201f2043d0324bc8f81b990148f7e37304827bd9e14fa1d75fd76c8f23cf16",
+    "target/iteration/task20-matcher-commit/before-staged-regexp.json": "b46ac058e13029f3a23dc71982798924fa8c2c710cf254280e31e2dcd3421ce2",
+    "target/iteration/task20-matcher-commit/before-staged-statements.json": "06d09b847ed5d3942bbcb01adca7f972ad8ab3854452e06cd18ad472e1a52f9c",
+    "target/iteration/task20-matcher-commit/before-string-match.json": "930d89a7103e184fb110ec2719ebff5649855ed14f9014da62467ce9254d015c",
+    "target/iteration/task20-matcher-commit/before-string-matchAll.json": "b52ea9a67ffcc4e80cfd34e00f0a05624ff5e80e75f0055818289007176ed664",
+    "target/iteration/task20-matcher-commit/before-string-replace.json": "05ba951f142eaf388b733fffeb107081b7fef63470b701980ae40ec77be328ee",
+    "target/iteration/task20-matcher-commit/before-string-replaceAll.json": "1186a2a79866895af2403e55289f6cd4da735764f1851baf76b16e7624e1ba4b",
+    "target/iteration/task20-matcher-commit/before-string-search.json": "9e9e076d3f5343088a721cf2036251cfc696d787a7041e2cdd7f011ec53b2dab",
+    "target/iteration/task20-matcher-commit/before-string-split.json": "518602fe31dd78f9c76dd82b597f282569ee07b4d2371691b222513983363441",
+    "target/iteration/task20-matcher-commit/before-summary.json": "309c7bdfe2e8bf23342c3227ac8493c234df95f17ab0de13645e622f388e03e1",
+    "target/iteration/task20-matcher-commit/cancelled-stage64.json": "4500d0eb108adf238314686a8c32e0f20b3af65f5b2447c76aa7c3aa935d261b",
+    "target/iteration/task20-matcher-commit/comparisons.json": "e195105ffce08554fcb3c7602bddec1581823da5d495e8a385082b5ddf36c8a3",
+    "target/iteration/task20-matcher-commit/controls.json": "651b5459721f538e00e84a69afc11ed0e4b39546ad6e0263f135a8a003875ada",
+    "target/iteration/task20-matcher-commit/production-after-function.json": "99f4a2eb5bc037f4d77a8af69b9855f678833654d03ea7cebd10da9d01135137",
+    "target/iteration/task20-matcher-commit/production-before-function.json": "8e575e0f7a18b87ead2daeaad475dac2dd1b8cc8aeaf3661d4e36748d7b77424"
+  }
+}
