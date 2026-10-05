@@ -8,7 +8,7 @@
     "inputs_changed": false
   },
   "source": {
-    "revision": "38fe28b4c583dc20a8a2b5cb0d8b52c414a5aaad",
+    "revision": "72dca87315301f8ba963b95c29d66f3d6652a5ec",
     "dirty": true,
     "changed_file_sha256": {
       "crates/quench-runtime-next/src/compile.rs": "6a471484f2e121065ef29556a5d65cba4cb12524377a5cd7c7cc615659a13446",
@@ -36,7 +36,7 @@
       "total": 20,
       "failed_path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
       "report": "target/iteration/task20-annexb-function-cohort-after.json",
-      "report_sha256": "9b95eec00bc38d27a1e215fc34a17b4321246a363879a47b4ff7dfcafe6f251b"
+      "report_sha256": "c57603d2873e24f7f1d3100d3807fcce28ac6c6d4bc75123f14661d6b40734bc"
     },
     "stage114_annexb_function_family": {
       "selection": "run-stages-next 114 114 block-scoped-functions-annex-b-",
@@ -44,7 +44,7 @@
       "failed": 0,
       "total": 9,
       "report": "target/iteration/task20-staged-annexb-family-after.json",
-      "report_sha256": "35b8625cbd99c4a99783283f7bf87636dd0f9541d09e655efee33e258491fae2"
+      "report_sha256": "f0855f86a8d673cdbfeef4e4150df02254e221195bba18872a6ac234371d2ac8"
     },
     "stage114_direct_eval_regression": {
       "selection": "run-stages-next 114 114 regress-602621.js",
@@ -52,7 +52,7 @@
       "failed": 0,
       "total": 1,
       "report": "target/iteration/task20-regress-602621-after.json",
-      "report_sha256": "c299fad6cb5c0ce909d34cb1ac5bb0e46d8140d275ccd406ffe473f7108f5a50"
+      "report_sha256": "511f1bc8349f69f7e635425f65b00cd272a74858a1e6d9e3f20500e6a1450b31"
     },
     "matched_stage114_subset": {
       "cases": 10,
@@ -63,7 +63,7 @@
       "compare_command": "target/debug/compare-runs --reports target/iteration/task20-annex-b-stage114-before-projection.json target/iteration/task20-annex-b-stage114-after-projection.json",
       "compare_output": "regressions=0",
       "before_report_sha256": "0bc9a349d2d6fa4c65d697554825a4f4133806a789fe69e68536e72bfabe6c3e",
-      "after_report_sha256": "8bc013a9be022b2e92b72da35ca5dcf63e456cc6ebe8055d49743bdfcdc536f4",
+      "after_report_sha256": "b518f06fc897d61cd6ecbc1d13254dd8e4f4e64249afa5e69bfcd15dfa839214",
       "baseline_projection_source": "target/iteration/task20-date-current/stage114-release.json",
       "baseline_source_report_sha256": "64e9e023b681b4ad895eb94471e0b310e1efc98814b34a406940c4592280fb64"
     },
@@ -73,7 +73,7 @@
       "compare_command": "target/debug/compare-runs --reports target/iteration/task20-annex-b-official-arguments-before.json target/iteration/task20-annex-b-official-arguments-after.json",
       "compare_output": "regressions=1: annexB/language/function-code/block-decl-func-skip-arguments.js",
       "before_report_sha256": "73e1ebb5e4a58f59dc0e4aa4db0db2fa958ef02c73901466493dd23b6c1b5761",
-      "after_report_sha256": "de606fb7772a2a675840373d38c831a4d52844cc2944842956d5028df8e9ad78"
+      "after_report_sha256": "85c83f77379ea9c9dfac564d6165edf70570bc27cde3c43873081e11d38345bd"
     }
   },
   "node_oracle": {
@@ -90,7 +90,7 @@
     "control_script": "target/iteration/task20-annex-b-arguments-control.cjs",
     "control_script_sha256": "a2f48a4e29e8221fcf824a8ec5872bc9b4df6c234699198f370297d20fbad705",
     "report": "target/iteration/task20-annex-b-diff-next.json",
-    "report_sha256": "d3403ef411ce29b17de1b7242c01471318d46e98118ac2337e16366b3d8393e2",
+    "report_sha256": "2d14e4259cfb535f7ae2fbd88344a3a16af302042691c870854dba31149243ea",
     "specialized_matches_generic": true,
     "specialized_matches_node": true,
     "generic_matches_node": true,
