@@ -84,11 +84,26 @@ impl<H: Host> Vm<H> {
             .heap
             .root_value(target_root)
             .expect("bound target root remains live");
+        let prototype = self.object_get_prototype_of(p, target)?;
+        let function = self
+            .heap
+            .root_value(function_root)
+            .expect("bound function root remains live");
+        self.object_data_mut(function)
+            .expect("bound function has object storage")
+            .proto = prototype;
+        let target = self
+            .heap
+            .root_value(target_root)
+            .expect("bound target root remains live");
         let length_atom = self.intern_atom("length");
-        let bound_length = if self
-            .property_attributes(target, PropertyKey::string(length_atom))
-            .is_some()
-        {
+        let length_key = self.heap.alloc(Cell::String(self.atom_value(length_atom)));
+        let descriptor = self.object_get_own_property_descriptor(p, &[target, length_key])?;
+        let bound_length = if !descriptor.is_undefined() {
+            let target = self
+                .heap
+                .root_value(target_root)
+                .expect("bound target root remains live");
             let target_length = self.get_property(p, target, length_atom)?;
             match target_length.as_number() {
                 None => 0.0,

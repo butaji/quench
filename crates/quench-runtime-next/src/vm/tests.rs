@@ -2997,10 +2997,20 @@ fn bound_function_metadata_roots_release_on_normal_and_abrupt_completion() {
         Engine::specialize as fn(&str, &str) -> _,
         Engine::specialize_unspecialized,
     ] {
-        for (metadata, fails) in [(None, false), (Some("length"), true), (Some("name"), true)] {
+        for (metadata, fails) in [
+            (None, false),
+            (Some("length"), true),
+            (Some("name"), true),
+            (Some("getPrototypeOf"), true),
+            (Some("getOwnPropertyDescriptor"), true),
+        ] {
             let mut vm = Vm::new(SilentHost);
             let source = match metadata {
                 None => "function target() {}".to_owned(),
+                Some(trap @ ("getPrototypeOf" | "getOwnPropertyDescriptor")) => format!(
+                    "var target = new Proxy(function() {{}}, {{ \
+                     {trap}() {{throw new Error('{trap}')}} }});"
+                ),
                 Some(property) => format!(
                     "function target() {{}} Object.defineProperty(target, '{property}', \
                      {{get() {{throw new Error('{property}')}}}});"
