@@ -467,23 +467,10 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             match self.heap.get(object) {
-                Some(Cell::ArrayBuffer { .. })
-                    if self.array_buffer_virtual_property(object, atom).is_some() =>
-                {
-                    return Ok(self.array_buffer_virtual_property(object, atom).unwrap());
-                }
                 Some(Cell::TypedArray { .. }) if atom == self.length_atom => {
                     return Ok(Value::number(
                         self.typed_array_length(object).unwrap_or(0) as f64
                     ));
-                }
-                Some(Cell::ArrayBuffer { bytes, shared, .. }) if atom == self.byte_length_atom => {
-                    let _shared = shared;
-                    return Ok(Value::number(if self.array_buffer_detached(object) {
-                        0.0
-                    } else {
-                        bytes.len() as f64
-                    }));
                 }
                 Some(Cell::Map { entries, .. }) if atom == self.size_atom => {
                     return Ok(Value::number(entries.len() as f64));
