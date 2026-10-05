@@ -337,8 +337,10 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
-        self.mark_work(&mut work, &mut shape_roots);
-        self.mark_ephemerons(&mut work, &mut shape_roots);
+        {
+            let mut ephemerons = weak::EphemeronWork::default();
+            self.mark_work(&mut work, &mut shape_roots, &mut ephemerons);
+        }
         let finalization_jobs = self.prune_weak_entries();
         #[cfg(feature = "profile-aggregate")]
         {
@@ -386,10 +388,11 @@ impl Heap {
         self.max_threshold = self.max_threshold.max(self.threshold);
         finalization_jobs
     }
-    pub(super) fn mark_work(
+    fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
         shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+        ephemerons: &mut weak::EphemeronWork,
     ) {
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
@@ -413,6 +416,7 @@ impl Heap {
                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
             Self::children(cell, &self.properties, work, shape_roots);
+            ephemerons.newly_marked(index as u32, cell, &self.marks, work);
             if let Some(elements) = self
                 .sparse_arrays
                 .as_ref()
