@@ -70,7 +70,6 @@ impl Compiler<'_> {
             value.r#async,
             false,
             None,
-            false,
             parameter_local_count,
             with_depth,
         );
