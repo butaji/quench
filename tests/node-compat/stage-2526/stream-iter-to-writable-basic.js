@@ -1,3 +1,4 @@
+// Flags: --experimental-stream-iter
 const assert = require("assert");
 const { push, text, toWritable } = require("stream/iter");
 
