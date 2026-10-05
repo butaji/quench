@@ -531,7 +531,7 @@ impl Heap {
                 ..
             } => {
                 object(value);
-                work.push(*legacy_constructor);
+                work.push(legacy_constructor.constructor());
             }
             Cell::DataView {
                 object: value,
