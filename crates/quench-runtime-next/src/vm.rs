@@ -46,6 +46,7 @@ mod collections;
 mod construction;
 mod data_view;
 mod date;
+mod local_time;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
