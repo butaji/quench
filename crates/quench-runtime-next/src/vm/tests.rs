@@ -544,6 +544,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         captured: false,
         registers,
         active_iterators: vec![],
+        with_objects: Vec::new(),
         with_base: 0,
     });
 
@@ -3137,12 +3138,16 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     let original = vm
         .heap
         .alloc(crate::heap::Cell::Error("suspended argument".into()));
+    let scope = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("suspended scope".into()));
     let held_atom = vm.intern_atom("held");
     let id = vm.suspend_continuation(Continuation {
         context: super::activation::CallContext::Internal,
         original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
         active_iterators: vec![],
+        with_objects: vec![scope],
         function: 0,
         pc: 0,
         env: live,
@@ -3159,6 +3164,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     assert!(vm.heap.get(live).is_some());
     assert!(vm.heap.get(held).is_some());
     assert!(vm.heap.get(original).is_some());
+    assert!(vm.heap.get(scope).is_some());
     assert_eq!(
         vm.resume_continuation(id).unwrap().original_arguments,
         [original]
@@ -3168,6 +3174,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     assert!(vm.heap.get(live).is_none());
     assert!(vm.heap.get(held).is_none());
     assert!(vm.heap.get(original).is_none());
+    assert!(vm.heap.get(scope).is_none());
 }
 
 #[test]
@@ -3187,6 +3194,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
         dynamic_bindings: vec![],
         registers: vec![],
         active_iterators: vec![],
+        with_objects: Vec::new(),
         completion: Completion::Yield(Value::UNDEFINED),
         captured: false,
         resume_register: None,
@@ -3222,6 +3230,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         captured: false,
         registers: vec![Value::heap(11), Value::heap(12)],
         active_iterators: vec![],
+        with_objects: vec![Value::heap(16)],
         with_base: 0,
     };
 
@@ -3239,6 +3248,8 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let recycled = Vm::<SilentHost>::recycle_frame(frame);
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
+    assert!(recycled.with_objects.is_empty());
+    assert_eq!(recycled.with_objects.capacity(), 0);
 }
 
 #[test]
@@ -5400,6 +5411,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     iterator: 1,
                     done: 2,
                 }],
+                with_objects: Vec::new(),
                 with_base: 0,
             };
             let continuation = Continuation::from_frame(

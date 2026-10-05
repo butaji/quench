@@ -112,6 +112,7 @@ impl<H: Host> Vm<H> {
             captured: false,
             registers: vec![],
             active_iterators: vec![],
+            with_objects: Vec::new(),
             with_base: self.with_stack.len(),
         });
         frame
@@ -218,8 +219,8 @@ impl<H: Host> Vm<H> {
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
         let result = self.run_frame_general(p, self.frames.len() - 1);
-        let frame = self.frames.pop().unwrap();
-        self.with_stack.truncate(frame.with_base);
+        let mut frame = self.frames.pop().unwrap();
+        self.deactivate_frame(&mut frame, &result);
         self.persist_global_lexical_bindings(p, &frame);
         match result? {
             FrameOutcome::Complete(value) => {
@@ -293,6 +294,7 @@ impl<H: Host> Vm<H> {
                 captured: false,
                 registers: vec![],
                 active_iterators: vec![],
+                with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
             },
         );
@@ -530,9 +532,28 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    pub(super) fn activate_frame(&mut self, frame: &mut Frame) {
+        frame.with_base = self.with_stack.len();
+        self.with_stack.append(&mut frame.with_objects);
+    }
+
+    pub(super) fn deactivate_frame(
+        &mut self,
+        frame: &mut Frame,
+        outcome: &Result<FrameOutcome, JsError>,
+    ) {
+        match outcome {
+            Ok(FrameOutcome::Await { .. } | FrameOutcome::Yield { .. }) => {
+                frame.with_objects = self.with_stack.split_off(frame.with_base);
+            }
+            _ => self.with_stack.truncate(frame.with_base),
+        }
+    }
+
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
+        frame.with_objects = Vec::new();
         const RETAINED_VALUES: usize = 256;
         if frame.original_arguments.capacity() > RETAINED_VALUES {
             frame.original_arguments.shrink_to(RETAINED_VALUES);

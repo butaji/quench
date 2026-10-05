@@ -79,6 +79,7 @@ mod tests {
             captured: false,
             registers: vec![],
             active_iterators: vec![],
+            with_objects: Vec::new(),
             with_base: 0,
         });
         vm

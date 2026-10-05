@@ -78,6 +78,7 @@ pub(crate) struct Continuation {
     pub dynamic_bindings: Vec<(Atom, Value)>,
     pub registers: Vec<Value>,
     pub active_iterators: Vec<ActiveIterator>,
+    pub with_objects: Vec<Value>,
     pub completion: Completion,
     pub captured: bool,
     pub resume_register: Option<u16>,
@@ -151,6 +152,7 @@ impl Continuation {
             dynamic_bindings: std::mem::take(&mut frame.dynamic_bindings),
             registers: std::mem::take(&mut frame.registers),
             active_iterators: std::mem::take(&mut frame.active_iterators),
+            with_objects: std::mem::take(&mut frame.with_objects),
             completion,
             captured: frame.captured,
             resume_register,
@@ -173,6 +175,7 @@ impl Continuation {
             captured: self.captured,
             registers: self.registers,
             active_iterators: self.active_iterators,
+            with_objects: self.with_objects,
             with_base,
         }
     }
@@ -182,6 +185,7 @@ impl Continuation {
             .callee()
             .into_iter()
             .chain(self.original_arguments.iter().copied())
+            .chain(self.with_objects.iter().copied())
             .chain(std::iter::once(self.env))
             .chain(std::iter::once(self.this))
             .chain(self.locals.iter().copied())
@@ -215,6 +219,7 @@ mod tests {
             locals: vec![Value::heap(4)],
             dynamic_bindings: vec![(0, Value::heap(8))],
             registers: vec![Value::heap(5)],
+            with_objects: vec![Value::heap(11)],
             active_iterators: vec![],
             completion: Completion::Await(Value::heap(6)),
             captured: false,
@@ -226,6 +231,7 @@ mod tests {
             [
                 Value::heap(9),
                 Value::heap(10),
+                Value::heap(11),
                 Value::heap(1),
                 Value::heap(2),
                 Value::heap(4),
@@ -237,6 +243,7 @@ mod tests {
         );
         let mut frame = continuation.into_frame(0);
         assert_eq!(frame.original_arguments, [Value::heap(10)]);
+        assert_eq!(frame.with_objects, [Value::heap(11)]);
         let restored = Continuation::from_frame(
             &mut frame,
             Completion::Await(Value::heap(6)),
@@ -245,6 +252,8 @@ mod tests {
         );
         assert!(frame.original_arguments.is_empty());
         assert_eq!(restored.original_arguments, [Value::heap(10)]);
+        assert!(frame.with_objects.is_empty());
+        assert_eq!(restored.with_objects, [Value::heap(11)]);
     }
 
     #[test]
