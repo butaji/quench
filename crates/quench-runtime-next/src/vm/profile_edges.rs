@@ -69,6 +69,7 @@ mod tests {
             program: ProgramId::MAIN,
             function: 3,
             pc: 0,
+            binding_site_pc: None,
             env: Value::NULL,
             this: Value::UNDEFINED,
             locals: vec![],

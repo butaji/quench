@@ -266,7 +266,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 })
         });
         self.code.push(instruction);
-        self.code.len() - 1
+        let pc = self.code.len() - 1;
+        if op == Op::DeleteName
+            || (self.with_depth != self.inherited_with_depth
+                && matches!(
+                    op,
+                    Op::LoadName
+                        | Op::LoadNameCall
+                        | Op::LoadNameTypeof
+                        | Op::ResolveName
+                        | Op::StoreName
+                ))
+        {
+            self.record_name_binding_site(pc, imm);
+        }
+        pc
     }
 
     pub(super) fn patch(&mut self, at: usize) {

@@ -310,6 +310,144 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
+    pub(super) fn name_binding(
+        &self,
+        frame: usize,
+        atom: Atom,
+    ) -> Option<crate::bytecode::EvalBinding> {
+        let activation = self.frames.get(frame)?;
+        let program = self.programs.get(activation.program)?;
+        let metadata = program.functions.get(activation.function as usize)?;
+        let pc = activation.binding_site_pc?;
+        let index = metadata
+            .binding_sites
+            .binary_search_by_key(&pc, |site| site.resume_pc)
+            .ok()?;
+        metadata.binding_sites[index]
+            .bindings
+            .iter()
+            .find(|binding| binding.atom == atom)
+            .copied()
+    }
+
+    pub(super) fn load_name_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        binding: crate::bytecode::EvalBinding,
+    ) -> Result<Value, JsError> {
+        match binding.location {
+            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => {
+                self.capture(p, frame, depth, slot)
+            }
+            crate::bytecode::EvalBindingLocation::Local(slot) => {
+                let activation = &self.frames[frame];
+                let value = if activation.captured {
+                    match self.heap.get(activation.env) {
+                        Some(Cell::Environment { slots, .. }) => {
+                            slots.get(usize::from(slot)).copied()
+                        }
+                        _ => None,
+                    }
+                } else {
+                    activation.locals.get(usize::from(slot)).copied()
+                }
+                .ok_or_else(|| JsError("invalid named binding slot".into()))?;
+                self.checked_binding_read(p, binding.atom, value)
+            }
+        }
+    }
+
+    pub(super) fn store_name_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        binding: crate::bytecode::EvalBinding,
+        value: Value,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        self.load_name_binding(p, frame, binding)?;
+        if !self.check_named_binding_assignment(p, binding.kind, strict)? {
+            return Ok(());
+        }
+        match binding.location {
+            crate::bytecode::EvalBindingLocation::Capture { depth, slot } => {
+                self.store_capture(p, frame, depth, slot, value)
+            }
+            crate::bytecode::EvalBindingLocation::Local(slot) => {
+                let activation = &mut self.frames[frame];
+                let target = if activation.captured {
+                    match self.heap.get_mut(activation.env) {
+                        Some(Cell::Environment { slots, .. }) => slots.get_mut(usize::from(slot)),
+                        _ => None,
+                    }
+                } else {
+                    activation.locals.get_mut(usize::from(slot))
+                };
+                *target.ok_or_else(|| JsError("invalid named binding slot".into()))? = value;
+                Ok(())
+            }
+        }
+    }
+
+    /// A local declarative scope precedes inherited object environments and
+    /// objects entered before that scope; later with scopes still precede it.
+    pub(super) fn with_objects_before_binding(&self, frame: usize, atom: Atom) -> Vec<Value> {
+        let activation = &self.frames[frame];
+        let mut start = activation.with_base;
+        if let Some(binding) = self.name_binding(frame, atom)
+            && matches!(
+                binding.location,
+                crate::bytecode::EvalBindingLocation::Local(_)
+            )
+        {
+            let mut environment = self.captured_parent_environment(frame);
+            while let Some(Cell::Environment {
+                parent,
+                with_objects,
+                ..
+            }) = self.heap.get(environment)
+            {
+                start += with_objects.len();
+                environment = *parent;
+            }
+            start += usize::from(binding.with_depth);
+        }
+        self.with_stack[start.min(self.with_stack.len())..].to_vec()
+    }
+
+    fn binding_reference(
+        &self,
+        reference: Value,
+    ) -> Option<(Value, u16, crate::bytecode::LexicalBindingKind)> {
+        match self.heap.get(reference)? {
+            Cell::BindingReference {
+                environment,
+                slot,
+                kind,
+            } => Some((*environment, *slot, *kind)),
+            _ => None,
+        }
+    }
+
+    pub(super) fn check_named_binding_assignment(
+        &mut self,
+        p: &ResidualProgram,
+        kind: crate::bytecode::LexicalBindingKind,
+        strict: bool,
+    ) -> Result<bool, JsError> {
+        match kind {
+            crate::bytecode::LexicalBindingKind::Mutable => Ok(true),
+            crate::bytecode::LexicalBindingKind::Immutable => {
+                Err(self.type_error(p, "assignment to immutable binding".into()))
+            }
+            crate::bytecode::LexicalBindingKind::FunctionName if strict => {
+                Err(self.type_error(p, "assignment to function name binding".into()))
+            }
+            crate::bytecode::LexicalBindingKind::FunctionName => Ok(false),
+        }
+    }
+
     pub(super) fn store_with_binding(
         &mut self,
         p: &ResidualProgram,
@@ -321,8 +459,7 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
-        let with_base = self.frames[frame].with_base.min(self.with_stack.len());
-        let with_objects = self.with_stack[with_base..].to_vec();
+        let with_objects = self.with_objects_before_binding(frame, atom);
         for object in with_objects.into_iter().rev() {
             if self.with_binding(p, object, key, atom)? {
                 self.set_property_with_program(p, object, atom, value)?;
@@ -433,6 +570,19 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
+        if let Some((environment, slot, kind)) = self.binding_reference(object) {
+            self.load_resolved_name(p, object, atom, strict)?;
+            if !self.check_named_binding_assignment(p, kind, strict)? {
+                return Ok(());
+            }
+            let target = match self.heap.get_mut(environment) {
+                Some(Cell::Environment { slots, .. }) => slots.get_mut(usize::from(slot)),
+                _ => None,
+            }
+            .ok_or_else(|| JsError("invalid named reference slot".into()))?;
+            *target = value;
+            return Ok(());
+        }
         let key = self.heap.alloc(Cell::String(self.atom_name(atom).into()));
         // ResolveName has already selected a non-global object environment.
         // Preserve that reference even if evaluating the RHS removed the
@@ -452,12 +602,13 @@ impl<H: Host> Vm<H> {
             }
             return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
-        let with_base = self
+        let with_objects = self
             .frames
-            .last()
-            .map_or(self.with_stack.len(), |frame| frame.with_base)
-            .min(self.with_stack.len());
-        let with_objects = self.with_stack[with_base..].to_vec();
+            .len()
+            .checked_sub(1)
+            .map_or_else(Vec::new, |frame| {
+                self.with_objects_before_binding(frame, atom)
+            });
         let mut is_with_binding = false;
         for candidate in with_objects.into_iter().rev() {
             if candidate == object && self.with_binding(p, candidate, key, atom)? {
@@ -585,6 +736,9 @@ impl<H: Host> Vm<H> {
         frame: usize,
         atom: Atom,
     ) -> Option<bool> {
+        if self.name_binding(frame, atom).is_some() {
+            return Some(false);
+        }
         let activation = self.frames.get(frame)?;
         let metadata = p.functions.get(activation.function as usize)?;
         if (metadata.environment_atoms.contains(&atom)
@@ -666,6 +820,14 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         strict: bool,
     ) -> Result<Value, JsError> {
+        if let Some((environment, slot, _)) = self.binding_reference(object) {
+            let value = match self.heap.get(environment) {
+                Some(Cell::Environment { slots, .. }) => slots.get(usize::from(slot)).copied(),
+                _ => None,
+            }
+            .ok_or_else(|| JsError("invalid named reference slot".into()))?;
+            return self.checked_binding_read(p, atom, value);
+        }
         if object == self.realm.globals {
             return self.load_name_without_with(p, atom, None);
         }
@@ -688,17 +850,26 @@ impl<H: Host> Vm<H> {
         }
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            let with_base = self
+            let with_objects = self
                 .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
+                .len()
+                .checked_sub(1)
+                .map_or_else(Vec::new, |frame| {
+                    self.with_objects_before_binding(frame, atom)
+                });
             for object in with_objects.into_iter().rev() {
                 if self.with_binding(p, object, key, atom)? {
                     return Ok(true);
                 }
             }
+        }
+        if self
+            .frames
+            .len()
+            .checked_sub(1)
+            .is_some_and(|frame| self.name_binding(frame, atom).is_some())
+        {
+            return Ok(true);
         }
         if self
             .dynamic_binding(self.frames.len().saturating_sub(1), atom)
@@ -732,18 +903,41 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            let with_base = self
+            let with_objects = self
                 .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
+                .len()
+                .checked_sub(1)
+                .map_or_else(Vec::new, |frame| {
+                    self.with_objects_before_binding(frame, atom)
+                });
             for object in with_objects.into_iter().rev() {
                 let has_binding = self.with_binding(p, object, key, atom)?;
                 if has_binding {
                     return Ok((object, true));
                 }
             }
+        }
+        if let Some(frame) = self.frames.len().checked_sub(1)
+            && let Some(binding) = self.name_binding(frame, atom)
+        {
+            let (environment, slot) = match binding.location {
+                crate::bytecode::EvalBindingLocation::Local(slot) => {
+                    (self.promote_frame_environment(frame), slot)
+                }
+                crate::bytecode::EvalBindingLocation::Capture { depth, slot } => (
+                    self.capture_env(frame, depth)
+                        .ok_or_else(|| JsError("invalid named reference".into()))?,
+                    slot,
+                ),
+            };
+            return Ok((
+                self.heap.alloc(Cell::BindingReference {
+                    environment,
+                    slot,
+                    kind: binding.kind,
+                }),
+                true,
+            ));
         }
         Ok((self.realm.globals, false))
     }
@@ -1038,6 +1232,11 @@ impl<H: Host> Vm<H> {
         if name == "\0rqj:object-freeze" {
             return Ok(self.native_value(Native::ObjectFreeze));
         }
+        if let Some(frame) = self.frames.len().checked_sub(1)
+            && let Some(binding) = self.name_binding(frame, atom)
+        {
+            return self.load_name_binding(p, frame, binding);
+        }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
             return self.checked_binding_read(p, atom, value);
         }
@@ -1093,12 +1292,13 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            let with_base = self
+            let with_objects = self
                 .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
+                .len()
+                .checked_sub(1)
+                .map_or_else(Vec::new, |frame| {
+                    self.with_objects_before_binding(frame, atom)
+                });
             for object in with_objects.into_iter().rev() {
                 if !self.with_binding(p, object, key, atom)? {
                     continue;
@@ -1121,16 +1321,22 @@ impl<H: Host> Vm<H> {
         let name = self.atom_name(atom);
         if !name.starts_with('\0') {
             let key = self.heap.alloc(Cell::String(name.into()));
-            let with_base = self
+            let with_objects = self
                 .frames
-                .last()
-                .map_or(self.with_stack.len(), |frame| frame.with_base)
-                .min(self.with_stack.len());
-            let with_objects = self.with_stack[with_base..].to_vec();
+                .len()
+                .checked_sub(1)
+                .map_or_else(Vec::new, |frame| {
+                    self.with_objects_before_binding(frame, atom)
+                });
             for object in with_objects.into_iter().rev() {
                 if self.with_binding(p, object, key, atom)? {
                     return self.get_property(p, object, atom);
                 }
+            }
+            if let Some(frame) = self.frames.len().checked_sub(1)
+                && let Some(binding) = self.name_binding(frame, atom)
+            {
+                return self.load_name_binding(p, frame, binding);
             }
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
@@ -1199,6 +1405,12 @@ impl<H: Host> Vm<H> {
                 && self.store_with_binding(p, frame, atom, value)?
             {
                 return Ok(());
+            }
+            if let Some(frame) = self.frames.len().checked_sub(1)
+                && let Some(binding) = self.name_binding(frame, atom)
+            {
+                let strict = p.functions[self.frames[frame].function as usize].strict;
+                return self.store_name_binding(p, frame, binding, value, strict);
             }
             if self.store_direct_eval_var_binding(atom, value) {
                 return Ok(());

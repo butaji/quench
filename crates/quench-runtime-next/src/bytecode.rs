@@ -675,21 +675,23 @@ pub struct Function {
 }
 
 /// Scoped binding projections at an instruction resume PC.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BindingSite {
     pub(crate) resume_pc: u32,
     pub(crate) bindings: Vec<EvalBinding>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
     pub(crate) location: EvalBindingLocation,
+    /// Active with scopes outside this declaration, relative to its activation.
+    pub(crate) with_depth: u16,
     pub(crate) kind: LexicalBindingKind,
     pub(crate) catch_parameter: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EvalBindingLocation {
     Local(u16),
     Capture { depth: u16, slot: u16 },
@@ -1062,7 +1064,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 37;
+    pub const FORMAT_VERSION: u8 = 38;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

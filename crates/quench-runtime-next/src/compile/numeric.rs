@@ -46,7 +46,12 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
 
 fn compact_binary_stores(function: &mut Function, live: &[u64]) {
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
+    let protected = protected_positions(
+        &old,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0; old.len() + 1];
     let mut pc = 0;
@@ -97,6 +102,7 @@ fn compact_binary_stores(function: &mut Function, live: &[u64]) {
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
+        &mut function.binding_sites,
     );
     function.code = code;
 }

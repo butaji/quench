@@ -917,7 +917,8 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalInstant { .. }) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
-            Some(Cell::Environment { .. })
+            Some(Cell::BindingReference { .. })
+            | Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::PromiseResolvingState { .. })

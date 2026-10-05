@@ -1247,18 +1247,8 @@ impl<H: Host> Vm<H> {
         if let Some(current) = self.direct_eval_lexical_value(p, atom) {
             self.checked_binding_read(p, atom, current)?;
         }
-        match binding.kind {
-            crate::bytecode::LexicalBindingKind::Immutable => {
-                return Err(self.type_error(p, "assignment to immutable binding".into()));
-            }
-            crate::bytecode::LexicalBindingKind::FunctionName => {
-                return if strict {
-                    Err(self.type_error(p, "assignment to function name binding".into()))
-                } else {
-                    Ok(true)
-                };
-            }
-            crate::bytecode::LexicalBindingKind::Mutable => {}
+        if !self.check_named_binding_assignment(p, binding.kind, strict)? {
+            return Ok(true);
         }
         let Some(frame_index) = self.frames.len().checked_sub(1) else {
             return Ok(false);

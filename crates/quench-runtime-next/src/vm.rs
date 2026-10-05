@@ -155,6 +155,7 @@ pub(super) struct Frame {
     program: ProgramId,
     function: u32,
     pc: usize,
+    binding_site_pc: Option<u32>,
     env: Value,
     this: Value,
     locals: Vec<Value>,

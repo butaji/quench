@@ -182,3 +182,75 @@ fn decoder_rejects_unknown_property_definition_modes() {
         );
     }
 }
+
+#[test]
+fn scoped_binding_sites_survive_residual_round_trip() {
+    let source = "for (let x of [1]) { with ({}) { x++; } }";
+    for generic in [false, true] {
+        let program = if generic {
+            crate::Engine::specialize_unspecialized(source, "binding-sites.js")
+        } else {
+            crate::Engine::specialize(source, "binding-sites.js")
+        }
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "quench-binding-sites-{}-{generic}",
+            std::process::id()
+        ));
+        program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| !function.binding_sites.is_empty())
+        );
+        for (before, after) in program.functions.iter().zip(&decoded.functions) {
+            assert_eq!(before.binding_sites, after.binding_sites);
+        }
+        crate::Runtime::new(crate::SystemHost)
+            .execute(&decoded)
+            .unwrap();
+    }
+}
+
+#[test]
+fn decoder_rejects_invalid_binding_site_metadata() {
+    let program = crate::Engine::specialize(
+        "for (let x of [1]) { with ({}) { x++; } }",
+        "binding-sites.js",
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "quench-invalid-binding-sites-{}",
+        std::process::id()
+    ));
+    for corrupt in 0..4 {
+        let mut invalid = program.clone();
+        let function = invalid
+            .functions
+            .iter_mut()
+            .find(|f| !f.binding_sites.is_empty())
+            .unwrap();
+        match corrupt {
+            0 => function.binding_sites[0].resume_pc = 0,
+            1 => function.binding_sites[0].resume_pc = function.code.len() as u32 + 1,
+            2 => {
+                function.binding_sites[0].bindings[0].location =
+                    EvalBindingLocation::Local(function.locals)
+            }
+            3 => function
+                .binding_sites
+                .insert(0, function.binding_sites[0].clone()),
+            _ => unreachable!(),
+        }
+        invalid.write_binary(&path).unwrap();
+        assert!(
+            ResidualProgram::read_binary(&path)
+                .unwrap_err()
+                .contains("invalid binding-site metadata")
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+}

@@ -88,6 +88,7 @@ impl<H: Host> Vm<H> {
             program: self.active_program,
             function: 0,
             pc: 0,
+            binding_site_pc: None,
             env: Value::NULL,
             this: Value::UNDEFINED,
             locals: vec![],
@@ -140,6 +141,7 @@ impl<H: Host> Vm<H> {
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
+        frame.binding_site_pc = None;
         frame.env = parent;
         let arrow = function
             .name
@@ -285,6 +287,7 @@ impl<H: Host> Vm<H> {
                 program: self.active_program,
                 function: 0,
                 pc: 0,
+                binding_site_pc: None,
                 env: Value::NULL,
                 this: Value::UNDEFINED,
                 locals: vec![],
@@ -339,6 +342,7 @@ impl<H: Host> Vm<H> {
         }
         frame.function = id;
         frame.pc = 0;
+        frame.binding_site_pc = None;
         frame.env = parent;
         let arrow = function
             .name

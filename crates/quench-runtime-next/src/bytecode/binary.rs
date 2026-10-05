@@ -184,6 +184,7 @@ pub(super) fn write_program(
                         out.u16(slot);
                     }
                 }
+                out.u16(binding.with_depth);
                 out.u8(binding.kind as u8);
                 out.u8(u8::from(binding.catch_parameter));
             }
@@ -426,6 +427,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                         },
                         _ => return Err("invalid eval binding location".into()),
                     },
+                    with_depth: input.u16()?,
                     kind: LexicalBindingKind::from_binary_tag(input.u8()?)?,
                     catch_parameter: match input.u8()? {
                         0 => false,

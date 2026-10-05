@@ -7,6 +7,33 @@ fn plain_object() -> Object {
 }
 
 #[test]
+fn resolved_binding_reference_keeps_its_slot_owner_alive() {
+    let mut heap = Heap::new();
+    let value = heap.alloc(Cell::String("kept".into()));
+    let environment = heap.alloc(Cell::Environment {
+        parent: Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        function: 0,
+        slots: vec![value].into_boxed_slice(),
+        dynamic_bindings: Vec::new(),
+        with_objects: Vec::new(),
+    });
+    let reference = heap.alloc(Cell::BindingReference {
+        environment,
+        slot: 0,
+        kind: crate::bytecode::LexicalBindingKind::Mutable,
+    });
+    heap.collect([reference]);
+    assert!(heap.get(environment).is_some());
+    assert!(heap.get(value).is_some());
+    heap.collect([]);
+    assert!(heap.get(reference).is_none());
+    assert!(heap.get(environment).is_none());
+    assert!(heap.get(value).is_none());
+}
+
+#[test]
 fn object_side_metadata_is_out_of_line() {
     assert_eq!(
         size_of::<Object>(),

@@ -150,7 +150,12 @@ fn rewrite_super_window(
     superinstructions: &mut Vec<Superinstruction>,
 ) -> bool {
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
+    let protected = protected_positions(
+        &old,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0; old.len() + 1];
     let mut index = 0;
@@ -188,6 +193,7 @@ fn rewrite_super_window(
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
+        &mut function.binding_sites,
     );
     function.code = code;
     changed
@@ -226,6 +232,7 @@ pub(super) fn protected_positions(
     code: &[Instr],
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
+    binding_sites: &[crate::bytecode::BindingSite],
 ) -> Vec<bool> {
     let mut protected = vec![false; code.len() + 1];
     for instruction in code {
@@ -244,6 +251,11 @@ pub(super) fn protected_positions(
     if parameter_end_pc != 0 {
         protected[parameter_end_pc as usize] = true;
     }
+    // A site's resume PC belongs to the preceding operation. Preserve this
+    // boundary so fusion cannot merge that operation with its successor.
+    for site in binding_sites {
+        protected[site.resume_pc as usize] = true;
+    }
     protected
 }
 
@@ -255,7 +267,12 @@ fn rewrite_once(
 ) -> bool {
     let live = liveness::analyze(function, methods, field_sites, superinstructions);
     let old = std::mem::take(&mut function.code);
-    let protected = protected_positions(&old, &function.handlers, function.parameter_end_pc);
+    let protected = protected_positions(
+        &old,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
     let mut code = Vec::with_capacity(old.len());
     let mut map = vec![0usize; old.len() + 1];
     let mut index = 0;
@@ -304,6 +321,7 @@ fn rewrite_once(
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
+        &mut function.binding_sites,
     );
     function.code = code;
     changed
@@ -331,6 +349,7 @@ pub(super) fn relocate(
     map: &[usize],
     handlers: &mut [crate::bytecode::Handler],
     parameter_end_pc: &mut u32,
+    binding_sites: &mut [crate::bytecode::BindingSite],
 ) {
     for instruction in code {
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
@@ -348,6 +367,9 @@ pub(super) fn relocate(
     }
     if *parameter_end_pc != 0 {
         *parameter_end_pc = map[*parameter_end_pc as usize] as u32;
+    }
+    for site in binding_sites {
+        site.resume_pc = map[site.resume_pc as usize] as u32;
     }
 }
 
