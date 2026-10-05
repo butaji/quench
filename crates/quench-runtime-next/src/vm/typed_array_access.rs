@@ -165,34 +165,6 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    pub(super) fn indexed_view_property(&self, object: Value, atom: Atom) -> Option<Value> {
-        match self.heap.get(object) {
-            Some(Cell::TypedArray { buffer, .. }) => {
-                if atom == self.length_atom || atom == self.byte_length_atom {
-                    let width = self
-                        .typed_array_kind(object)
-                        .map_or(1, TypedArrayKind::width);
-                    let length = self.typed_array_length(object).unwrap_or(0);
-                    return Some(Value::number(if atom == self.byte_length_atom {
-                        (length * width) as f64
-                    } else {
-                        length as f64
-                    }));
-                }
-                if atom == self.byte_offset_atom {
-                    return Some(Value::number(
-                        self.typed_array_byte_offset(object).unwrap_or(0) as f64,
-                    ));
-                }
-                if atom == self.buffer_atom {
-                    return Some(*buffer);
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
     pub(super) fn set_through_typed_array_prototype(
         &mut self,
         p: &ResidualProgram,
