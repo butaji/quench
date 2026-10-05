@@ -4,19 +4,51 @@ use crate::Value;
 use std::collections::VecDeque;
 
 /// The only state that crosses an activation boundary. The value is kept as a
-/// heap root while the continuation is suspended and is consumed by the
-/// resumer according to its completion kind.
-#[allow(dead_code)]
+/// child of the suspension's owner and is consumed by the resumer according
+/// to its completion kind.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Completion {
+    GeneratorStart,
     Return(Value),
+    // Current thrown resumes enter the shared frame error boundary directly.
+    #[allow(dead_code)]
     Throw(Value),
     Yield(Value),
     Await(Value),
 }
 
+/// The origin of an activation, including the identity exposed to JavaScript.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum CallContext {
+    Function(Value),
+    DirectEval(Value),
+    IndirectEval(Value),
+    Internal,
+}
+
+impl CallContext {
+    pub(super) fn user_function(id: u32, callable: Value) -> Self {
+        if id == super::ROOT_FUNCTION_ID {
+            Self::Internal
+        } else {
+            Self::Function(callable)
+        }
+    }
+
+    pub(super) fn callee(self) -> Option<Value> {
+        match self {
+            Self::Function(value) | Self::DirectEval(value) | Self::IndirectEval(value) => {
+                Some(value)
+            }
+            Self::Internal => None,
+        }
+    }
+
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Continuation {
+    pub context: CallContext,
     pub program: ProgramId,
     pub function: u32,
     pub pc: usize,
@@ -69,7 +101,7 @@ pub(crate) struct AsyncGeneratorRequest {
 
 /// A generation-checked slot for a suspended activation. Resumption consumes
 /// the slot, so a stale host/compiler token cannot resume a replacement frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ContinuationId {
     pub(crate) slot: u32,
     pub(crate) generation: u32,
@@ -88,6 +120,7 @@ impl Continuation {
         promise: Value,
     ) -> Self {
         Self {
+            context: std::mem::replace(&mut frame.context, CallContext::Internal),
             program: frame.program,
             function: frame.function,
             pc: frame.pc,
@@ -106,6 +139,7 @@ impl Continuation {
 
     pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
         super::Frame {
+            context: self.context,
             program: self.program,
             function: self.function,
             pc: self.pc,
@@ -122,16 +156,20 @@ impl Continuation {
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        std::iter::once(self.env)
+        self.context
+            .callee()
+            .into_iter()
+            .chain(std::iter::once(self.env))
             .chain(std::iter::once(self.this))
             .chain(self.locals.iter().copied())
             .chain(self.dynamic_bindings.iter().map(|(_, value)| *value))
             .chain(self.registers.iter().copied())
             .chain(match self.completion {
+                Completion::GeneratorStart => None,
                 Completion::Return(value)
                 | Completion::Throw(value)
                 | Completion::Yield(value)
-                | Completion::Await(value) => std::iter::once(value),
+                | Completion::Await(value) => Some(value),
             })
             .chain(std::iter::once(self.promise))
     }
@@ -144,6 +182,7 @@ mod tests {
     #[test]
     fn continuation_roots_include_frame_and_completion_values() {
         let continuation = Continuation {
+            context: CallContext::Function(Value::heap(9)),
             program: ProgramId::MAIN,
             function: 3,
             pc: 7,
@@ -161,6 +200,7 @@ mod tests {
         assert_eq!(
             continuation.roots().collect::<Vec<_>>(),
             [
+                Value::heap(9),
                 Value::heap(1),
                 Value::heap(2),
                 Value::heap(4),

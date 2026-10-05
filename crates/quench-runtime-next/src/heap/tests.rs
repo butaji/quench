@@ -7,30 +7,49 @@ fn plain_object() -> Object {
 }
 
 #[test]
-fn resolved_binding_reference_keeps_its_slot_owner_alive() {
+fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
-    let value = heap.alloc(Cell::String("kept".into()));
-    let environment = heap.alloc(Cell::Environment {
+    let kept = heap.alloc(Cell::String("kept".into()));
+    let owner = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         program: None,
         root_eval_scope: false,
+        binding_site_pc: None,
         function: 0,
-        slots: vec![value].into_boxed_slice(),
-        dynamic_bindings: Vec::new(),
+        slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
+        dynamic_bindings: Vec::new().into(),
         with_objects: Vec::new(),
     });
+    let slots = heap.clone_environment_slots(owner, &[0]).unwrap();
+    let view = heap.alloc(Cell::Environment {
+        parent: Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        binding_site_pc: None,
+        function: 0,
+        slots,
+        dynamic_bindings: Vec::new().into(),
+        with_objects: Vec::new(),
+    });
+    *heap.environment_slot_mut(view, 0).unwrap() = Value::number(2.0);
     let reference = heap.alloc(Cell::BindingReference {
-        environment,
-        slot: 0,
+        environment: view,
+        slot: 1,
         kind: crate::bytecode::LexicalBindingKind::Mutable,
     });
+    assert_eq!(heap.environment_slot(owner, 0), Some(Value::number(1.0)));
+    assert_eq!(heap.environment_slot_owner(view, 1), Some(owner));
     heap.collect([reference]);
-    assert!(heap.get(environment).is_some());
-    assert!(heap.get(value).is_some());
+    assert_eq!(heap.environment_slot(view, 1), Some(kept));
+    assert!(heap.get(kept).is_some());
+    *heap.environment_slot_mut(view, 1).unwrap() = Value::FALSE;
+    assert_eq!(heap.environment_slot(owner, 1), Some(Value::FALSE));
+    heap.collect([reference]);
+    assert!(heap.get(kept).is_none());
     heap.collect([]);
+    assert!(heap.get(owner).is_none());
+    assert!(heap.get(view).is_none());
     assert!(heap.get(reference).is_none());
-    assert!(heap.get(environment).is_none());
-    assert!(heap.get(value).is_none());
 }
 
 #[test]

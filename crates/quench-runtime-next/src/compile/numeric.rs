@@ -148,7 +148,7 @@ fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
         && store.register_a() == update.result_register()
         && store.optional_register_b().is_none()
         && store.local_slot() == load.local_slot())
-    .then_some(NumericLocalStoreTarget {
+    .then(|| NumericLocalStoreTarget {
         register: update.result_register(),
         decrement: update.boolean_flag() == Some(true),
     })
@@ -176,6 +176,13 @@ mod tests {
         let mut mismatch = code;
         mismatch[2].set_a(2);
         assert_eq!(local_inc_store(&mismatch), None);
+        // Nonmatching opcodes do not have the update operand layout. Their
+        // fields must never be decoded as if the pattern had matched.
+        for non_update in [Op::Binary, Op::StoreLocal, Op::Return] {
+            let mut mismatch = code;
+            mismatch[1] = Instr::new(non_update, 0, 0, 0, 0);
+            assert_eq!(local_inc_store(&mismatch), None);
+        }
     }
 
     #[test]
@@ -198,11 +205,13 @@ mod tests {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: true,
             strict: false,
             locals: 4,
             local_atoms: vec![],
@@ -213,7 +222,9 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
+            name_bindings: vec![],
             binding_sites: vec![],
+            environment_clones: vec![],
             code: code.clone(),
             wide: vec![],
             registers: 3,
@@ -252,11 +263,13 @@ mod tests {
             is_generator: false,
             is_class_constructor: false,
             derived_constructor: false,
+            instance_initializer: None,
             super_home_atom: None,
             constructible: true,
             class_field_initializer: false,
             parameter_eval_arguments_error: false,
             arguments_slot: None,
+            simple_parameters: true,
             strict: false,
             locals: 4,
             local_atoms: vec![],
@@ -267,7 +280,9 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
+            name_bindings: vec![],
             binding_sites: vec![],
+            environment_clones: vec![],
             code: code.clone(),
             wide: vec![],
             registers: 3,

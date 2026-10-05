@@ -157,6 +157,7 @@ pub(crate) enum ImmediateRole {
     LayoutEncoded,
     Unused,
     ConstantIndex,
+    EnvironmentCloneIndex,
     ClosureFunctionIndex,
     ArrayLength,
     AtomIndex,
@@ -474,11 +475,12 @@ const CALL_EFFECT: Effect = READ_THROW.union(Effect::WRITES_HEAP);
 
 opcodes!(
     Nop => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
-    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    CloneEnv => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning EnvironmentCloneIndex, @ Register, @ fields(Unused, Unused, Unused),
     Wide => Effect::PURE; layout Scalar; meaning WideInstructionIndex, @ Register, @ fields(WideIndexChunk, WideIndexChunk, WideIndexChunk),
     LoadConst => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocal => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    StoreVarBinding => CALL_EFFECT; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, Unused, Unused),
     LoadEnvLocal => Effect::READS_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreEnvLocal => Effect::WRITES_HEAP; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     LoadCapture => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -491,7 +493,7 @@ opcodes!(
     DeleteName => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     StoreName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, BooleanFlag, CacheSiteIndex),
     StoreResolvedName => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, BooleanFlag),
-    LoadThis => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
+    LoadThis => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadImportMeta => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeClosure => CALL_EFFECT; layout Scalar; meaning ClosureFunctionIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeArray => CALL_EFFECT; layout Scalar; meaning ArrayLength, @ Register, @ fields(ResultRegister, Unused, Unused),
@@ -545,7 +547,7 @@ opcodes!(
     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
     NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
-    InitializeThis => Effect::CONTROL; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
+    InitializeThis => CALL_EFFECT.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     CacheTemplateObject => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     LoadCachedTemplateObject => Effect::READS_HEAP; layout Scalar; meaning TemplateSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     DefineField => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, Unused),
@@ -648,12 +650,15 @@ pub struct Function {
     pub is_generator: bool,
     pub is_class_constructor: bool,
     pub derived_constructor: bool,
+    /// Instance-element initialization run when this derived constructor binds `this`.
+    pub instance_initializer: Option<u32>,
     /// Lexical HomeObject captured by methods and arrows containing `super`.
     pub super_home_atom: Option<Atom>,
     pub constructible: bool,
     pub class_field_initializer: bool,
     pub parameter_eval_arguments_error: bool,
     pub arguments_slot: Option<u16>,
+    pub simple_parameters: bool,
     pub strict: bool,
     pub locals: u16,
     pub local_atoms: Vec<Atom>,
@@ -665,13 +670,23 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
+    pub(crate) name_bindings: Vec<EvalBinding>,
+    /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
+    /// Sorted local slots receiving fresh storage for each CloneEnv plan.
+    pub environment_clones: Vec<Vec<u16>>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+}
+
+impl Function {
+    pub(crate) fn arguments_are_mapped(&self) -> bool {
+        !self.strict && self.simple_parameters
+    }
 }
 
 /// Scoped binding projections at an instruction resume PC.
@@ -688,7 +703,32 @@ pub(crate) struct EvalBinding {
     /// Active with scopes outside this declaration, relative to its activation.
     pub(crate) with_depth: u16,
     pub(crate) kind: LexicalBindingKind,
-    pub(crate) catch_parameter: bool,
+    pub(crate) declaration: EvalBindingDeclaration,
+}
+
+impl EvalBinding {
+    pub(crate) fn conflicts_with_var(self) -> bool {
+        matches!(self.location, EvalBindingLocation::Local(_))
+            && self.declaration == EvalBindingDeclaration::Lexical
+            && self.kind != LexicalBindingKind::FunctionName
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum EvalBindingDeclaration {
+    Lexical = 0,
+    CatchParameter = 1,
+    Variable = 2,
+}
+
+impl EvalBindingDeclaration {
+    pub(crate) fn from_binary_tag(tag: u8) -> Result<Self, String> {
+        [Self::Lexical, Self::CatchParameter, Self::Variable]
+            .into_iter()
+            .find(|declaration| *declaration as u8 == tag)
+            .ok_or_else(|| "invalid eval binding declaration".into())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -724,11 +764,6 @@ impl LexicalBindingKind {
     }
 }
 
-/// High bit of `Function::arguments_slot` marks a mapped (sloppy, simple
-/// parameter-list) arguments object. Keeping this bit in the existing
-/// residual field preserves the binary format while making the mapping an
-/// explicit execution invariant.
-pub(crate) const MAPPED_ARGUMENTS_BIT: u16 = 1 << 15;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum DispatchClass {
@@ -1064,7 +1099,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 38;
+    pub const FORMAT_VERSION: u8 = 39;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

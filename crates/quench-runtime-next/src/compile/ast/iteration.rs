@@ -242,7 +242,7 @@ impl FunctionCompiler<'_, '_> {
                     if declaration.kind != VariableDeclarationKind::Var
             )
         {
-            self.emit(Op::CloneEnv, 0, 0, 0, 0);
+            self.clone_lexical_environment();
         }
         self.bind_for_of_left(left, value);
         self.push_control(ControlKind::Loop, label);
@@ -366,14 +366,6 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn bind_for_of_left(&mut self, left: &ForStatementLeft<'_>, value: Register) {
-        if let Some(SimpleAssignmentTarget::StaticMemberExpression(target)) =
-            left.as_simple_assignment_target()
-            && target.property.name.as_str() == self.owner.annex_b_call_target_marker
-            && matches!(&target.object, Expression::CallExpression(_))
-        {
-            self.throw_invalid_call_assignment(&target.object);
-            return;
-        }
         match left {
             ForStatementLeft::VariableDeclaration(declaration)
                 if declaration.declarations.len() == 1 =>
@@ -390,9 +382,7 @@ impl FunctionCompiler<'_, '_> {
                 self.bind_pattern(&declaration.declarations[0].id, value);
             }
             _ => {
-                if let Some(target) = left.as_simple_assignment_target() {
-                    self.assign_target(target, value, 0);
-                } else if let Some(target) = left.as_assignment_target() {
+                if let Some(target) = left.as_assignment_target() {
                     self.assign_pattern(target, value);
                 } else {
                     self.owner

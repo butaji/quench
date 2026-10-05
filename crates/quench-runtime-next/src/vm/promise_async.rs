@@ -10,15 +10,16 @@ impl<H: Host> Vm<H> {
         env: Value,
         this: Value,
         args: &[Value],
+        context: CallContext,
     ) -> Result<Value, JsError> {
         if p.functions[id as usize].is_generator {
-            return self.call_generator(p, id, env, this, args);
+            return self.call_generator(p, id, env, this, args, context);
         }
         if !p.functions[id as usize].is_async {
-            return self.call_user(p, id, env, this, args);
+            return self.call_user(p, id, env, this, args, context);
         }
         let promise = self.promise_object();
-        let outcome = match self.call_user_frame(p, id, env, this, args) {
+        let outcome = match self.call_user_frame(p, id, env, this, args, context) {
             Ok(outcome) => outcome,
             Err(error) => {
                 let reason = error
@@ -68,10 +69,9 @@ impl<H: Host> Vm<H> {
         continuation: ContinuationId,
         promise: Value,
         generator: Option<Value>,
-        awaited: Value,
+        source: Value,
         yielded: bool,
     ) -> Result<(), JsError> {
-        let source = self.promise_for_value(p, awaited)?;
         let fulfilled = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
         let rejected = self.native_with_env(Native::PromiseAsyncResumeJob, Value::NULL);
         self.realm.promise.async_resume_jobs.insert(
@@ -94,7 +94,9 @@ impl<H: Host> Vm<H> {
                 yielded,
             },
         );
-        let record = self.realm.promise
+        let record = self
+            .realm
+            .promise
             .records
             .get(&source)
             .cloned()
@@ -105,7 +107,8 @@ impl<H: Host> Vm<H> {
             next: self.promise_object(),
         };
         if record.state == PromiseState::Pending {
-            self.realm.promise
+            self.realm
+                .promise
                 .records
                 .get_mut(&source)
                 .expect("await source Promise record exists")
@@ -122,15 +125,20 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = *self.realm.promise
+        let job = *self
+            .realm
+            .promise
             .active_native
             .last()
             .ok_or_else(|| JsError("Promise async resume without callback".into()))?;
-        let resume = self.realm.promise
+        let resume = self
+            .realm
+            .promise
             .async_resume_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise async resume job".into()))?;
-        self.realm.promise
+        self.realm
+            .promise
             .async_resume_jobs
             .retain(|_, candidate| candidate.continuation != resume.continuation);
         self.resume_async_continuation(p, resume, value)?;

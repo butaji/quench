@@ -176,12 +176,14 @@ impl<H: Host> Vm<H> {
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
-        let source_is_invalid = crate::Engine::specialize_eval_unspecialized_with_atom_prefix(
+        let source_is_invalid = crate::Engine::specialize_eval_with_context(
             &source,
             "<ShadowRealm>",
             &atom_prefix,
             false,
-            false,
+            crate::compile::EvalContext::default(),
+            &[],
+            &[],
         )
         .is_err();
         let prior_global = self.switch_realm_global(realm_global);

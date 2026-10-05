@@ -60,6 +60,7 @@ impl<H: Host> Vm<H> {
             Value::NULL,
             Value::UNDEFINED,
             &args,
+            CallContext::Internal,
         )?;
         function
             .signature

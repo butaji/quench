@@ -103,7 +103,6 @@ impl JsError {
         self.0.payload.thrown = Some(value);
     }
 
-
     pub(crate) fn is_eval_parser_diagnostic(&self) -> bool {
         matches!(
             self.0.payload.description,
@@ -193,7 +192,8 @@ impl<H: Host> Vm<H> {
         let mut key_root = None;
         let result = (|| {
             let target = self.heap.root_value(receiver).unwrap();
-            let home = self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::Error)];
+            let home =
+                self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::Error)];
             if target == home {
                 return Err(self.type_error(program, "cannot set Error.prototype.stack".into()));
             }
@@ -202,7 +202,8 @@ impl<H: Host> Vm<H> {
             key_root = Some(key);
             let property = self.heap.root_value(key).unwrap();
             let target = self.heap.root_value(receiver).unwrap();
-            let descriptor = self.object_get_own_property_descriptor(program, &[target, property])?;
+            let descriptor =
+                self.object_get_own_property_descriptor(program, &[target, property])?;
             let target = self.heap.root_value(receiver).unwrap();
             let value = self.heap.root_value(value_root).unwrap();
             if descriptor.is_undefined() {
@@ -326,9 +327,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn stack_exhaustion_error(&mut self) -> JsError {
         // Exhaustion must not invoke guest accessors or constructors.
-        let prototype = self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
+        let prototype =
+            self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::RangeError)];
         let object = self.heap.alloc(Cell::Object(Object::error(prototype)));
-        let message = self.heap.alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
+        let message = self
+            .heap
+            .alloc(Cell::String(crate::stack::STACK_EXHAUSTED_MESSAGE.into()));
         self.set_builtin_value_named(object, "message", message)
             .expect("fresh error object accepts message");
         JsError::thrown(object, crate::stack::STACK_EXHAUSTED_MESSAGE.into())
@@ -515,12 +519,7 @@ impl<H: Host> Vm<H> {
         let symbol_prototype = self.object();
         self.set_builtin_value_named(symbol, "prototype", symbol_prototype)?;
         self.set_builtin_value_named(symbol_prototype, "constructor", symbol)?;
-        self.set_builtin_named(
-            program,
-            symbol_prototype,
-            "valueOf",
-            Native::SymbolValueOf,
-        )?;
+        self.set_builtin_named(program, symbol_prototype, "valueOf", Native::SymbolValueOf)?;
         self.set_builtin_named(
             program,
             symbol_prototype,
@@ -748,7 +747,10 @@ impl<H: Host> Vm<H> {
             kind,
         )
         .map_err(|diagnostics| {
-            if diagnostics.iter().any(crate::compile::Diagnostic::is_stack_exhausted) {
+            if diagnostics
+                .iter()
+                .any(crate::compile::Diagnostic::is_stack_exhausted)
+            {
                 return self.stack_exhaustion_error();
             }
             let message = diagnostics
@@ -770,12 +772,7 @@ impl<H: Host> Vm<H> {
                 .functions
                 .iter()
                 .enumerate()
-                .find(|(_, function)| {
-                    function.parent == Some(0)
-                        && function
-                            .name
-                            .is_some_and(|name| &residual.atoms[name as usize] == "anonymous")
-                })
+                .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
                 .map(|(id, _)| id as u32)
                 .ok_or_else(|| {
                     self.type_error(program, "dynamic Function body is unavailable".into())
@@ -784,6 +781,7 @@ impl<H: Host> Vm<H> {
         })();
         self.active_program = active_program;
         let function = result?;
+        self.set_builtin_function_name(function, "anonymous")?;
         let function_source = match kind {
             crate::compile::DynamicFunctionKind::Ordinary => {
                 format!("function anonymous({parameters}\n) {{\n{source}\n}}")
@@ -800,43 +798,6 @@ impl<H: Host> Vm<H> {
         };
         self.set_function_source(function, &function_source)?;
         Ok(function)
-    }
-
-    pub(super) fn call_function_dispatch(
-        &mut self,
-        program: &ResidualProgram,
-        native: Native,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        match native {
-            Native::DynamicFunction => {
-                let environment = self.active_native_env().unwrap_or(Value::NULL);
-                if let Some(result) = self.call_eval_super_arrow(program, environment)? {
-                    return Ok(result);
-                }
-                let source = match self.heap.get(environment) {
-                    Some(Cell::String(source)) => Some(source.host_string().to_owned()),
-                    _ => None,
-                }
-                .ok_or_else(|| JsError("invalid dynamic Function environment".into()))?;
-                let source = source.trim();
-                let body_strict =
-                    source.starts_with("'use strict';") || source.starts_with("\"use strict\";");
-                let source = source
-                    .strip_prefix("'use strict';")
-                    .or_else(|| source.strip_prefix("\"use strict\";"))
-                    .map(str::trim)
-                    .unwrap_or(source);
-                if let Some(expression) = source
-                    .strip_prefix("return ")
-                    .map(|expression| expression.trim().trim_end_matches(';').trim())
-                {
-                    return self.eval_simple_expression(program, expression, body_strict);
-                }
-                self.eval_source_simple(program, source, body_strict)
-            }
-            _ => self.function_native(program, native, args),
-        }
     }
 
     pub(super) fn call_host(
@@ -864,7 +825,7 @@ impl<H: Host> Vm<H> {
         } else if native == Native::BigInt {
             self.bigint_constructor(program, args.first().copied())
         } else {
-            self.call_function_dispatch(program, native, args)
+            self.function_native(program, native, args)
         }
     }
 
@@ -937,9 +898,13 @@ impl<H: Host> Vm<H> {
         let type_error_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(error_prototype)));
-        self.realm.intrinsics.builtin_prototypes
+        self.realm
+            .intrinsics
+            .builtin_prototypes
             .insert((global, Native::TypeError), type_error_prototype);
-        self.realm.intrinsics.builtin_prototypes
+        self.realm
+            .intrinsics
+            .builtin_prototypes
             .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named(program, type_error, "prototype", type_error_prototype)?;
         self.set_named(program, type_error_prototype, "constructor", type_error)?;
@@ -1301,7 +1266,9 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(array_buffer, "name", array_buffer_name)?;
         self.set_named(program, global, "ArrayBuffer", array_buffer)?;
         let realm_error_prototype = self.object();
-        self.realm.intrinsics.builtin_prototypes
+        self.realm
+            .intrinsics
+            .builtin_prototypes
             .insert((global, Native::Error), realm_error_prototype);
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
         self.set_builtin_value_named(realm_error_constructor, "prototype", realm_error_prototype)?;
@@ -1585,7 +1552,9 @@ impl<H: Host> Vm<H> {
                 self.heap
                     .alloc(Cell::Object(Self::empty_object(error_prototype)))
             };
-            self.realm.intrinsics.builtin_prototypes
+            self.realm
+                .intrinsics
+                .builtin_prototypes
                 .insert((self.realm.globals, *native), prototype);
             self.set_named(program, constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;

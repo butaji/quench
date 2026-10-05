@@ -472,6 +472,7 @@ impl<H: Host> Vm<H> {
                     });
                     [frame.env, frame.this]
                         .into_iter()
+                        .chain(frame.context.callee())
                         .chain(frame.locals.iter().copied())
                         .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
                         .chain(frame.registers.iter().enumerate().filter_map(

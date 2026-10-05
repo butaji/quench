@@ -77,7 +77,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && self.state.encountered_await_identifier
                 && !stmt.is_module_declaration()
             {
-                self.state.potential_await_reparse.push((stmt_index, checkpoint));
+                self.state
+                    .potential_await_reparse
+                    .push((stmt_index, checkpoint));
             }
 
             // Section 11.2.1 Directive Prologue
@@ -90,8 +92,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                         if matches!(&expr.expression, Expression::StringLiteral(string)
                             if expr.span.start == string.span.start) =>
                     {
-                        let ExpressionStatement { span, expression, .. } = expr.unbox();
-                        let Expression::StringLiteral(string) = expression else { unreachable!() };
+                        let ExpressionStatement {
+                            span, expression, ..
+                        } = expr.unbox();
+                        let Expression::StringLiteral(string) = expression else {
+                            unreachable!()
+                        };
                         let string = string.unbox();
                         let src = &self.source_text
                             [string.span.start as usize + 1..string.span.end as usize - 1];
@@ -136,8 +142,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
         };
 
-        let no_side_effects_comments =
-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
+        let no_side_effects_comments = self
+            .lexer
+            .trivia_builder
+            .previous_token_no_side_effects_comments();
 
         let mut stmt = match self.cur_kind() {
             Kind::LCurly => self.parse_block_statement(),
@@ -172,7 +180,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 self.parse_function_declaration(self.cur_start(), /* async */ false, stmt_ctx)
             }
             Kind::At => self.parse_decorated_statement(stmt_ctx),
-            Kind::Let if !self.cur_token().escaped() => self.parse_let(stmt_ctx),
+            Kind::Let
+                if !self.cur_token().escaped() && self.lexer.peek_token().kind() != Kind::Colon =>
+            {
+                self.parse_let(stmt_ctx)
+            }
             Kind::Async => self.parse_async_statement(self.cur_start(), stmt_ctx),
             Kind::Import => self.parse_import_statement(),
             Kind::Const => self.parse_const_statement(stmt_ctx),
@@ -202,7 +214,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(comments) = no_side_effects_comments
             && Self::set_pure_on_function_stmt(&mut stmt)
         {
-            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+            self.lexer
+                .trivia_builder
+                .mark_no_side_effects_comments_applied(comments);
         }
 
         stmt
@@ -325,8 +339,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.bump_any(); // bump `if`
         let test = self.parse_paren_expression();
         let consequent = self.parse_statement_list_item(StatementContext::If);
-        let alternate =
-            self.eat(Kind::Else).then(|| self.parse_statement_list_item(StatementContext::If));
+        let alternate = self
+            .eat(Kind::Else)
+            .then(|| self.parse_statement_list_item(StatementContext::If));
         Statement::new_if_statement(self.end_span(start), test, consequent, alternate, self)
     }
 
@@ -484,7 +499,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 }
                 if is_let {
                     // `for (let of ...)`, `for (let.something of ...)` is not allowed
-                    self.error(diagnostics::for_loop_let_reserved_word(self.end_span(expr_start)));
+                    self.error(diagnostics::for_loop_let_reserved_word(
+                        self.end_span(expr_start),
+                    ));
                 }
                 let target = AssignmentTarget::cover(init_expression, self);
                 let for_stmt_left = ForStatementLeft::from(target);
@@ -516,7 +533,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             )
         });
 
-        self.parse_any_for_loop(for_start, parenthesis_opening_span, init_declaration, r#await)
+        self.parse_any_for_loop(
+            for_start,
+            parenthesis_opening_span,
+            init_declaration,
+            r#await,
+        )
     }
 
     pub(crate) fn is_using_declaration(&mut self) -> bool {
@@ -531,18 +553,21 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         parenthesis_opening_span: Span,
         r#await: bool,
     ) -> Statement<'a> {
-        let using_decl =
-            self.context_remove(Context::In, |p| p.parse_using_declaration(StatementContext::For));
+        let using_decl = self.context_remove(Context::In, |p| {
+            p.parse_using_declaration(StatementContext::For)
+        });
 
         if matches!(self.cur_kind(), Kind::In) {
             if using_decl.kind.is_await() {
-                self.error(diagnostics::await_using_declaration_not_allowed_in_for_in_statement(
-                    using_decl.span,
-                ));
+                self.error(
+                    diagnostics::await_using_declaration_not_allowed_in_for_in_statement(
+                        using_decl.span,
+                    ),
+                );
             } else {
-                self.error(diagnostics::using_declaration_not_allowed_in_for_in_statement(
-                    using_decl.span,
-                ));
+                self.error(
+                    diagnostics::using_declaration_not_allowed_in_for_in_statement(using_decl.span),
+                );
             }
         }
 
@@ -609,7 +634,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             )
             && declaration.has_init()
         {
-            self.error(diagnostics::initializer_in_for_in_lexical_declaration(declaration.span));
+            self.error(diagnostics::initializer_in_for_in_lexical_declaration(
+                declaration.span,
+            ));
         }
     }
 
@@ -685,8 +712,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn parse_continue_statement(&mut self) -> Statement<'a> {
         let start = self.cur_start();
         self.bump_any(); // bump `continue`
-        let label =
-            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
+        let label = if self.can_insert_semicolon() {
+            None
+        } else {
+            Some(self.parse_label_identifier())
+        };
         self.asi();
         Statement::new_continue_statement(self.end_span(start), label, self)
     }
@@ -695,8 +725,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     fn parse_break_statement(&mut self) -> Statement<'a> {
         let start = self.cur_start();
         self.bump_any(); // bump `break`
-        let label =
-            if self.can_insert_semicolon() { None } else { Some(self.parse_label_identifier()) };
+        let label = if self.can_insert_semicolon() {
+            None
+        } else {
+            Some(self.parse_label_identifier())
+        };
         self.asi();
         Statement::new_break_statement(self.end_span(start), label, self)
     }
@@ -754,7 +787,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 match first_default {
                     None => first_default = Some(case.span),
                     Some(first_span) if !reported_duplicate => {
-                        p.error(diagnostics::switch_multiple_default_clause(first_span, case.span));
+                        p.error(diagnostics::switch_multiple_default_clause(
+                            first_span, case.span,
+                        ));
                         reported_duplicate = true;
                     }
                     Some(_) => {}
@@ -862,7 +897,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             CatchParameter::new(
                 Span::new(
                     pattern.span().start,
-                    type_annotation.as_ref().map_or(pattern.span().end, |ta| ta.span.end),
+                    type_annotation
+                        .as_ref()
+                        .map_or(pattern.span().end, |ta| ta.span.end),
                 ),
                 pattern,
                 type_annotation,

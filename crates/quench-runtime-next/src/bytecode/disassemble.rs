@@ -215,7 +215,8 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         ImmediateRole::Unused => Ok(()),
         ImmediateRole::LayoutEncoded => write!(output, " imm={}", instruction.imm()),
         ImmediateRole::FieldLookup => write!(output, " lookup={:?}", instruction.field_lookup()),
-        ImmediateRole::ConstantIndex
+        ImmediateRole::EnvironmentCloneIndex
+        | ImmediateRole::ConstantIndex
         | ImmediateRole::ClosureFunctionIndex
         | ImmediateRole::AtomIndex
         | ImmediateRole::LocalSlot

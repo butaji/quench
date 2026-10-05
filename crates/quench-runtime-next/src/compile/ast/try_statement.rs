@@ -78,7 +78,7 @@ impl FunctionCompiler<'_, '_> {
         let return_target = self.code.len() as u32;
         self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
-        self.emit(Op::Return, return_value, 0, 0, 0);
+        self.emit_return(return_value);
         self.iterator_close_ranges
             .push((return_target, self.code.len() as u32));
         self.patch_edges(&context.return_edges, return_target);
@@ -172,7 +172,7 @@ impl FunctionCompiler<'_, '_> {
         let return_target = self.code.len() as u32;
         self.scoped_finalizer_statements(&finalizer.body);
         let return_value = self.load_atom(return_atom);
-        self.emit(Op::Return, return_value, 0, 0, 0);
+        self.emit_return(return_value);
         self.iterator_close_ranges
             .push((return_target, self.code.len() as u32));
         let return_slot = self.local_slot(return_atom);

@@ -1,7 +1,112 @@
-use super::{Cell, Heap};
+use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap};
+use crate::bytecode::Atom;
 use crate::value::Value;
 
 impl Heap {
+    pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
+        match self.get(environment)? {
+            Cell::Environment {
+                dynamic_bindings: EnvironmentBindings::Owned(_),
+                ..
+            } => Some(environment),
+            Cell::Environment {
+                dynamic_bindings: EnvironmentBindings::Shared(owner),
+                ..
+            } => Some(*owner),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
+        let owner = self.environment_binding_owner(environment)?;
+        match self.get(owner)? {
+            Cell::Environment {
+                dynamic_bindings: EnvironmentBindings::Owned(bindings),
+                ..
+            } => Some(bindings),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn environment_bindings_mut(
+        &mut self,
+        environment: Value,
+    ) -> Option<&mut Vec<(Atom, Value)>> {
+        let owner = self.environment_binding_owner(environment)?;
+        match self.get_mut(owner)? {
+            Cell::Environment {
+                dynamic_bindings: EnvironmentBindings::Owned(bindings),
+                ..
+            } => Some(bindings),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn environment_contains(&self, environment: Value, value: Value) -> bool {
+        let Some(Cell::Environment { slots, .. }) = self.get(environment) else {
+            return false;
+        };
+        (0..slots.len()).any(|slot| self.environment_slot(environment, slot) == Some(value))
+    }
+
+    pub(crate) fn environment_slot_owner(&self, environment: Value, slot: usize) -> Option<Value> {
+        let Cell::Environment { slots, .. } = self.get(environment)? else {
+            return None;
+        };
+        match slots.0.get(slot)? {
+            EnvironmentSlot::Owned(_) => Some(environment),
+            EnvironmentSlot::Shared(owner) => Some(*owner),
+        }
+    }
+
+    pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
+        let owner = self.environment_slot_owner(environment, slot)?;
+        let Cell::Environment { slots, .. } = self.get(owner)? else {
+            return None;
+        };
+        match slots.0.get(slot)? {
+            EnvironmentSlot::Owned(value) => Some(*value),
+            EnvironmentSlot::Shared(_) => None,
+        }
+    }
+
+    pub(crate) fn environment_slot_mut(
+        &mut self,
+        environment: Value,
+        slot: usize,
+    ) -> Option<&mut Value> {
+        let owner = self.environment_slot_owner(environment, slot)?;
+        let Cell::Environment { slots, .. } = self.get_mut(owner)? else {
+            return None;
+        };
+        match slots.0.get_mut(slot)? {
+            EnvironmentSlot::Owned(value) => Some(value),
+            EnvironmentSlot::Shared(_) => None,
+        }
+    }
+
+    pub(crate) fn clone_environment_slots(
+        &self,
+        environment: Value,
+        fresh: &[u16],
+    ) -> Option<EnvironmentSlots> {
+        let Cell::Environment { slots, .. } = self.get(environment)? else {
+            return None;
+        };
+        (0..slots.len())
+            .map(|slot| {
+                if fresh.binary_search(&(slot as u16)).is_ok() {
+                    self.environment_slot(environment, slot)
+                        .map(EnvironmentSlot::Owned)
+                } else {
+                    self.environment_slot_owner(environment, slot)
+                        .map(EnvironmentSlot::Shared)
+                }
+            })
+            .collect::<Option<Box<[_]>>>()
+            .map(EnvironmentSlots)
+    }
+
     pub fn get(&self, value: Value) -> Option<&Cell> {
         let index = value.heap_index()? as usize;
         if index >= self.slots.len() {

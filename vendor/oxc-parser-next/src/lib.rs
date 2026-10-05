@@ -97,6 +97,11 @@ use oxc_span::{SourceType, Span};
 use oxc_syntax::module_record::ModuleRecord;
 
 pub use crate::lexer::{Kind, Token};
+
+/// Internal AST member name for an Annex B call-expression assignment target.
+/// The NUL makes this impossible to spell as a JavaScript identifier. Consumers
+/// opting into this representation must lower it to the required runtime error.
+pub const CALL_ASSIGNMENT_TARGET_MARKER: &str = "\0oxc:call-assignment-target";
 use crate::{
     config::{
         LexerConfig, NoTokensParserConfig, ParserConfig, RuntimeParserConfig, TokensParserConfig,
@@ -217,6 +222,10 @@ pub struct ParserReturn<'a> {
 /// You may provide options to the [`Parser`] using [`Parser::with_options`].
 #[derive(Debug, Clone, Copy)]
 pub struct ParseOptions {
+    /// Preserve call-expression assignment targets as synthetic static members
+    /// using [`CALL_ASSIGNMENT_TARGET_MARKER`]. The consumer owns strict-mode
+    /// validation and Annex B runtime-error lowering. Default: `false`.
+    pub allow_call_assignment_targets: bool,
     /// Whether to parse regular expressions or not.
     ///
     /// Default: `false`
@@ -269,6 +278,7 @@ pub struct ParseOptions {
 impl Default for ParseOptions {
     fn default() -> Self {
         Self {
+            allow_call_assignment_targets: false,
             #[cfg(feature = "regular_expression")]
             parse_regular_expression: false,
             allow_return_outside_function: false,
@@ -299,7 +309,13 @@ impl<'a> Parser<'a> {
     /// - `source_type`: Source type (e.g. JavaScript, TypeScript, JSX, ESM Module, Script)
     pub fn new(allocator: &'a Allocator, source_text: &'a str, source_type: SourceType) -> Self {
         let options = ParseOptions::default();
-        Self { allocator, source_text, source_type, options, config: NoTokensParserConfig }
+        Self {
+            allocator,
+            source_text,
+            source_type,
+            options,
+            config: NoTokensParserConfig,
+        }
     }
 }
 
@@ -683,7 +699,13 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     ) -> Self {
         Self {
             options,
-            lexer: Lexer::new(allocator, source_text, source_type, config.lexer_config(), unique),
+            lexer: Lexer::new(
+                allocator,
+                source_text,
+                source_type,
+                config.lexer_config(),
+                unique,
+            ),
             source_type,
             source_text,
             errors: vec![],
@@ -745,7 +767,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         if errors.len() != 1 {
             errors
                 .reserve(self.lexer.errors.len() + self.errors.len() + module_record_errors.len());
-            errors.extend(self.lexer.errors.drain(..).map(ParserDiagnostic::into_diagnostic));
+            errors.extend(
+                self.lexer
+                    .errors
+                    .drain(..)
+                    .map(ParserDiagnostic::into_diagnostic),
+            );
             errors.extend(self.errors.drain(..).map(ParserDiagnostic::into_diagnostic));
             errors.append(&mut module_record_errors);
         }
@@ -769,7 +796,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 // discard deferred module errors (HTML comments are valid in scripts)
                 program.source_type = source_type.with_script(true);
                 errors.extend(
-                    self.deferred_script_errors.into_iter().map(ParserDiagnostic::into_diagnostic),
+                    self.deferred_script_errors
+                        .into_iter()
+                        .map(ParserDiagnostic::into_diagnostic),
                 );
             }
         }
@@ -864,8 +893,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     fn reparse_potential_top_level_awaits(&mut self, statements: &mut ArenaVec<'a, Statement<'a>>) {
         // Token stream is already complete from the first parse.
         // Reparsing here is only to patch AST nodes, so keep the original token stream.
-        let original_tokens =
-            if self.lexer.config.tokens() { Some(self.lexer.take_tokens()) } else { None };
+        let original_tokens = if self.lexer.config.tokens() {
+            Some(self.lexer.take_tokens())
+        } else {
+            None
+        };
 
         let checkpoints = std::mem::take(&mut self.state.potential_await_reparse);
         for (stmt_index, checkpoint) in checkpoints {
@@ -925,7 +957,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         // PropertyDefinition : cover_initialized_name
         // It is a Syntax Error if any source text is matched by this production.
         for expr in self.state.cover_initialized_name.values() {
-            self.errors.push(diagnostics::cover_initialized_name(expr.span()));
+            self.errors
+                .push(diagnostics::cover_initialized_name(expr.span()));
         }
     }
 
@@ -988,7 +1021,9 @@ mod test {
         let allocator = Allocator::default();
         let source_type = SourceType::default();
         let source = "a";
-        let expr = Parser::new(&allocator, source, source_type).parse_expression().unwrap();
+        let expr = Parser::new(&allocator, source, source_type)
+            .parse_expression()
+            .unwrap();
         assert!(matches!(expr, Expression::Identifier(_)));
     }
 
@@ -997,7 +1032,11 @@ mod test {
         let allocator = Allocator::default();
         let source_type = SourceType::default();
         for source in ["a b", "a;", "let x = 1"] {
-            assert!(Parser::new(&allocator, source, source_type).parse_expression().is_err());
+            assert!(
+                Parser::new(&allocator, source, source_type)
+                    .parse_expression()
+                    .is_err()
+            );
         }
     }
 
@@ -1019,7 +1058,10 @@ mod test {
             let ret = Parser::new(&allocator, source, source_type).parse();
             assert!(ret.is_flow_language);
             assert_eq!(ret.diagnostics.len(), 1);
-            assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Flow is not supported");
+            assert_eq!(
+                ret.diagnostics.first().unwrap().to_string(),
+                "Flow is not supported"
+            );
         }
     }
 
@@ -1085,8 +1127,13 @@ mod test {
         let source_type = SourceType::default();
         {
             let source = "%DebugPrint('Raging against the Dying Light')";
-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
+            let opts = ParseOptions {
+                allow_v8_intrinsics: true,
+                ..ParseOptions::default()
+            };
+            let ret = Parser::new(&allocator, source, source_type)
+                .with_options(opts)
+                .parse();
             assert!(ret.diagnostics.is_empty());
 
             if let Some(Statement::ExpressionStatement(expr_stmt)) = ret.program.body.first() {
@@ -1101,8 +1148,13 @@ mod test {
         }
         {
             let source = "%DebugPrint(...illegalSpread)";
-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
+            let opts = ParseOptions {
+                allow_v8_intrinsics: true,
+                ..ParseOptions::default()
+            };
+            let ret = Parser::new(&allocator, source, source_type)
+                .with_options(opts)
+                .parse();
             assert_eq!(ret.diagnostics.len(), 1);
             assert_eq!(
                 ret.diagnostics[0].to_string(),
@@ -1120,8 +1172,13 @@ mod test {
             let source = "interface Props extends %enuProps {}";
             let source_type = SourceType::default().with_typescript(true);
             // Should not panic whether `allow_v8_intrinsics` is set or not.
-            let opts = ParseOptions { allow_v8_intrinsics: true, ..ParseOptions::default() };
-            let ret = Parser::new(&allocator, source, source_type).with_options(opts).parse();
+            let opts = ParseOptions {
+                allow_v8_intrinsics: true,
+                ..ParseOptions::default()
+            };
+            let ret = Parser::new(&allocator, source, source_type)
+                .with_options(opts)
+                .parse();
             assert_eq!(ret.diagnostics.len(), 1);
             let ret = Parser::new(&allocator, source, source_type).parse();
             assert_eq!(ret.diagnostics.len(), 1);
@@ -1154,7 +1211,10 @@ mod test {
         let source_type = SourceType::default();
         let source = "#!/usr/bin/node\n;";
         let ret = Parser::new(&allocator, source, source_type).parse();
-        assert_eq!(ret.program.hashbang.unwrap().value.as_str(), "/usr/bin/node");
+        assert_eq!(
+            ret.program.hashbang.unwrap().value.as_str(),
+            "/usr/bin/node"
+        );
     }
 
     #[test]
@@ -1162,7 +1222,11 @@ mod test {
         let allocator = Allocator::default();
         let source_type = SourceType::unambiguous();
         assert!(source_type.is_unambiguous());
-        let sources = ["import x from 'foo';", "export {x} from 'foo';", "import.meta"];
+        let sources = [
+            "import x from 'foo';",
+            "export {x} from 'foo';",
+            "import.meta",
+        ];
         for source in sources {
             let ret = Parser::new(&allocator, source, source_type).parse();
             assert!(ret.program.source_type.is_module());
@@ -1311,7 +1375,10 @@ mod test {
 
         assert!(!ret.fatal_error);
         assert_eq!(ret.diagnostics.len(), 1);
-        assert_eq!(ret.diagnostics.first().unwrap().to_string(), "Unterminated string");
+        assert_eq!(
+            ret.diagnostics.first().unwrap().to_string(),
+            "Unterminated string"
+        );
 
         let tokens = ret
             .tokens
