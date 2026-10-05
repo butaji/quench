@@ -2,6 +2,8 @@ use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
 
+const INTERNAL_PROPERTY_PREFIX: &str = "\0rqj:";
+
 pub(super) enum PropertyCopyKind {
     Set,
     CreateDataProperty,
@@ -28,21 +30,27 @@ impl<H: Host> Vm<H> {
         result
     }
 
+    pub(super) fn own_named_keys(&self, object: Value) -> Vec<Atom> {
+        let Some(data) = self.object_data(object) else {
+            return Vec::new();
+        };
+        self.ordered_shape(data)
+            .into_iter()
+            .filter(|(atom, slot)| {
+                self.heap.property_get(data, *slot).is_some()
+                    && !self.atom_name(*atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+            })
+            .map(|(atom, _)| atom)
+            .collect()
+    }
+
     fn ordinary_own_key_values(&mut self, object: Value) -> Vec<Value> {
         let mut values = self.indexed_name_keys(object).unwrap_or_default();
         let Some(data) = self.object_data(object) else {
             return values;
         };
         let shape = data.shape();
-        let strings = self
-            .ordered_shape(data)
-            .into_iter()
-            .filter(|(atom, slot)| {
-                self.heap.property_get(data, *slot).is_some()
-                    && !self.atom_name(*atom).starts_with("\0rqj:")
-            })
-            .map(|(atom, _)| atom)
-            .collect::<Vec<_>>();
+        let strings = self.own_named_keys(object);
         let symbols = self
             .shape_keys(shape)
             .iter()

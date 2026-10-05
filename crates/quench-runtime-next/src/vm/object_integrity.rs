@@ -668,16 +668,7 @@ impl<H: Host> Vm<H> {
                 object.set_frozen(true);
             }
         }
-        let mut keys = self
-            .object_data(target)
-            .map(|data| {
-                self.ordered_shape(data)
-                    .into_iter()
-                    .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
-                    .map(|(atom, _)| atom)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let mut keys = self.own_named_keys(target);
         keys.extend(self.array_integrity_atoms(target));
         for atom in keys {
             let mut attributes = self
@@ -732,16 +723,12 @@ impl<H: Host> Vm<H> {
         if data.is_extensible() {
             return Ok(Value::FALSE);
         }
-        let named_ok = self
-            .ordered_shape(data)
-            .into_iter()
-            .filter(|(_, slot)| self.heap.property_get(data, *slot).is_some())
-            .all(|(atom, _)| {
-                let attributes = self
-                    .property_attributes(target, PropertyKey::string(atom))
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-                !attributes.configurable && (!freeze || !attributes.writable)
-            });
+        let named_ok = self.own_named_keys(target).into_iter().all(|atom| {
+            let attributes = self
+                .property_attributes(target, PropertyKey::string(atom))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            !attributes.configurable && (!freeze || !attributes.writable)
+        });
         let arrays_ok = self.array_is_integrity_level(target, freeze);
         let shape_keys = self.shape_keys(data.shape());
         let symbols_ok = shape_keys
