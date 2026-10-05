@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "tasks": [
+    "15",
+    "20"
+  ],
+  "baseline_source_head": "f37ecef2931d191a3c98ef3e79828c989d6a07e0",
+  "qualification": "Isolated shared local-time resolver on the committed baseline; unrelated pending changes excluded and preserved.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm.rs": "b63b438e1b3c6458db192ba87cb75fef1183626128ccf77fbf768e37273f3ce1",
+    "crates/quench-runtime-next/src/vm/date.rs": "45a622576c8c7c785bccc186d9f281471cf81ff4dca742a40358ba0953ef374a",
+    "crates/quench-runtime-next/src/vm/temporal_zoned_date_time.rs": "adc7db8d75691aee3ca6d95a5920996a83b5621f75527f40b959f51ad7887f7f",
+    "crates/quench-runtime-next/src/vm/local_time.rs": "b77e3b3abb76e9ae562a9378eeb2482b7ed5f7ef086026a6027ffdb20c6644c9"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "representation": {
+    "transition": "Date and Temporal share Single/Ambiguous/None dispatch. Compatible chooses the earlier fold instant and the pre-gap offset; earlier/later/reject retain Temporal semantics.",
+    "date_precision": "One named operation retains the existing Date minute-offset precision across construction, local views and out-of-range fallbacks. Historical second precision is a remaining correctness gap.",
+    "limits": "The existing Temporal one-day offset probes are shared unchanged; this bounded qualification is not proof for every historical timezone transition. Named-zone gap results now pass the same Temporal epoch-range check as other results."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/date/date.cc": "20585e734c7bf365fb778c4f8cc9da5ad592110413dd3c22e0a2fa53339f76f8"
+  },
+  "build": {
+    "profile": "release, correctness only; no performance claim",
+    "log": "target/iteration/task15-local-time-build.log",
+    "before_binary_sha256": "88a0a34d89f959f4b56471564bf5361782d6b1a8519482018b6be4aa9052d71a",
+    "after_binary_sha256": "91912a142d258185a035d956798f971eba9fcc60e0f5e0fb2a4d24f51b55a080"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "jobs": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 1564,
+    "passed_before": 1556,
+    "passed_after": 1556,
+    "regressions": 0,
+    "scopes": [
+      {
+        "scope": "date",
+        "total": 594,
+        "passed_before": 594,
+        "passed_after": 594,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-local-time/before-date.json": "7d65344f2c06adc4e3386072254bfed87964a32cf260854537a0af9baf52e1a6",
+          "target/iteration/task15-local-time/after-date.json": "49047814ec4abb6706c2d792ba3d92d8e9fc630bb200883031a49b5b6af0f99f",
+          "target/iteration/task15-local-time/compare-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "zoned-family",
+        "total": 901,
+        "passed_before": 901,
+        "passed_after": 901,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-local-time/before-zoned-family.json": "1c83b343bc8e81f5f42d77768ea33444f6178483d906da30e32c30ebed3a4ee5",
+          "target/iteration/task15-local-time/after-zoned-family.json": "bc78d807d1da4469650aefc683d01c93743bd467ff1b9417cf2be8647894296d",
+          "target/iteration/task15-local-time/compare-zoned-family.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "plain-to-zoned",
+        "total": 29,
+        "passed_before": 29,
+        "passed_after": 29,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-local-time/before-plain-to-zoned.json": "fc93d4fdf9f0a9cec395f749173275d3097ba90d6b32ae811508e55c27ad7195",
+          "target/iteration/task15-local-time/after-plain-to-zoned.json": "377ea18ae16037603b6047ad3db009961c09d8eef529adcb8232655de7e2c397",
+          "target/iteration/task15-local-time/compare-plain-to-zoned.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "intl-date",
+        "total": 12,
+        "passed_before": 12,
+        "passed_after": 12,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-local-time/before-intl-date.json": "35d0bfbbfc5055ad502ca48e97da01800a9674720b3da41cc3465232c5dae01f",
+          "target/iteration/task15-local-time/after-intl-date.json": "600cab1b11e941fa003f88ef8843e1bd9e14b1f7b6281f9275976cd85f6dfc66",
+          "target/iteration/task15-local-time/compare-intl-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-date",
+        "total": 28,
+        "passed_before": 20,
+        "passed_after": 20,
+        "regressions": 0,
+        "reports": {
+          "target/iteration/task15-local-time/before-staged-date.json": "16a398e6e63163ea29ef92d52982c50a10912f762c13c98b53c6e1ecba12cac3",
+          "target/iteration/task15-local-time/after-staged-date.json": "c825d49c21cc1ba1f95a126d6a89e230959515174c94c26c46dd32c6eb127e8c",
+          "target/iteration/task15-local-time/compare-staged-date.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ],
+    "remaining_non_pass": [
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-1-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-2-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-3-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-4-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-5-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-6-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-7-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      },
+      {
+        "outcome": "timed_out",
+        "path": "staging/sm/Date/dst-offset-caching-8-of-8.js",
+        "reason": "test timed out after 10000ms",
+        "stage": "114"
+      }
+    ]
+  },
+  "node_controls": {
+    "oracle": "v26.10.0",
+    "transition": {
+      "summary": {
+        "controls": 43,
+        "observations_per_build": 86,
+        "before_matches": 46,
+        "after_matches": 84
+      },
+      "regressions": 0,
+      "report": "target/iteration/task15-local-time/node-transition-controls.json",
+      "sha256": "5314701271049f2dbbb12504952af7afb938f5ef9552b84bf8b2e94dfef7282c"
+    },
+    "grammar": {
+      "summary": {
+        "strings": 73,
+        "timezones": 3,
+        "controls": 219,
+        "observations_per_build": 438,
+        "before_matches": 428,
+        "after_matches": 432
+      },
+      "regressions": 0,
+      "report": "target/iteration/task15-local-time/node-controls.json",
+      "sha256": "2b26dca50732a3de92d09c05a27f9a00f23fbe4fd89c9113ee9585a7980a7042"
+    },
+    "remaining_differences": {
+      "transition": "1900 Kathmandu retains its minute-rounded timestamp in both execution modes; Node retains historical offset seconds.",
+      "grammar": "The date-only negative-zero expanded year remains rejected in three zones and both modes; Node accepts through permissive parsing."
+    }
+  },
+  "historical_corpus_conflict": {
+    "report": "target/iteration/task15-local-time/node-historical-fixture.json",
+    "sha256": "0a879d6284fde522d371e58718bf51a8c75c4c5e5741ea27a4f741e8823de605",
+    "observation": "The unchanged pinned S15.9.3.1_A5_T1 fixture also fails local Node in the system timezone. assertRelativeDateMs computes offset from whole minutes, discarding historical offset seconds. The second-precision change is outside this transition fix; inputs, helper and timezone are unchanged."
+  },
+  "units": "No new unit tests duplicating suites. Production affected suites and Node controls qualify the change.",
+  "limits": [
+    "Eight unchanged staged Date stress timeouts remain failures.",
+    "Stage A and full Test262, Wasm and frozen implemented Node qualification remain open."
+  ]
+}
