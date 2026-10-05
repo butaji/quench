@@ -1005,7 +1005,9 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras.as_deref().is_some_and(|extras| extras.error_data)
+        self.extras
+            .as_deref()
+            .is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn shape(&self) -> u32 {
@@ -1216,6 +1218,7 @@ pub(crate) enum Cell {
         object: Object,
         source: JsString,
         flags: String,
+        matcher: Rc<quench_regexp::Regex>,
         // Intrinsic constructor identity owns legacy eligibility and realm.
         // Undefined disables legacy features for derived construction.
         legacy_constructor: Value,

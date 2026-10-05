@@ -279,6 +279,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         object: plain_object(),
         source: "a".into(),
         flags: String::new(),
+        matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
         legacy_constructor: constructor,
     });
     let root = heap.root(regexp);
