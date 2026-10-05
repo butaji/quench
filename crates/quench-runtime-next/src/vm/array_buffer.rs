@@ -589,40 +589,24 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, format!("{name}.slice receiver is invalid")));
             }
         };
-        let relative = |number: f64| {
-            if number.is_nan() {
-                0
-            } else if number.is_infinite() {
-                if number.is_sign_negative() { 0 } else { length }
-            } else if number.is_sign_negative() {
-                length.saturating_sub(number.abs().trunc() as usize)
-            } else {
-                (number.trunc() as usize).min(length)
-            }
-        };
         let start = args
             .first()
-            .map(|value| self.to_number(p, *value))
+            .copied()
+            .map(|value| self.array_buffer_slice_index(p, value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(0);
         let end = args
             .get(1)
+            .copied()
             .filter(|value| !value.is_undefined())
-            .map(|value| self.to_number(p, *value))
+            .map(|value| self.array_buffer_slice_index(p, value, length))
             .transpose()?
-            .map(relative)
             .unwrap_or(length);
         let count = end.saturating_sub(start);
         let constructor_atom = self.intern_atom("constructor");
         let constructor = self.get_property(p, this, constructor_atom)?;
-        let default_constructor = if shared {
-            Native::SharedArrayBuffer
-        } else {
-            Native::ArrayBuffer
-        };
         let species = if constructor.is_undefined() {
-            self.native_value(default_constructor)
+            None
         } else {
             if constructor.is_null() || self.object_data(constructor).is_none() {
                 return Err(self.type_error(p, "ArrayBuffer constructor must be an object".into()));
@@ -635,20 +619,24 @@ impl<H: Host> Vm<H> {
                 .transpose()?
                 .unwrap_or(Value::UNDEFINED);
             if species.is_null() || species.is_undefined() {
-                self.native_value(default_constructor)
+                None
             } else {
-                species
+                Some(species)
             }
         };
-        if !self.is_constructable(p, species) {
-            return Err(self.type_error(p, "ArrayBuffer species is not a constructor".into()));
-        }
-        let result = self.construct_value_with_new_target(
-            p,
-            species,
-            species,
-            &[Value::number(count as f64)],
-        )?;
+        let result = if let Some(species) = species {
+            if !self.is_constructable(p, species) {
+                return Err(self.type_error(p, "ArrayBuffer species is not a constructor".into()));
+            }
+            self.construct_value_with_new_target(
+                p,
+                species,
+                species,
+                &[Value::number(count as f64)],
+            )?
+        } else {
+            self.new_fixed_array_buffer(p, count, shared)?
+        };
         let (result_bytes, result_shared, result_detached, result_immutable) =
             match self.heap.get(result) {
                 Some(Cell::ArrayBuffer {
@@ -664,7 +652,7 @@ impl<H: Host> Vm<H> {
                     );
                 }
             };
-        if result == this || (!shared && result_shared) || result_detached || result_immutable {
+        if result == this || result_shared != shared || result_detached || result_immutable {
             return Err(self.type_error(p, "ArrayBuffer species returned an invalid buffer".into()));
         }
         if result_bytes.len() < count {
@@ -673,12 +661,18 @@ impl<H: Host> Vm<H> {
         // Coercions and species construction can detach, resize, or write the
         // source. Its current backing store is authoritative at the copy step.
         let source_bytes = match self.heap.get(this) {
-            Some(Cell::ArrayBuffer { bytes, detached: false, .. }) => Rc::clone(bytes),
+            Some(Cell::ArrayBuffer {
+                bytes,
+                detached: false,
+                ..
+            }) => Rc::clone(bytes),
             _ => return Err(self.type_error(p, "ArrayBuffer was detached during slice".into())),
         };
         let copy_count = count.min(source_bytes.len().saturating_sub(start));
         if copy_count != 0
-            && let Some(Cell::ArrayBuffer { bytes: destination, .. }) = self.heap.get_mut(result)
+            && let Some(Cell::ArrayBuffer {
+                bytes: destination, ..
+            }) = self.heap.get_mut(result)
         {
             Rc::make_mut(destination)[..copy_count]
                 .copy_from_slice(&source_bytes[start..start + copy_count]);
@@ -742,7 +736,7 @@ impl<H: Host> Vm<H> {
             length
         };
         let result = self.heap.alloc(Cell::ArrayBuffer {
-            object: Self::empty_object(self.array_buffer_proto),
+            object: Self::empty_object(self.array_buffer_intrinsic_prototype(false)),
             bytes: Rc::new(copied_bytes),
             shared: false,
             detached: false,
@@ -939,7 +933,7 @@ impl<H: Host> Vm<H> {
             .unwrap()
             .copy_from_slice(&source_bytes[start..end]);
         Ok(self.heap.alloc(Cell::ArrayBuffer {
-            object: Self::empty_object(self.array_buffer_proto),
+            object: Self::empty_object(self.array_buffer_intrinsic_prototype(false)),
             bytes,
             shared: false,
             detached: false,
