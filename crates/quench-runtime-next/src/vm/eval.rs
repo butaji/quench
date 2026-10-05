@@ -799,31 +799,6 @@ impl<H: Host> Vm<H> {
                 return Ok(self.typeof_value(value));
             }
         }
-        if let Some(name) = expression.strip_prefix("++") {
-            let atom = self.intern_atom(name.trim());
-            let current = self.load_name(p, atom, None)?;
-            let value = Value::number(current.as_number().unwrap_or(0.0) + 1.0);
-            self.store_eval_name(p, atom, value, strict, false)?;
-            if !self.direct_eval && !strict {
-                self.store_frame_local(p, atom, value);
-                self.store_eval_outer_local(p, atom, value);
-            }
-            return Ok(value);
-        }
-        if let Some((name, rhs)) = expression.split_once("+=") {
-            let atom = self.intern_atom(name.trim());
-            let current = self.load_name(p, atom, None)?;
-            let increment = self.eval_simple_expression(p, rhs, strict)?;
-            let value = Value::number(
-                current.as_number().unwrap_or(0.0) + increment.as_number().unwrap_or(0.0),
-            );
-            self.store_eval_name(p, atom, value, strict, false)?;
-            if !self.direct_eval && !strict {
-                self.store_frame_local(p, atom, value);
-                self.store_eval_outer_local(p, atom, value);
-            }
-            return Ok(value);
-        }
         if expression.len() >= 2
             && matches!(expression.as_bytes().first(), Some(b'\'' | b'"'))
             && expression.as_bytes().last() == expression.as_bytes().first()
