@@ -100,6 +100,7 @@ impl<H: Host> Vm<H> {
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or(Frame {
             context: CallContext::Internal,
+            original_arguments: vec![],
             program: self.active_program,
             function: 0,
             pc: 0,
@@ -150,7 +151,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.context = context;
+        self.initialize_frame_invocation(&mut frame, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -280,6 +281,7 @@ impl<H: Host> Vm<H> {
             &mut self.frames[frame_index],
             Frame {
                 context: CallContext::Internal,
+                original_arguments: vec![],
                 program: self.active_program,
                 function: 0,
                 pc: 0,
@@ -333,7 +335,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.context = context;
+        self.initialize_frame_invocation(&mut frame, context, args);
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -368,6 +370,21 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    pub(super) fn initialize_frame_invocation(
+        &self,
+        frame: &mut Frame,
+        context: CallContext,
+        args: &[Value],
+    ) {
+        frame.context = context;
+        frame.original_arguments.clear();
+        if context
+            .callable()
+            .is_some_and(|function| !self.function_caller_is_restricted(function))
+        {
+            frame.original_arguments.extend_from_slice(args);
+        }
+    }
 
     pub(super) fn initialize_arguments_object(
         &mut self,
@@ -515,7 +532,11 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
         frame.context = CallContext::Internal;
+        frame.original_arguments.clear();
         const RETAINED_VALUES: usize = 256;
+        if frame.original_arguments.capacity() > RETAINED_VALUES {
+            frame.original_arguments.shrink_to(RETAINED_VALUES);
+        }
         if frame.locals.capacity() > RETAINED_VALUES {
             frame.locals.clear();
             frame.locals.shrink_to(RETAINED_VALUES);

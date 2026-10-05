@@ -1,0 +1,201 @@
+{
+  "schema": 1,
+  "tasks": [
+    "12",
+    "20"
+  ],
+  "baseline_source_head": "40669c4645971b072fa53a0c9829f9e56c2f237c",
+  "qualification": "Isolated invocation argument ownership and legacy arguments reflection, plus existing internal lifetime/continuation/pool checks; unrelated activation, Promise, Node and Wasm changes excluded.",
+  "source_sha256": {
+    "crates/quench-runtime-next/src/vm.rs": "e26ad155341b5ded862d309d7c2ed6eeece6843a01005f6c26a760903145f871",
+    "crates/quench-runtime-next/src/vm/activation.rs": "ceca0fa1c5ebfd7148dff2af787992f882b3c0fc420fbf30e7f700036c3b42bc",
+    "crates/quench-runtime-next/src/vm/dispatch_frame.rs": "562144177db11428db3f95ed0b349dfea14fb3ea41b249e94c2663cf0b608d29",
+    "crates/quench-runtime-next/src/vm/dispatch_numeric.rs": "beffd31cbd3a669dfb90c3c75d6a3ef9b3e0ac464c5420a77060e7badac6ba95",
+    "crates/quench-runtime-next/src/vm/function.rs": "8f30d6ca07c3c836670e453f37f26107abaa74413b5852be4d1d44ae97b8b3c0",
+    "crates/quench-runtime-next/src/vm/gc.rs": "7cba5245d00be6d6d1049174cb9f143b4b41d59ba2e9d45e08f18373add57196",
+    "crates/quench-runtime-next/src/vm/generator.rs": "3e6d2cf180a05a88a8e00e9579b1819654b65bbd719bc89bbdf30948a4194526",
+    "crates/quench-runtime-next/src/vm/object_get.rs": "7df3818e6d1c60adfe794e28f303a6273d155cdeab25d65049a0495ede6fa32d",
+    "crates/quench-runtime-next/src/vm/profile_edges.rs": "9754e6a65fd5a8d401b1466b09eb138898965a0f5ef6cd0bfe019aac77868f3d",
+    "crates/quench-runtime-next/src/vm/tests.rs": "1c59408a0275c15e12fd5f80311d0bd69189e84b8c963fc21acbee9479d84d05"
+  },
+  "suite_pin": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+  "suite_clean": true,
+  "representation": {
+    "authority": "Each eligible invocation owns one original-argument vector. Shared initialize_frame_invocation sets callable context, clears old arguments and snapshots only eligible legacy function calls. Ordinary, numeric, reused and generator paths call that operation.",
+    "lifecycle": "GC projects original argument roots. Continuation transitions move the vector with the rest of the activation; recycling clears it and applies the existing named frame-value retention policy.",
+    "projection": "Each function.arguments read creates a fresh unmapped arguments object using the existing initializer, original values, simple-parameter callee policy and current-realm object prototype. No derived argument object or local values are used as snapshot authority.",
+    "cost": "An eligible invocation copies values because locals/mapped arguments can mutate or disappear; ineligible invocations copy nothing. Guest arguments-object allocation occurs only on a read. Continuation transitions move owned data without copying.",
+    "scope": "No new serializer field, dependency, fixture branch, parallel reflection stack or duplicated guest-semantic unit test. Source formatting changes were verified to preserve the non-whitespace bytes."
+  },
+  "contract": {
+    "proposal_cited_by_pinned_tests": "https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md",
+    "status": "Legacy-reflection proposal; no universal Node parity or complete proposal-implementation claim.",
+    "pinned_fixture": "staging/sm/extensions/arguments-property-access-in-function.js",
+    "node_difference": "After assigning the formal parameter, current Node exposes its changed value in f.arguments; Quench preserves the original invocation value, as required by the proposal ArgumentsList snapshot. Retained both normal/generic controls."
+  },
+  "upstream_node_source": {
+    "tests/node/deps/v8/src/builtins/accessors.cc": "bab4d27dbfaccfc56bd9768a288a071ff6cf9797a1b65daa3396e8ba87514d07"
+  },
+  "build": {
+    "profile": "release; correctness only, no Stage B performance claim",
+    "log": "target/iteration/task12-function-arguments/build.log",
+    "before_binary_sha256": "fb414bc55aa4d70245b6d4937dfa9a09521d1507aa27b056a1852a4e45b1c3d9",
+    "after_binary_sha256": "487df9a4ff2fc2fb162a1bb0b7d87db3e4efa8b9599c77202a27303e257debd3"
+  },
+  "affected_test262": {
+    "full_suite_run": false,
+    "selection": "Function, language arguments, staged arguments paths, generator/async function and prototype stages, and eval.",
+    "jobs_per_scope": 2,
+    "timeout_ms": 10000,
+    "distinct_cases": 983,
+    "passed_before": 981,
+    "passed_after": 982,
+    "gained": [
+      "staging/sm/extensions/arguments-property-access-in-function.js"
+    ],
+    "regressions": [],
+    "remaining": [
+      "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+    ],
+    "scopes": [
+      {
+        "scope": "function",
+        "total": 509,
+        "passed_before": 509,
+        "passed_after": 509,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-function.json": "a320c856d666af1f369ea468a4b86f08ed2ccab24e3f5939ece0d8dfcf0e7d20",
+          "target/iteration/task12-function-arguments/after-function.json": "026c834d2bb3c6fb2ca747125351ca91ea2c6b9236e34e358bd0e43dd7818d25",
+          "target/iteration/task12-function-arguments/compare-function.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "arguments",
+        "total": 263,
+        "passed_before": 263,
+        "passed_after": 263,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-arguments.json": "536245b2753f42b8dc24d69cc9ce18706ca5b080e786d7a4c882d1ff98dfb495",
+          "target/iteration/task12-function-arguments/after-arguments.json": "403081564d8209ac45d5d6a03ffdd79dc605f1f0462aebf9bbfa596b4ad35362",
+          "target/iteration/task12-function-arguments/compare-arguments.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "staged-arguments",
+        "total": 28,
+        "passed_before": 26,
+        "passed_after": 27,
+        "gained": [
+          "staging/sm/extensions/arguments-property-access-in-function.js"
+        ],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-staged-arguments.json": "e3618c406575af5b021c68c368d418455ca1776481e0cc6d595590acedec99b0",
+          "target/iteration/task12-function-arguments/after-staged-arguments.json": "2b29bd6d18b2b81104f766b761976a849eed363ec23936a754e7f4f078c11508",
+          "target/iteration/task12-function-arguments/compare-staged-arguments.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "generator",
+        "total": 84,
+        "passed_before": 84,
+        "passed_after": 84,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-generator.json": "8d1da2892d879feda3fba6932ff3fe6b7130698593735e94860b2e24662f3db9",
+          "target/iteration/task12-function-arguments/after-generator.json": "da3a826b7381da955257d78cdb2cf9c4c978f0661a65b5d35863eb9e6631dba5",
+          "target/iteration/task12-function-arguments/compare-generator.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "async",
+        "total": 89,
+        "passed_before": 89,
+        "passed_after": 89,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-async.json": "7046aaa57d0342e2fb7bd00c6c55c70d4e5641a5c2a0e8045e3a1aa0c453715c",
+          "target/iteration/task12-function-arguments/after-async.json": "b2d7250bd35b1edece00426d078d40dcbfcea01d37794a755ac082efa222565a",
+          "target/iteration/task12-function-arguments/compare-async.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      },
+      {
+        "scope": "eval",
+        "total": 10,
+        "passed_before": 10,
+        "passed_after": 10,
+        "gained": [],
+        "regressions": [],
+        "reports": {
+          "target/iteration/task12-function-arguments/before-eval.json": "a82b34ba25af3d46f521cba61600d552a8719720d96e93acf838460f90140c7c",
+          "target/iteration/task12-function-arguments/after-eval.json": "294e9502ff943dee4c75c8fbbacdc83253d1e6535a40b621cb8d4b7fecde00ce",
+          "target/iteration/task12-function-arguments/compare-eval.log": "4318323c1580506259687c9c34b80b25284b12295f3f957dcf5f6e4e4417a5bd"
+        }
+      }
+    ]
+  },
+  "node_controls": {
+    "node_version": "v26.10.0",
+    "sources": 33,
+    "observations_per_build": 66,
+    "before_matches": 16,
+    "after_matches": 64,
+    "losses": 0,
+    "report": "target/iteration/task12-function-arguments/node-controls.json",
+    "sha256": "80162082ff3837213f7707ba2db5a949c827742eb83a62135357666bac994245",
+    "remaining_cases": [
+      "parameter-mutation"
+    ],
+    "scope": "Original values, mutations, fresh objects, descriptors, parameter forms, recursion, eval, callbacks, forwarding and restrictions in normal/generic modes."
+  },
+  "realm_controls": {
+    "sources": 4,
+    "observations_per_build": 4,
+    "before_matches": 0,
+    "after_matches": 4,
+    "losses": 0,
+    "modes": "Test262 host worker, specialized mode only; CLI SystemHost intentionally lacks $262.",
+    "report": "target/iteration/task12-function-arguments/realm-controls.json",
+    "sha256": "6e7112251887e9ae8aa7c4d1b3f83bd95f220a1450666173d29eb0385a0d4c6b",
+    "scope": "Foreign/nested object prototypes, callee identity, iterator identity and foreign rest-parameter TypeError realm."
+  },
+  "limits": [
+    "No suite pin, discovery, fixture, harness, exclusion, deadline or expectation changed. External controls are diagnostics, not added suite cases.",
+    "The unchanged staged Annex B arguments conflict remains, with its original failing outcome.",
+    "Complete Test262, Wasm, frozen implemented Node compatibility and production single-VM cutover remain open; Stage A is not complete."
+  ],
+  "internal_verification": {
+    "passed": 8,
+    "failed": 0,
+    "scope": "Extend existing active-frame and suspended-continuation GC roots, continuation move/restore and pooled invocation/register reset invariants. No new duplicate semantic unit test.",
+    "checks": [
+      {
+        "command": "cargo test --profile iteration -p quench-runtime-next --lib continuation",
+        "passed": 6,
+        "failed": 0,
+        "log": "target/iteration/task12-function-arguments/internal-continuation.log",
+        "sha256": "6943b166c28473b213ab7194dea6c6324da4c3a2cf7d5d2e3360452823dd1636"
+      },
+      {
+        "command": "cargo test --profile iteration -p quench-runtime-next --lib unrepresentable_register_maps_keep_the_conservative_frame_roots",
+        "passed": 1,
+        "failed": 0,
+        "log": "target/iteration/task12-function-arguments/internal-active-frame.log",
+        "sha256": "ebc0fe91dcc40824782f91828a23cb852b592e85d45c82c7ed6a21c74fe664c9"
+      },
+      {
+        "command": "cargo test --profile iteration -p quench-runtime-next --lib pooled_frame_registers_are_reset_when_their_length_is_reused",
+        "passed": 1,
+        "failed": 0,
+        "log": "target/iteration/task12-function-arguments/internal-pool.log",
+        "sha256": "b4a3012ba221fabf6f1b1e5a448caba350842281ff57772f89c3fe4910406bd7"
+      }
+    ]
+  }
+}

@@ -333,12 +333,16 @@ impl<H: Host> Vm<H> {
             ));
         }
         if !private_name
-            && self.atom_name(atom) == "caller"
+            && matches!(self.atom_name(atom), "caller" | "arguments")
             && matches!(self.heap.get(object), Some(Cell::Function { .. }))
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
         {
-            return Ok(self.function_caller(object));
+            return match self.atom_name(atom) {
+                "caller" => Ok(self.function_caller(object)),
+                "arguments" => self.function_arguments(object),
+                _ => unreachable!("legacy function reflection property"),
+            };
         }
         let private_target = object;
         let mut object = object;
