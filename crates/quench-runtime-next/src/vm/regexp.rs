@@ -23,10 +23,33 @@ const REGEXP_LEGACY_ACCESSOR_GROUPS: &[(&[&str], bool)] = &[
     (&["rightContext", "$'"], false),
 ];
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct RegExpIntrinsics {
     pub(super) constructor: Value,
     pub(super) prototype: Value,
+    legacy_input: Option<JsString>,
+    legacy_match: LegacyRegExpMatch,
+}
+
+#[derive(Clone)]
+enum LegacyRegExpMatch {
+    Empty,
+    Matched {
+        input: JsString,
+        matched: quench_regexp::Match,
+    },
+    Invalid,
+}
+
+impl RegExpIntrinsics {
+    pub(super) fn new(constructor: Value, prototype: Value) -> Self {
+        Self {
+            constructor,
+            prototype,
+            legacy_input: Some(JsString::from_units(&[])),
+            legacy_match: LegacyRegExpMatch::Empty,
+        }
+    }
 }
 
 enum RegExpConstructorInput {
@@ -56,13 +79,10 @@ impl<H: Host> Vm<H> {
         constructor: Value,
         prototype: Value,
     ) -> Result<(), JsError> {
-        self.realm.intrinsics.regexp_intrinsics.insert(
-            realm,
-            RegExpIntrinsics {
-                constructor,
-                prototype,
-            },
-        );
+        self.realm
+            .intrinsics
+            .regexp_intrinsics
+            .insert(realm, RegExpIntrinsics::new(constructor, prototype));
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
         self.set_property_attributes(
@@ -142,14 +162,15 @@ impl<H: Host> Vm<H> {
         name: &str,
         has_setter: bool,
     ) -> Result<(), JsError> {
-        let getter = self.native_with_realm(Native::RegExpLegacyGetter, realm, realm);
+        let atom = self.intern_atom(name);
+        let selector = Value::number(atom as f64);
+        let getter = self.native_with_realm(Native::RegExpLegacyGetter, selector, realm);
         self.set_builtin_function_name(getter, &format!("get RegExp.{name}"))?;
         let setter =
-            has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, realm, realm));
+            has_setter.then(|| self.native_with_realm(Native::RegExpLegacySetter, selector, realm));
         if let Some(setter) = setter {
             self.set_builtin_function_name(setter, &format!("set RegExp.{name}"))?;
         }
-        let atom = self.intern_atom(name);
         self.set_named(program, constructor, name, getter)?;
         self.set_property_attributes(
             constructor,
@@ -1054,7 +1075,48 @@ impl<H: Host> Vm<H> {
         receiver: Value,
     ) -> Result<Value, JsError> {
         self.require_regexp_constructor_receiver(p, receiver)?;
-        Ok(Value::UNDEFINED)
+        let selector = self
+            .active_native_env()
+            .and_then(Value::as_number)
+            .ok_or_else(|| JsError("missing RegExp legacy property selector".into()))?
+            as Atom;
+        let name = self.atom_name(selector);
+        let state = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .expect("active realm has RegExp intrinsics");
+        let value = if matches!(name, "input" | "$_") {
+            state.legacy_input.clone()
+        } else {
+            match &state.legacy_match {
+                LegacyRegExpMatch::Invalid => None,
+                LegacyRegExpMatch::Empty => Some(JsString::from_units(&[])),
+                LegacyRegExpMatch::Matched { input, matched } => {
+                    let range = match name {
+                        "lastMatch" | "$&" => Some(matched.range.clone()),
+                        "leftContext" | "$`" => Some(0..matched.range.start),
+                        "rightContext" | "$'" => Some(matched.range.end..input.units().len()),
+                        "lastParen" | "$+" => matched.captures.last().cloned().flatten(),
+                        _ => name
+                            .strip_prefix('$')
+                            .and_then(|index| index.parse::<usize>().ok())
+                            .and_then(|index| index.checked_sub(1))
+                            .and_then(|index| matched.captures.get(index))
+                            .cloned()
+                            .flatten(),
+                    };
+                    Some(JsString::from_units(
+                        range.map_or(&[][..], |range| &input.units()[range]),
+                    ))
+                }
+            }
+        };
+        match value {
+            Some(value) => Ok(self.heap.alloc(Cell::String(value))),
+            None => Err(self.type_error(p, "RegExp legacy match state is unavailable".into())),
+        }
     }
 
     pub(super) fn regexp_legacy_setter_native(
@@ -1064,7 +1126,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         self.require_regexp_constructor_receiver(p, receiver)?;
-        let _value = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        let value = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+        self.realm
+            .intrinsics
+            .regexp_intrinsics
+            .get_mut(&self.realm.globals)
+            .expect("active realm has RegExp intrinsics")
+            .legacy_input = Some(value);
         Ok(Value::UNDEFINED)
     }
 
@@ -1155,9 +1223,9 @@ impl<H: Host> Vm<H> {
             let intrinsic = vm.regexp_intrinsic_constructor();
             let legacy_constructor =
                 if new_target.is_none_or(|target| vm.same_value(target, intrinsic)) {
-                    intrinsic
+                    crate::heap::RegExpLegacyOwner::Enabled(intrinsic)
                 } else {
-                    Value::UNDEFINED
+                    crate::heap::RegExpLegacyOwner::Disabled(intrinsic)
                 };
             vm.regexp_from_source(prototype, pattern, flags, legacy_constructor)
         })
@@ -1181,7 +1249,7 @@ impl<H: Host> Vm<H> {
             prototype,
             source,
             flags,
-            self.regexp_intrinsic_constructor(),
+            crate::heap::RegExpLegacyOwner::Enabled(self.regexp_intrinsic_constructor()),
         )
     }
 
@@ -1211,7 +1279,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
         source: JsString,
         flags: String,
-        legacy_constructor: Value,
+        legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
         let object = self.heap.alloc(Cell::RegExp {
@@ -1253,7 +1321,7 @@ impl<H: Host> Vm<H> {
                         "RegExp.prototype.compile called on incompatible receiver".into(),
                     ));
                 };
-                let enabled = matches!(vm.heap.get(receiver), Some(Cell::RegExp { legacy_constructor, .. }) if vm.same_value(*legacy_constructor, vm.regexp_intrinsic_constructor()));
+                let enabled = matches!(vm.heap.get(receiver), Some(Cell::RegExp { legacy_constructor, .. }) if matches!(legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if vm.same_value(*owner, vm.regexp_intrinsic_constructor())));
             if !enabled {
                 return Err(vm.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
             }
@@ -1448,7 +1516,7 @@ impl<H: Host> Vm<H> {
             let index = matched.range.start;
             let index_atom = vm.intern_atom("index");
             vm.set_property(result, index_atom, Value::number(index as f64))?;
-            let input_value = vm.heap.alloc(Cell::String(input));
+            let input_value = vm.heap.alloc(Cell::String(input.clone()));
             let input_atom = vm.intern_atom("input");
             vm.set_property(result, input_atom, input_value)?;
             let groups_atom = vm.intern_atom("groups");
@@ -1457,6 +1525,31 @@ impl<H: Host> Vm<H> {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
                 let indices_atom = vm.intern_atom("indices");
                 vm.set_property(result, indices_atom, indices)?;
+            }
+            let owner = match vm.heap.get(this) {
+                Some(Cell::RegExp {
+                    legacy_constructor, ..
+                }) => *legacy_constructor,
+                _ => return Err(JsError("RegExp instance unavailable after match".into())),
+            };
+            let intrinsic = vm.regexp_intrinsic_constructor();
+            if vm.same_value(owner.constructor(), intrinsic) {
+                let state = vm
+                    .realm
+                    .intrinsics
+                    .regexp_intrinsics
+                    .get_mut(&vm.realm.globals)
+                    .expect("active realm has RegExp intrinsics");
+                match owner {
+                    crate::heap::RegExpLegacyOwner::Enabled(_) => {
+                        state.legacy_input = Some(input.clone());
+                        state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+                    }
+                    crate::heap::RegExpLegacyOwner::Disabled(_) => {
+                        state.legacy_input = None;
+                        state.legacy_match = LegacyRegExpMatch::Invalid;
+                    }
+                }
             }
             Ok(result)
         })

@@ -118,17 +118,11 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
     );
     vm.realm.intrinsics.regexp_intrinsics.insert(
         first_global,
-        RegExpIntrinsics {
-            constructor: first_regexp_constructor,
-            prototype: first_regexp_prototype,
-        },
+        RegExpIntrinsics::new(first_regexp_constructor, first_regexp_prototype),
     );
     vm.realm.intrinsics.regexp_intrinsics.insert(
         second_global,
-        RegExpIntrinsics {
-            constructor: second_regexp_constructor,
-            prototype: second_regexp_prototype,
-        },
+        RegExpIntrinsics::new(second_regexp_constructor, second_regexp_prototype),
     );
     vm.realm
         .intrinsics
