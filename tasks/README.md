@@ -46,13 +46,12 @@ not qualified. Partial Test262 or Wasm reports do not permit Stage B.
 
 The remaining work is:
 
-- [20](20.md): pass the complete pinned Test262 inventory, including unresolved
-  failures and documented corpus conflicts.
+- [20](20.md): close audited Test262 behavior gaps with affected-stage checks.
 - [19](19.md), [21](21.md) and [22](22.md): freeze the implemented Node case set
-  and pass every case on the shared VM. Unimplemented upstream cases are outside
-  the gate; migration failures cannot remove cases from the frozen set.
+  and close known shared-VM gaps. Unimplemented upstream cases are outside the
+  inventory; migration failures cannot remove cases from the frozen set.
 - [37](37.md), [40](40.md) and [23](23.md): finish shared Wasm lowering and
-  integration, then pass the complete pinned directive inventory.
+  integration and close known directive gaps.
 - [24](24.md): verify integrated correctness; [27](27.md): switch all production
   consumers and delete legacy; [86](86.md): complete cleanup and verify the
   final build against all three inventories.
@@ -67,9 +66,11 @@ evidence and implement only actual gaps. Historical plans, host rewrites,
 runner-speed targets, new APIs and broad architecture proposals add no gates.
 Performance campaigns are not required in A.
 
-The first permitted integrated qualification campaign can supply the same-build
-reports for tasks 20/22/23 and task 24; it is one campaign, not a full run per
-task.
+Task 24 is the sole initial full-inventory campaign and owns the same-build
+100% reports for all three suites. If it finds a failure, reopen the responsible
+implementation task, fix and verify the affected scope, then repeat Task 24.
+Tasks 27 and 86 reuse those reports only when source, binaries, configuration
+and inventories are unchanged.
 
 Wasm lowering uses the completed VM foundation; tasks 07/10 own required fixes
 without making their full historical plans prerequisites. Wasm suite closure
