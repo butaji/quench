@@ -130,6 +130,7 @@ pub(super) fn require(
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
+            | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
             | BuiltinModule::ChildProcess),
@@ -170,6 +171,7 @@ enum BuiltinModule {
     Os,
     Buffer,
     Stream,
+    StringDecoder,
     WorkerThreads,
     Util,
     ChildProcess,
@@ -192,6 +194,7 @@ impl BuiltinModule {
             Self::Os => Some("os"),
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
+            Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
             Self::ChildProcess => Some("child_process"),
@@ -231,6 +234,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
+    ("string_decoder", BuiltinModule::StringDecoder),
+    ("node:string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
@@ -275,9 +280,13 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
     match builtin {
         BuiltinModule::Fs => crate::modules::fs::shared_vm::module(context),
         BuiltinModule::Net => crate::modules::net::shared_vm::module(context),
-        BuiltinModule::Os => simple_module(context, "type", Some("osType")),
+        BuiltinModule::Os => crate::modules::os::shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer::shared_vm::module(context),
-        BuiltinModule::Stream => crate::modules::stream::shared_vm::module(context),
+        BuiltinModule::Stream => {
+            let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
+            crate::modules::stream::shared_vm::module(context, decoder)
+        }
+        BuiltinModule::StringDecoder => crate::modules::string_decoder::shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
             let module = context.object_rooted()?;
             let is_main = context.boolean(true);
@@ -298,19 +307,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "special builtin passed to generic shared module builder",
         )),
     }
-}
-
-fn simple_module(
-    context: &mut Context<'_>,
-    property: &str,
-    operation: Option<&str>,
-) -> Result<RootId, RootedError> {
-    let module = context.object_rooted()?;
-    if let Some(operation) = operation {
-        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
-        set(context, module, property, function)?;
-    }
-    Ok(module)
 }
 
 enum Request {
@@ -429,7 +425,11 @@ fn module_record(
     set(context, module, "exports", exports)?;
     let main_file = context.host_mut().commonjs_entry.is_some();
     let id = if parent.is_none() {
-        if main_file { "." } else { "[eval]" }
+        if main_file {
+            "."
+        } else {
+            "[eval]"
+        }
     } else {
         filename
             .to_str()

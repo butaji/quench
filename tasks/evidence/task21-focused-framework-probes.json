@@ -15,27 +15,122 @@
   "profile_run": {
     "command": "target/iteration/run-parallel-next --profile framework-core",
     "runner_sha256": "6191b1fa6b9ea8927ed50ac0979313eb9241f2c9c9bfc8252b4bf644eabecbfd",
-    "result": { "pass": 8, "skip": 0, "fail": 11, "timeout": 0, "crash": 0, "unclassified": 0, "total": 19 },
+    "result": {
+      "pass": 8,
+      "skip": 0,
+      "fail": 11,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 19
+    },
     "cases": [
-      { "path": "tests/node/test/parallel/test-events-once.js", "sha256": "9e89e78df87e9e204e8ddc2e3a86445d5e830a2c3686b4d41dd9f9e436b4357a", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-stream-auto-destroy.js", "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-path-join.js", "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-path-resolve.js", "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-url-parse-query.js", "sha256": "9129c3dd207a227bcf125155b5d09eb0db95a6eee40f96fad5393016672fceef", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-util-inherits.js", "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-buffer-tostring.js", "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-string-decoder.js", "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393", "status": "fail", "reason": "Cannot find module 'string_decoder'" },
-      { "path": "tests/node/test/parallel/test-crypto-hash.js", "sha256": "89787c4d7b6d2b128d352f11433aad746e4a834a6180e1936ee3e10c80999cb1", "status": "fail", "reason": "Cannot find module 'crypto'" },
-      { "path": "tests/node/test/parallel/test-http-server.js", "sha256": "9adbaf9262b3e38d0362ff7dc635dabdb6dc39b58b4bbff674982d9e315d25fa", "status": "fail", "reason": "Cannot find module 'http'" },
-      { "path": "tests/node/test/parallel/test-http-automatic-headers.js", "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57", "status": "fail", "reason": "Cannot find module 'http'" },
-      { "path": "tests/node/test/parallel/test-http-content-length.js", "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed", "status": "fail", "reason": "Cannot find module 'http'" },
-      { "path": "tests/node/test/parallel/test-http-write-head.js", "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38", "status": "fail", "reason": "Cannot find module 'http'" },
-      { "path": "tests/node/test/parallel/test-http-generic-streams.js", "sha256": "a401a903cd1ba9dc37f03556b90075b798096bc354fbd727005fd4fb9e412e35", "status": "fail", "reason": "Cannot find module 'http'" },
-      { "path": "tests/node/test/parallel/test-fs-read-stream-resume.js", "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0", "status": "fail", "reason": "TypeError: value is not callable; shared fs exposes only readFileSync and lacks createReadStream" },
-      { "path": "tests/node/test/parallel/test-stream-pipe-flow.js", "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8", "status": "pass" },
-      { "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js", "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f", "status": "fail", "reason": "Cannot find module 'async_hooks'" },
-      { "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback.js", "sha256": "8dd2f7203d3e6da2942691ea6c4f984c3cafa6d6e5a57cb8dd5850694d691111", "status": "fail", "reason": "Cannot find module 'diagnostics_channel'" },
-      { "path": "tests/node/test/parallel/test-diagnostics-channel-http-server-start.js", "sha256": "23ca6fec9d9517c6b85690e96adfc659088d9f2b49501e31ced077eaf1f6b153", "status": "fail", "reason": "Cannot find module 'async_hooks'" }
+      {
+        "path": "tests/node/test/parallel/test-events-once.js",
+        "sha256": "9e89e78df87e9e204e8ddc2e3a86445d5e830a2c3686b4d41dd9f9e436b4357a",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
+        "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-join.js",
+        "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-resolve.js",
+        "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-url-parse-query.js",
+        "sha256": "9129c3dd207a227bcf125155b5d09eb0db95a6eee40f96fad5393016672fceef",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-util-inherits.js",
+        "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-buffer-tostring.js",
+        "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-string-decoder.js",
+        "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+        "status": "fail",
+        "reason": "Cannot find module 'string_decoder'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-crypto-hash.js",
+        "sha256": "89787c4d7b6d2b128d352f11433aad746e4a834a6180e1936ee3e10c80999cb1",
+        "status": "fail",
+        "reason": "Cannot find module 'crypto'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-server.js",
+        "sha256": "9adbaf9262b3e38d0362ff7dc635dabdb6dc39b58b4bbff674982d9e315d25fa",
+        "status": "fail",
+        "reason": "Cannot find module 'http'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+        "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+        "status": "fail",
+        "reason": "Cannot find module 'http'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-content-length.js",
+        "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed",
+        "status": "fail",
+        "reason": "Cannot find module 'http'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-write-head.js",
+        "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
+        "status": "fail",
+        "reason": "Cannot find module 'http'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-generic-streams.js",
+        "sha256": "a401a903cd1ba9dc37f03556b90075b798096bc354fbd727005fd4fb9e412e35",
+        "status": "fail",
+        "reason": "Cannot find module 'http'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
+        "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+        "status": "fail",
+        "reason": "TypeError: value is not callable; shared fs exposes only readFileSync and lacks createReadStream"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+        "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js",
+        "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+        "status": "fail",
+        "reason": "Cannot find module 'async_hooks'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+        "sha256": "8dd2f7203d3e6da2942691ea6c4f984c3cafa6d6e5a57cb8dd5850694d691111",
+        "status": "fail",
+        "reason": "Cannot find module 'diagnostics_channel'"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-http-server-start.js",
+        "sha256": "23ca6fec9d9517c6b85690e96adfc659088d9f2b49501e31ced077eaf1f6b153",
+        "status": "fail",
+        "reason": "Cannot find module 'async_hooks'"
+      }
     ]
   },
   "owner_sha256": {
@@ -69,35 +164,75 @@
       "sha256": "9e89e78df87e9e204e8ddc2e3a86445d5e830a2c3686b4d41dd9f9e436b4357a",
       "command": "target/iteration/run-parallel-next --profile framework-core --filter test-events-once.js",
       "status": "pass",
-      "result": { "pass": 1, "skip": 0, "fail": 0, "timeout": 0, "crash": 0, "unclassified": 0, "total": 1 }
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-inherits.js",
       "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114",
       "command": "target/iteration/run-parallel-next --profile framework-core --filter test-util-inherits.js",
       "status": "pass",
-      "result": { "pass": 1, "skip": 0, "fail": 0, "timeout": 0, "crash": 0, "unclassified": 0, "total": 1 }
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
     },
     {
       "path": "tests/node/test/parallel/test-buffer-tostring.js",
       "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
       "command": "target/iteration/run-parallel-next --profile framework-core --filter test-buffer-tostring.js",
       "status": "pass",
-      "result": { "pass": 1, "skip": 0, "fail": 0, "timeout": 0, "crash": 0, "unclassified": 0, "total": 1 }
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
       "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
       "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --filter test-stream-auto-destroy.js",
       "status": "pass",
-      "result": { "pass": 1, "skip": 0, "fail": 0, "timeout": 0, "crash": 0, "unclassified": 0, "total": 1 }
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
       "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
       "command": "target/iteration/run-parallel-next --profile framework-core --filter test-stream-pipe-flow.js",
       "status": "pass",
-      "result": { "pass": 1, "skip": 0, "fail": 0, "timeout": 0, "crash": 0, "unclassified": 0, "total": 1 }
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
     },
     {
       "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
@@ -113,5 +248,118 @@
       "status": "blocked_before_assertions",
       "reason": "Cannot find module 'http'"
     }
-  ]
+  ],
+  "current_focused_run_set": {
+    "scope": "current_affected_fixture_runs",
+    "reviewed_on": "2026-10-06",
+    "source_revision": "73565af5bf6271b196af15879a2fe1fd1b7deb6a",
+    "source_state": "Dirty worktree; runner and Node owner hashes below bind these results to the tested bytes.",
+    "runner_binary_sha256": "2c04e48575a91c54ea435767fb3c3544e7ed4eddad127460835d2e8406565363",
+    "runner_sources_sha256": {
+      "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+      "crates/quench-node-test/src/parallel_profile.rs": "f63cfdbd628d65d845bf64ce998e359db305ccb251b33f642a7d32d0963c0eff",
+      "crates/quench-node-test/src/case_process.rs": "c3c22940bebc194360df3329218e7e9e514ca2b8eaa1d845ff7a46d2d37c5317",
+      "crates/quench-node-test/src/shared_runner.rs": "a21fad01f23d3910168d726c9cf375c5b0dd48bd38619669d475e88c1aed52e1",
+      "crates/quench-node-test/src/reader.rs": "d33e66fda4b9cf9246bba99db8b5db6e6575408b097f7bd425c528cc1886ee40"
+    },
+    "owner_sha256": {
+      "crates/quench-node/src/host/shared_vm.rs": "10d8267504d667d72fcf1dc93dbf0bfbee7ce8d9ccd921c7933c7de465b2ec81",
+      "crates/quench-node/src/host/shared_vm/commonjs.rs": "01c2bf665de7009476264ad65b5616c36f1700f1b22ccbb88ae32ad9d64694e4",
+      "crates/quench-node/src/modules/os.rs": "4647688e3ceb96bcb40f02db599f842e7a68b384ad9596efd983b774ed51de3c",
+      "crates/quench-node/src/modules/os/shared_vm.rs": "6d0d3c8b60fc7f8f92436ed7c56636ec3263e977b9ed63de55947713a46b6401",
+      "crates/quench-node/src/modules/buffer/shared_vm.rs": "65dabf875ef0bf4b5b0c8e2f7e4a0ea97c2d3f8ff26d74d1ce50b78181d8df5f",
+      "crates/quench-node/src/modules/buffer_enc.rs": "0170dc10c0f7c013409b73653a78abd09eb0fe366bdda7cb764d5c60fa54e5fb",
+      "crates/quench-node/src/modules/string_decoder.rs": "f76d15084a6107d18b758c6afdb33dccab000f853a0b7ca98b6a6bff18d5cb2b",
+      "crates/quench-node/src/modules/string_decoder/shared_vm.rs": "9368f0d57aa043f222282b9864a25a8480b1f5838beaadee2e2c8b60eac6b761",
+      "crates/quench-node/src/modules/stream/shared_vm.rs": "7c2f9974486854a06b7ab7235e9f98f089977199c41082694ddf5eab39cc65fc",
+      "crates/quench-node/src/modules/stream_prelude.js": "7fbfaa5bc14f737171c2618040b048b61643f734a78092e64537aee7d8302724"
+    },
+    "cases": [
+      {
+        "path": "tests/node/test/parallel/test-string-decoder.js",
+        "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-string-decoder.js --timeout-secs 90",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-readable-default-encoding.js",
+        "sha256": "a250c8a60506dc029aaa6affb64f46373dec963380e72909a5fed47b15bd1dbe",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-stream-readable-default-encoding.js",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      },
+      {
+        "path": "tests/node/test/parallel/test-buffer-tostring.js",
+        "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --filter test-buffer-tostring.js",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
+        "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --filter test-stream-auto-destroy.js",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+        "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --filter test-stream-pipe-flow.js",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      }
+    ],
+    "local_node_oracle": {
+      "node": "v26.10.0",
+      "status": "pass",
+      "checks": [
+        "UTF-8 pending-byte metadata and completion",
+        "base64 chunk completion",
+        "Readable.setEncoding UTF-8 decoding"
+      ],
+      "invocation": "CommonJS eval using node:string_decoder and node:stream; direct fixture invocation inherits the repository root type=module scope."
+    }
+  }
 }

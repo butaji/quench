@@ -5,19 +5,16 @@ use quench_runtime::value::Value as LegacyValue;
 use rqj::{NativeContext, RootId, RootedError};
 
 const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(encode, decode) => {
+    r#"(encode, decode, canonicalEncoding) => {
   const codedTypeError = (message, code) => {
     const error = new TypeError(message);
     error.code = code;
     return error;
   };
-  const encodingNames = new Set([
-    "utf8", "utf-8", "ucs2", "ucs-2", "utf16le", "utf-16le",
-    "ascii", "latin1", "binary", "hex", "base64", "base64url",
-  ]);
   const normalizeEncoding = (encoding) => {
-    const normalized = String(encoding || "utf8").toLowerCase();
-    if (!encodingNames.has(normalized)) {
+    const requested = encoding || "utf8";
+    const normalized = canonicalEncoding(String(requested));
+    if (normalized === undefined) {
       throw codedTypeError(`Unknown encoding: ${encoding}`, "ERR_UNKNOWN_ENCODING");
     }
     return normalized;
@@ -99,7 +96,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
 
     static isEncoding(encoding) {
-      return typeof encoding === "string" && encodingNames.has(encoding.toLowerCase());
+      return typeof encoding === "string" && canonicalEncoding(encoding) !== undefined;
     }
 
     toString(encoding = "utf8", start = 0, end = this.length) {
@@ -117,6 +114,20 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     slice(start = 0, end = this.length) {
       return this.subarray(start, end);
     }
+
+    equals(other) {
+      if (!(other instanceof Uint8Array)) {
+        throw codedTypeError(
+          'The "otherBuffer" argument must be an instance of Buffer or Uint8Array',
+          "ERR_INVALID_ARG_TYPE",
+        );
+      }
+      if (other.byteLength !== this.byteLength) return false;
+      for (let index = 0; index < this.byteLength; index++) {
+        if (this[index] !== other[index]) return false;
+      }
+      return true;
+    }
   }
 
   return { Buffer, SlowBuffer: Buffer };
@@ -127,8 +138,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(BUFFER_FACTORY, "node:buffer/shared.js")?;
     let encode = context.host_function(crate::host::shared_vm::operation("bufferEncode"))?;
     let decode = context.host_function(crate::host::shared_vm::operation("bufferDecode"))?;
+    let canonical_encoding =
+        context.host_function(crate::host::shared_vm::operation("bufferCanonicalEncoding"))?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[encode, decode])?;
+    let constructor =
+        context.call_rooted(factory, undefined, &[encode, decode, canonical_encoding])?;
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
@@ -231,6 +245,25 @@ pub(crate) fn decode(
         _ => unreachable!("Buffer decoding always returns a string"),
     };
     Ok(context.string_rooted(&text))
+}
+
+pub(crate) fn canonical_encoding(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(input) = args.first().copied() else {
+        return Ok(context.undefined());
+    };
+    let Some(name) = context.string_text(input)? else {
+        return Ok(context.undefined());
+    };
+    Ok(
+        match crate::modules::buffer_enc::canonical_encoding(&name) {
+            Some(name) => context.string_rooted(name),
+            None => context.undefined(),
+        },
+    )
 }
 
 fn encoding(
