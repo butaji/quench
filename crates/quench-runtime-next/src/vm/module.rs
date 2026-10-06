@@ -1,5 +1,5 @@
 use crate::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModulePhase {
@@ -238,8 +238,12 @@ impl ModuleRecord {
 pub(crate) struct ModuleEvaluationStack(Vec<PathBuf>);
 
 impl ModuleEvaluationStack {
-    pub(crate) fn contains(&self, module: &PathBuf) -> bool {
-        self.0.contains(module)
+    pub(crate) fn members(&self) -> &[PathBuf] {
+        &self.0
+    }
+
+    pub(crate) fn contains(&self, module: &Path) -> bool {
+        self.0.iter().any(|active| active.as_path() == module)
     }
 
     pub(crate) fn enter(&mut self, module: PathBuf) {
@@ -251,8 +255,11 @@ impl ModuleEvaluationStack {
         self.0.pop();
     }
 
-    pub(crate) fn cycle_to(&self, module: &PathBuf) -> Option<&[PathBuf]> {
-        let start = self.0.iter().position(|active| active == module)?;
+    pub(crate) fn cycle_to(&self, module: &Path) -> Option<&[PathBuf]> {
+        let start = self
+            .0
+            .iter()
+            .position(|active| active.as_path() == module)?;
         Some(&self.0[start..])
     }
 }

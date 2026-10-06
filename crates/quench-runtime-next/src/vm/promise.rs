@@ -1588,6 +1588,13 @@ impl<H: Host> Vm<H> {
                     }
                     let module_type = module_type.as_deref().unwrap_or("javascript");
                     let cache_key = module_cache_key(&module.name, module_type);
+                    if phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                        && module_type == "javascript"
+                        && let Some(reason) = vm.errored_async_cycle_root(&cache_key)
+                    {
+                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                        return Ok(Value::UNDEFINED);
+                    }
                     if let Some(outcome) = vm
                         .realm
                         .promise
@@ -1599,25 +1606,16 @@ impl<H: Host> Vm<H> {
                             ModuleOutcome::Evaluated(namespace) => {
                                 let namespace =
                                     if phase == crate::bytecode::ModuleRequestPhase::Defer {
-                                        let deferred = vm
-                                            .realm
-                                            .promise
-                                            .modules
-                                            .get(&cache_key)
-                                            .and_then(ModuleRecord::deferred_namespace);
-                                        match deferred {
-                                            Some(namespace) => namespace,
-                                            None => {
-                                                let namespace =
-                                                    vm.deferred_module_namespace(p, &module)?;
-                                                vm.realm
-                                                    .promise
-                                                    .modules
-                                                    .get_mut(&cache_key)
-                                                    .expect("module record found above")
-                                                    .cache_deferred_namespace(namespace);
-                                                namespace
-                                            }
+                                        if module_type == "javascript" {
+                                            vm.cached_deferred_javascript_namespace(
+                                                p, &cache_key, &module,
+                                            )?
+                                        } else {
+                                            vm.deferred_synthetic_module_namespace(
+                                                p,
+                                                &module,
+                                                module_type,
+                                            )?
                                         }
                                     } else {
                                         namespace
@@ -1754,6 +1752,14 @@ impl<H: Host> Vm<H> {
                             vm.promise_resolve_value(p, promise, namespace)?;
                             return Ok(Value::UNDEFINED);
                         }
+                    }
+                    if module_type != "javascript"
+                        && phase == crate::bytecode::ModuleRequestPhase::Defer
+                    {
+                        let namespace =
+                            vm.deferred_synthetic_module_namespace(p, &module, module_type)?;
+                        vm.promise_resolve_value(p, promise, namespace)?;
+                        return Ok(Value::UNDEFINED);
                     }
                     if module_type == "javascript"
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
@@ -2537,6 +2543,22 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
+    fn errored_async_cycle_root(&self, cache_key: &str) -> Option<Value> {
+        let cycle_root = self
+            .realm
+            .promise
+            .modules
+            .get(cache_key)?
+            .async_cycle_root()?;
+        let root_key = module_cache_key(&cycle_root.to_string_lossy(), "javascript");
+        match self.realm.promise.modules.get(&root_key)?.outcome {
+            ModuleOutcome::Errored(reason) => Some(reason),
+            ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) | ModuleOutcome::Evaluated(_) => {
+                None
+            }
+        }
+    }
+
     pub(super) fn instantiate_main_module(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         if !p.is_module() || self.programs.module_environment(ProgramId::MAIN).is_some() {
             return Ok(());
@@ -2825,18 +2847,19 @@ impl<H: Host> Vm<H> {
                 crate::bytecode::ModuleRequestPhase::Evaluation => {
                     let identity =
                         crate::module_identity::normalize(std::path::Path::new(&module.name));
-                    if let Some(cycle) = active.cycle_to(&identity) {
-                        for member in cycle {
-                            let key = module_cache_key(&member.to_string_lossy(), "javascript");
-                            if let Some(record) = self.realm.promise.modules.get_mut(&key) {
-                                record.set_async_cycle_root(identity.clone());
-                            }
-                        }
+                    if let Some((root, cycle)) =
+                        self.async_cycle_merge_for_dependency(&identity, active)
+                    {
+                        self.merge_async_cycle_root(&root, &cycle);
                     }
                     self.evaluate_static_module_request(p, request, module, active)?;
                 }
                 crate::bytecode::ModuleRequestPhase::Defer => {
-                    self.prepare_deferred_module_request(p, module)?;
+                    self.prepare_deferred_module_request(
+                        p,
+                        module,
+                        request.module_type.as_deref().unwrap_or("javascript"),
+                    )?;
                 }
                 crate::bytecode::ModuleRequestPhase::Source => {}
             }
@@ -2844,11 +2867,84 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    fn async_cycle_merge_for_dependency(
+        &self,
+        dependency: &std::path::Path,
+        active: &ModuleEvaluationStack,
+    ) -> Option<(std::path::PathBuf, Vec<std::path::PathBuf>)> {
+        if let Some(cycle) = active.cycle_to(dependency) {
+            return Some((cycle.first()?.clone(), cycle.to_vec()));
+        }
+        let key = module_cache_key(&dependency.to_string_lossy(), "javascript");
+        let dependency_root = self
+            .realm
+            .promise
+            .modules
+            .get(&key)?
+            .async_cycle_root()?
+            .clone();
+        let start = active.members().iter().position(|member| {
+            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            self.realm
+                .promise
+                .modules
+                .get(&key)
+                .and_then(ModuleRecord::async_cycle_root)
+                .is_some_and(|root| root == &dependency_root)
+        })?;
+        let cycle = active.members()[start..].to_vec();
+        let extends_component = cycle.iter().any(|member| {
+            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            self.realm
+                .promise
+                .modules
+                .get(&key)
+                .and_then(ModuleRecord::async_cycle_root)
+                .is_none_or(|root| root != &dependency_root)
+        });
+        extends_component.then_some((dependency_root, cycle))
+    }
+
+    fn merge_async_cycle_root(&mut self, root: &std::path::Path, cycle: &[std::path::PathBuf]) {
+        let previous_roots = cycle
+            .iter()
+            .filter_map(|member| {
+                let key = module_cache_key(&member.to_string_lossy(), "javascript");
+                self.realm
+                    .promise
+                    .modules
+                    .get(&key)
+                    .and_then(ModuleRecord::async_cycle_root)
+                    .cloned()
+            })
+            .collect::<FxHashSet<_>>();
+        let root = root.to_path_buf();
+        for record in self.realm.promise.modules.values_mut() {
+            if record
+                .async_cycle_root()
+                .is_some_and(|previous| previous_roots.contains(previous))
+            {
+                record.set_async_cycle_root(root.clone());
+            }
+        }
+        for member in cycle {
+            let key = module_cache_key(&member.to_string_lossy(), "javascript");
+            if let Some(record) = self.realm.promise.modules.get_mut(&key) {
+                record.set_async_cycle_root(root.clone());
+            }
+        }
+    }
+
     fn prepare_deferred_module_request(
         &mut self,
         p: &ResidualProgram,
         module: ModuleSource,
+        module_type: &str,
     ) -> Result<(), JsError> {
+        if module_type != "javascript" {
+            self.deferred_synthetic_module_namespace(p, &module, module_type)?;
+            return Ok(());
+        }
         let key = module_cache_key(&module.name, "javascript");
         match self
             .realm
@@ -2963,6 +3059,63 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    fn deferred_synthetic_module_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        module_type: &str,
+    ) -> Result<Value, JsError> {
+        let key = module_cache_key(&module.name, module_type);
+        if let Some(namespace) = self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .and_then(ModuleRecord::deferred_namespace)
+        {
+            return Ok(namespace);
+        }
+        let namespace = self.evaluate_static_synthetic_module(p, module, module_type)?;
+        let default_atom = self.intern_atom("default");
+        let default_value = self.own_property(namespace, default_atom).ok_or_else(|| {
+            self.type_error(p, "synthetic module has no default export".into())
+        })?;
+        let deferred = self.module_namespace_with_tag(
+            vec![("default".into(), default_value)],
+            "Deferred Module",
+        )?;
+        let Some(record) = self.realm.promise.modules.get_mut(&key) else {
+            return Err(self.type_error(p, "synthetic module record is unavailable".into()));
+        };
+        record.cache_deferred_namespace(deferred);
+        Ok(deferred)
+    }
+
+    fn cached_deferred_javascript_namespace(
+        &mut self,
+        p: &ResidualProgram,
+        key: &str,
+        module: &ModuleSource,
+    ) -> Result<Value, JsError> {
+        if let Some(namespace) = self
+            .realm
+            .promise
+            .modules
+            .get(key)
+            .and_then(ModuleRecord::deferred_namespace)
+        {
+            return Ok(namespace);
+        }
+        let namespace = self.deferred_module_namespace(p, module)?;
+        self.realm
+            .promise
+            .modules
+            .get_mut(key)
+            .expect("module record found above")
+            .cache_deferred_namespace(namespace);
+        Ok(namespace)
+    }
+
     fn evaluate_static_module_request(
         &mut self,
         p: &ResidualProgram,
@@ -2973,24 +3126,52 @@ impl<H: Host> Vm<H> {
         match request.module_type.as_deref().unwrap_or("javascript") {
             "javascript" => self.evaluate_static_module_source(p, module, active),
             module_type @ ("json" | "text" | "bytes") => {
-                let key = module_cache_key(&module.name, module_type);
-                if self.realm.promise.modules.contains_key(&key) {
-                    return Ok(());
-                }
-                let namespace = self.evaluate_dynamic_module(
-                    p,
-                    &module,
-                    module_type,
-                    crate::bytecode::ModuleRequestPhase::Evaluation,
-                )?;
-                self.realm
-                    .promise
-                    .modules
-                    .insert(key, ModuleRecord::materialized(namespace));
+                self.evaluate_static_synthetic_module(p, &module, module_type)?;
                 Ok(())
             }
             _ => Err(self.type_error(p, "unsupported static module type attribute".into())),
         }
+    }
+
+    fn evaluate_static_synthetic_module(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        module_type: &str,
+    ) -> Result<Value, JsError> {
+        let key = module_cache_key(&module.name, module_type);
+        if let Some(outcome) = self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .map(|record| record.outcome)
+        {
+            return match outcome {
+                ModuleOutcome::Evaluated(namespace) | ModuleOutcome::Deferred(namespace) => {
+                    Ok(namespace)
+                }
+                ModuleOutcome::Errored(reason) => Err(JsError::thrown(
+                    reason,
+                    "synthetic module evaluation failed".into(),
+                )),
+                ModuleOutcome::Pending(_) => Err(self.type_error(
+                    p,
+                    "synthetic module is not ready for synchronous evaluation".into(),
+                )),
+            };
+        }
+        let namespace = self.evaluate_dynamic_module(
+            p,
+            module,
+            module_type,
+            crate::bytecode::ModuleRequestPhase::Evaluation,
+        )?;
+        self.realm
+            .promise
+            .modules
+            .insert(key, ModuleRecord::materialized(namespace));
+        Ok(namespace)
     }
 
     fn evaluate_static_module_source(
@@ -3329,20 +3510,32 @@ impl<H: Host> Vm<H> {
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
-                })?;
+            })?;
             let dependency_key = module_cache_key(&dependency.name, "javascript");
-            let dependency_record = self.realm.promise.modules.get(&dependency_key);
-            let phase = dependency_record.map(ModuleRecord::phase);
+            let module_identity =
+                crate::module_identity::normalize(std::path::Path::new(&module.name));
+            let dependency_state = self
+                .realm
+                .promise
+                .modules
+                .get(&dependency_key)
+                .map(|record| (record.phase(), record.async_cycle_root().cloned()));
+            let Some((phase, cycle_root)) = dependency_state else {
+                continue;
+            };
+            if cycle_root.as_ref() == Some(&module_identity)
+                && phase == ModulePhase::WaitingForDependencies
+            {
+                continue;
+            }
             if matches!(
                 phase,
-                Some(ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies)
+                ModulePhase::EvaluatingAsync | ModulePhase::WaitingForDependencies
             ) {
                 return Ok(true);
             }
-            let cycle_root = dependency_record.and_then(ModuleRecord::async_cycle_root);
-            let module_identity =
-                crate::module_identity::normalize(std::path::Path::new(&module.name));
             let cycle_root_phase = cycle_root
+                .as_ref()
                 .filter(|root| **root != module_identity)
                 .and_then(|root| {
                     self.realm
