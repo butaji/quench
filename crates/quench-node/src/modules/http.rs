@@ -14,6 +14,46 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::modules::net;
 
+pub(crate) mod shared_vm;
+
+pub(crate) const HTTP_METHODS: &[&str] = &[
+    "ACL",
+    "BIND",
+    "CHECKOUT",
+    "CONNECT",
+    "COPY",
+    "DELETE",
+    "GET",
+    "HEAD",
+    "LINK",
+    "LOCK",
+    "M-SEARCH",
+    "MERGE",
+    "MKACTIVITY",
+    "MKCALENDAR",
+    "MKCOL",
+    "MOVE",
+    "NOTIFY",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PROPFIND",
+    "PROPPATCH",
+    "PURGE",
+    "PUT",
+    "QUERY",
+    "REBIND",
+    "REPORT",
+    "SEARCH",
+    "SOURCE",
+    "SUBSCRIBE",
+    "TRACE",
+    "UNBIND",
+    "UNLINK",
+    "UNLOCK",
+    "UNSUBSCRIBE",
+];
+
 /// Hidden property mapping a `res` object to its host-side state.
 pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 const REQ_ENCODING_PROP: &str = "\0quench:http:res:encoding";
@@ -1778,45 +1818,8 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Value {
     );
     module = quench_runtime::execute::set_property(module, "OutgoingMessage", outgoing.clone());
     module = quench_runtime::execute::set_property(module, "ServerResponse", outgoing.clone());
-    let methods = [
-        "ACL",
-        "BIND",
-        "CHECKOUT",
-        "CONNECT",
-        "COPY",
-        "DELETE",
-        "GET",
-        "HEAD",
-        "LINK",
-        "LOCK",
-        "M-SEARCH",
-        "MERGE",
-        "MKACTIVITY",
-        "MKCALENDAR",
-        "MKCOL",
-        "MOVE",
-        "NOTIFY",
-        "OPTIONS",
-        "PATCH",
-        "POST",
-        "PROPFIND",
-        "PROPPATCH",
-        "PURGE",
-        "PUT",
-        "QUERY",
-        "REBIND",
-        "REPORT",
-        "SEARCH",
-        "SOURCE",
-        "SUBSCRIBE",
-        "TRACE",
-        "UNBIND",
-        "UNLINK",
-        "UNLOCK",
-        "UNSUBSCRIBE",
-    ];
-    let values = methods
-        .into_iter()
+    let values = HTTP_METHODS
+        .iter()
         .map(|method| Value::String(method.to_string()))
         .collect();
     module = quench_runtime::execute::set_property(
