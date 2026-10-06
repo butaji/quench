@@ -208,7 +208,20 @@
         "assert",
         "diagnostics_channel",
         "node:diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Channel/BoundedChannel construction and naming, bounded subscribe/run ordering, and unsubscribe."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2014/stream-iter-pull-sync-stateful.js",
@@ -232,7 +245,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "tracingChannel traceSync start/end/error, traceCallback, and callback validation."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2015/stream-iter-from-sync-normalization.js",
@@ -7277,7 +7303,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Require/module identity and DiagnosticsChannel brand/name."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2679/domain-stack.js",
@@ -7908,7 +7947,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Channel identity, subscribe, hasSubscribers, and unsubscribe."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2730/diagnostics-tracing-rust.js",
@@ -7917,7 +7969,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Tracing start/end payload/result values and subscriber removal."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2731/assert-rust-family.js",
@@ -7954,7 +8019,24 @@
         "diagnostics_channel",
         "internal/test/binding",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/js_runtime_internal_binding.rs",
+          "crates/quench-node/src/modules/clone.rs"
+        ],
+        "obligations": [
+          "Diagnostics subscribe/publish plus asserted Buffer, util, internalBinding, and structuredClone behavior."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2736/buffer-constructor-identity.js",
@@ -10056,7 +10138,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Channel brand/name, subscribe/publish payload, and subscriber state."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2998/diagnostics-bind-default.js",
@@ -10066,7 +10161,21 @@
         "assert",
         "async_hooks",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "Channel.bindStore and bound AsyncLocalStorage store observed by callback."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2999/diagnostics-run-stores.js",
@@ -10076,7 +10185,21 @@
         "assert",
         "async_hooks",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "Channel.runStores callback receiver/arguments/result and AsyncLocalStorage state."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3000/diagnostics-bounded-scope.js",
@@ -10086,7 +10209,23 @@
         "assert",
         "async_hooks",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-runtime/src/using_scope.rs",
+          "crates/quench-runtime/src/disposable_stack.rs"
+        ],
+        "obligations": [
+          "BoundedChannel.withScope disposal payload and AsyncLocalStorage state, including explicit resource management."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3001/async-local-storage-enter-with.js",
@@ -10131,7 +10270,20 @@
       "static_module_specifiers": [
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Tracing and bounded-subscriber state transitions."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3006/timers-promises-interval-validation.js",
@@ -18770,7 +18922,20 @@
         "../common",
         "assert",
         "diagnostics_channel"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "Channel and top-level hasSubscribers before and after subscription."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-process-euid-egid.js",

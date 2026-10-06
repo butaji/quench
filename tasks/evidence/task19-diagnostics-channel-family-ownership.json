@@ -1,0 +1,257 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_diagnostics_channel_family_ownership",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "f801b8e4fd5aab88208dc8fff1a30195e35bc08a",
+  "source_state": "Dirty worktree; owner-source SHA-256 values bind the reviewed bytes.",
+  "inventory_snapshot": {
+    "sha256": "5723ab24a64956bd27aece22cc2928271d5babbc557243cac322d878ee6e3fb1",
+    "source_head": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
+    "case_candidates": 1586,
+    "support_inputs": 13
+  },
+  "node_fixture_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "review_counts": {
+    "specifier_projection_cases": 15,
+    "pending_assertion_cases_reviewed": 12,
+    "included_now": 12,
+    "already_included_cases": 2,
+    "locator_only_pending_cases": 1,
+    "fixture_hashes_verified": 15
+  },
+  "membership_basis": "Asserted diagnostics_channel behavior; imports only locate candidates.",
+  "qualification": "Ownership review only; no test suites were run. Included rows identify implemented legacy owners regardless of outcome and do not qualify shared NodeHost execution.",
+  "owner_sources_sha256": {
+    "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+    "crates/quench-node/src/host.rs": "2f59514c211308fcb642458972bc85cf8dfe08d4d650a1ff259b8df6a63e0fa4",
+    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
+    "crates/quench-node/src/modules/async_hooks.rs": "0cba3cae47932ac34c43f7df1e9f07952b71de0903c68d7813201cbcd243efbc",
+    "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
+    "crates/quench-node/src/modules/clone.rs": "677fe8402b45cce3f27a8d242ad39fe5124e138dd4c6ec84eb48f539e36b9deb",
+    "crates/quench-node/src/modules/diagnostics_channel.rs": "a160f962cab3052349149fc10e9ca9605a64d2710a08aa9bd773c3fd2aa9c398",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/util.rs": "4d2046c9fd7421c97ccbf8db1026e4aaf8322e42a3a2a420dad4cae9fac1d040",
+    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
+    "crates/quench-runtime/src/disposable_stack.rs": "07cd4f1b07203c9eac5f4b3aeb62fe7bdf7d4e59c0431c4278184e1559c35b05",
+    "crates/quench-runtime/src/using_scope.rs": "abc0d15baf38b1bc6f8d89c26e292548f68b8ad3113a5df33082ff967eaf93ae"
+  },
+  "cases": [
+    {
+      "path": "tests/node-compat/stage-2008/diagnostics-bounded-channel.js",
+      "sha256": "45616cbc4a267e3d4e4315a4f2382fc17f817b31615688f9432ae8f25b78696a",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Channel/BoundedChannel construction and naming, bounded subscribe/run ordering, and unsubscribe."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2015/diagnostics-tracing-channel.js",
+      "sha256": "94e3df43b76c76311e4fcdab1bf4b746a12a87375e45f75839f4efad012d4d59",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "tracingChannel traceSync start/end/error, traceCallback, and callback validation."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2678/diagnostics-channel-lexical-isolation.js",
+      "sha256": "96dd4226bffbd8660f315252bc3040f65a5e39295643836f22e733dce934efb3",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Require/module identity and DiagnosticsChannel brand/name."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2729/diagnostics-channel-core.js",
+      "sha256": "85c807db4310e1957c1b5bfd46e430996cdd42036da7587ee06dd045bd9b0412",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Channel identity, subscribe, hasSubscribers, and unsubscribe."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2730/diagnostics-tracing-rust.js",
+      "sha256": "3f2321ce994c1211201149565b6ca8db7c41a6dd43f4b53b49cd1379edaa8a7a",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Tracing start/end payload/result values and subscriber removal."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2735/diagnostics-static-contract.js",
+      "sha256": "a8b650f6e4a0fc0c69966f57cc44c3fdb24acd3c842725c7228d689480f1ba9d",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/util.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-node/src/modules/clone.rs"
+      ],
+      "obligations": [
+        "Diagnostics subscribe/publish plus asserted Buffer, util, internalBinding, and structuredClone behavior."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2997/diagnostics-channel-facts.js",
+      "sha256": "3a9927328411e1786d56f275b351e6976721b342ab9b3144afc25d49123475a8",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Channel brand/name, subscribe/publish payload, and subscriber state."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2998/diagnostics-bind-default.js",
+      "sha256": "2a8ead834745e251fcf8f19d6538b5624df65604fe54d85ab5d47c3b6e9b8580",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs",
+        "crates/quench-node/src/modules/async_hooks.rs"
+      ],
+      "obligations": [
+        "Channel.bindStore and bound AsyncLocalStorage store observed by callback."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2999/diagnostics-run-stores.js",
+      "sha256": "7835106f5ba5c28d7375447307e81d8a272b58aaf188eecc70e3125350d7905f",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs",
+        "crates/quench-node/src/modules/async_hooks.rs"
+      ],
+      "obligations": [
+        "Channel.runStores callback receiver/arguments/result and AsyncLocalStorage state."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3000/diagnostics-bounded-scope.js",
+      "sha256": "7ed4c19414b67f4a45c6986f81d9afed49451180186ca4d85ffd6380bdb784c9",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs",
+        "crates/quench-node/src/modules/async_hooks.rs",
+        "crates/quench-runtime/src/using_scope.rs",
+        "crates/quench-runtime/src/disposable_stack.rs"
+      ],
+      "obligations": [
+        "BoundedChannel.withScope disposal payload and AsyncLocalStorage state, including explicit resource management."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3005/diagnostics-tracing-subscriber-state.js",
+      "sha256": "29a161c1a48b094cd4d730421dfc5818818a9c7c1449b30f014f401a400618ee",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Tracing and bounded-subscriber state transitions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-has-subscribers.js",
+      "sha256": "f45355d6191bbbcef10fa8693727c0db02bf5e8505f87e05b1ada609fa9c67f6",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/diagnostics_channel.rs"
+      ],
+      "obligations": [
+        "Channel and top-level hasSubscribers before and after subscription."
+      ]
+    }
+  ],
+  "already_included": [
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+      "sha256": "8dd2f7203d3e6da2942691ea6c4f984c3cafa6d6e5a57cb8dd5850694d691111",
+      "status": "already_included",
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "diagnostics_channel tracingChannel callback lifecycle and payload identity."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-http-server-start.js",
+      "sha256": "23ca6fec9d9517c6b85690e96adfc659088d9f2b49501e31ced077eaf1f6b153",
+      "status": "already_included",
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "HTTP server request-start and response-finish diagnostic events with request context."
+        ]
+      }
+    }
+  ],
+  "locator_only": {
+    "path": "tests/node/test/parallel/test-module-prototype-mutation.js",
+    "sha256": "d4e7461d2500c81d08dc7d0d5cf0e801433123dbe18f55eafa892db3b303a301",
+    "global_status": "pending",
+    "reason": "The fixture imports Channel to avoid unrelated Object.prototype name-setter effects; its assertion is module-loading behavior, not diagnostics_channel API behavior."
+  }
+}
