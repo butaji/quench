@@ -10,7 +10,9 @@
 //! Keep runner policy separate from the Node host and runtime semantics.
 
 pub mod case_process;
+pub mod compat_cli;
 pub mod inventory;
+pub(crate) mod node_observations;
 pub mod parallel_profile;
 pub mod reader;
 pub mod runner;
