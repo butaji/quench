@@ -205,6 +205,16 @@ not yet qualify the implemented Node suite. Production cutover remains task 27.
 See
 [task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
 
+Run the selected upstream Node `test/parallel` profile against the shared VM
+with the separately compiled `run-parallel-next` worker. Profile membership
+comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
+narrowly selects cases within that profile for affected-case checks.
+
+```sh
+cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- \
+  --profile framework-core --filter test-path-join.js
+```
+
 ## Shared Wasm scopes
 
 Build and run the separately named shared-VM development target on explicit
