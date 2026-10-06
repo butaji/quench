@@ -11,6 +11,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[path = "querystring/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 pub(crate) const SEP_DEFAULT: &[u16] = &[38]; // '&'
 pub(crate) const EQ_DEFAULT: &[u16] = &[61]; // '='
 pub(crate) const PLUS_DECODED: &[u16] = &[32]; // ' '

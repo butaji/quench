@@ -9,6 +9,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[path = "os/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 pub fn platform() -> String {
     if cfg!(target_os = "macos") {
         "darwin".into()

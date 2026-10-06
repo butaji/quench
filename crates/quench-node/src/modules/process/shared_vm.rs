@@ -15,7 +15,12 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let process = context.object_rooted()?;
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
-    for (name, operation) in [("nextTick", "nextTick"), ("on", "on")] {
+    for (name, operation) in [
+        ("nextTick", "nextTick"),
+        ("on", "on"),
+        ("cwd", "processCwd"),
+        ("umask", "processUmask"),
+    ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
@@ -43,8 +48,33 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let values = context.array_rooted(&values)?;
         install(context, process, name, values)?;
     }
+    set_text(
+        context,
+        process,
+        "arch",
+        crate::modules::process::architecture(),
+    )?;
+    set_text(
+        context,
+        process,
+        "platform",
+        &crate::modules::process::platform(),
+    )?;
+    let pid = context.number(std::process::id() as f64);
+    install(context, process, "pid", pid)?;
+    let version = format!("v{}", crate::modules::process::NODE_VERSION);
+    set_text(context, process, "version", &version)?;
+    install_config(context, process)?;
+    install_facts(
+        context,
+        process,
+        "features",
+        crate::modules::process::feature_facts(),
+    )?;
+    install_versions(context, process)?;
     let global = context.global_root()?;
-    install(context, global, "process", process)?;
+    install(context, global, "global", global)?;
+    define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
     let previous = context
         .host_mut()
@@ -56,6 +86,97 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.release_root(previous);
     }
     Ok(())
+}
+
+fn define_global_process(
+    context: &mut NativeContext<'_, NodeHost>,
+    global: RootId,
+    process: RootId,
+) -> Result<(), RootedError> {
+    let object_key = context.string_rooted("Object");
+    let object = context.get_property_rooted(global, object_key)?;
+    let define_key = context.string_rooted("defineProperty");
+    let define = context.get_property_rooted(object, define_key)?;
+    let name = context.string_rooted("process");
+    let descriptor = context.object_rooted()?;
+    let writable = context.boolean(true);
+    let enumerable = context.boolean(false);
+    let configurable = context.boolean(true);
+    for (key, value) in [
+        ("value", process),
+        ("writable", writable),
+        ("enumerable", enumerable),
+        ("configurable", configurable),
+    ] {
+        let key = context.string_rooted(key);
+        if !context.set_property_rooted(descriptor, key, value, descriptor)? {
+            return Err(RootedError::host("cannot define global process descriptor"));
+        }
+    }
+    context.call_rooted(define, object, &[global, name, descriptor])?;
+    Ok(())
+}
+
+fn install_config(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+) -> Result<(), RootedError> {
+    let config = context.object_rooted()?;
+    let variables = context.object_rooted()?;
+    for (name, fact) in crate::modules::process::config_variable_facts() {
+        let value = fact_value(context, *fact)?;
+        install(context, variables, name, value)?;
+    }
+    install(context, config, "variables", variables)?;
+    install(context, process, "config", config)
+}
+
+fn install_facts(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    property: &str,
+    facts: &[(&'static str, crate::modules::process::ProcessFact)],
+) -> Result<(), RootedError> {
+    let object = context.object_rooted()?;
+    for (name, fact) in facts {
+        let value = fact_value(context, *fact)?;
+        install(context, object, name, value)?;
+    }
+    install(context, process, property, object)
+}
+
+fn fact_value(
+    context: &mut NativeContext<'_, NodeHost>,
+    fact: crate::modules::process::ProcessFact,
+) -> Result<RootId, RootedError> {
+    match fact {
+        crate::modules::process::ProcessFact::Boolean(value) => Ok(context.boolean(value)),
+        crate::modules::process::ProcessFact::Number(value) => Ok(context.number(value)),
+        crate::modules::process::ProcessFact::String(value) => Ok(context.string_rooted(value)),
+        crate::modules::process::ProcessFact::EmptyArray => context.array_rooted(&[]),
+    }
+}
+
+fn install_versions(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+) -> Result<(), RootedError> {
+    let versions = context.object_rooted()?;
+    for (name, version) in crate::modules::process::version_facts() {
+        let value = context.string_rooted(version);
+        install(context, versions, name, value)?;
+    }
+    install(context, process, "versions", versions)
+}
+
+fn set_text(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    property: &str,
+    value: &str,
+) -> Result<(), RootedError> {
+    let value = context.string_rooted(value);
+    install(context, object, property, value)
 }
 
 fn install(
@@ -81,6 +202,59 @@ pub(crate) fn uptime(
 ) -> Result<RootId, RootedError> {
     let seconds = context.host_mut().state().borrow().process.uptime();
     Ok(context.number(seconds))
+}
+
+pub(crate) fn cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let cwd = context
+        .host_mut()
+        .state()
+        .borrow()
+        .process
+        .cwd
+        .to_string_lossy()
+        .into_owned();
+    Ok(context.string_rooted(&cwd))
+}
+
+pub(crate) fn umask(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(mask) = args.first().copied() else {
+        let current = context.host_mut().state().borrow().process.umask;
+        return Ok(context.number(current as f64));
+    };
+    let value = context
+        .rooted_value(mask)
+        .ok_or_else(|| RootedError::host("invalid process.umask argument root"))?;
+    let parsed = if let Some(number) = value.as_number() {
+        (number.is_finite() && number >= 0.0 && number.fract() == 0.0).then_some(number as u32)
+    } else if let Some(text) = context.string_text(mask)? {
+        u32::from_str_radix(&text, 8).ok()
+    } else {
+        None
+    };
+    let Some(parsed) = parsed else {
+        let error =
+            context.type_error_rooted("The \"mask\" argument must be of type number or string")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        let property = context.string_rooted("code");
+        if !context.set_property_rooted(error, property, code, error)? {
+            return Err(RootedError::host("cannot set process.umask error code"));
+        }
+        return Err(context.throw(error));
+    };
+    let previous = {
+        let state = context.host_mut().state();
+        let mut state = state.borrow_mut();
+        state.process.update_umask(parsed)
+    };
+    Ok(context.number(previous as f64))
 }
 
 /// Run shared-host nextTick callbacks before VM jobs, then emit process exit
@@ -118,17 +292,126 @@ fn drain_checkpoint(
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     loop {
-        while let Some(callback) = state.borrow_mut().event_loop.take_shared_next_tick() {
+        drain_shared_jobs(runtime, program, state)?;
+
+        if crate::modules::fetch_shared_vm::poll(runtime, program, state)? {
+            continue;
+        }
+
+        let due = state
+            .borrow_mut()
+            .event_loop
+            .take_due_shared_timer(std::time::Instant::now());
+        if let Some(timer) = due {
+            let callback_result = crate::modules::timers::shared_vm::timer_callback(
+                runtime,
+                program,
+                &timer.callback,
+            );
+            if callback_result.is_err() {
+                state.borrow_mut().event_loop.cancel_shared_timer(timer.id);
+            }
+            let released = state
+                .borrow_mut()
+                .event_loop
+                .complete_shared_timer(timer, std::time::Instant::now());
+            if let Some(callback) = released {
+                crate::modules::timers::shared_vm::release_runtime_callback(runtime, callback);
+            }
+            callback_result?;
+            continue;
+        }
+
+        let immediate_cutoff = state.borrow().event_loop.shared_immediate_cutoff();
+        let Some(cutoff) = immediate_cutoff else {
+            let next_timer = state.borrow().event_loop.next_shared_timer_due();
+            if crate::modules::fetch_shared_vm::has_pending(state) {
+                let poll_interval = crate::modules::fetch_shared_vm::poll_interval();
+                let wait = next_timer
+                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
+                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                if !wait.is_zero() {
+                    std::thread::sleep(wait);
+                }
+                continue;
+            }
+            if let Some(due) = next_timer {
+                std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
+                continue;
+            }
+            break;
+        };
+        let mut ran_immediate = false;
+        loop {
+            let immediate = {
+                state
+                    .borrow_mut()
+                    .event_loop
+                    .take_shared_immediate_through(cutoff)
+            };
+            let Some(immediate) = immediate else {
+                break;
+            };
+            ran_immediate = true;
+            if let Err(error) = invoke(runtime, program, immediate.callback) {
+                let cancelled = state
+                    .borrow_mut()
+                    .event_loop
+                    .take_shared_immediate_through(cutoff);
+                if let Some(cancelled) = cancelled {
+                    release_callback_roots(
+                        runtime,
+                        cancelled.callback.callback,
+                        cancelled.callback.receiver,
+                        cancelled.callback.args,
+                    );
+                }
+                return Err(error);
+            }
+            drain_shared_jobs(runtime, program, state)?;
+        }
+        if !ran_immediate {
+            let next_timer = state.borrow().event_loop.next_shared_timer_due();
+            if crate::modules::fetch_shared_vm::has_pending(state) {
+                let poll_interval = crate::modules::fetch_shared_vm::poll_interval();
+                let wait = next_timer
+                    .map(|due| due.saturating_duration_since(std::time::Instant::now()))
+                    .map_or(poll_interval, |delay| delay.min(poll_interval));
+                if !wait.is_zero() {
+                    std::thread::sleep(wait);
+                }
+                continue;
+            }
+            if let Some(due) = next_timer {
+                std::thread::sleep(due.saturating_duration_since(std::time::Instant::now()));
+            } else {
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn drain_shared_jobs(
+    runtime: &mut rqj::Runtime<NodeHost>,
+    program: &rqj::ResidualProgram,
+    state: &Rc<RefCell<crate::host::HostState>>,
+) -> Result<(), String> {
+    loop {
+        loop {
+            let callback = { state.borrow_mut().event_loop.take_shared_next_tick() };
+            let Some(callback) = callback else {
+                break;
+            };
             invoke(runtime, program, callback)?;
         }
         runtime
             .run_host_jobs(program)
             .map_err(|error| runtime.format_error(program, &error))?;
         if !state.borrow().event_loop.has_shared_next_ticks() {
-            break;
+            return Ok(());
         }
     }
-    Ok(())
 }
 
 fn emit_exit(

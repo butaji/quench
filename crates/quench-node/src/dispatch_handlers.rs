@@ -8770,20 +8770,13 @@ fn cp_run_host_child(
     if !has_entry && !version_probe && !args.iter().any(|arg| arg == "-e" || arg == "--eval") {
         return None;
     }
-    // `process.execPath` points at the compatibility runner selected by the
-    // parent (often `run-compat`), while a child must use the script runner
-    // binary that accepts `-e`/entry-file arguments.  Keep the executable
-    // choice a host fact shared with spawnSync rather than letting the
-    // runner's CLI reject the child's JavaScript source.
-    let executable = std::env::current_exe().ok().and_then(|path| {
-        path.parent()
-            .map(|dir| dir.join("run"))
-            .filter(|runner| runner.is_file())
-            .or(Some(path))
-    })?;
-    let mut process = std::process::Command::new(executable);
+    // The host installs the canonical engine path as process.execPath.
+    // Execute that command directly; a diagnostic launcher has a different CLI.
+    let mut process = std::process::Command::new(command);
     crate::modules::child_process::clear_worker_markers(&mut process);
-    process.args(&args).env("QUENCH_CHILD_RUNNER", "1");
+    process
+        .args(&args)
+        .env(crate::modules::process::CHILD_RUNNER_ENV, "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
         process.current_dir(cwd);
     }
@@ -8804,11 +8797,11 @@ fn cp_run_host_child(
             }
         }
         process.env_clear().envs(values);
-        process.env("QUENCH_CHILD_RUNNER", "1");
+        process.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
     }
     if let Some(eval_index) = args.iter().position(|arg| arg == "-e" || arg == "--eval") {
         let exec_argv = serde_json::to_string(&args[..eval_index]).unwrap_or_else(|_| "[]".into());
-        process.env("QUENCH_EXEC_ARGV", exec_argv);
+        process.env(crate::modules::process::EXEC_ARGV_ENV, exec_argv);
     }
     let input = execute::to_js_string(&execute::get_property(
         &execute::get_property(child, "stdin"),
@@ -8928,26 +8921,20 @@ pub fn cp_spawn_output_emit(
     let command = execute::get_property(child, "\0childCommand");
     let child_args = execute::get_property(child, "\0childArgs");
     let child_options = execute::get_property(child, "\0childOptions");
-    // Self-reexecs use the same Rust runner as the parent. Execute that
-    // bounded host process and feed its real stdout/stderr bytes through the
+    // Self-reexecs use the canonical engine installed by the host. Feed its
+    // real stdout/stderr bytes through the
     // ChildProcess streams; this keeps arbitrary child JavaScript observable
     // without inspecting its source or fixture name.
-    // Source-backed scripts with observable output are handled by the same
-    // host semantic facts below.  Explicit process.exit codes remain on the
-    // real re-exec path; the child runner preserves that status at its Rust
-    // process boundary.
     // Invocation policy flags must reach the real child boundary.  The
     // in-process timer model cannot represent abort-on-uncaught semantics;
-    // preserve ordinary source-backed simulation only when no abort policy is
-    // present, so a self-reexec observes the actual OS status/signal.
+    // remaining IPC/stdin/timer adapters cannot intercept an abort-policy
+    // invocation, which must observe the actual OS status/signal.
     let abort_policy = cp_args_have_abort_policy(&child_args);
     let source_driven = !abort_policy
         && (matches!(
             execute::get_property(child, "\0childSpawnIpc"),
             Value::Boolean(true)
-        ) || (cp_spawn_script_stdout(&child_args).is_some()
-            && !cp_spawn_script_has_runtime_branch(&child_args))
-            || cp_spawn_script_requires_in_process(&child_args)
+        ) || cp_spawn_script_requires_in_process(&child_args)
             || cp_spawn_script_uses_stdin(&child_args)
             || cp_spawn_eval_requires_in_process(&child_args));
     let real_child = if source_driven {
@@ -12402,28 +12389,6 @@ fn cp_script_stdout(source: &str, args: &Value) -> Option<String> {
     if source.matches("console.log('").count() + source.matches("console.log(\"").count() > 1 {
         return Some(cp_console_log_output(source));
     }
-    if source.contains("JSON.stringify(process.execArgv)") {
-        let values = match args {
-            Value::Array(array) => (0..array.logical_len())
-                .filter_map(|index| {
-                    execute::get_property_result(args, &index.to_string())
-                        .ok()
-                        .and_then(|value| execute::to_js_string(&value).ok())
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        };
-        let script_index = values.iter().position(|value| {
-            value.ends_with(".js") || value.ends_with(".mjs") || value.ends_with(".cjs")
-        })?;
-        let encoded = values[..script_index]
-            .iter()
-            .filter(|value| value.starts_with('-'))
-            .map(|value| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")))
-            .collect::<Vec<_>>()
-            .join(",");
-        return Some(format!("[{encoded}]"));
-    }
     cp_script_output(source)
         .or_else(|| cp_script_output_with_repeat_arg(source, args))
         .filter(|(stream, _)| *stream == "stdout")
@@ -12548,23 +12513,6 @@ fn cp_spawn_script_requires_in_process(args: &Value) -> bool {
                     || source.contains("setTimeout")
                     || source.contains("child.unref")
             })
-    })
-}
-
-fn cp_spawn_script_has_runtime_branch(args: &Value) -> bool {
-    let Value::Array(array) = args else {
-        return false;
-    };
-    (0..array.logical_len()).any(|index| {
-        execute::get_property_result(args, &index.to_string())
-            .ok()
-            .and_then(|value| execute::to_js_string(&value).ok())
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            // A source-backed child that observes argv can select a distinct
-            // execution branch for the child entry.  Keep it on the real
-            // runner path; deriving only top-level console output would
-            // otherwise replay the parent's branch.
-            .is_some_and(|source| source.contains("process.argv"))
     })
 }
 
@@ -12913,7 +12861,10 @@ pub fn net_set_asf_timeout(
             ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
         ])));
     }
-    state.borrow_mut().net.auto_select_family_attempt_timeout = (*value as u64).max(10);
+    state
+        .borrow_mut()
+        .net
+        .set_auto_select_family_attempt_timeout(*value as u64);
     Ok(Value::Undefined)
 }
 
@@ -13973,9 +13924,11 @@ pub fn process_exit_code_get(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Number(
-        state.borrow().process.exit_code.unwrap_or(0) as f64
-    ))
+    Ok(state
+        .borrow()
+        .process
+        .exit_code
+        .map_or(Value::Undefined, |code| Value::Number(code as f64)))
 }
 
 pub fn process_exit_code_set(
@@ -13983,49 +13936,7 @@ pub fn process_exit_code_set(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let value = args.first().cloned().unwrap_or(Value::Undefined);
-    if matches!(value, Value::Undefined | Value::Null) {
-        state.borrow_mut().process.exit_code = None;
-        return Ok(Value::Undefined);
-    }
-    let code = match &value {
-        Value::Number(number) if number.is_finite() && number.fract() == 0.0 => *number as i64,
-        Value::String(text) if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) => {
-            text.parse::<i64>().unwrap_or(-1)
-        }
-        _ => -1,
-    };
-    if !(0..=255).contains(&code) {
-        let received = match &value {
-            Value::Number(number) => {
-                let rendered = if number.is_nan() {
-                    "NaN".to_string()
-                } else if number.is_infinite() {
-                    if number.is_sign_negative() {
-                        "-Infinity"
-                    } else {
-                        "Infinity"
-                    }
-                    .to_string()
-                } else {
-                    number.to_string()
-                };
-                format!("Received {rendered}")
-            }
-            _ => crate::modules::util::invalid_arg_received(&value),
-        };
-        return Err(VmError::Thrown(host_api::object(vec![
-            ("name".into(), Value::String("TypeError".into())),
-            (
-                "message".into(),
-                Value::String(format!(
-                    "The \"code\" argument must be of type number or string. {received}"
-                )),
-            ),
-        ])));
-    }
-    state.borrow_mut().process.exit_code = Some(code as i32);
-    Ok(Value::Undefined)
+    crate::modules::process::set_exit_code(state, args)
 }
 
 pub fn process_getuid(

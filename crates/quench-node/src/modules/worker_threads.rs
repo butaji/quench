@@ -670,7 +670,7 @@ fn launch(
     }
     command
         .env("QUENCH_WORKER", "1")
-        .env("QUENCH_CHILD_RUNNER", "1");
+        .env(crate::modules::process::CHILD_RUNNER_ENV, "1");
     if !matches!(message, Value::Undefined) {
         command.env(
             "QUENCH_WORKER_MESSAGE",
@@ -686,7 +686,7 @@ fn launch(
     };
     if !matches!(exec_argv, Value::Undefined) {
         command.env(
-            "QUENCH_EXEC_ARGV",
+            crate::modules::process::EXEC_ARGV_ENV,
             serde_json::to_string(&to_json(&exec_argv)).unwrap_or_else(|_| "[]".into()),
         );
     }

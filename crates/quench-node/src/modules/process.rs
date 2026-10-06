@@ -10,6 +10,8 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+pub(crate) const NODE_VERSION: &str = "22.0.0";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnhandledRejectionMode {
     Throw,
@@ -41,8 +43,10 @@ pub struct ProcessState {
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
-    pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
+    /// `process.exit()` ends guest execution immediately; `process.exitCode`
+    /// only selects the eventual status and must not hide an uncaught error.
+    pub exit_requested: bool,
     /// Invocation policy: abort instead of reporting an unhandled exception.
     /// This is carried in the host state so child re-execs observe the same
     /// process-level flag without inspecting fixture names or source text.
@@ -79,14 +83,6 @@ impl ProcessState {
         // must stay the same value as process.argv[0], even when the host is
         // embedded or driven by the compatibility runner.
         let exec_path = argv.first().cloned().unwrap_or_default();
-        let versions = vec![
-            ("node".to_string(), "v22.0.0".into()),
-            ("quench".to_string(), "v0.1.0".into()),
-            // The Rust crypto backend follows the OpenSSL 3 API surface.
-            // Expose the fact through the same versions object Node tests
-            // use for feature gating.
-            ("openssl".to_string(), "3.0.0".into()),
-        ];
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
             started: std::time::Instant::now(),
@@ -104,9 +100,9 @@ impl ProcessState {
             deprecations_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
-            version: "v22.0.0".into(),
-            versions,
+            version: format!("v{NODE_VERSION}"),
             exit_code: None,
+            exit_requested: false,
             abort_on_uncaught_exception: false,
             cwd,
             umask: 0o022,
@@ -125,6 +121,12 @@ impl ProcessState {
 
     pub fn uptime(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
+    }
+
+    pub(crate) fn update_umask(&mut self, mask: u32) -> u32 {
+        let previous = self.umask;
+        self.umask = mask & 0o777;
+        previous
     }
 }
 
@@ -474,10 +476,7 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
 }
 
 pub fn build_with_title(argv: &[String], exec_path: &str, title: &str) -> Value {
-    let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
-        .ok()
-        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
-        .unwrap_or_default();
+    let exec_argv = inherited_exec_argv();
     build_with_title_and_exec_argv(argv, exec_path, title, &exec_argv)
 }
 
@@ -601,20 +600,7 @@ fn info_props_with_exec_argv(
             "config",
             crate::host::readonly_namespace_from_pairs(vec![(
                 "variables".to_string(),
-                crate::host::readonly_namespace_from_pairs(vec![
-                    ("v8_enable_i18n_support".to_string(), Value::Number(1.0)),
-                    ("node_module_version".to_string(), Value::Number(127.0)),
-                    ("napi_build_version".to_string(), Value::String("9".into())),
-                    (
-                        "node_builtin_shareable_builtins".to_string(),
-                        host_api::array(Vec::new()),
-                    ),
-                    ("node_use_lief".to_string(), Value::Boolean(false)),
-                    ("node_use_amaro".to_string(), Value::Boolean(false)),
-                    ("node_use_ffi".to_string(), Value::Boolean(false)),
-                    ("node_shared".to_string(), Value::Boolean(false)),
-                    ("node_shared_openssl".to_string(), Value::Boolean(false)),
-                ]),
+                crate::host::readonly_namespace_from_pairs(config_variable_props()),
             )]),
         ),
         ("execPath", Value::String(exec_path.to_string())),
@@ -627,16 +613,16 @@ fn info_props_with_exec_argv(
             host_api::object(vec![("name".to_string(), Value::String("node".into()))]),
         ),
         ("domain", Value::Null),
-        ("version", Value::String("v22.0.0".into())),
+        ("version", Value::String(format!("v{NODE_VERSION}"))),
         (
             "versions",
             crate::host::readonly_namespace_from_pairs(versions_props()),
         ),
         (
             "platform",
-            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
+            Value::String(platform()),
         ),
-        ("arch", Value::String(current_arch().to_string())),
+        ("arch", Value::String(architecture().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         (
             "ppid",
@@ -652,12 +638,7 @@ fn info_props_with_exec_argv(
             host_api::array(
                 explicit_exec_argv
                     .map(|values| values.to_vec())
-                    .or_else(|| {
-                        std::env::var("QUENCH_EXEC_ARGV")
-                            .ok()
-                            .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
-                    })
-                    .unwrap_or_default()
+                    .unwrap_or_else(inherited_exec_argv)
                     .into_iter()
                     .map(Value::String)
                     .collect(),
@@ -699,22 +680,12 @@ fn process_parent_id() -> u32 {
 }
 
 pub fn features() -> Value {
-    host_api::object(vec![
-        ("inspector".into(), Value::Boolean(false)),
-        ("debug".into(), Value::Boolean(false)),
-        ("uv".into(), Value::Boolean(true)),
-        ("ipv6".into(), Value::Boolean(true)),
-        ("openssl_is_boringssl".into(), Value::Boolean(false)),
-        ("dtls".into(), Value::Boolean(false)),
-        ("quic".into(), Value::Boolean(false)),
-        ("tls_alpn".into(), Value::Boolean(true)),
-        ("tls_sni".into(), Value::Boolean(true)),
-        ("tls_ocsp".into(), Value::Boolean(true)),
-        ("tls".into(), Value::Boolean(true)),
-        ("cached_builtins".into(), Value::Boolean(true)),
-        ("require_module".into(), Value::Boolean(true)),
-        ("typescript".into(), Value::String("strip".into())),
-    ])
+    host_api::object(
+        feature_facts()
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_legacy_value()))
+            .collect(),
+    )
 }
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
@@ -1004,46 +975,116 @@ fn env_object() -> Value {
     host_api::object(pairs)
 }
 
-pub fn versions_props() -> Vec<(String, Value)> {
-    vec![
-        ("node".to_string(), Value::String("22.0.0".into())),
-        ("acorn".to_string(), Value::String("8.18.0".into())),
-        ("ada".to_string(), Value::String("2.7.8".into())),
-        ("ares".to_string(), Value::String("1.0.0".into())),
-        ("brotli".to_string(), Value::String("1.1.0".into())),
-        ("cldr".to_string(), Value::String("45.0".into())),
-        ("icu".to_string(), Value::String("75.1".into())),
-        ("llhttp".to_string(), Value::String("9.2.1".into())),
-        ("merve".to_string(), Value::String("1.0.0".into())),
-        ("modules".to_string(), Value::String("127".into())),
-        ("napi".to_string(), Value::String("9".into())),
-        ("nbytes".to_string(), Value::String("1.0.0".into())),
-        ("ncrypto".to_string(), Value::String("1.0.0".into())),
-        ("nghttp2".to_string(), Value::String("1.61.0".into())),
-        ("nghttp3".to_string(), Value::String("1.3.0".into())),
-        ("ngtcp2".to_string(), Value::String("1.4.0".into())),
-        ("openssl".to_string(), Value::String("3.0.0".into())),
-        ("simdjson".to_string(), Value::String("1.0.0".into())),
-        ("simdutf".to_string(), Value::String("5.2.4".into())),
-        ("tz".to_string(), Value::String("2024a".into())),
-        ("unicode".to_string(), Value::String("15.1".into())),
-        ("uv".to_string(), Value::String("1.48.0".into())),
-        ("uvwasi".to_string(), Value::String("1.0.0".into())),
-        (
-            "v8".to_string(),
-            Value::String("12.4.254.21-node.20".into()),
-        ),
-        ("zlib".to_string(), Value::String("1.3.0".into())),
-        ("zstd".to_string(), Value::String("1.0.0".into())),
+#[derive(Clone, Copy)]
+pub(crate) enum ProcessFact {
+    Boolean(bool),
+    Number(f64),
+    String(&'static str),
+    EmptyArray,
+}
+
+impl ProcessFact {
+    fn to_legacy_value(self) -> Value {
+        match self {
+            Self::Boolean(value) => Value::Boolean(value),
+            Self::Number(value) => Value::Number(value),
+            Self::String(value) => Value::String(value.into()),
+            Self::EmptyArray => host_api::array(Vec::new()),
+        }
+    }
+}
+
+pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] {
+    &[
+        ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
+        ("node_module_version", ProcessFact::Number(127.0)),
+        ("napi_build_version", ProcessFact::String("9")),
+        ("node_builtin_shareable_builtins", ProcessFact::EmptyArray),
+        ("node_use_lief", ProcessFact::Boolean(false)),
+        ("node_use_amaro", ProcessFact::Boolean(false)),
+        ("node_use_ffi", ProcessFact::Boolean(false)),
+        ("node_shared", ProcessFact::Boolean(false)),
+        ("node_shared_openssl", ProcessFact::Boolean(false)),
     ]
+}
+
+pub(crate) fn feature_facts() -> &'static [(&'static str, ProcessFact)] {
+    &[
+        ("inspector", ProcessFact::Boolean(false)),
+        ("debug", ProcessFact::Boolean(false)),
+        ("uv", ProcessFact::Boolean(true)),
+        ("ipv6", ProcessFact::Boolean(true)),
+        ("openssl_is_boringssl", ProcessFact::Boolean(false)),
+        ("dtls", ProcessFact::Boolean(false)),
+        ("quic", ProcessFact::Boolean(false)),
+        ("tls_alpn", ProcessFact::Boolean(true)),
+        ("tls_sni", ProcessFact::Boolean(true)),
+        ("tls_ocsp", ProcessFact::Boolean(true)),
+        ("tls", ProcessFact::Boolean(true)),
+        ("cached_builtins", ProcessFact::Boolean(true)),
+        ("require_module", ProcessFact::Boolean(true)),
+        ("typescript", ProcessFact::String("strip")),
+    ]
+}
+
+pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("node", NODE_VERSION),
+        ("acorn", "8.18.0"),
+        ("ada", "2.7.8"),
+        ("ares", "1.0.0"),
+        ("brotli", "1.1.0"),
+        ("cldr", "45.0"),
+        ("icu", "75.1"),
+        ("llhttp", "9.2.1"),
+        ("merve", "1.0.0"),
+        ("modules", "127"),
+        ("napi", "9"),
+        ("nbytes", "1.0.0"),
+        ("ncrypto", "1.0.0"),
+        ("nghttp2", "1.61.0"),
+        ("nghttp3", "1.3.0"),
+        ("ngtcp2", "1.4.0"),
+        ("openssl", "3.0.0"),
+        ("simdjson", "1.0.0"),
+        ("simdutf", "5.2.4"),
+        ("tz", "2024a"),
+        ("unicode", "15.1"),
+        ("uv", "1.48.0"),
+        ("uvwasi", "1.0.0"),
+        ("v8", "12.4.254.21-node.20"),
+        ("zlib", "1.3.0"),
+        ("zstd", "1.0.0"),
+    ]
+}
+
+fn config_variable_props() -> Vec<(String, Value)> {
+    config_variable_facts()
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), value.to_legacy_value()))
+        .collect()
+}
+
+pub fn versions_props() -> Vec<(String, Value)> {
+    version_facts()
+        .iter()
+        .map(|(name, version)| ((*name).to_string(), Value::String((*version).into())))
+        .collect()
 }
 
 /// `process.exit(code)` — records the exit code and unwinds the VM
 /// with a non-catchable error; the runner maps it to the run outcome
 /// after `exit` handlers run. Never kills the host process.
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let code = args.first().map(value_to_i32).unwrap_or(0);
-    state.borrow_mut().process.exit_code = Some(code);
+    if !args.is_empty() {
+        set_exit_code(state, args)?;
+    }
+    let code = state.borrow().process.exit_code.unwrap_or(0);
+    {
+        let mut state = state.borrow_mut();
+        state.process.exit_code = Some(code);
+        state.process.exit_requested = true;
+    }
     // Node's public `process.exit()` funnels through the internal
     // `reallyExit` hook. Keep that edge observable so embedders and test
     // harnesses that replace `process.reallyExit` see the same final output;
@@ -1061,6 +1102,52 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     Err(VmError::Thrown(Value::String(format!(
         "process.exit({code})"
     ))))
+}
+
+/// Node validates a safe integer before storing it in its signed 32-bit exit field.
+/// The OS exit status is projected later at the process boundary.
+pub fn set_exit_code(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let value = args.first().unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Undefined | Value::Null) {
+        state.borrow_mut().process.exit_code = None;
+        return Ok(Value::Undefined);
+    }
+    let number = match value {
+        Value::Number(number) => Some(*number),
+        Value::String(text) if !text.is_empty() => {
+            let number = quench_runtime::to_number(value)?;
+            (!number.is_nan()).then_some(number)
+        }
+        _ => None,
+    }
+    .ok_or_else(|| {
+        crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"code\" argument must be of type number.{}",
+            crate::modules::buffer_enc::invalid_arg_received(value)
+        ))
+    })?;
+    if !number.is_finite() || number.fract() != 0.0 {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "code",
+            "an integer",
+            &execute::number_to_js_string(number),
+        ));
+    }
+    let max_safe_integer = quench_runtime::to_number(&execute::get_property(
+        &Value::Builtin(quench_runtime::ops::Builtin::Number),
+        "MAX_SAFE_INTEGER",
+    ))?;
+    if number.abs() > max_safe_integer {
+        return Err(crate::modules::buffer_enc::out_of_range(
+            "code",
+            &format!(">= -{max_safe_integer} && <= {max_safe_integer}"),
+            &crate::modules::util::format_with_options(&[Value::Number(number)], true, false, true),
+        ));
+    }
+    // Every validated safe integer fits i64; narrowing then reproduces the
+    // Int32Array storage in Node's process exit fields without saturation.
+    state.borrow_mut().process.exit_code = Some(number as i64 as i32);
+    Ok(Value::Undefined)
 }
 
 pub fn kill(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -1288,6 +1375,14 @@ pub fn hrtime(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     Ok(host_api::array(vec![Value::Number(secs), Value::Number(nanos)]).clone())
 }
 
+pub(crate) fn platform() -> String {
+    std_env("QUENCH_PLATFORM", current_platform())
+}
+
+pub(crate) fn architecture() -> &'static str {
+    current_arch()
+}
+
 fn current_platform() -> &'static str {
     if cfg!(target_os = "macos") {
         "darwin"
@@ -1427,14 +1522,6 @@ fn prepend_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &
     }
 }
 
-fn value_to_i32(value: &Value) -> i32 {
-    match value {
-        Value::Number(n) => *n as i32,
-        Value::String(s) => s.parse().unwrap_or(0),
-        _ => 0,
-    }
-}
-
 /// Explicit subprocess invocation selects the real OS output channels.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
 
@@ -1566,11 +1653,8 @@ pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ));
         }
     };
-    // POSIX umask uses only the permission bits; Node ignores higher bits.
-    let mask = mask & 0o777;
     let mut guard = state.borrow_mut();
-    let previous = guard.process.umask;
-    guard.process.umask = mask;
+    let previous = guard.process.update_umask(mask);
     Ok(Value::Number(previous as f64))
 }
 
@@ -1943,4 +2027,14 @@ pub(crate) fn emit_unhandled_rejection_warnings(state: &Rc<RefCell<HostState>>, 
         let warning = host_api::object(props);
         let _ = emit(state, &[Value::String("warning".into()), warning]);
     }
+}
+
+/// Internal child-exec transport for the already parsed Node invocation flags.
+pub const EXEC_ARGV_ENV: &str = "QUENCH_EXEC_ARGV";
+
+pub fn inherited_exec_argv() -> Vec<String> {
+    std::env::var(EXEC_ARGV_ENV)
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
+        .unwrap_or_default()
 }

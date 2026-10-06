@@ -1,6 +1,6 @@
 //! The checked-in Node `test/parallel` manifest is the profile selection authority.
 
-use crate::case_process::{observe_parallel_case, RunResult};
+use crate::case_process::{RunResult, observe_parallel_case};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
@@ -30,7 +30,14 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
                         Some(crate::NodeOutcome::GuestExit { code }) => Some(format!(
                             "guest exit status {code} requires harness classification"
                         )),
-                        _ => None,
+                        _ => observation.signal.map(|signal| {
+                            let stderr = String::from_utf8_lossy(&observation.stderr);
+                            format!(
+                                "worker terminated by signal {}; stderr: {}",
+                                signal,
+                                stderr.trim()
+                            )
+                        }),
                     };
                     (observation.outcome(), reason)
                 }

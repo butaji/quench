@@ -115,29 +115,61 @@ pub fn resolve(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let paths = args
+        .iter()
+        .enumerate()
+        .map(|(i, arg)| shared::validate_string(arg, &format!("paths[{i}]")))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::String(resolve_strings(
+        &paths,
+        &shared::js_cwd(state),
+        |device| drive_cwd(state, device),
+    )))
+}
+
+/// Node's Win32 `resolve` transformation with process facts supplied by the
+/// owning Node host. Inputs are already valid strings.
+pub(crate) fn resolve_strings(
+    paths: &[String],
+    cwd: &str,
+    mut drive_cwd: impl FnMut(&str) -> String,
+) -> String {
     let mut acc = ResolveAcc::default();
-    let mut i = args.len() as isize - 1;
-    while i >= -1 {
-        let path = match resolve_next_arg(state, args, i, &acc)? {
-            NextArg::Skip => {
-                i -= 1;
-                continue;
-            }
-            NextArg::Done(out) => return Ok(Value::String(out)),
-            NextArg::Path(p) => p,
-        };
+    let mut complete = false;
+    for path in paths.iter().rev().filter(|path| !path.is_empty()) {
         let chars: Vec<char> = path.chars().collect();
         let (root_end, device, is_absolute) = resolve_root(&chars);
         match acc.fold(device, &chars[root_end..], is_absolute) {
-            Fold::Continue => i -= 1,
-            Fold::Skip => {
-                i -= 1;
-                continue;
+            Fold::Continue => {}
+            Fold::Skip => continue,
+            Fold::Break => {
+                complete = true;
+                break;
             }
-            Fold::Break => break,
         }
     }
-    Ok(Value::String(acc.finish()))
+    if !complete {
+        let single_dot = paths.len() == 1 && (paths[0].is_empty() || paths[0] == ".");
+        if acc.device.is_empty()
+            && (paths.is_empty() || single_dot)
+            && cwd.chars().next().is_some_and(shared::is_path_separator)
+        {
+            return if shared::WINDOWS {
+                cwd.to_owned()
+            } else {
+                cwd.replace('/', "\\")
+            };
+        }
+        let base = if acc.device.is_empty() {
+            cwd.to_owned()
+        } else {
+            drive_cwd(&acc.device)
+        };
+        let chars: Vec<char> = base.chars().collect();
+        let (root_end, device, is_absolute) = resolve_root(&chars);
+        let _ = acc.fold(device, &chars[root_end..], is_absolute);
+    }
+    acc.finish()
 }
 
 enum Fold {
@@ -194,49 +226,6 @@ struct ResolveAcc {
     device: String,
     tail: String,
     absolute: bool,
-}
-
-enum NextArg {
-    Skip,
-    Done(String),
-    Path(String),
-}
-
-/// The next path to fold into the resolution: an argument, the
-/// process cwd, or the drive-specific cwd.
-fn resolve_next_arg(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-    i: isize,
-    acc: &ResolveAcc,
-) -> Result<NextArg, VmError> {
-    if i >= 0 {
-        let p = shared::validate_string(&args[i as usize], &format!("paths[{i}]"))?;
-        return Ok(if p.is_empty() {
-            NextArg::Skip
-        } else {
-            NextArg::Path(p)
-        });
-    }
-    if acc.device.is_empty() {
-        let cwd = shared::js_cwd(state);
-        if fast_path(args, &cwd) {
-            let out = if shared::WINDOWS {
-                cwd
-            } else {
-                cwd.replace('/', "\\")
-            };
-            return Ok(NextArg::Done(out));
-        }
-        return Ok(NextArg::Path(cwd));
-    }
-    Ok(NextArg::Path(drive_cwd(state, &acc.device)))
-}
-
-fn fast_path(args: &[Value], cwd: &str) -> bool {
-    let single_dot = args.len() == 1
-        && matches!(args.first(), Some(Value::String(s)) if s.is_empty() || s == ".");
-    (args.is_empty() || single_dot) && cwd.chars().next().is_some_and(shared::is_path_separator)
 }
 
 fn drive_cwd(state: &Rc<RefCell<HostState>>, device: &str) -> String {

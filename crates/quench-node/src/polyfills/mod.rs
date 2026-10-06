@@ -197,6 +197,7 @@ mod tests {
                 "report",
                 "performance",
                 "support",
+                "event-emitter",
                 "punycode",
                 "dns",
                 "dgram-head",
@@ -243,3 +244,4 @@ mod tests {
 }
 pub mod bootstrap;
 pub mod post_bootstrap;
+pub mod shared_vm;
