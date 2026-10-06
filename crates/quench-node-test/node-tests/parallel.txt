@@ -9,7 +9,7 @@ test-events-list.js
 test-events-listener-count-with-listener.js
 test-events-static-geteventlisteners.js
 test-events-uncaught-exception-stack.js
-test-events-once.js # profile=framework-core
+test-events-once.js
 test-eventsource.js
 test-eventsource-disabled.js
 test-fs-exists.js
@@ -39,6 +39,8 @@ test-stream-error-once.js
 test-stream-event-names.js
 test-stream-base-prototype-accessors-enumerability.js
 test-stream-auto-destroy.js # profile=framework-core
+test-stream-inheritance.js
+test-readable-from.js
 test-stream-add-abort-signal.js
 test-stream-duplex-end.js
 test-stream-end-of-streams.js
@@ -101,12 +103,12 @@ test-timers-nan-duration-emit-once-per-process.js
 test-timers-negative-duration-warning-emit-once-per-process.js
 test-path-basename.js
 test-path-dirname.js
-test-path-extname.js
+test-path-extname.js # profile=framework-core
 test-path-glob.js
 test-path-isabsolute.js
 test-path-join.js # profile=framework-core
 test-path-makelong.js
-test-path-normalize.js
+test-path-normalize.js # profile=framework-core
 test-path-parse-format.js
 test-path-posix-exists.js
 test-path-relative.js
@@ -126,7 +128,7 @@ test-url-format-whatwg.js
 test-url-invalid-file-url-path-input.js
 test-url-is-url-internal.js
 test-url-pathtofileurl.js
-test-url-parse-query.js # profile=framework-core
+test-url-parse-query.js
 test-url-parse-format.js
 test-url-revokeobjecturl.js
 test-url-relative.js
@@ -160,7 +162,7 @@ test-buffer-arraybuffer.js
 test-buffer-backing-arraybuffer.js
 test-buffer-badhex.js
 test-buffer-bigint64.js
-test-buffer-write-utf8-two-byte.js # profile=framework-core
+test-buffer-write-utf8-two-byte.js
 test-buffer-compare.js
 test-buffer-compare-offset.js
 test-buffer-concat.js
@@ -309,7 +311,7 @@ test-event-emitter-add-listeners.js
 test-event-emitter-emit-context.js
 test-event-emitter-error-monitor.js
 test-event-emitter-errors.js
-test-event-emitter-get-max-listeners.js
+test-event-emitter-get-max-listeners.js # profile=framework-core
 test-event-emitter-invalid-listener.js
 test-event-emitter-listener-count.js
 test-event-emitter-listeners-side-effects.js
@@ -318,7 +320,7 @@ test-event-emitter-max-listeners.js
 test-event-emitter-method-names.js
 test-event-emitter-modify-in-emit.js
 test-event-emitter-num-args.js
-test-event-emitter-once.js
+test-event-emitter-once.js # profile=framework-core
 test-event-emitter-prepend.js
 test-event-emitter-remove-all-listeners.js
 test-event-emitter-remove-listeners.js
@@ -485,7 +487,11 @@ test-timers-async-store-leak.js
 test-timers-nan-duration-warning-promises.js
 test-timers-process-tampering.js
 test-console-formatTime.js
-test-diagnostics-channel-has-subscribers.js
+test-diagnostics-channel-has-subscribers.js # profile=framework-core
+test-diagnostics-channel-object-channel-pub-sub.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-callback-run-stores.js
+test-diagnostics-channel-tracing-channel-sync-run-stores.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-run-stores.js
 test-process-euid-egid.js
 test-stream-finished.js
 test-stream-construct.js
@@ -671,11 +677,25 @@ test-https-timeout-server-2.js
 test-https-timeout-server.js
 test-https-truncate.js
 test-https-unix-socket-self-signed.js
+test-http-server.js
 test-http-automatic-headers.js # profile=framework-core
 test-http-content-length.js # profile=framework-core
+test-http-incoming-message-destroy.js
 test-http-write-head.js # profile=framework-core
+test-http-generic-streams.js
 test-fs-read-stream-resume.js # profile=framework-core
+test-fs-read-stream-inherit.js
 test-stream-pipe-flow.js # profile=framework-core
 test-async-hooks-run-in-async-scope-this-arg.js # profile=framework-core
-test-diagnostics-channel-tracing-channel-callback.js # profile=framework-core
-test-diagnostics-channel-http-server-start.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-callback.js
+test-diagnostics-channel-http-server-start.js
+test-zlib-from-string.js
+test-buffer-bytelength.js
+test-http-request-end.js # profile=framework-core
+test-stream-readable-async-iterators.js
+test-http-response-readable.js # profile=framework-core
+test-stream-pipeline-async-iterator.js
+test-http-allow-content-length-304.js # profile=framework-core
+test-http-listening.js # profile=framework-core
+test-global-webstreams.js # profile=framework-core
+test-queue-microtask.js

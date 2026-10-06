@@ -2,7 +2,7 @@
   "schema": 2,
   "state": "input_sources_classified_capability_audit_pending",
   "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the curated upstream manifest. The framework-core profile is tagged in that manifest and remains a derived test selection, not a second inventory or proof of implementation. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
-  "source_head": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
+  "source_head": "62109e265221b718a2b0c4680e057453d0f3941a",
   "entries": [
     {
       "path": "tests/node-compat/stage-1005/readable-state.js",
@@ -11106,7 +11106,7 @@
     },
     {
       "path": "crates/quench-node-test/node-tests/parallel.txt",
-      "sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc",
+      "sha256": "e72613082b78a734fbac78689496771781e25cfe6b1890b456e12030548617cd",
       "role": "inventory_manifest"
     },
     {
@@ -12301,6 +12301,57 @@
         ],
         "obligations": [
           "stream construction, state, lifecycle, read/write, pipe, pipeline, finished, operators and compose behavior; case-specific behavior: stream auto destroy. Assertion evidence: L14 destroy: common.mustCall((err, cb) => cb()); L21 r.on('end', common.mustCall(() => {."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-inheritance.js",
+      "sha256": "c9ef907fd9bdff250ccdcc38cb1df7368334f6427520229e84aba826b1a86bee",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "stream"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Stream constructor inheritance and instanceof matrix across Readable, Writable, Duplex and Transform, including custom subclasses. Assertion evidence: L11 assert.ok(readable instanceof Readable);; L29 assert.ok(transform instanceof Transform);."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-readable-from.js",
+      "sha256": "81a800f5e3d73933d110e9578b3bf31776e814c73b472910ec34e20bfd3b5124",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "events",
+        "stream",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/buffer_from.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Readable.from sync/async iterable, promise, string, Buffer-byte, error and destruction behavior. Assertion evidence: L27 assert.strictEqual(chunk, expected.shift());; L119 assert.strictEqual(chunk instanceof Buffer, true);; L138 assert.strictEqual(err.message, 'kaboom');.",
+          "Additional asserted behavior: events.once completion synchronization and Buffer byte-mode values. Assertion evidence: L79 assert.strictEqual(chunk.toString(), expected.shift());; L119 assert.strictEqual(chunk instanceof Buffer, true)."
         ]
       }
     },
@@ -14245,36 +14296,13 @@
       }
     },
     {
-      "path": "tests/node/test/parallel/test-buffer-bytelength.js",
-      "sha256": "a3cb0933149792fdc96895fd0a11b98e884aaa9ca0afeadfce002ff2f6f2d0b9",
+      "path": "tests/node/test/parallel/test-buffer-write-utf8-two-byte.js",
+      "sha256": "e544936e15fad34fc47cebb8b791e24959148aecb14cb392f999a5d1ed9f98b4",
       "role": "assertion_case",
       "static_module_specifiers": [
         "../common",
-        "assert",
-        "buffer",
-        "vm"
-      ],
-      "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/registry.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_buffer.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/buffer.rs",
-          "crates/quench-node/src/modules/buffer_from.rs",
-          "crates/quench-node/src/modules/buffer_enc.rs",
-          "crates/quench-runtime/src/value_buffer.rs",
-          "crates/quench-runtime/src/typed_array_ops.rs",
-          "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
-          "crates/quench-node/src/polyfills/bootstrap/api_head.rs"
-        ],
-        "obligations": [
-          "byteLength for encodings, Buffer/ArrayBuffer/DataView/typed arrays, cross-realm ArrayBuffer, invalid args, UTF-8 length vs global TextEncoder."
-        ]
-      }
+        "assert"
+      ]
     },
     {
       "path": "tests/node/test/parallel/test-buffer-compare.js",
@@ -16781,7 +16809,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "EventEmitter on/addListener identity, newListener ordering before insertion, re-entrant registration ordering and listener snapshots. Assertion evidence: L33 assert.strictEqual(ee.addListener, ee.on);; L49 ee.once('newListener', common.mustCall(function(name, listener) {; L85 assert.deepStrictEqual(ee.listeners('hello'), [listen2, listen1])."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-emit-context.js",
@@ -16812,7 +16854,23 @@
         "assert",
         "events",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Unhandled EventEmitter error conversion for strings, objects and custom inspection hooks, including exact error fields/message. Assertion evidence: L9 assert.throws(; L27 assert.throws(; L30 [util.inspect.custom]() { throw new Error(); }.",
+          "Additional asserted behavior: util.inspect invokes a user custom-inspection hook while formatting the unhandled error. Assertion evidence: L30 [util.inspect.custom]() { throw new Error(); }."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-get-max-listeners.js",
@@ -16822,7 +16880,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "EventEmitter defaultMaxListeners, instance get/set maximum and prototype method receiver behavior. Assertion evidence: L8 assert.strictEqual(emitter.getMaxListeners(), EventEmitter.defaultMaxListeners);; L14 assert.strictEqual(emitter.getMaxListeners(), 3)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-invalid-listener.js",
@@ -16832,7 +16904,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "EventEmitter listener-taking methods reject non-callable listener values with the expected TypeError name, code and message. Assertion evidence: L11 assert.throws(() => {."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-listener-count.js",
@@ -16842,7 +16928,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Static and instance listenerCount results for string and numeric event names. Assertion evidence: L14 assert.strictEqual(EventEmitter.listenerCount(emitter, 'foo'), 2);; L18 assert.strictEqual(emitter.listenerCount(123), 1)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-listeners-side-effects.js",
@@ -16862,7 +16963,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "listeners() snapshots and unwraps once callbacks; rawListeners() preserves the once wrapper, exposes its listener and invokes/removes it. Assertion evidence: L44 assert.deepStrictEqual(ee.listeners('foo'), [listener]);; L112 assert.strictEqual(wrappedListeners[1].listener, listener);; L125 assert.strictEqual(rawListeners[0](), 0)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-max-listeners.js",
@@ -16892,7 +17007,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "EventEmitter emit uses a stable listener snapshot while callbacks add, remove and removeAll listeners; later emits observe mutations. Assertion evidence: L49 assert.strictEqual(e.listeners('foo').length, 1);; L57 assert.deepStrictEqual(['callback1', 'callback2', 'callback3'],; L79 assert.deepStrictEqual(['callback2', 'callback3'], callbacks_called)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-num-args.js",
@@ -16912,7 +17041,21 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/events/shared_vm.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "once listeners run once, are removable by original callback, detach before recursive emission, and receive all emitted arguments. Assertion evidence: L29 e.once('hello', common.mustCall());; L44 ee.once('e', common.mustCall(function() {; L64 ee.once('foo', common.mustCall((...params) => {."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-prepend.js",
@@ -18936,6 +19079,50 @@
           "Channel and top-level hasSubscribers before and after subscription."
         ]
       }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+      "sha256": "80ec1039fa620286f417ea7cf2aa994e24e9985b25d3a30528796806d1f85dca",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
+      "sha256": "5e3fe6cd5b4054e9d997b4c5800cc4c8920a1a3ac4c18fa3b4121f4d2224cef2",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "async_hooks",
+        "diagnostics_channel",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+      "sha256": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "async_hooks",
+        "diagnostics_channel",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
+      "sha256": "29a2d0c6131ef63cd8b706e2e9cba6b38e9cdd869b69a615e95d64c1c4b92d00",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "node:timers/promises",
+        "async_hooks",
+        "diagnostics_channel",
+        "assert"
+      ]
     },
     {
       "path": "tests/node/test/parallel/test-process-euid-egid.js",
@@ -21639,6 +21826,16 @@
       }
     },
     {
+      "path": "tests/node/test/parallel/test-http-incoming-message-destroy.js",
+      "sha256": "f5687e6385fc1c34bf20e53586cb0b25610eb00b3f3353d5911793bef760d8dd",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ]
+    },
+    {
       "path": "tests/node/test/parallel/test-http-write-head.js",
       "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
       "role": "assertion_case",
@@ -21705,6 +21902,17 @@
           "File ReadStream pause/resume lifecycle, data order, and completion."
         ]
       }
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-read-stream-inherit.js",
+      "sha256": "38a9fdbf6df6ef8c04a3847d2f78f8c39ed0654c7d6dd8278b1d1a0b6c6af2fd",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "fs",
+        "../common/fixtures"
+      ]
     },
     {
       "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
@@ -21788,6 +21996,174 @@
           "HTTP server request-start and response-finish diagnostic events with request context."
         ]
       }
+    },
+    {
+      "path": "tests/node/test/parallel/test-zlib-from-string.js",
+      "sha256": "710df25a808bf39929b964730aee798cc453b4f0c1d618bd0b547e1b675b2a08",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "zlib"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-bytelength.js",
+      "sha256": "a3cb0933149792fdc96895fd0a11b98e884aaa9ca0afeadfce002ff2f6f2d0b9",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "buffer",
+        "vm"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_buffer.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/buffer_from.rs",
+          "crates/quench-node/src/modules/buffer_enc.rs",
+          "crates/quench-runtime/src/value_buffer.rs",
+          "crates/quench-runtime/src/typed_array_ops.rs",
+          "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+          "crates/quench-node/src/modules/vm_api.rs",
+          "crates/quench-node/src/polyfills/bootstrap/api_head.rs"
+        ],
+        "obligations": [
+          "byteLength for encodings, Buffer/ArrayBuffer/DataView/typed arrays, cross-realm ArrayBuffer, invalid args, UTF-8 length vs global TextEncoder."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-request-end.js",
+      "sha256": "3e0b807998d5d332cb0f0ebaa4d9131776a0889c92729e0092216285e0737c33",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-readable-async-iterators.js",
+      "sha256": "053c89c514f3b58eed64e5ec0b789078b366a203b8af00e315813766c3a80655",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "stream",
+        "assert",
+        "http",
+        "fs"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/js_runtime_require_stream_http.rs",
+          "crates/quench-node/src/modules/fs.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_client.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Readable async-iterator ordering, stream identity, pending reads, error delivery, premature close, return/throw cleanup and destroyOnReturn behavior. Assertion evidence: L94 assert.strictEqual(iter.stream, readable);; L348 assert.strictEqual(err.code, 'ERR_STREAM_PREMATURE_CLOSE');; L911 await assert.rejects(it.throw(new Error('kaboom')), { message: 'kaboom' }).",
+          "Additional asserted behavior: fs ReadStream and HTTP request/response streams integrate with async iteration and preserve data, errors and close lifecycle. Assertion evidence: L405 assert.strictEqual(data, expected);; L824 assert.strictEqual(_err.code, 'ECONNRESET');; L851 assert.strictEqual(JSON.stringify(body), str)."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-response-readable.js",
+      "sha256": "6fd7cd5b9a45b4ecb5c5204f3af1e4658bf257eee4a8ca80382aaee0adffabac",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-pipeline-async-iterator.js",
+      "sha256": "1327f0087c9ed6b9640f66708ab2ba72305e94b8ac7c29ba7500654d3e59a4b4",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "stream",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "pipeline output is asynchronously iterable and source errors reach iteration unchanged. Assertion evidence: L27 assert.strictEqual(k, 'helloworld');; L31 run().catch(common.mustCall((err) => assert.strictEqual(err, _err)))."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-allow-content-length-304.js",
+      "sha256": "549f270f168edd84dc9a3f68b60dbdf342064080fd1d37837e8b135ea36863f1",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-listening.js",
+      "sha256": "59bf8088ec4ad0fce262e0a50a7ea7c79950d39e4bf202d49634ee9fc30dd0f8",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-global-webstreams.js",
+      "sha256": "eb3016b2899247ca258c8f8229d351150be47703e79711693778a3b33dac2f06",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "stream/web"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams_require.rs"
+        ],
+        "obligations": [
+          "Global Web Streams constructors have identity with the corresponding stream/web exports. Assertion evidence: L8 assert.strictEqual(ReadableStream, webstreams.ReadableStream);; L24 assert.strictEqual(DecompressionStream, webstreams.DecompressionStream)."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-queue-microtask.js",
+      "sha256": "f7964c48b8e9e0bba7c51be3500355871219e2e4321c401e1cb523efc7888ac8",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert"
+      ]
     }
   ],
   "sources": [
