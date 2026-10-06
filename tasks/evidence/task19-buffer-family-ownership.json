@@ -3,11 +3,11 @@
   "task": "19",
   "kind": "node_api_family_ownership",
   "reviewed_on": "2026-10-05",
-  "source_revision": "52b37f36cc971137182500b4dc9f6e535baf62ad",
-  "source_state": "dirty; owner hashes bind this partial review to the current source snapshot",
+  "source_revision": "eac05996cbe1ef8231748453a5388495708eee24",
+  "source_state": "dirty; owner hashes bind the review to current source bytes",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "c9268c8232b782c02a7486452ba72300a127cdd0afa624371684214292c6c032",
+    "sha256": "23f85f8e5f75b55585fff24eaa2481389d0b70aa347b90109233d8de73a4e51c",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "candidate_assertions": 106,
     "candidate_observations": 1
@@ -17,11 +17,11 @@
     "candidate_assertions": 106,
     "candidate_observations": 1,
     "already_included_assertions": 1,
-    "newly_classified_assertions": 7,
-    "newly_included_assertions": 2,
-    "newly_excluded_assertions": 5,
+    "newly_classified_assertions": 105,
+    "newly_included_assertions": 97,
+    "newly_excluded_assertions": 8,
     "newly_excluded_observations": 1,
-    "remaining_pending_assertions": 98,
+    "remaining_pending_assertions": 0,
     "remaining_pending_observations": 0,
     "membership_frozen": false
   },
@@ -151,31 +151,1990 @@
       "obligations": [
         "Requires real CJS/ESM child execution and observed Buffer DEP0005 stderr under --pending-deprecation; the current child path fabricates results for warning_node_modules fixture paths."
       ]
+    },
+    {
+      "path": "tests/node-compat/stage-2191/buffer-invalid-utf8.js",
+      "role": "assertion_case",
+      "sha256": "144fdf5ac0e1d95f4baa0f7e57ed2737f402b655852bfb0323c26be1c7185023",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "Buffer.from byte inputs decode malformed UTF-8 with Node replacement boundaries."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2505/buffer-indexof-encoding.js",
+      "role": "assertion_case",
+      "sha256": "a1320c2fd81d000b1817511db99cdc51ea0a67b7a7244aa64d89c7889e215d60",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "indexOf string/encoded needles, unknown encoding error, invalid needle types."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2506/buffer-search-receiver.js",
+      "role": "assertion_case",
+      "sha256": "87c552b361ab787cfd7b5e68e3cb0e1ffa1a3f173824e762b5d83d37f0ff9875",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs"
+      ],
+      "obligations": [
+        "lastIndexOf rejects wrong receiver with Node TypeError."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2541/buffer-cross-realm-string.js",
+      "role": "assertion_case",
+      "sha256": "497d4c42623ac176efe7cdb8573e08d06e871081b1a23f847b543e8d2b090f0f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/vm_api.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer.from converts a cross-realm String wrapper."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2547/buffer-copybytesfrom-alignment.js",
+      "role": "assertion_case",
+      "sha256": "68411204a02a9a33a3fd5c4aaf3be858f4956468a2820d52d0f198a5c8a4b23f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "copyBytesFrom selects Float64Array elements and returns the correct byte view."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2576/buffer-ucs2-string.js",
+      "role": "assertion_case",
+      "sha256": "8d8f3a728209b5e946fe03090bc48153da45f04e0f4563bd0d83ae04a58db0d9",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "UCS-2/UTF-16LE string encoding and decoding."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2645/buffer-fill-encoding-matrix.js",
+      "role": "assertion_case",
+      "sha256": "2a9394ab4c69ec3c8efacab06ddb1b867ae1024a19819bd8524defb18155934c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs"
+      ],
+      "obligations": [
+        "fill pattern, encoding, coercion, range and receiver behavior, plus internalBinding(buffer).fill."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2647/buffer-compare-ranges.js",
+      "role": "assertion_case",
+      "sha256": "0911b2b985841f1026fce8b2a1ffe6e21372e6236aeb91363af2ff831c1c02cb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "compare selected byte ranges and reject invalid bounds/types."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2648/buffer-indexof-utf8-length.js",
+      "role": "assertion_case",
+      "sha256": "553448caafc64016179c268571a53fa28368ab1644ae7d90d5c6ae293e64b34d",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "long UTF-8 search returns byte offsets for Buffer and string needles."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2649/buffer-resizable-view.js",
+      "role": "assertion_case",
+      "sha256": "65c22225869c3b6b023020cddcafdbae1e4455cfc85cbc30b22249e863db044c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer view byteLength follows ArrayBuffer grow/shrink."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2650/buffer-tostring-range.js",
+      "role": "assertion_case",
+      "sha256": "9bd18b7ead2bf340b2cb56224aafc7295c1954fcc996f55fbd5c4e46d8b10329",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "toString encoding coercion, start/end clamp and ERR_UNKNOWN_ENCODING."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2651/buffer-string-limit-fact.js",
+      "role": "assertion_case",
+      "sha256": "317c42b77073efc060bfae721698744ddb7df8d7df2211d92bb891be0a730fa8",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "MAX_STRING_LENGTH value/order against MAX_LENGTH."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2652/buffer-write-offset-validation.js",
+      "role": "assertion_case",
+      "sha256": "83a9f3e69d4ac3a715a5090e39a28cb55bf352bca601a18c99c4099f4619920c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "numeric write offset/byteLength type and range errors."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2653/buffer-alias-identity.js",
+      "role": "assertion_case",
+      "sha256": "dd58f17db449cae9f19faec08127984cfe0ea1f7f4f59b8c113dca5f83d6c7e8",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "upper/lower numeric read/write aliases are identical functions."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2655/buffer-encoding-exports.js",
+      "role": "assertion_case",
+      "sha256": "b9a6e4df7f715338ef6cc3247640d0d6a377fb9f1afe293eff940354f2055af9",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "buffer exports isAscii/isUtf8; valid bytes and bad-argument error."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2656/buffer-detached-transfer.js",
+      "role": "assertion_case",
+      "sha256": "a7e048a2b30066e8b83ecf2b96c3068d6d0f8fce37aa263ca6d007b8caec5e9a",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "isAscii/isUtf8 values, wrong types, detached ArrayBuffer/views; TextEncoder comes from util."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2657/buffer-inspect-max-bytes.js",
+      "role": "assertion_case",
+      "sha256": "4c6fa88910768b2dc5c256ed7eea0dba459649c83cd340d1e479676f5442e792",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs"
+      ],
+      "obligations": [
+        "INSPECT_MAX_BYTES getter type and setter range/type errors."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2658/buffer-pool-identity.js",
+      "role": "assertion_case",
+      "sha256": "a66f347b368e4dd8846a113d30efcd6b96f910d7e40f6f5649d838a0d4dcc806",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs"
+      ],
+      "obligations": [
+        "small Buffer.from allocations share backing store with distinct byteOffset."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2668/buffer-alloc-tail-call.js",
+      "role": "assertion_case",
+      "sha256": "4c3e51a776a6c3291141485c26e13143f0f991f7ac5319b95ed475d6859dd99c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "nested Buffer.alloc returns length 16 and zero at index 0."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2703/buffer-aligned-allocation.js",
+      "role": "assertion_case",
+      "sha256": "90ef31d40ffa57538753284cc27e5615bd6e50ffbfafed0959b8087647924d2c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs"
+      ],
+      "obligations": [
+        "pooled byteOffset alignment/identity, slow backing independence, invalid fill argument."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2704/buffer-legacy-warning-stack.js",
+      "role": "assertion_case",
+      "sha256": "dd8acf5d2fcbd375f2b36980077760ed6a93ca3c910b55a6219573ed9a75998d",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "legacy new Buffer warning DEP0005 once across Error.prepareStackTrace; stack result is Buffer."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2717/buffer-generic-typed-array.js",
+      "role": "assertion_case",
+      "sha256": "495f46b6e19eac2408c9f09885b63259bd18e02cb485b72437fa70f14a845756",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/util.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "generic typed-array compare/copy receivers and util.inspect formatting/truncation."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2721/buffer-typed-array-method-family.js",
+      "role": "assertion_case",
+      "sha256": "44eaf251ec568fab45e5818b788b8cd50c8d6158fcb92a461124258b5ee0a01c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "inherited map/filter functions and values."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2737/buffer-search-stress.js",
+      "role": "assertion_case",
+      "sha256": "6c2d2726e06eab1afaf89d1775c421405e61b5be2b83c7bee840b102162958b6",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs"
+      ],
+      "obligations": [
+        "long indexOf hit/miss."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2780/buffer-constants.js",
+      "role": "assertion_case",
+      "sha256": "b8c0965c5e5f8aa223a757e89615f6e01d154d52c569c418aa3786fea80b4e3c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "Buffer max-length/string-length exports and bounds."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2813/buffer-fill-contract.js",
+      "role": "assertion_case",
+      "sha256": "24a40ac54b774d00a914fec96ad6de0270fbbb989f0686ed7087312373fd94fb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "fill returns receiver; string/numeric fill and negative range."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2841/buffer-generic-copy.js",
+      "role": "assertion_case",
+      "sha256": "3cdffe38e0a6a3f5f86f508b3c2ac75ecc6b3b61cac608783685a48995be4ac2",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer.copy accepts generic Uint8Array destination and copies selected bytes."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3046/buffer-search-facts.js",
+      "role": "assertion_case",
+      "sha256": "ba0c864744fb3e194eb19f3c781bf4b125026efb5fe9d6d32da553c2ccf510d8",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "indexOf/lastIndexOf overloads, byte/string/hex needles, offsets and invalid needle."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3047/buffer-codec-state.js",
+      "role": "assertion_case",
+      "sha256": "65090c129707c3e117821e6bf44ec12477dacc05e5de82c4c8b9da2eb5fa58c3",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/modules/buffer_write.rs"
+      ],
+      "obligations": [
+        "Unicode/surrogate UTF-8 from/byteLength/write, code-point truncation, and no overrun."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3051/buffer-inspect-own-undefined.js",
+      "role": "assertion_case",
+      "sha256": "6987fc2fae31ea66c9d6f273add51430cec7d56a0e63b650fc32ba1b9f82eb5b",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "util.inspect when Buffer.prototype.inspect is undefined, preserving extra own properties."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3069/buffer-zero-fill-reset.js",
+      "role": "assertion_case",
+      "sha256": "38ac683b4c219fc7983f94aca28af4ab064237fabc40d3a11303f147ae5e6514",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer allocation activity leaves Uint8Array zero initialization intact."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-3071/buffer-transfer.js",
+      "role": "assertion_case",
+      "sha256": "46dd1a9ac6ce001c8a311a2059b70bbdc72c9a9f7c211321b62a58e61c56f54b",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/worker_threads.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "pooled backing remains shared/untransferable; ordinary ArrayBuffer transfers."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-alloc.js",
+      "role": "assertion_case",
+      "sha256": "ba7f216531cb67bace11f8f46ec180550bd6a7179cf0763ddf139394e8546da4",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/modules/buffer_write.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/vm_api.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "constructor/alloc/from, typed views and cross-realm ArrayBuffer, codecs, pool/parent/offset, numeric reads/writes, type/range errors; optional crypto digest compares base64 decode equivalence."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-ascii.js",
+      "role": "assertion_case",
+      "sha256": "21982d237b9fc6b4c57cd81cf30d7408c145db31c1ff1f9d7b36782efd4149bb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "ASCII high-bit decoding and sliced decode."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-arraybuffer.js",
+      "role": "assertion_case",
+      "sha256": "340bc969ac5379a22224b9d46e9ef259fa9ffec167ab97d6fbd46772099d0e3a",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer.from ArrayBuffer sharing, offset/length, mutation aliasing, numeric view and bounds."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-backing-arraybuffer.js",
+      "role": "assertion_case",
+      "sha256": "bc1e787fc8c3396bf244f8f166e88098db65378a69316ea984a58dfac5a0e701",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "internalBinding(util).arrayBufferViewHasBuffer observes on-heap/materialized Buffer backing transitions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-badhex.js",
+      "role": "assertion_case",
+      "sha256": "fc3dfab4f76e4171b0b48656088a266bf22b775354be397094785e230681e79f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/modules/buffer_write.rs"
+      ],
+      "obligations": [
+        "malformed/truncated hex decoding and hex write truncation/remainder."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-bigint64.js",
+      "role": "assertion_case",
+      "sha256": "0856537eca3080008e347560a7ec7de50216ab6aa47c6a2f759307a422fe6799",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "BigInt64/BigUint64 endian reads/writes and offset/range errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-bytelength.js",
+      "role": "assertion_case",
+      "sha256": "a3cb0933149792fdc96895fd0a11b98e884aaa9ca0afeadfce002ff2f6f2d0b9",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/vm_api.rs",
+        "crates/quench-node/src/polyfills/bootstrap/api_head.rs"
+      ],
+      "obligations": [
+        "byteLength for encodings, Buffer/ArrayBuffer/DataView/typed arrays, cross-realm ArrayBuffer, invalid args, UTF-8 length vs global TextEncoder."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-compare.js",
+      "role": "assertion_case",
+      "sha256": "31ca4edc3766b623fbb27088b0a7dee091c7c2bd547b9b428c79aec897083352",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "static/prototype compare ordering, equal/empty and type handling."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-compare-offset.js",
+      "role": "assertion_case",
+      "sha256": "ac9305bbe60afacc153f1583cddde26d53d1fcc446df10552086826eeb72da64",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "compare subranges, coercion/default args, invalid types and bounds."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-concat.js",
+      "role": "assertion_case",
+      "sha256": "807c2845212484a3549dcaafab98d9f8105a521aea30a244f368e668de994847",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "concat ordering, identity, truncation/zero tail, Uint8Array inputs and validation; optional crypto generates nonconstant payload."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-constructor-outside-node-modules.js",
+      "role": "assertion_case",
+      "sha256": "7b521666f5e6e8a3a8b497507de286b7d2953d0de10fa7649308924ce6011d40",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-node/src/modules/vm_api.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "new Buffer emits DEP0005 outside node_modules; vm filename filtering, warning count/details and Error stack behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-constructor-deprecation-error.js",
+      "role": "assertion_case",
+      "sha256": "65ccd094b96914414065da6aa564a26bc88c8bb23e7ad1890e1ecbdb6b167be4",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "deprecated construction inside Error.prepareStackTrace emits once with warning metadata."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-copy.js",
+      "role": "assertion_case",
+      "sha256": "0ff4cb3fbd0b1bd2f36d119a9ab83f4ad32356569715ee2cb6cabfac4ae4f385",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "copy offsets/count/overlap, generic typed-array destination and coercion."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-copy-immutable.js",
+      "role": "assertion_case",
+      "sha256": "33148d2f5e87cd054a6f368aefce395b159a960dc231272d3dda48982cbb62ee",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "transferToImmutable copy target stays unchanged while immutable source bytes copy into mutable target."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-equals.js",
+      "role": "assertion_case",
+      "sha256": "39f02576736fd260cc03724cc0ea91d0039a84fa42315dcfe2a70f1c0b23e2a6",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "equals against Buffer/Uint8Array and rejects invalid input."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-fakes.js",
+      "role": "assertion_case",
+      "sha256": "38a01e883ab38f55c65d3380772c4a40ff4537916f2a7e265ee2e4716f644348",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs",
+        "crates/quench-node/src/modules/buffer_write.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "forged Buffer-prototype receiver rejected or handled correctly by static/prototype APIs."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-failed-alloc-typed-arrays.js",
+      "role": "assertion_case",
+      "sha256": "cce797f3fc3a3a0f8250e7d2c2028ef448d1560d9025d6044c7c3b48bf010ddc",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "failed Buffer allocations leave Uint32Array allocation zero-filled."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-fill.js",
+      "role": "assertion_case",
+      "sha256": "d7334366077dc073145011c6efdd4a61e3013a9ea12c94e845a74902b57e56b6",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "fill numbers/strings/views, coercion, offset/range/type errors and internalBinding(buffer).fill."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-from.js",
+      "role": "assertion_case",
+      "sha256": "57a051541f292810da965a6ba608007de9c141b01c86cfc571adff82725bd160",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/vm_api.rs"
+      ],
+      "obligations": [
+        "String wrappers/ToPrimitive, cross-realm String, typed arrays/ArrayBuffers, copyBytesFrom snapshot/range and argument errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-generic-methods.js",
+      "role": "assertion_case",
+      "sha256": "e6d13bdbcf199cc90d2c172f4ba4082a72660d3863b4c28dd56e88e1d2e426ba",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs",
+        "crates/quench-node/src/modules/buffer_write.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "prototype method/symbol surface, aliases, generic typed-array receiver semantics and util inspection."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-includes.js",
+      "role": "assertion_case",
+      "sha256": "f7d123f421fe2db806b4124b30ace165cec82a699b2c734541b469dcfa5a53cb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "includes byte/string needles, offsets and encodings."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-indexof.js",
+      "role": "assertion_case",
+      "sha256": "140f0ec09c07d12b8b45ae152fb9627ae46ca022eb9bbef6992c3d0827c4875f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_methods/buffer_search.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "indexOf/lastIndexOf byte/string needles, encoding, offsets and boundaries."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-isascii.js",
+      "role": "assertion_case",
+      "sha256": "1af01e922a815cba169ce63477ec45ceea178f5ba1178fee463a179c80797c00",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "isAscii values for ASCII/high-bit bytes and Buffer; wrong types and detached views; TextEncoder comes through util."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-isutf8.js",
+      "role": "assertion_case",
+      "sha256": "fb8e0df84354181ceecc2951f08c670ea7d8e5e37ea8799759814038abb9af8f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "isUtf8 valid/invalid UTF-8 boundaries, invalid argument types and detached views; TextEncoder helper."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-isutf8-isascii-fast.js",
+      "role": "assertion_case",
+      "sha256": "d0c663579d4dc88b80017182a6a8f663aa0da58db6c02f5d2c957ba8dd6bb796",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "missing_capabilities": [
+        "requires --allow-natives-syntax V8 optimization intrinsics and internalBinding(debug).getV8FastApiCallCount; those engine-specific fast-API counters are not implemented Node behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-inspect.js",
+      "role": "assertion_case",
+      "sha256": "87baa733fa77cf8ec41ed5fcfdd1b50d708d2665e0c2314dc23afbac37da7383",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "util.inspect renders pooled/slow buffers, truncation/max bytes and own properties."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-isencoding.js",
+      "role": "assertion_case",
+      "sha256": "5da97872ab091d569c27f7f4293db094637ff3e66b4b0fccb991fccfa4b6e7f7",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "accepted/rejected encoding names and aliases."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-iterator.js",
+      "role": "assertion_case",
+      "sha256": "73d620cdb4083f0fdc62666800b2e5929251ceab86dcff3340d57823098ca438",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer entries/keys/values iteration order and values."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-no-negative-allocation.js",
+      "role": "assertion_case",
+      "sha256": "78ba50e2df1a93d78b03d105889b813b4a1dd9cdf5e204b41cdcc3f6090a1962",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "Buffer constructor and alloc variants reject negative/NaN sizes."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-inheritance.js",
+      "role": "assertion_case",
+      "sha256": "15a8301e8a99dd3027928fff40d43d519c8ad0a7010c4fe7d2aef7b6372a5d8f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "custom Buffer subclass/static inheritance, prototype chain and inherited results."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-new.js",
+      "role": "assertion_case",
+      "sha256": "ed9adcba4afafff636e3bec0ccbed204ddc6accd12cb1ec829237d2496bd1b40",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "legacy constructor rejects numeric length when a second encoding argument is supplied."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-nopendingdep-map.js",
+      "role": "assertion_case",
+      "sha256": "75292c75222bf3160dc940fc87d0e26f17c1d7b34c04f0b1df7b126493318684",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "map/filter/slice operations preserve Buffer behavior without emitting DEP0005."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-of-no-deprecation.js",
+      "role": "assertion_case",
+      "sha256": "7e90a61923d10f034db136d62c3e6d2e859fa21317a98e5492bcbd4721ea1585",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "Buffer.of constructs bytes without legacy-constructor warning."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-pending-deprecation.js",
+      "role": "assertion_case",
+      "sha256": "9609b3031d3caa707cc8e7570e464f3a84c9bd301ab52a9ea3eb22613b19e4bb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "--pending-deprecation warning code/message and once-only delivery."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-over-max-length.js",
+      "role": "assertion_case",
+      "sha256": "4a23781272b14512b373cb006ae0037ed54223163ced3c0bf3094d199268c081",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "constructor/alloc variants reject MAX_LENGTH+1."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-parent-property.js",
+      "role": "assertion_case",
+      "sha256": "5ac36f8c51db72f33c3065b1347be996cda78c245d1bc8b12046c253656722cb",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "parent/backing ArrayBuffer and identity for alloc/from ArrayBuffer."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-pool-untransferable.js",
+      "role": "assertion_case",
+      "sha256": "0f7425f9e309217c8b20b974ff3c8ba6d37ddc3e564f7ae68b5148780f7d0d48",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
+        "crates/quench-node/src/modules/worker_threads.rs"
+      ],
+      "obligations": [
+        "pooled buffers share untransferable backing; MessageChannel and ArrayBuffer.transfer refusal."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-prototype-inspect.js",
+      "role": "assertion_case",
+      "sha256": "0bbe06600d7d9b33897b3d31e203d130435ac0051713774f5a95a3fd711dcfad",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "Buffer.prototype.inspect output for empty, normal and truncated values."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-read.js",
+      "role": "assertion_case",
+      "sha256": "a46464c712f8462106e38eee8d222591eb527f8611ec1d5b44ea6a554c98f38c",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "numeric reads across signed/unsigned widths and bounds/type failures."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-readdouble.js",
+      "role": "assertion_case",
+      "sha256": "4bd25267d559b5c275cd4fb98f1260344882d167d3a8f19f65659d29dbc37eb0",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "float64 endian decoding and special bit patterns."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-readfloat.js",
+      "role": "assertion_case",
+      "sha256": "f24f29a9dfd8cbe2b7a99fb8d7c4cef3a263a94e1d9915b7996adc8bf4f8f4d0",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "float32 endian decoding, infinities/NaN/negative zero."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-readint.js",
+      "role": "assertion_case",
+      "sha256": "7fbff2708f18c20c2c2d36079c1de183a4922d67093de93eb7364b42c272fcc7",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "signed integer endian reads, ranges and argument validation."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-readuint.js",
+      "role": "assertion_case",
+      "sha256": "a9685e68642a72179368a4fd5cb68710f7dbd07ac79fab840b44732b384cfcce",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "unsigned integer endian reads, ranges and argument validation."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-resizable.js",
+      "role": "assertion_case",
+      "sha256": "cbaa832e342240e07141310497ac54ca56de160a5564bd4ced12a2d8736cb0fa",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "ArrayBuffer-backed Buffer view length/content as backing resizes."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-safe-unsafe.js",
+      "role": "assertion_case",
+      "sha256": "5828f89598933c00749aaec642d4e665cdfc62e0691c5132092e1556d0a41041",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "alloc returns zero-filled safe buffers; unsafe allocator activity does not alter safe/typed-array zero initialization."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-set-inspect-max-bytes.js",
+      "role": "assertion_case",
+      "sha256": "dd1ef5f27d006b762055a9b31bdbeafc196a3c418b513af4cfe9ede6587acf43",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "obligations": [
+        "INSPECT_MAX_BYTES setter rejects NaN/negative with range errors and string with argument-type error."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-sharedarraybuffer.js",
+      "role": "assertion_case",
+      "sha256": "9874086ba50be8c0d8c39443dc493539e9bd1c5ed5309c4592d6949cc79f96c2",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_from.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer.from SharedArrayBuffer views and Buffer.byteLength on shared backing."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-slice.js",
+      "role": "assertion_case",
+      "sha256": "1d7c81a13b38701952a8dd5b287b556fbb9d9195ace7e636809533ab6718a504",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "slice/subarray content, sharing, empty/negative/fractional boundaries and string codecs."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-slow.js",
+      "role": "assertion_case",
+      "sha256": "c29fed8cd6a805f914ac17f6a46c25a96af06b09be1fd093df0887582f5b3d8d",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "allocUnsafeSlow type/size, Buffer brand and independent backing store."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-swap.js",
+      "role": "assertion_case",
+      "sha256": "001f9d52b583f6c1359999b1359bfb979f804c7237f114a11825a619bada7991",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "obligations": [
+        "swap16/32/64 in-place order and invalid-length errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-swap-fast.js",
+      "role": "assertion_case",
+      "sha256": "9d7321512062413683bd2ff54d260068bb5a61978fd96331f8c12029453ce96e",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs"
+      ],
+      "missing_capabilities": [
+        "requires --allow-natives-syntax V8 optimizer intrinsics and internalBinding(debug).getV8FastApiCallCount; this is engine-specific fast-path accounting."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-tostring-4gb.js",
+      "role": "assertion_case",
+      "sha256": "a4f7773cbca06fa499e2bba2e4f5098170966a0c77eeba57cac0e75cc45b15de",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "toString on >4-GiB backing/slice does not throw; memory/32-bit fixture helper may skip, not an implementation exclusion."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-tostring.js",
+      "role": "assertion_case",
+      "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "toString encodings/round-trips, empty/range/error behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-tostring-range.js",
+      "role": "assertion_case",
+      "sha256": "84de95ad801e0b43b4a6da69e61bae784e13e0d224d9f8b5a87be82ab7b70988",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "start/end coercion, clamping, empty and boundary slices."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-tostring-rangeerror.js",
+      "role": "assertion_case",
+      "sha256": "2e7d1c813bb0f698d02fcd1575be4620990694a7fc3a132d939738f143b094cf",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "toString rejects output above MAX_STRING_LENGTH."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-write.js",
+      "role": "assertion_case",
+      "sha256": "898dd20c1e70f31dc681b39c64a502900b37ad3b3eff94474a647bb473ffedad",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_write.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "obligations": [
+        "string write offsets, encodings, truncation, returns, invalid encoding/offset."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-write-fast.js",
+      "role": "assertion_case",
+      "sha256": "d1f024eecf7e27c44afe75afb43573cf4c266430a4cf1fd0b75c46c9033c0ee7",
+      "status": "excluded",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_write.rs",
+        "crates/quench-node/src/modules/buffer_enc.rs"
+      ],
+      "missing_capabilities": [
+        "requires --allow-natives-syntax optimizer intrinsics and internalBinding(debug).getV8FastApiCallCount for internal/buffer.utf8Write fast-path assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-writeint.js",
+      "role": "assertion_case",
+      "sha256": "19c093d8d0413530589a26330f69239931d05f8ccded10611fb0ea32da57552b",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "signed integer write bytes/endian/round-trip, precision, type and range errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-writeuint.js",
+      "role": "assertion_case",
+      "sha256": "5e41385df103a0781e133340833cc3676ed8029c653cb66bb9fbbed577042227",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "unsigned integer write bytes/endian/aliases and type/range errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-tojson.js",
+      "role": "assertion_case",
+      "sha256": "8f8bd78041033e87ed0196b0cf7d3c8574bebdbff012eabed6a6711f59bc39f0",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_methods.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer JSON type/data shape and Buffer.from round-trip."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-writedouble.js",
+      "role": "assertion_case",
+      "sha256": "55b150bceb33390fe2a169e186bdac387987e05513f5cfb4b52727b66e09c052",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "float64 endian writes/round-trip and special values."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-writefloat.js",
+      "role": "assertion_case",
+      "sha256": "3ff692c3f94e677239f3895b0ed3cd52ac31aa5da38ea99072124d7aa7a1600f",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer_proto.rs",
+        "crates/quench-node/src/modules/buffer_rw.rs"
+      ],
+      "obligations": [
+        "float32 endian writes/round-trip and special values."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-zero-fill-cli.js",
+      "role": "assertion_case",
+      "sha256": "8e600a17b1514c185e8aae943c70ed895d0a88ca60b777dad4c45298bbc2dfbe",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "--zero-fill-buffers invocation; alloc/allocUnsafe/allocUnsafeSlow/legacy constructor produce zero bytes."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-zero-fill-reset.js",
+      "role": "assertion_case",
+      "sha256": "83027c3412c6e28c47eb52deb6625031d83afa45c16b260903a39f64067beecd",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "Buffer allocation and zero-fill mode do not alter later typed-array zero initialization."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-zero-fill.js",
+      "role": "assertion_case",
+      "sha256": "08ead41efb33f15f08cad78988bb96d78f0ba537bb7603573aaf46b2b692cd5b",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs"
+      ],
+      "obligations": [
+        "alloc/unsafe/legacy construction zero-fill results."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-constants.js",
+      "role": "assertion_case",
+      "sha256": "59d2a1cf579b95447c9b9a85c404244676e89aaa52d0f4af97ea3c626fc945a5",
+      "status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_buffer.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-runtime/src/value_buffer.rs",
+        "crates/quench-runtime/src/typed_array_ops.rs",
+        "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
+      ],
+      "obligations": [
+        "constants alias equality and string-length boundary."
+      ]
     }
   ],
   "owner_sources_sha256": {
-    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
     "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
     "crates/quench-node/src/dispatch_buffer.rs": "38fef1a9f33bae31572ca840d17f48227450b75c8fc40d7d5fa20de5b34d96e6",
     "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
-    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/host/shared_vm.rs": "0abcbfc503aa5f336b82e5701f5ffa2f22180f3a3a4179cc36917066eb470394",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "0659e2f5fe672a8875013b192249e8b16b0bca81a999b6ef444c726afd5e8e1e",
+    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
     "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
-    "crates/quench-node/src/modules/buffer_from.rs": "9762a39be4a212b8cfe68a8651b5020601e6d40d90c5f0c911fc2f17d5e404fa",
     "crates/quench-node/src/modules/buffer_enc.rs": "1634e27a9874b93163b13b666c8b2ee2376d1b654c397ab54eb82f5c1488fbff",
-    "crates/quench-node/src/modules/buffer_proto.rs": "5170e2a88b691e178d405cc81de17163cf5fdde4474a2425d250005a53715a38",
+    "crates/quench-node/src/modules/buffer_from.rs": "9762a39be4a212b8cfe68a8651b5020601e6d40d90c5f0c911fc2f17d5e404fa",
     "crates/quench-node/src/modules/buffer_methods.rs": "62847833d9932c67d17dc4ac9c31417c4f045a7c97acadb9a6288e272644a510",
     "crates/quench-node/src/modules/buffer_methods/buffer_search.rs": "858c93587ed64e7a706d22709620509fee1094f679b351ae704a05a53db7b7e4",
+    "crates/quench-node/src/modules/buffer_proto.rs": "5170e2a88b691e178d405cc81de17163cf5fdde4474a2425d250005a53715a38",
     "crates/quench-node/src/modules/buffer_rw.rs": "a6813661e7bd80ad9d6f782041f48c555a56039340a00906dec48035ab5fa903",
     "crates/quench-node/src/modules/buffer_write.rs": "d575cb335b9dcd8ca884bf3406ec0cc8c6d63d455d301f80078e9c175a5e270b",
-    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
     "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
-    "crates/quench-node/src/host/shared_vm.rs": "0abcbfc503aa5f336b82e5701f5ffa2f22180f3a3a4179cc36917066eb470394",
-    "crates/quench-node/src/host/shared_vm/commonjs.rs": "0659e2f5fe672a8875013b192249e8b16b0bca81a999b6ef444c726afd5e8e1e"
+    "crates/quench-node/src/modules/crypto.rs": "76456f0131b8241aa01f23884ed74ef0446c3f8355d5f10c747644754e92a568",
+    "crates/quench-node/src/modules/process.rs": "1ae3ac711e4a36818f7f4cb34bf5a37ae978456c323ad2dde68c1258ba1988b8",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/util.rs": "4d2046c9fd7421c97ccbf8db1026e4aaf8322e42a3a2a420dad4cae9fac1d040",
+    "crates/quench-node/src/modules/vm_api.rs": "37e552f258ae560846167bdbdb2e857a8541e927ad144964ea4ca46bdecfeefc",
+    "crates/quench-node/src/modules/worker_threads.rs": "4dc1bad7c82cf88c9361fe1b26919fadf8f58dfddfc0435d47df3bcd1e433ae6",
+    "crates/quench-node/src/polyfills/bootstrap/api_head.rs": "ede8063528577353ebc04de9d0b0c5c10de9b9e05f1a5078c53b36c7adcb9b26",
+    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
+    "crates/quench-runtime/src/typed_array_ops.rs": "c32569a3cc0cfc13fa464dd40e294cf58ea59720889ee1a4e85660b79cdb1933",
+    "crates/quench-runtime/src/value_buffer.rs": "4da46a8a579023b38fa7623f5f4cab513e2e6fa60a250708c747a6ae8d1f93ca",
+    "crates/quench-runtime/src/vm/vm_builtin_errors.rs": "2047c25c69ac5a89dfde92cce710586a0346d078d3ccf79076accba2267bbea1"
   },
   "limits": [
-    "This is a partial audit of seven newly classified assertions and one observation; 98 Buffer assertion candidates remain pending.",
-    "Candidate membership is based on asserted behavior and active capability, not import presence or pass outcome.",
-    "The alignment case remains included despite an incomplete physical-alignment implementation.",
-    "No suite was run for this metadata-only review."
+    "The full 106-assertion, one-observation Buffer candidate family is now classified; the one previously included local Buffer case remains the existing inventory authority.",
+    "Membership follows asserted behavior and active owners regardless of runtime pass/fail. Three V8 fast-path fixtures are excluded because V8 optimizer intrinsics and debug fast-path counters are absent; the separate allocator-counter and source/path-matched child-output exclusions remain explicit.",
+    "Aligned allocation remains included despite incomplete physical alignment. Cases relying on fabricated child output remain excluded until generic child execution replaces those shortcuts.",
+    "No Buffer suite was run for this metadata-only ownership audit; behavior qualification remains in tasks 21/22."
   ]
 }

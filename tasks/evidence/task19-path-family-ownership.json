@@ -1,0 +1,583 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_api_family_ownership",
+  "reviewed_on": "2026-10-05",
+  "source_revision": "eac05996cbe1ef8231748453a5388495708eee24",
+  "source_state": "dirty; input and owner hashes bind this review to current bytes",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "23f85f8e5f75b55585fff24eaa2481389d0b70aa347b90109233d8de73a4e51c",
+    "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+    "candidate_paths": 86,
+    "specifier_hits": 88,
+    "upstream_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "projection": {
+    "family": "Path",
+    "candidate_paths": 86,
+    "specifier_hits": 88,
+    "already_reviewed_global_status": {
+      "included": 2,
+      "excluded": 7,
+      "pending": 77
+    },
+    "family_included": 23,
+    "family_excluded": 63,
+    "newly_included_global_cases": 21,
+    "newly_excluded_global_cases": 1,
+    "remaining_unclassified_path_obligations": 0,
+    "membership_frozen": false
+  },
+  "active_route": {
+    "summary": "Legacy require routes path, path/posix and path/win32 through modules/require.rs to modules/path.rs; Path owns POSIX and Win32 algorithm modules. NodeHost shared CommonJS currently registers only process/assert and has no Path builtin, so task 21 owns cutover.",
+    "files": {
+      "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+      "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+      "crates/quench-node/src/modules/crypto.rs": "76456f0131b8241aa01f23884ed74ef0446c3f8355d5f10c747644754e92a568",
+      "crates/quench-node/src/modules/fs.rs": "ec14dad041b3cf1232ae1853faa2e26c9cca56114a275347bd9b1386b619f6a9",
+      "crates/quench-node/src/modules/fs_async.rs": "514070bcb281ef497d8b3627b362d026f8e7ff9c30478ce59003fdeac01f2f4f",
+      "crates/quench-node/src/modules/fs_promises.rs": "7e067e45dba53bf3593292fb99b6fd35109006162c287cd0d8953ee47c1ad9a7",
+      "crates/quench-node/src/modules/fs_sync.rs": "762ae97ce02b7252a8d63bb29db02fe2ad8d2fe0a243da846c73cea933f4bcdd",
+      "crates/quench-node/src/modules/os.rs": "2bf75f8a00128040c755088097cc07f5c2ced88b5b315422d108a008838fdb42",
+      "crates/quench-node/src/modules/path.rs": "ec50f94786edcc23b345bfd30ad8b5f4235dca07001aa08ff4efa8d1886197bf",
+      "crates/quench-node/src/modules/path_glob.rs": "28b70aa48c10ae4126d4a09bccc00e4cba08a7d32cae80f62edc8f21bd6ec3d3",
+      "crates/quench-node/src/modules/path_parts.rs": "b8585fa5cbd741934b38cc2d1f0c7d96071b16b7f743ecf3fd6ee1f9281c6939",
+      "crates/quench-node/src/modules/path_posix.rs": "90570790eda6a9d9956bd007cb31bd9aef7bf8ad185e9e85cfc7265064692913",
+      "crates/quench-node/src/modules/path_win32.rs": "845692652347992b2cca33adf8da22c54c8cb8372709776431a8783775c49190",
+      "crates/quench-node/src/modules/path_win32_extra.rs": "406a27a955f47472f27ebf211c169a7f82ed558a015faca323a44be02dfe0911",
+      "crates/quench-node/src/modules/path_win32_normalize.rs": "d33c3af3967dc9e7066ecb52da3ae6e348468153e6f7027f6e5d789fd9093bef",
+      "crates/quench-node/src/modules/process.rs": "1ae3ac711e4a36818f7f4cb34bf5a37ae978456c323ad2dde68c1258ba1988b8",
+      "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+      "crates/quench-node/src/modules/timers.rs": "e37f0519a61ee6a147102efdeb48fd6a2b9841d8b116a4a6a0063989fa88d1d6",
+      "crates/quench-node/src/modules/tls.rs": "023be348bf3833c16eb67dc915df6f052142b39b58b772613783cdb5059e3f0b",
+      "crates/quench-node/src/polyfills/bootstrap/vfs.rs": "e94e6dfca3dad63e530d557d32fa5cbb19c04c71b8663416c5a72c2f03641249",
+      "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7"
+    }
+  },
+  "included_cases": [
+    {
+      "path": "tests/node-compat/stage-2393/vfs-router.js",
+      "sha256": "a1e52966d254974609a667c5a6a20e3a7329bfcd45d15e563497c7ae28ffb491",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_parts.rs",
+        "crates/quench-node/src/polyfills/bootstrap/vfs.rs"
+      ],
+      "obligations": [
+        "Path resolve/parse/relative/sep and join values feed asserted mount containment and relative routing (fixture lines 9-16). The case also has a VFS owner."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2843/path-string-units.js",
+      "sha256": "2ac96b026172cb5f6eeeec739e3f5654cfec70f9bb76ae988c8ba04023d141ca",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs"
+      ],
+      "obligations": [
+        "StringUnits arguments produce the asserted joined/resolved strings (fixture lines 5-6)."
+      ]
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-path.js",
+      "sha256": "d3f37e452511acd7a7d2a9cd9690eac4de62e8cdefb4ea44fb926184d52a10cf",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs"
+      ],
+      "obligations": [
+        "Path sep/delimiter values and namespace surface."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-basename.js",
+      "sha256": "65597c05aba2382d01fbe265db8f1c4f6a8a3abfbde15b195fc132ef33b285a5",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs",
+        "crates/quench-node/src/modules/path_parts.rs"
+      ],
+      "obligations": [
+        "POSIX and Win32 basename and suffix behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-dirname.js",
+      "sha256": "8c2deec17cf44d2a5d64a60a3f692fad69635b28e225451aa2619bc53b2da30a",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs"
+      ],
+      "obligations": [
+        "dirname roots and trailing separators."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-extname.js",
+      "sha256": "923a9c4d615770ea3aa054756d21046c17883d350fe53dc7dad22ae65bb24048",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs",
+        "crates/quench-node/src/modules/path_parts.rs"
+      ],
+      "obligations": [
+        "POSIX and Win32 extension edge cases."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-glob.js",
+      "sha256": "5feefd6107cad45c5b6c1c1da6b6ee682e39e21a977d5cde64123d426370bac3",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs",
+        "crates/quench-node/src/modules/path_glob.rs"
+      ],
+      "obligations": [
+        "Path glob matcher semantics and non-string TypeErrors (lines 34-47)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-isabsolute.js",
+      "sha256": "08a508f0392e255f3b42c435b384fdc35af70ae0c64ab63e279c78f10823c8a0",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs"
+      ],
+      "obligations": [
+        "POSIX roots, drive roots and UNC roots."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-join.js",
+      "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs"
+      ],
+      "obligations": [
+        "separator, drive-relative and UNC joins."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-makelong.js",
+      "sha256": "34e4930e946e4463b50a29f84c27f1d630ef9a6f4a8ffd23f36f7b727d8dda01",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs"
+      ],
+      "obligations": [
+        "toNamespacedPath conversions and pass-through identity/types."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-normalize.js",
+      "sha256": "334d57232e4a7201b86c41b6220882d2d6d1d52e480699e87cb6a9ce7c633264",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_normalize.rs"
+      ],
+      "obligations": [
+        "POSIX and Win32 normalization."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-parse-format.js",
+      "sha256": "1eca0e56c88a65727ea7717b13dda9a33e659df6bd5cd2075f67c6f17dbd600e",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs",
+        "crates/quench-node/src/modules/path_parts.rs"
+      ],
+      "obligations": [
+        "parse/format fields, order, errors and trailing separators."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-posix-exists.js",
+      "sha256": "b8565152f3b5634cebcc736c3f550ece68b80521116783cedb29a1593c9ec359",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs"
+      ],
+      "obligations": [
+        "path/posix alias identity equals path.posix."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-relative.js",
+      "sha256": "c50c170b438c400fb3a693e99c16f21f6c2f5ccdfab6626765b54b26f58bae03",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs"
+      ],
+      "obligations": [
+        "POSIX and Win32 relative path results."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-resolve.js",
+      "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs"
+      ],
+      "obligations": [
+        "absolute resolution and live process cwd."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-win32-exists.js",
+      "sha256": "9bae5d47421cc934dd37a5ce2a6c8af593cee2437e763bf31d2cc6d8fe21efd1",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs"
+      ],
+      "obligations": [
+        "path/win32 alias identity equals path.win32."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-zero-length-strings.js",
+      "sha256": "b3d90f9a2c38138a62863f58d98d80aa5ace9eb0534f1d7b80f5f5de57cfce3a",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs"
+      ],
+      "obligations": [
+        "empty-string semantics for join/normalize/isAbsolute/resolve/relative (lines 13-39)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path.js",
+      "sha256": "fa6a6b3db2f451b2a8c3eb9155cb3fa8929f2e1bf6ce9bcafe1b1ba982450fa6",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_win32.rs",
+        "crates/quench-node/src/modules/path_win32_extra.rs",
+        "crates/quench-node/src/modules/path_win32_normalize.rs",
+        "crates/quench-node/src/modules/path_parts.rs",
+        "crates/quench-node/src/modules/path_glob.rs"
+      ],
+      "obligations": [
+        "Path validation TypeErrors, separators/delimiters, method results and namespace identity (lines 27-73)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-os-homedir-no-envvar.js",
+      "sha256": "16e2d6747b85354e06a5c35f091bf4202dd7115bbcecd9d4fe42645823f5a5d1",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/os.rs"
+      ],
+      "obligations": [
+        "homedir result assertion checks that it contains path.sep (lines 15-18)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-posix-relative-on-windows.js",
+      "sha256": "9b6a8a4ed5b019ac63b921ca8e57ec6bbf2832943dd767bc4818cbe16aff4c75",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs"
+      ],
+      "obligations": [
+        "POSIX relative output with Windows host path state."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-win32-normalize-device-names.js",
+      "sha256": "3737fb8094da42d2a2619d82c66a06803a98b799628632dd517ba289b0ead5bb",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_win32.rs",
+        "crates/quench-node/src/modules/path_win32_normalize.rs"
+      ],
+      "obligations": [
+        "Win32 reserved-device-name normalization; upstream fixture skips off Windows but tests implemented Win32 semantics."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-require-resolve.js",
+      "sha256": "7e55f56f5c143bdade7a8d81b99eca1c40b447fa65b5519ecf3ea5b82e9971f9",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path_posix.rs"
+      ],
+      "obligations": [
+        "require.resolve paths entry matches path.dirname(__filename) (lines 81-91)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-promises-mkdtempDisposable.js",
+      "sha256": "52effcd8c678ac75047eb6c8f56b0014a3eafd46339158c92bb67eec79bd4fd3",
+      "status": "included",
+      "global_status": "excluded",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/path_posix.rs",
+        "crates/quench-node/src/modules/path_parts.rs",
+        "crates/quench-node/src/modules/fs_promises.rs"
+      ],
+      "obligations": [
+        "Path basename/dirname assertions on the returned temp directory; global case excluded because fs.promises.mkdtempDisposable is absent (the dormant bootstrap fragment is not registered)."
+      ],
+      "missing_capabilities": [
+        "The active Node host does not implement fs.promises.mkdtempDisposable; the dormant bootstrap fragment is not registered. Path basename/dirname are implemented, but the complete case requires this missing filesystem operation."
+      ]
+    }
+  ],
+  "excluded_locator_cases": [
+    {
+      "category": "fs_api",
+      "count": 21,
+      "owners": [
+        "crates/quench-node/src/modules/fs.rs",
+        "crates/quench-node/src/modules/fs_sync.rs",
+        "crates/quench-node/src/modules/fs_async.rs",
+        "crates/quench-node/src/modules/fs_promises.rs"
+      ],
+      "reason": "Path only supplies names or inputs; assertions observe filesystem operations, effects, or lifecycle.",
+      "paths": [
+        "tests/node-compat/stage-2060/fs-promises-access-mode.js",
+        "tests/node-compat/stage-2071/fs-cp-error-on-exist.js",
+        "tests/node-compat/stage-2072/fs-cp-sync-async-filter.js",
+        "tests/node-compat/stage-2073/fs-cp-filtered-invalid-destination.js",
+        "tests/node-compat/stage-2074/fs-cp-symlink-options.js",
+        "tests/node-compat/stage-2075/fs-cp-directory-errors.js",
+        "tests/node-compat/stage-2087/fs-access-portable-contract.js",
+        "tests/node-compat/stage-2090/fs-cp-incompatible-options.js",
+        "tests/node-compat/stage-2905/test-fs-mkdir-async-result.js",
+        "tests/node-compat/stage-2905/test-fs-mkdir-mode.js",
+        "tests/node-compat/stage-2905/test-fs-mkdir-proxy-options.js",
+        "tests/node-compat/stage-2905/test-fs-mkdir-string-mode.js",
+        "crates/quench-node-test/node-tests/test-fs.js",
+        "tests/node/test/parallel/test-fs-existssync-false.js",
+        "tests/node/test/parallel/test-fs-make-callback.js",
+        "tests/node/test/parallel/test-fs-operations-with-surrogate-pairs.js",
+        "tests/node/test/parallel/test-fs-truncate-sync.js",
+        "tests/node/test/parallel/test-fs-existssync-memleak-longpath.js",
+        "tests/node/test/parallel/test-fs-promises-watch-iterator.js",
+        "tests/node/test/parallel/test-fs-promises-watch.js",
+        "tests/node/test/parallel/test-fs-filehandle.js"
+      ]
+    },
+    {
+      "category": "vfs_provider_fs",
+      "count": 23,
+      "owners": [
+        "crates/quench-node/src/polyfills/bootstrap/vfs.rs",
+        "crates/quench-node/src/modules/fs.rs",
+        "crates/quench-node/src/modules/fs_sync.rs",
+        "crates/quench-node/src/modules/fs_async.rs",
+        "crates/quench-node/src/modules/fs_promises.rs"
+      ],
+      "reason": "Path resolve/join only constructs roots or names; assertions target VFS/provider filesystem behavior.",
+      "paths": [
+        "tests/node-compat/stage-2383/real-provider-positioned-handle.js",
+        "tests/node-compat/stage-2384/real-provider-promises-probe.js",
+        "tests/node-compat/stage-2385/real-provider-fstat-observation.js",
+        "tests/node-compat/stage-2386/real-provider-async-observer.js",
+        "tests/node-compat/stage-2388/real-provider-realpath.js",
+        "tests/node-compat/stage-2389/real-provider-readlink.js",
+        "tests/node-compat/stage-2390/real-provider-watch-surface.js",
+        "tests/node-compat/stage-2392/real-provider-symlink-rejection.js",
+        "tests/node-compat/stage-2409/vfs-real-symlink-async.js",
+        "tests/node-compat/stage-2410/vfs-real-symlink-sequence.js",
+        "tests/node-compat/stage-2411/vfs-real-promises-read.js",
+        "tests/node-compat/stage-2412/vfs-real-promises-middle.js",
+        "tests/node-compat/stage-2413/vfs-mounted-promises-paths.js",
+        "tests/node-compat/stage-2414/vfs-mounted-promises-mutations.js",
+        "tests/node-compat/stage-2415/vfs-mounted-promises-handle.js",
+        "tests/node-compat/stage-2416/vfs-mounted-promises-attributes.js",
+        "tests/node-compat/stage-2417/vfs-mounted-promises-link-temp.js",
+        "tests/node-compat/stage-2419/vfs-mounted-promise-buffer-encoding.js",
+        "tests/node-compat/stage-2420/vfs-mounted-promises-attribute-sequence.js",
+        "tests/node-compat/stage-2423/vfs-real-provider-access.js",
+        "tests/node-compat/stage-2431/vfs-real-symlink-absolute.js",
+        "tests/node-compat/stage-2492/fs-fixture-rerun.js",
+        "tests/node-compat/stage-2494/real-provider-internal-read.js"
+      ]
+    },
+    {
+      "category": "stream_filehandle",
+      "count": 7,
+      "owners": [
+        "crates/quench-node/src/modules/fs_promises.rs",
+        "crates/quench-node/src/modules/require.rs"
+      ],
+      "reason": "Path only creates fixture filenames; the tested missing capabilities are FileHandle pull(), pullSync(), writer(), or stream/iter adapters already excluded by the stream-family audit.",
+      "paths": [
+        "tests/node-compat/stage-2401/filehandle-pull-concurrency.js",
+        "tests/node-compat/stage-2402/filehandle-pull-lifecycle.js",
+        "tests/node-compat/stage-2403/filehandle-pull-zlib-concurrency.js",
+        "tests/node-compat/stage-2405/filehandle-pull-many.js",
+        "tests/node/test/parallel/test-fs-promises-file-handle-pull.js",
+        "tests/node/test/parallel/test-fs-promises-file-handle-pullsync.js",
+        "tests/node/test/parallel/test-fs-promises-file-handle-writer.js"
+      ]
+    },
+    {
+      "category": "module_resolution",
+      "count": 6,
+      "owners": [
+        "crates/quench-node/src/modules/require.rs"
+      ],
+      "reason": "Path operations only form module filenames/specifiers; assertions target require/resolve behavior.",
+      "paths": [
+        "tests/node-compat/stage-2114/module-directory-fallback.js",
+        "tests/node-compat/stage-2116/module-global-path-resolution.js",
+        "tests/node-compat/stage-2117/module-resolve.js",
+        "tests/node-compat/stage-2118/module-resolve-path-order.js",
+        "tests/node-compat/stage-2119/module-trailing-slash-package.js",
+        "tests/node/test/parallel/test-require-extension-over-directory.js"
+      ]
+    },
+    {
+      "category": "other_owners",
+      "count": 6,
+      "owners": [
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-node/src/modules/fs_sync.rs",
+        "crates/quench-node/src/modules/timers.rs",
+        "crates/quench-node/src/modules/tls.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "reason": "Path only locates child fixtures, source files, CLI documentation, or key material; assertions observe the named host API.",
+      "paths": [
+        "tests/node-compat/stage-2499/process-spawn-argv0-output.js",
+        "tests/node-compat/stage-2905/test-process-execpath-symlink.js",
+        "tests/node/test/parallel/test-process-env-allowed-flags-are-documented.js",
+        "tests/node/test/parallel/test-timers-nan-duration-warning.js",
+        "tests/node/test/parallel/test-timers-negative-duration-warning.js",
+        "tests/node/test/parallel/test-https-selfsigned-no-keycertsign-no-crash.js"
+      ]
+    }
+  ],
+  "alias_overlaps": [
+    "tests/node/test/parallel/test-path-posix-exists.js imports path and path/posix; one case row.",
+    "tests/node/test/parallel/test-path-win32-exists.js imports path and path/win32; one case row."
+  ],
+  "controls": [
+    "Path membership follows asserted Path behavior, not static imports.",
+    "The 63 locator-only cases remain eligible for their asserted API owners; Path EX does not overwrite global case disposition.",
+    "Do not exclude platform-specific Win32 behavior because the current host is macOS.",
+    "The mkdtempDisposable case has Path-observed behavior but remains globally excluded until the missing fs.promises method exists."
+  ]
+}
