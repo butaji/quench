@@ -214,28 +214,36 @@ fn utf8_units(units: &[u16]) -> Vec<u8> {
 
 /// Decode bytes to a string under a canonical encoding.
 pub fn decode_str(bytes: &[u8], encoding: &str) -> Value {
-    match encoding {
-        "hex" => Value::String(hex::encode(bytes)),
-        "latin1" => Value::String(bytes.iter().map(|b| *b as char).collect()),
-        "ascii" => Value::String(bytes.iter().map(|b| (b & 0x7F) as char).collect()),
-        "base64" => Value::String(base64_encode(bytes, true, false)),
-        "base64url" => Value::String(base64_encode(bytes, false, true)),
-        "utf16le" => decode_utf16le(bytes),
-        _ => Value::String(String::from_utf8_lossy(bytes).into_owned()),
+    let units = decode_units(bytes, encoding);
+    if encoding == "utf16le" {
+        match String::from_utf16(&units) {
+            Ok(text) => Value::String(text),
+            Err(_) => Value::StringUnits(std::rc::Rc::new(
+                quench_runtime::value::StringUnitsData::new(units),
+            )),
+        }
+    } else {
+        Value::String(String::from_utf16_lossy(&units))
     }
 }
 
-fn decode_utf16le(bytes: &[u8]) -> Value {
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-        .collect();
-    match String::from_utf16(&units) {
-        Ok(s) => Value::String(s),
-        Err(_) => Value::StringUnits(std::rc::Rc::new(
-            quench_runtime::value::StringUnitsData::new(units),
-        )),
-    }
+/// Decode bytes to UTF-16 code units without tying the codec to a VM value.
+pub(crate) fn decode_units(bytes: &[u8], encoding: &str) -> Vec<u16> {
+    let text = match encoding {
+        "hex" => hex::encode(bytes),
+        "latin1" => return bytes.iter().map(|byte| u16::from(*byte)).collect(),
+        "ascii" => return bytes.iter().map(|byte| u16::from(byte & 0x7f)).collect(),
+        "base64" => base64_encode(bytes, true, false),
+        "base64url" => base64_encode(bytes, false, true),
+        "utf16le" => {
+            return bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+        }
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    };
+    text.encode_utf16().collect()
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

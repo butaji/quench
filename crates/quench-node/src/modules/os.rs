@@ -185,7 +185,11 @@ fn sysinfo_cpus() -> Vec<CpuInfo> {
 }
 
 pub fn totalmem(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Number(sysinfo_total() as f64))
+    Ok(Value::Number(total_memory_bytes() as f64))
+}
+
+pub(crate) fn total_memory_bytes() -> u64 {
+    sysinfo_total()
 }
 
 pub fn freemem(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {

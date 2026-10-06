@@ -1,4 +1,4 @@
-//! Run the checked-in Node parallel profile through the shared VM.
+//! Run checked-in Node parallel fixtures through the shared VM.
 
 use quench_node_test::{case_process::worker_entry_with, parallel_profile, shared_runner};
 use std::process::ExitCode;
@@ -16,18 +16,18 @@ fn main() -> ExitCode {
         }
     };
     if options.help {
-        println!("run-parallel-next --profile NAME [--filter NAME] [--timeout-secs N]");
+        println!("run-parallel-next [--profile NAME] [--filter NAME] [--timeout-secs N]");
         return ExitCode::SUCCESS;
     }
     parallel_profile::run(
-        Some(&options.profile),
+        options.profile.as_deref(),
         options.filter.as_deref(),
         options.timeout_secs,
     )
 }
 
 struct Options {
-    profile: String,
+    profile: Option<String>,
     filter: Option<String>,
     timeout_secs: u64,
     help: bool,
@@ -56,11 +56,9 @@ impl Options {
                 value => return Err(format!("unknown option {value}")),
             }
         }
-        let profile = if help {
-            profile.unwrap_or_default()
-        } else {
-            profile.ok_or("--profile is required")?
-        };
+        if !help && profile.is_none() && filter.is_none() {
+            return Err("--profile or --filter is required".into());
+        }
         Ok(Self {
             profile,
             filter,
