@@ -127,6 +127,7 @@ pub(super) fn require(
         Some(
             module @ (BuiltinModule::Fs
             | BuiltinModule::Net
+            | BuiltinModule::Http
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
@@ -168,6 +169,7 @@ enum BuiltinModule {
     PathWin32,
     Fs,
     Net,
+    Http,
     Os,
     Buffer,
     Stream,
@@ -191,6 +193,7 @@ impl BuiltinModule {
         match self {
             Self::Fs => Some("fs"),
             Self::Net => Some("net"),
+            Self::Http => Some("http"),
             Self::Os => Some("os"),
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
@@ -228,6 +231,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:fs", BuiltinModule::Fs),
     ("net", BuiltinModule::Net),
     ("node:net", BuiltinModule::Net),
+    ("http", BuiltinModule::Http),
+    ("node:http", BuiltinModule::Http),
     ("os", BuiltinModule::Os),
     ("node:os", BuiltinModule::Os),
     ("buffer", BuiltinModule::Buffer),
@@ -280,6 +285,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
     match builtin {
         BuiltinModule::Fs => crate::modules::fs::shared_vm::module(context),
         BuiltinModule::Net => crate::modules::net::shared_vm::module(context),
+        BuiltinModule::Http => crate::modules::http::shared_vm::module(context),
         BuiltinModule::Os => crate::modules::os::shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer::shared_vm::module(context),
         BuiltinModule::Stream => {

@@ -361,5 +361,44 @@
       ],
       "invocation": "CommonJS eval using node:string_decoder and node:stream; direct fixture invocation inherits the repository root type=module scope."
     }
+  },
+  "http_methods_probe": {
+    "scope": "shared_http_module_shape",
+    "source_revision": "7cb8893906fe46205f8910b16575782c259106fd",
+    "source_state": "Dirty worktree; these hashes bind this focused probe to its source and runner bytes.",
+    "suite": {
+      "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+      "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+      "manifest_sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc"
+    },
+    "runner_sha256": "bfb200d1a9b57865eebddb9eadbbc7e1d313ea6e56d8efe4748d63de6954bf81",
+    "owners_sha256": {
+      "crates/quench-node/src/host/shared_vm/commonjs.rs": "1c768c02fec21e675368c6f2ee712c1cf908d7a1bd0523af04b0f3c2e34006fe",
+      "crates/quench-node/src/modules/http.rs": "f3a73048bc697e6893a526c1616b73751722bdda74d266ed31a50016f7d94fd7",
+      "crates/quench-node/src/modules/http/shared_vm.rs": "cbf85921bc245c6f5dda564ffb0f4b900d5184a0ab5076b0317395009bb8f584"
+    },
+    "cases": [
+      {
+        "path": "tests/node/test/parallel/test-http-methods.js",
+        "sha256": "8f002f7fd5486e2923715290ac40578fd5320eb677aeec121d47350551fa8cbd",
+        "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-http-methods.js",
+        "status": "pass",
+        "result": {
+          "pass": 1,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 1
+        }
+      }
+    ],
+    "local_node_oracle": {
+      "node": "v26.10.0",
+      "status": "pass",
+      "check": "node:http METHODS equals the fixture's sorted 35-method list",
+      "invocation_note": "The fixture cannot be invoked directly from this repository because root package.json sets type=module; Node's CommonJS eval checked the same API value."
+    }
   }
 }
