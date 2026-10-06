@@ -18,6 +18,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "strict" (1) => crate::modules::assert::shared_vm::ok,
         method "strictEqual" (2) => crate::modules::assert::shared_vm::strict_equal,
         method "throws" (3) => crate::modules::assert::shared_vm::throws,
+        global "structuredClone" (1) => crate::modules::clone_shared_vm::structured_clone,
     ]
 }
 

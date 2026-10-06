@@ -121,6 +121,7 @@ mod sort;
 mod string;
 mod string_cache;
 mod string_extra;
+mod structured_clone;
 mod superinstruction;
 mod symbol;
 mod temporal;
