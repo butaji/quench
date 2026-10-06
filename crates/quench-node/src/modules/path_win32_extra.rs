@@ -261,7 +261,7 @@ pub fn dirname(
     Ok(Value::String(dirname_str(&path)))
 }
 
-fn dirname_str(path: &str) -> String {
+pub(crate) fn dirname_str(path: &str) -> String {
     if path.is_empty() {
         return ".".into();
     }

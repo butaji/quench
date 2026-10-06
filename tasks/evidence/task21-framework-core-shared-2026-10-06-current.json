@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "framework_core_shared_vm_profile_current",
+  "run_date": "2026-10-06",
+  "source_revision": "7caf598bdf970ec20d714c2548f1aeb2831b6f01",
+  "source_state": "Dirty worktree; aggregate source-tree digest, runner binary, manifest, selected fixture hashes, and owner hashes bind this result.",
+  "source_snapshot": {
+    "roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "file_count": 1286,
+    "sha256": "6c2ccd12c000ef4236c127ea8720a7a644b102191755ae221259be02f0332d39"
+  },
+  "runner": {
+    "command": "target/iteration/run-parallel-next --profile framework-core --timeout-secs 30",
+    "engine": "shared VM through run-parallel-next",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "a858b5168bde484d158489ad5911ebdebb7e64d4a49c3adf5aa9b4b91e84e6f4",
+    "timeout_seconds_per_fixture": 30,
+    "build_profile": "iteration; functional qualification only, no performance claim"
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "c6021ca6c501cd7ea5ba3bab5456f42b08c0b8d190a0f980f008bbc6ab011e43",
+    "profile": "framework-core",
+    "selected_count": 26,
+    "selected_fixtures": [
+      {
+        "path": "tests/node/test/parallel/test-http-methods.js",
+        "sha256": "8f002f7fd5486e2923715290ac40578fd5320eb677aeec121d47350551fa8cbd",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
+        "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-readable-from.js",
+        "sha256": "81a800f5e3d73933d110e9578b3bf31776e814c73b472910ec34e20bfd3b5124",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-extname.js",
+        "sha256": "923a9c4d615770ea3aa054756d21046c17883d350fe53dc7dad22ae65bb24048",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-join.js",
+        "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-normalize.js",
+        "sha256": "334d57232e4a7201b86c41b6220882d2d6d1d52e480699e87cb6a9ce7c633264",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-resolve.js",
+        "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-util-inherits.js",
+        "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-buffer-tostring.js",
+        "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-string-decoder.js",
+        "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-event-emitter-get-max-listeners.js",
+        "sha256": "8c1e179c08ca0565afe0fdf71b7ea68a573a0f67403936d476eb5bf969793a83",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-event-emitter-once.js",
+        "sha256": "0eaa75b1102a47f307f9004a60fb9a48b0968e94a4e484e07436228abc4241fd",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-has-subscribers.js",
+        "sha256": "f45355d6191bbbcef10fa8693727c0db02bf5e8505f87e05b1ada609fa9c67f6",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+        "sha256": "80ec1039fa620286f417ea7cf2aa994e24e9985b25d3a30528796806d1f85dca",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+        "sha256": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+        "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-content-length.js",
+        "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed",
+        "shared_vm": "pass",
+        "local_node": "oracle_mismatch"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-write-head.js",
+        "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
+        "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+        "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js",
+        "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-request-end.js",
+        "sha256": "3e0b807998d5d332cb0f0ebaa4d9131776a0889c92729e0092216285e0737c33",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-response-readable.js",
+        "sha256": "6fd7cd5b9a45b4ecb5c5204f3af1e4658bf257eee4a8ca80382aaee0adffabac",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-allow-content-length-304.js",
+        "sha256": "549f270f168edd84dc9a3f68b60dbdf342064080fd1d37837e8b135ea36863f1",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-listening.js",
+        "sha256": "59bf8088ec4ad0fce262e0a50a7ea7c79950d39e4bf202d49634ee9fc30dd0f8",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-global-webstreams.js",
+        "sha256": "eb3016b2899247ca258c8f8229d351150be47703e79711693778a3b33dac2f06",
+        "shared_vm": "pass",
+        "local_node": "pass"
+      }
+    ]
+  },
+  "shared_vm_result": {
+    "pass": 26,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 26,
+    "exit_code": 0
+  },
+  "local_node_oracle": {
+    "node": "v26.10.0",
+    "status": "25 pass; one upstream expectation differs from this local release",
+    "command": "Execute byte-identical fixture symlinks with Node using a temporary CommonJS package scope, upstream test/common and test/fixtures, NODE_SKIP_FLAG_CHECK=true, and --preserve-symlinks.",
+    "pass": 25,
+    "known_mismatch": {
+      "path": "tests/node/test/parallel/test-http-content-length.js",
+      "expected": "The pinned fixture expects IncomingMessage request headers to have a null prototype.",
+      "actual": "Local Node v26.10.0 returns an ordinary object for req.headers in this scenario.",
+      "implication": "The shared-VM fixture passes against the pinned assertion. The local executable is not an exact oracle for this version-sensitive expectation."
+    }
+  },
+  "attempt_history": [
+    {
+      "command": "target/iteration/run-parallel-next --profile framework-core --timeout-secs 30",
+      "result": "25 pass, 1 timeout (test-string-decoder.js)"
+    },
+    {
+      "command": "target/iteration/run-parallel-next --filter test-string-decoder.js --timeout-secs 30",
+      "result": "one isolated timeout; no source change followed"
+    },
+    {
+      "command": "target/iteration/run-parallel-next --filter test-string-decoder.js --timeout-secs 120",
+      "result": "pass; 12.079 seconds wall time"
+    },
+    {
+      "command": "target/iteration/run-parallel-next --filter test-string-decoder.js --timeout-secs 30",
+      "result": "pass"
+    },
+    {
+      "command": "target/iteration/run-parallel-next --profile framework-core --timeout-secs 30",
+      "result": "26 pass, no timeouts"
+    }
+  ],
+  "owner_sha256": {
+    "crates/quench-node/src/host/shared_vm.rs": "49fcb31935d80cf1ec31eef989ebc21670a740d88d10b28147601579f28484ff",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "ef67566622e166f986e308a9a4ed07c22271e1822e25d4c714cc2ecafc6d396c",
+    "crates/quench-node/src/modules/path/shared_vm.rs": "206ab111353ae03f2082f2f1acffcfc748e2a2ad41ac4df0ec53e910dce39c55",
+    "crates/quench-node/src/modules/path_parts.rs": "b8585fa5cbd741934b38cc2d1f0c7d96071b16b7f743ecf3fd6ee1f9281c6939",
+    "crates/quench-node/src/modules/path_posix.rs": "07b50e2e3dfb4bcdb4c84aac296e1b81b54249a4fb84a1ee1d4f15dd1ede4fad",
+    "crates/quench-node/src/modules/path_win32_extra.rs": "473855f9783101c5109793c1bceebf5c21071ec1aa9ef9630d591009284c5b4c",
+    "crates/quench-node/src/modules/string_decoder/shared_vm.rs": "9368f0d57aa043f222282b9864a25a8480b1f5838beaadee2e2c8b60eac6b761",
+    "crates/quench-node/src/modules/stream_prelude.js": "dfd4a7af1eb6c5d69b03bdcb055755b91f6c266d07932d126cafbbd1831835c6",
+    "crates/quench-node/src/modules/http/shared_vm.rs": "9e6eba33723670901b710a1fbdbf7b7033da40b0d7b03070a838ae84b0451500",
+    "crates/quench-node/src/modules/fs/shared_vm.rs": "7acea43e6b14e59ea18b4f57f9ca2ce8c45d9ab59dc67fcfaaa8573b1c8e5382",
+    "crates/quench-node/src/modules/async_hooks/shared_vm.rs": "5b473bd3c127924b9e3071f4b9147633218aa96f70adf6a52043a5db3bd85fb6",
+    "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs": "d5f8f6c82ddeff4707a34b909cb5eb756c7e5433154b8cbefe065f21279d66f6",
+    "crates/quench-node/src/modules/buffer/shared_vm.rs": "cfc199ff6eb0e79442e3fec7bdca3b952f2bec76824a81c7ddc09cdc9c8aeafd",
+    "crates/quench-node-test/src/parallel_profile.rs": "6d2659e5c805584e43b43ca79d43af3731e29caa5ea81a86350ba1ea48d97564",
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05"
+  },
+  "qualification": "The final current-source run passes the intended 26-case shared framework profile. One earlier run timed out on the exhaustive StringDecoder partition fixture, but the isolated fixture then passed twice and a second complete 26-case run passed. Local Node v26.10.0 disagrees with one version-sensitive pinned header-prototype assertion. This is focused Task 21 profile evidence only; package scenarios and the frozen Task 22 inventory still require their own current-source qualification."
+}

@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "node_parallel_affected_path_slice",
+  "run_date": "2026-10-06",
+  "source_revision": "7caf598bdf970ec20d714c2548f1aeb2831b6f01",
+  "source_state": "Dirty worktree; owner, fixture, manifest, runner, and binary hashes bind this focused rerun to the tested snapshot.",
+  "runner": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-path-basename.js --timeout-secs 30; repeat with test-path-dirname.js",
+    "engine": "shared VM through run-parallel-next",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "a858b5168bde484d158489ad5911ebdebb7e64d4a49c3adf5aa9b4b91e84e6f4",
+    "timeout_seconds_per_fixture": 30
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "7f7995c1a06b3f3e2078b1b7255dfcacac33335956a2f71f894a98e7c397de40",
+    "selection": "Two exact name-filtered upstream fixtures; filters are independent of the framework-core profile tags."
+  },
+  "result": {
+    "pass": 2,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 2,
+    "exit_code": 0
+  },
+  "local_node_oracle": {
+    "node": "v26.10.0",
+    "status": "pass",
+    "command": "Execute byte-identical upstream fixtures through local Node v26.10.0 in a temporary CommonJS package scope, preserving fixture-relative test/parallel paths and the upstream test/common directory.",
+    "cases_passed": 2
+  },
+  "cases": [
+    {
+      "path": "tests/node/test/parallel/test-path-basename.js",
+      "sha256": "65597c05aba2382d01fbe265db8f1c4f6a8a3abfbde15b195fc132ef33b285a5",
+      "status": "pass",
+      "obligation": "POSIX and Win32 basename behavior, suffix removal, separators, drive roots, trailing separators, and ordinary path strings."
+    },
+    {
+      "path": "tests/node/test/parallel/test-path-dirname.js",
+      "sha256": "8c2deec17cf44d2a5d64a60a3f692fad69635b28e225451aa2619bc53b2da30a",
+      "status": "pass",
+      "obligation": "POSIX and Win32 dirname behavior for roots, drive-relative paths, UNC roots, trailing separators, and ordinary path strings."
+    }
+  ],
+  "owner_sha256": {
+    "crates/quench-node/src/host/shared_vm.rs": "49fcb31935d80cf1ec31eef989ebc21670a740d88d10b28147601579f28484ff",
+    "crates/quench-node/src/modules/path/shared_vm.rs": "206ab111353ae03f2082f2f1acffcfc748e2a2ad41ac4df0ec53e910dce39c55",
+    "crates/quench-node/src/modules/path_parts.rs": "b8585fa5cbd741934b38cc2d1f0c7d96071b16b7f743ecf3fd6ee1f9281c6939",
+    "crates/quench-node/src/modules/path_posix.rs": "07b50e2e3dfb4bcdb4c84aac296e1b81b54249a4fb84a1ee1d4f15dd1ede4fad",
+    "crates/quench-node/src/modules/path_win32_extra.rs": "473855f9783101c5109793c1bceebf5c21071ec1aa9ef9630d591009284c5b4c",
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/parallel_profile.rs": "6d2659e5c805584e43b43ca79d43af3731e29caa5ea81a86350ba1ea48d97564"
+  },
+  "limits": "This qualifies only the two selected Path methods on the shared host and their byte-identical local Node oracle runs. It does not qualify the remaining Path API, full Node inventory, or Stage A gate.",
+  "source_snapshot": {
+    "roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "file_count": 1286,
+    "sha256": "6c2ccd12c000ef4236c127ea8720a7a644b102191755ae221259be02f0332d39"
+  }
+}

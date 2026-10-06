@@ -14,6 +14,10 @@ enum Method {
     Join,
     Resolve,
     Relative,
+    Basename,
+    Dirname,
+    Extname,
+    Normalize,
 }
 
 impl Flavor {
@@ -42,13 +46,25 @@ impl Flavor {
 }
 
 impl Method {
-    const ALL: [Self; 3] = [Self::Join, Self::Resolve, Self::Relative];
+    const ALL: [Self; 7] = [
+        Self::Join,
+        Self::Resolve,
+        Self::Relative,
+        Self::Basename,
+        Self::Dirname,
+        Self::Extname,
+        Self::Normalize,
+    ];
 
     fn name(self) -> &'static str {
         match self {
             Self::Join => "join",
             Self::Resolve => "resolve",
             Self::Relative => "relative",
+            Self::Basename => "basename",
+            Self::Dirname => "dirname",
+            Self::Extname => "extname",
+            Self::Normalize => "normalize",
         }
     }
 
@@ -57,6 +73,25 @@ impl Method {
             Self::Join => "pathJoin",
             Self::Resolve => "pathResolve",
             Self::Relative => "pathRelative",
+            Self::Basename => "pathBasename",
+            Self::Dirname => "pathDirname",
+            Self::Extname => "pathExtname",
+            Self::Normalize => "pathNormalize",
+        }
+    }
+
+    fn argument_count(self, available: usize) -> usize {
+        match self {
+            Self::Join | Self::Resolve => available,
+            Self::Relative | Self::Basename => available.min(2),
+            Self::Dirname | Self::Extname | Self::Normalize => available.min(1),
+        }
+    }
+
+    fn path_count(self, available: usize) -> usize {
+        match self {
+            Self::Basename | Self::Dirname | Self::Extname | Self::Normalize => available.min(1),
+            Self::Join | Self::Resolve | Self::Relative => available,
         }
     }
 }
@@ -139,6 +174,38 @@ pub(crate) fn relative_operation(
     apply(context, function, args, Method::Relative)
 }
 
+pub(crate) fn basename_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::Basename)
+}
+
+pub(crate) fn dirname_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::Dirname)
+}
+
+pub(crate) fn extname_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::Extname)
+}
+
+pub(crate) fn normalize_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::Normalize)
+}
+
 fn apply(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -150,11 +217,35 @@ fn apply(
         .string_text(data)?
         .and_then(parse_flavor)
         .ok_or_else(|| RootedError::host("invalid Path operation data"))?;
-    let paths = args
+    let arguments = &args[..method.argument_count(args.len())];
+    let path_arguments = &arguments[..method.path_count(arguments.len())];
+    if matches!(
+        method,
+        Method::Basename | Method::Dirname | Method::Extname | Method::Normalize
+    ) && path_arguments.is_empty()
+    {
+        return Err(path_type_error(context, "path", "undefined")?);
+    }
+    let paths = path_arguments
         .iter()
         .enumerate()
-        .map(|(index, argument)| argument_string(context, *argument, index))
+        .map(|(index, argument)| argument_string(context, *argument, index, method))
         .collect::<Result<Vec<_>, _>>()?;
+    let suffix = if matches!(method, Method::Basename) {
+        match arguments.get(1).copied() {
+            Some(argument)
+                if context
+                    .rooted_value(argument)
+                    .is_some_and(|value| value.is_undefined()) =>
+            {
+                None
+            }
+            Some(argument) => Some(argument_string(context, argument, 1, method)?),
+            None => None,
+        }
+    } else {
+        None
+    };
 
     let result = match (flavor, method) {
         (Flavor::Posix, Method::Join) => crate::modules::path_posix::join_strings(&paths),
@@ -186,6 +277,26 @@ fn apply(
                 |device| process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone()),
             )
         }
+        (Flavor::Posix, Method::Basename) => {
+            crate::modules::path_parts::basename_str(&paths[0], suffix.as_deref(), false)
+        }
+        (Flavor::Win32, Method::Basename) => {
+            crate::modules::path_parts::basename_str(&paths[0], suffix.as_deref(), true)
+        }
+        (Flavor::Posix, Method::Dirname) => crate::modules::path_posix::dirname_str(&paths[0]),
+        (Flavor::Win32, Method::Dirname) => {
+            crate::modules::path_win32_extra::dirname_str(&paths[0])
+        }
+        (Flavor::Posix, Method::Extname) => {
+            crate::modules::path_parts::extname_str(&paths[0], false)
+        }
+        (Flavor::Win32, Method::Extname) => {
+            crate::modules::path_parts::extname_str(&paths[0], true)
+        }
+        (Flavor::Posix, Method::Normalize) => crate::modules::path_posix::normalize_str(&paths[0]),
+        (Flavor::Win32, Method::Normalize) => {
+            crate::modules::path_win32_normalize::normalize_str(&paths[0])
+        }
     };
     Ok(context.string_rooted(&result))
 }
@@ -202,22 +313,33 @@ fn argument_string(
     context: &mut NativeContext<'_, NodeHost>,
     argument: RootId,
     index: usize,
+    method: Method,
 ) -> Result<String, RootedError> {
     if let Some(value) = context.string_text(argument)? {
         return Ok(value);
     }
-    let name = match index {
-        0 => "paths[0]",
-        1 => "paths[1]",
+    let name = match (method, index) {
+        (Method::Basename | Method::Dirname | Method::Extname | Method::Normalize, 0) => "path",
+        (Method::Basename, _) => "suffix",
+        (_, 0) => "paths[0]",
+        (_, 1) => "paths[1]",
         _ => "path",
     };
+    Err(path_type_error(context, name, "an instance of Object")?)
+}
+
+fn path_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    received: &str,
+) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted(&format!(
-        "The \"{name}\" argument must be of type string. Received an instance of Object"
+        "The \"{name}\" argument must be of type string. Received {received}"
     ))?;
     let key = context.string_rooted("code");
     let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
     let _ = context.set_property_rooted(error, key, code, error)?;
-    Err(context.throw(error))
+    Ok(context.throw(error))
 }
 
 fn process_cwd(context: &mut NativeContext<'_, NodeHost>) -> Result<String, RootedError> {
