@@ -40,7 +40,7 @@ test-stream-event-names.js
 test-stream-base-prototype-accessors-enumerability.js
 test-stream-auto-destroy.js # profile=framework-core
 test-stream-inheritance.js
-test-readable-from.js
+test-readable-from.js # profile=framework-core
 test-stream-add-abort-signal.js
 test-stream-duplex-end.js
 test-stream-end-of-streams.js
