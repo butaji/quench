@@ -7207,7 +7207,19 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "require(\"async_hooks\") returns the implemented module object."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2664/worker-hasref.js",
@@ -7218,7 +7230,22 @@
         "assert",
         "async_hooks",
         "worker_threads"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/worker_threads.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "WORKER async resource exposes hasRef; Worker ref/unref and post-exit lifecycle are observed."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2665/async-resource-validation.js",
@@ -7227,7 +7254,19 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "AsyncResource validates missing or empty type and negative or fractional IDs with the expected error names and codes."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2666/async-hooks-timer-init.js",
@@ -7236,7 +7275,22 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Enabling and disabling a hook returns the hook, and scheduling one immediate emits one init event."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2668/buffer-alloc-tail-call.js",
@@ -7294,7 +7348,23 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/promise.rs"
+        ],
+        "obligations": [
+          "Two Promise constructions emit exactly two PROMISE init callbacks, checked at process exit."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2678/diagnostics-channel-lexical-isolation.js",
@@ -7929,7 +7999,21 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/promise.rs"
+        ],
+        "obligations": [
+          "Promise init trigger chain, before/after callbacks, execution IDs and trigger IDs match the asserted identities."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2728/promise-simple.js",
@@ -7938,7 +8022,21 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/promise.rs"
+        ],
+        "obligations": [
+          "Constructing two Promises emits exactly two PROMISE init events."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2729/diagnostics-channel-core.js",
@@ -8268,7 +8366,22 @@
         "assert",
         "async_hooks",
         "worker_threads"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/worker_threads.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "WORKER async resource exposes hasRef; Worker ref/unref transitions and terminate Promise lifecycle are observed."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2742/worker-unref-deferred-start.js",
@@ -10234,7 +10347,22 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/polyfills/bootstrap/core_head.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/promise.rs"
+        ],
+        "obligations": [
+          "enterWith store remains observable across await and Promise continuation boundaries."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3002/async-local-storage-exit.js",
@@ -10243,7 +10371,20 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/polyfills/bootstrap/core_head.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "exit temporarily removes the store, returns the callback result, and restores the outer store."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3003/async-local-storage-scope.js",
@@ -10252,7 +10393,20 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/polyfills/bootstrap/core_head.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "defaultValue and nested withScope restore stores correctly; dispose is idempotent."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3004/async-local-storage-static-capture.js",
@@ -10261,7 +10415,20 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/polyfills/bootstrap/core_head.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Static bind and snapshot preserve the store captured when each function is created."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3005/diagnostics-tracing-subscriber-state.js",
@@ -10412,7 +10579,19 @@
       "static_module_specifiers": [
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "AsyncResource.domain exposes the implemented removed-property error and exact message."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3043/domain-stack-state-machine.js",
@@ -10533,7 +10712,23 @@
       "role": "assertion_case",
       "static_module_specifiers": [
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/construct_builtins.rs",
+          "crates/quench-runtime/src/execute.rs",
+          "crates/quench-runtime/src/vm/vm_builtin_numeric.rs"
+        ],
+        "obligations": [
+          "Explicit garbage collection invokes destroy for an automatic AsyncResource."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3054/cluster-capability-identities.js",
@@ -19027,7 +19222,29 @@
         "internal/async_context_frame",
         "internal/async_hooks",
         "internal/timers"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/polyfills/bootstrap/core_head.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/construct_builtins.rs",
+          "crates/quench-runtime/src/execute.rs",
+          "crates/quench-runtime/src/vm/vm_builtin_numeric.rs"
+        ],
+        "obligations": [
+          "Timer callbacks see the bound store; timer firing or cancellation releases retained store, callback and args so the weak store can collect."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-timers-nan-duration-warning-promises.js",
@@ -19099,7 +19316,23 @@
         "async_hooks",
         "diagnostics_channel",
         "assert"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Callback tracing runs under the start-bound store, async callback tracing under the asyncStart-bound store, then restores the outer scope."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
@@ -19110,7 +19343,20 @@
         "async_hooks",
         "diagnostics_channel",
         "assert"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "traceSync applies the bound store within the callback and restores it afterward."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-run-stores.js",
@@ -19122,7 +19368,23 @@
         "async_hooks",
         "diagnostics_channel",
         "assert"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers_promises.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-runtime/src/promise.rs"
+        ],
+        "obligations": [
+          "tracePromise preserves the first store across await and clears it after Promise settlement."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-process-euid-egid.js",
@@ -19201,7 +19463,22 @@
         "../common",
         "assert",
         "async_hooks"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Scheduling one immediate emits one init; repeated disable prevents later hook callbacks."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-argon2-unsupported.js",
@@ -20961,7 +21238,22 @@
         "assert",
         "async_hooks",
         "worker_threads"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/worker_threads.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "WORKER init resource exposes hasRef and tracks Worker ref/unref transitions through exit."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-worker-resource-limits.js",
