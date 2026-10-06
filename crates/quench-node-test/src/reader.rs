@@ -13,6 +13,7 @@ pub enum NodeOutcome {
     Pass,
     Fail { reason: String },
     Skip { reason: String },
+    GuestExit { code: i32 },
 }
 
 /// One Node fixture file + its raw source.
@@ -321,7 +322,7 @@ fn strip_v8_native_probes(source: &str) -> String {
         .join("\n")
 }
 
-fn fixture_flags(source: &str) -> Vec<String> {
+pub(crate) fn fixture_flags(source: &str) -> Vec<String> {
     source
         .lines()
         .filter_map(|line| line.trim().strip_prefix("// Flags:"))

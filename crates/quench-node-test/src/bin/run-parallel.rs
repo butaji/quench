@@ -21,12 +21,6 @@ use quench_node_test::case_process::{
 };
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
-const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
-
-struct ManifestEntry {
-    name: String,
-    profiles: Vec<String>,
-}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -140,110 +134,8 @@ fn run_one(path: PathBuf) -> ExitCode {
     }
 }
 
-fn manifest_entries() -> Vec<ManifestEntry> {
-    let manifest = std::fs::read_to_string(MANIFEST).unwrap_or_default();
-    manifest
-        .lines()
-        .filter_map(|line| {
-            let (name, annotation) = line.split_once('#').unwrap_or((line, ""));
-            let name = name.trim();
-            if name.is_empty() {
-                return None;
-            }
-            let profiles = annotation
-                .split_whitespace()
-                .filter_map(|part| part.strip_prefix("profile="))
-                .map(str::to_string)
-                .collect();
-            Some(ManifestEntry {
-                name: name.to_string(),
-                profiles,
-            })
-        })
-        .collect()
-}
-
 fn run_manifest(profile: Option<&str>) -> ExitCode {
-    if !std::path::Path::new(PARALLEL_DIR).is_dir() {
-        eprintln!(
-            "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
-             initialize the tests/node submodule before running run-parallel"
-        );
-        return ExitCode::from(2);
-    }
-    let entries = manifest_entries();
-    if entries.is_empty() {
-        eprintln!("read {MANIFEST}: missing or empty manifest");
-        return ExitCode::from(2);
-    }
-    let all_names: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Err(error) = validate_manifest(&all_names, &root.join(PARALLEL_DIR)) {
-        eprintln!("invalid {MANIFEST}: {error}");
-        return ExitCode::from(2);
-    }
-    let names: Vec<&str> = entries
-        .iter()
-        .filter(|entry| profile.is_none_or(|profile| entry.profiles.iter().any(|p| p == profile)))
-        .map(|entry| entry.name.as_str())
-        .collect();
-    if names.is_empty() {
-        eprintln!(
-            "error: manifest has no members for profile {}",
-            profile.unwrap_or("")
-        );
-        return ExitCode::from(2);
-    }
-    let mut counts = [0usize; RunResult::COUNT];
-    // Resolve fixture paths against the startup CWD and isolate every fixture
-    // in a child process. A manifest entry must not be able to retain module
-    // state, change the runner's CWD, crash the gate, or hang it indefinitely.
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    for name in &names {
-        let path = root.join(PARALLEL_DIR).join(name);
-        let result = triage_one(&exe, &path, DEFAULT_CASE_TIMEOUT_SECS);
-        counts[result as usize] += 1;
-        println!("{}  {name}", result.label().to_uppercase());
-    }
-    println!(
-        "parallel: pass={} skip={} fail={} timeout={} crash={} unclassified={} total={}",
-        counts[0],
-        counts[1],
-        counts[2],
-        counts[3],
-        counts[4],
-        counts[5],
-        names.len()
-    );
-    gate_exit(counts[RunResult::Pass as usize], names.len())
-}
-
-fn validate_manifest(names: &[String], parallel_root: &std::path::Path) -> Result<(), String> {
-    let mut seen = std::collections::HashSet::with_capacity(names.len());
-    for name in names {
-        if std::path::Path::new(name)
-            .components()
-            .any(|part| !matches!(part, std::path::Component::Normal(_)))
-        {
-            return Err(format!(
-                "fixture must be relative to the parallel suite: {name}"
-            ));
-        }
-        if !seen.insert(name) {
-            return Err(format!("duplicate fixture entry: {name}"));
-        }
-        let path = parallel_root.join(name);
-        if !path.is_file() {
-            return Err(format!("fixture does not exist: {name}"));
-        }
-        if !matches!(
-            path.extension().and_then(|value| value.to_str()),
-            Some("js" | "mjs" | "cjs")
-        ) {
-            return Err(format!("fixture has unsupported extension: {name}"));
-        }
-    }
-    Ok(())
+    quench_node_test::parallel_profile::run(profile, None, DEFAULT_CASE_TIMEOUT_SECS)
 }
 
 fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {

@@ -11,8 +11,10 @@
 
 pub mod case_process;
 pub mod inventory;
+pub mod parallel_profile;
 pub mod reader;
 pub mod runner;
+pub mod shared_runner;
 pub mod stages;
 
 pub use reader::{NodeFixture, NodeOutcome, NodeRunner};

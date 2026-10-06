@@ -25,9 +25,10 @@ pub mod modules;
 pub mod polyfills;
 pub mod registry;
 pub mod run;
+pub mod shared_run;
 
 pub use envelope::{NodeObject, NodeShared};
-pub use host::{install, NodeHost};
+pub use host::{NodeHost, install};
 pub use registry::{NodeSpec, NodeSymbol};
 
 use quench_runtime::value::Value;

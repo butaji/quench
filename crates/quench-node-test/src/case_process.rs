@@ -7,7 +7,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-use crate::{NodeOutcome, NodeTestRunner};
+use crate::NodeOutcome;
 
 pub const DEFAULT_CASE_TIMEOUT_SECS: u64 = 30;
 const WORKER_OPTION: &str = "--case-worker";
@@ -59,6 +59,14 @@ impl CaseObservation {
 
 /// Both runner binaries consume this private mode before parsing public options.
 pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
+    worker_entry_with(arguments, crate::runner::run_file)
+}
+
+/// Compiled worker entry for a runner binary with a statically selected engine.
+pub fn worker_entry_with(
+    arguments: &[String],
+    run_file: fn(&Path) -> NodeOutcome,
+) -> Option<ExitCode> {
     if arguments.first().map(String::as_str) != Some(WORKER_OPTION) {
         return None;
     }
@@ -66,9 +74,11 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
         eprintln!("invalid Node case-worker invocation");
         return Some(ExitCode::from(2));
     };
-    let outcome = NodeTestRunner::new().run_file(Path::new(fixture));
+    let outcome = run_file(Path::new(fixture));
     let code = match &outcome {
-        NodeOutcome::Pass | NodeOutcome::Skip { .. } => ExitCode::SUCCESS,
+        NodeOutcome::Pass | NodeOutcome::Skip { .. } | NodeOutcome::GuestExit { .. } => {
+            ExitCode::SUCCESS
+        }
         NodeOutcome::Fail { .. } => ExitCode::from(1),
     };
     let write = serde_json::to_vec(&outcome)
@@ -95,14 +105,33 @@ pub fn observe_case(
     }
     let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
     let result = directory.path().join("result.json");
-    let stdout = directory.path().join("stdout");
-    let stderr = directory.path().join("stderr");
     let mut command = Command::new(executable);
     command
         .arg(WORKER_OPTION)
         .arg(fixture)
         .arg(&result)
-        .env(quench_node::modules::process::CHILD_RUNNER_ENV, "1")
+        .env(quench_node::modules::process::CHILD_RUNNER_ENV, "1");
+    observe_process_in(command, timeout, &directory, Some(&result))
+}
+
+/// Capture a raw local process using the same deadline and output path as workers.
+pub fn observe_command(command: Command, timeout: Duration) -> Result<CaseObservation, String> {
+    if timeout.is_zero() {
+        return Err("Node cases require a positive deadline".into());
+    }
+    let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
+    observe_process_in(command, timeout, &directory, None)
+}
+
+fn observe_process_in(
+    mut command: Command,
+    timeout: Duration,
+    directory: &tempfile::TempDir,
+    result_path: Option<&Path>,
+) -> Result<CaseObservation, String> {
+    let stdout = directory.path().join("stdout");
+    let stderr = directory.path().join("stderr");
+    command
         .stdout(Stdio::from(
             fs::File::create(&stdout).map_err(|error| error.to_string())?,
         ))
@@ -123,7 +152,7 @@ pub fn observe_case(
     }
     let mut child = command
         .spawn()
-        .map_err(|error| format!("spawn Node worker: {error}"))?;
+        .map_err(|error| format!("spawn observed process: {error}"))?;
     let waited = child.wait_timeout(timeout);
     let timed_out = matches!(waited, Ok(None));
     let status = match waited {
@@ -151,8 +180,8 @@ pub fn observe_case(
         exit_code: status.code(),
         signal,
         timed_out,
-        worker: fs::read(result)
-            .ok()
+        worker: result_path
+            .and_then(|path| fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice(&bytes).ok()),
         stdout: fs::read(stdout).map_err(|error| format!("read worker stdout: {error}"))?,
         stderr: fs::read(stderr).map_err(|error| format!("read worker stderr: {error}"))?,
