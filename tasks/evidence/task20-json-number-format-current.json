@@ -1,0 +1,48 @@
+{
+  "task": "20",
+  "scope": "JSON number formatting uses the JavaScript Number representation shared with String(number)",
+  "source_revision": "ec0a5d11c19ed159e2fc5080da374533e9db9f50",
+  "source_dirty": true,
+  "source_sha256": {
+    "crates/quench-runtime-next/src/api.rs": "18b0f2779ce5e275fc86d0672c19c412d9678d20c37de83d7f878c38e72bec39",
+    "crates/quench-runtime-next/src/vm/json.rs": "12cf1d19afb386fba727b9a6508e657385409e6db33c4da5215c9a2c9df8c74e",
+    "crates/quench-runtime-next/src/number_to_string.rs": "3ccc7cc01471b51c19cf951dbece8ba6de1b529281f5025369ec057cabc66a92"
+  },
+  "implementation": {
+    "number_representation": "JsonValue::Number(f64)",
+    "format_owner": "crate::number_to_string::format",
+    "writer": "vm/json.rs::write_json"
+  },
+  "focused_runtime_test": {
+    "command": "cargo test -p quench-runtime-next api::tests::regression_json_numbers_share_javascript_number_representation -- --exact",
+    "test_binary": "target/debug/deps/rqj-4dd9006612a58c8a",
+    "test_binary_sha256": "12bae3ed18428aa09ac36779b9b13a0cbf433ea64bafd384b96a1bf59270c8f3",
+    "result": "passed: 1 test; both execution modes; 508 filtered"
+  },
+  "node_oracle": {
+    "runtime": "Node.js v26.10.0",
+    "result": "passed: exact stdout match",
+    "stdout_lines": [
+      "[100000000000000000000,9223372036854776000,123456789012345680000]",
+      "[0.000001,1e-7,1e+21,1e+300,1.5e-7,0.1]",
+      "[0,0,null,null,null]",
+      "Infinity",
+      "-Infinity",
+      "true",
+      "true",
+      "1e400",
+      "{\"n\":9223372036854776000}",
+      "[100000000000000000000]",
+      "1e400",
+      "undefined"
+    ]
+  },
+  "affected_suite_context": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage": 53,
+    "existing_qualification": "task20-verified-owner-stages-current.json",
+    "cases": 165,
+    "passed": 165,
+    "note": "This focused regression adds numeric boundaries not asserted by the pinned JSON cases; it is not a full Test262 run."
+  }
+}

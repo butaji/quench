@@ -1,0 +1,710 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_api_family_ownership",
+  "reviewed_on": "2026-10-05",
+  "source_revision": "ec0a5d11c19ed159e2fc5080da374533e9db9f50",
+  "source_state": "dirty; input and owner hashes bind this review to current bytes",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "71afeac8b6a5d249c2b2fccee132c8157c52307386ff09da2e0f06e447589bee",
+    "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+    "candidate_paths": 37,
+    "specifier_hits": 38,
+    "upstream_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "projection": {
+    "family": "URL",
+    "candidate_paths": 37,
+    "specifier_hits": 38,
+    "assertion_cases": 37,
+    "observation_cases": 0,
+    "already_included_global_cases": 1,
+    "newly_included_global_cases": 33,
+    "family_included_global_cases": 34,
+    "locator_only_cases": 3,
+    "remaining_pending_url_obligations": 0,
+    "membership_frozen": false
+  },
+  "active_route": {
+    "summary": "The legacy require aliases in modules/require.rs build modules/url.rs. Legacy parse/format/resolve and URLPattern NodeSpecs route through registry.rs and dispatch.rs/dispatch_handlers.rs; WHATWG URL and IDNA methods live in modules/url_whatwg.rs, with file conversion in url_file.rs. The shared NodeHost CommonJS table still has no URL builtin; task 21 owns migration after the inventory and shared host operations qualify.",
+    "owner_sources_sha256": {
+      "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+      "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
+      "crates/quench-node/src/host.rs": "1e94689dd8ab06be455bac2defc9c50c1c7fe9ae3690239738acdc0063cca522",
+      "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
+      "crates/quench-node/src/js_runtime_url_pattern.rs": "3cbeabc17534099ace7761f01e86aa968689ca4cf53e6cc4efb3d72922845a87",
+      "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
+      "crates/quench-node/src/modules/event_loop.rs": "f9e57059a9bbc54cae3536a6b65d96a72d5834298eba42f2e7f1619d4826118c",
+      "crates/quench-node/src/modules/path.rs": "ec50f94786edcc23b345bfd30ad8b5f4235dca07001aa08ff4efa8d1886197bf",
+      "crates/quench-node/src/modules/process.rs": "1ae3ac711e4a36818f7f4cb34bf5a37ae978456c323ad2dde68c1258ba1988b8",
+      "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+      "crates/quench-node/src/modules/url.rs": "c8a0e457a29ace43092d3a18082fd351fd5558eb9958697adfbea08d0e405de8",
+      "crates/quench-node/src/modules/url_file.rs": "28fcb67ca56db6195be4ab0072edf09f6cc04a61c4a4ac9f31a86eee955b698e",
+      "crates/quench-node/src/modules/url_whatwg.rs": "609b7c3ba50e83a5a6f23bec02fe64fd6038d5b67a401b8f7c6845a5d80d6e11",
+      "crates/quench-node/src/modules/util.rs": "4d2046c9fd7421c97ccbf8db1026e4aaf8322e42a3a2a420dad4cae9fac1d040",
+      "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs": "4b2aa9e17f5449f45433e2029d40aa4a99ac479f5bc9b1ff473b91e61b87898f",
+      "crates/quench-node/src/polyfills/bootstrap/url.rs": "a5911ca5a91d2dc4c5791435f03a766114bb95dd4e4d0accf52ac24d28985712",
+      "crates/quench-node/src/polyfills/post_bootstrap/module_surface_15_tail.rs": "a28373560a9990dcb5c555bdc06d50caa1e8c2a3dd8d98d47dfe7f326b02a4bb",
+      "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7",
+      "crates/quench-node/src/modules/console.rs": "2308d6bfec3e2b8786c4bc4dfa5bf371f96f17f271cdfb4c86763e7a1d3caf62"
+    }
+  },
+  "included_cases": [
+    {
+      "path": "tests/node-compat/stage-1231/url-format-quoted-host.js",
+      "role": "assertion_case",
+      "sha256": "272d9c72e2e3e0a2c8d0f5019ed76cbad05b9fcca2adab862ae6e78274d90772",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.format escapes quote and whitespace characters in a host-like path; assertions L4-L6."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-1526/url-parse-protocol-relative.js",
+      "role": "assertion_case",
+      "sha256": "002875af0bbd72569cb5559fa9ef95cb8693215ee58f7744fb5c66e6fefa4a88",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.parse returns the protocol-relative URL fields and Url prototype asserted at L4-L19."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2481/url-parse-idempotent.js",
+      "role": "assertion_case",
+      "sha256": "592ca69e083dead80733ca6837e80aeaecabc506847ad41d7136eb5de8a5339f",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Bare and node: URL aliases share the parse function; parse results expose resolve and resolveObject methods (L3-L11)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2482/url-format-quoted-host-boundary.js",
+      "role": "assertion_case",
+      "sha256": "461e4fe5ce06ba7a371ade9f4b6b32ffa4cbdcb8f2d3a449d2831df715a736a7",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.format escapes quoted input across HTTP, HTTPS, FTP and pathname positions (L4-L16)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2497/url-parse-url-prototype.js",
+      "role": "assertion_case",
+      "sha256": "7cb48884a101b2aa6041948df70f41c8e9cef8982f041795f0c85f1d46c7bf23",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy parse/resolveObject results retain Url identity and prototype; normalization and format fields match (L4-L50)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2498/url-parse-invalid-received.js",
+      "role": "assertion_case",
+      "sha256": "e8a4f3e73b3b96203e7190be89883fd26d5b8be379780134fd9e88c172d94de2",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/util.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "URL.parse rejects non-string inputs with ERR_INVALID_ARG_TYPE and Node received-value descriptions (L5-L13); the common helper itself is test support."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2503/url-format-file-opaque.js",
+      "role": "assertion_case",
+      "sha256": "21db037e554c847b2ca0959caf5abf8f7d7904069797b505410dc60f64f361ed",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy format and resolveObject preserve opaque file URL forms and fragment updates (L4-L14)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2504/url-parse-query-shape.js",
+      "role": "assertion_case",
+      "sha256": "d33ebf29c7e64f755b99dd640c4d77dfac8abcc777a86e56094e06f15719b5df",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy parse query mode returns search text and a null-prototype query object (L4-L8)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-format.js",
+      "role": "assertion_case",
+      "sha256": "4b2a4ccd906a1a14fad653d9089a09bdae34d431841dc83d441091dc9d4448cd",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.format handles object and string inputs, protocol/authority formatting and IPv6 authority (L4-L17)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-legacy-constructor.js",
+      "role": "assertion_case",
+      "sha256": "3e71ebfd21607ca17baba51aad5b5dba35523ec45cf033aabeeae4afd5db1472",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "The URL module exposes the Url constructor and permits construction of an empty Url object (L1-L4)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-parse-invalid-args.js",
+      "role": "assertion_case",
+      "sha256": "c0eb81857e09c1da34144b4946007202e21f4024b0446ac1c8df80213c5d5457",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/util.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "URL.parse rejects invalid argument types with TypeError and ERR_INVALID_ARG_TYPE (L4-L8)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-parse-query.js",
+      "role": "assertion_case",
+      "sha256": "74dfd0d304a3837ea99554e86b11112d857de8693bdfe877706a92a43f87c995",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy query parsing preserves own keys and returns a null-prototype query object (L4-L13)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-parse.js",
+      "role": "assertion_case",
+      "sha256": "3cfabd5c9c5ae5e9179dc3f353c6e638afe6ee50bc1b1d188aad6461c350b263",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.parse decodes auth and returns protocol, path, query and href fields (L4-L9)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-resolve-authority.js",
+      "role": "assertion_case",
+      "sha256": "bdf12b236581e4a869e67330bcd0c5c88617c79a837eab46b23afdb4aa2cc243",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.resolve applies authority and credential precedence for absolute and relative inputs (L3-L18)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-resolve-object-relative.js",
+      "role": "assertion_case",
+      "sha256": "63715b864615423cb58c13f3c9785d05857af5248711f5122a063959c21fbcd3",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Url.resolveObject resolves a relative pathname against the parsed source (L3-L5)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-resolve-object.js",
+      "role": "assertion_case",
+      "sha256": "d034d1989c2ee1bd6917c374ce3335f862cb1bdf73bb95af8e400cd915ac12c4",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy resolve and resolveObject expose the expected empty-source behavior (L3-L5)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2681/url-resolve-opaque-format.js",
+      "role": "assertion_case",
+      "sha256": "19b4927a038a7c089dc9c9f25fe6fca2e35c289978ccbe284bfbeee76ffa9358",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy resolveObject and format preserve opaque HTTP and file URLs with fragments (L4-L10)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2792/url-parse-warning.js",
+      "role": "assertion_case",
+      "sha256": "622d022ff7ec7bc09bca9e7973d72076836cd70b8992f256ebb7d719ac520c72",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/event_loop.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Calling legacy URL.parse emits the DEP0169 deprecation warning once through process warning/nextTick observation (L4-L11)."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-282/url-parse-normalization.js",
+      "role": "assertion_case",
+      "sha256": "eb4ed0ce201e4e182e3776101cd868f33882dce7beef01d95c1d85f7761bba23",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.parse normalizes surrounding whitespace, protocol/host case, backslashes, path and href (L4-L25)."
+      ]
+    },
+    {
+      "path": "crates/quench-node-test/node-tests/test-url.js",
+      "role": "assertion_case",
+      "sha256": "844f79fedb3cdf67dd55acb8e941ad57dcaf583699325205b473b4a667201152",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/console.rs"
+      ],
+      "obligations": [
+        "legacy URL parse query and format object"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-domain-ascii-unicode.js",
+      "role": "assertion_case",
+      "sha256": "062b67f66cfac0085ea891e6851c6cc9e7ef8ad357e460403c46f88538d6e4bc",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "domainToASCII/domainToUnicode round-trip the asserted UTS-46 domain cases when Intl is available (L9-L26)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-format.js",
+      "role": "assertion_case",
+      "sha256": "bcfafcaf241628641df21549421b36f2c7269415cbe0e5cf79b30a73805e810e",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.format normalizes the pinned URL/object matrix and preserves expected fields and output (L9-L279)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-fileurltopath.js",
+      "role": "assertion_case",
+      "sha256": "e47d86742e03536f384b5a5c3daf121906235f0f574fee50a07d571c3f4db39c",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_file.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "fileURLToPath validates arguments/scheme/host and converts encoded POSIX/Windows file URLs; platform-specific branches remain in scope (L8-L156)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-format-invalid-input.js",
+      "role": "assertion_case",
+      "sha256": "07d65fef444d1f83a7a22a2a805197b8f3bfa246e64e5ba5713f98f27e5e91c3",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "URL.format rejects invalid argument types with Node error metadata and preserves empty-string/empty-object behavior (L9-L29)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-format-whatwg.js",
+      "role": "assertion_case",
+      "sha256": "313a29280b8a5fdee1842dfcb3d54aa79d7d453dee2d2a9b082081a68223b40c",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "URL.format accepts WHATWG URL instances and applies auth, fragment, search and unicode options with Node coercion/errors (L9-L156)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-invalid-file-url-path-input.js",
+      "role": "assertion_case",
+      "sha256": "11e07ae5f594724ba620a17710b4b2583df4b3ce22fb6e2537ab3704577fecba",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_file.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "fileURLToPath rejects encoded separators with ERR_INVALID_FILE_URL_PATH and retains the URL input object (L3-L23)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-is-url-internal.js",
+      "role": "assertion_case",
+      "sha256": "c931da01c93ecc78ce3c29e1a204f61b469c8afe1364ea13f982e9de45c43899",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/js_runtime_internal_binding.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "internal url.isURL recognizes a WHATWG URL instance and rejects legacy Url/plain-object lookalikes (L6-L18)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-pathtofileurl.js",
+      "role": "assertion_case",
+      "sha256": "650976bdad801e10c004d2d8c189ffb0bdcde8c1c828e2a6f55e88471391057e",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/path.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_file.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "pathToFileURL encodes POSIX/Windows path bytes, validates UNC hosts and honors explicit platform options (L8-L281)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-parse-query.js",
+      "role": "assertion_case",
+      "sha256": "9129c3dd207a227bcf125155b5d09eb0db95a6eee40f96fad5393016672fceef",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.parse query mode returns the asserted parsed fields, key order and non-Object prototype (L14-L91)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-parse-format.js",
+      "role": "assertion_case",
+      "sha256": "d76c79486b105431a8550fed6b33235fa3bf386b7e748590efcf63df381e8809",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.parse/format match the pinned parse table, normalization, fields and Url prototype (L9-L1050); Intl-gated cases retain their fixture conditions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-relative.js",
+      "role": "assertion_case",
+      "sha256": "2ab2268c9ec2bc73ea22dd1ba1da92ffbc94b07df69379388ba6d108f30c65af",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "Legacy URL.resolve/resolveObject/format match the pinned relative-resolution matrix (L8-L438)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-urlpattern-types.js",
+      "role": "assertion_case",
+      "sha256": "84c5ea23f8a1991d902455baa731434af5c6953f9bd4c3b38f50dc596d8fc7f6",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/js_runtime_url_pattern.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/polyfills/bootstrap/url.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "The URL module URLPattern constructor enforces construct/type errors and coerces ignoreCase while exposing parsed component properties (L8-L163)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-url-urltooptions.js",
+      "role": "assertion_case",
+      "sha256": "eeaf2c1247e23f898c8dcb3a502fa0b5b8b0ada347ee6e22b3b034a235895d88",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "urlToHttpOptions maps WHATWG URL fields, bracketed IPv6, copied-URL brand state and invalid inputs (L6-L44)."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-blob-createobjecturl.js",
+      "role": "assertion_case",
+      "sha256": "5dc3b343d27be4b89d13cc50c036dd9236351e645800fb9359c0e6cb4dd1ab5b",
+      "status": "included",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/dispatch_handlers.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/buffer.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/url.rs",
+        "crates/quench-node/src/modules/url_whatwg.rs",
+        "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs",
+        "crates/quench-node/src/polyfills/post_bootstrap/module_surface_15_tail.rs",
+        "crates/quench-node/src/registry.rs"
+      ],
+      "obligations": [
+        "URL.createObjectURL/revokeObjectURL preserve Blob identity, size, bytes, one-shot removal and invalid-input errors (L11-L53)."
+      ]
+    }
+  ],
+  "locator_only_cases": [
+    {
+      "path": "tests/node-compat/stage-2193/http-get-query-targets.js",
+      "role": "assertion_case",
+      "sha256": "ffb9fa19714dea6e103f17951fcfdf379ec38a9f6d69a23b790b96090f0cc086",
+      "family_status": "excluded",
+      "global_status": "pending",
+      "owners": [
+        "crates/quench-node/src/modules/http.rs",
+        "crates/quench-node/src/modules/http_client.rs"
+      ],
+      "reason": "URL.parse and new URL supply alternative arguments to http.get; assertions observe request.url and HTTP request count, not URL parse/format behavior."
+    },
+    {
+      "path": "tests/node/test/parallel/test-util-inspect.js",
+      "role": "assertion_case",
+      "sha256": "3a9528ed11d56184f5d6aa1295a782d6371eb150212d7c496e0348fbcfc1bb6d",
+      "family_status": "excluded",
+      "global_status": "pending",
+      "owners": [
+        "crates/quench-node/src/modules/util.rs"
+      ],
+      "reason": "pathToFileURL only supplies encoded cwd text inserted into the same actual and expected stack strings; assertions target util.inspect formatting and do not independently observe URL conversion."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-client-get-url.js",
+      "role": "assertion_case",
+      "sha256": "e724b5e3ee9672270abc4bb1ac3ee65767625922381a878d75614e1184e51188",
+      "family_status": "excluded",
+      "global_status": "pending",
+      "owners": [
+        "crates/quench-node/src/modules/http.rs",
+        "crates/quench-node/src/modules/http_client.rs",
+        "crates/quench-node/src/modules/tls.rs"
+      ],
+      "reason": "url.parse and new URL are alternative inputs to https.get; assertions observe HTTPS request path/response behavior, not URL output."
+    }
+  ],
+  "controls": [
+    "Static URL imports only locate candidates; inclusion follows asserted URL behavior and active NodeSpec/module owners.",
+    "HTTP/HTTPS target-form cases and the util.inspect fixture remain global pending entries for their asserted HTTP(S)/util owners; URL-family exclusion does not mark the whole case excluded.",
+    "No case outcome was used to decide membership; existing failures remain included when URL behavior is implemented.",
+    "Platform-specific file URL behavior remains included even when the current macOS run skips Windows-only branches.",
+    "The global inventory remains unfrozen until every assertion and observation case has an owner disposition and required observation trace."
+  ]
+}

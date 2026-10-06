@@ -7,7 +7,7 @@
   "source_state": "dirty; owner hashes bind the review to current source bytes",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "23f85f8e5f75b55585fff24eaa2481389d0b70aa347b90109233d8de73a4e51c",
+    "sha256": "71afeac8b6a5d249c2b2fccee132c8157c52307386ff09da2e0f06e447589bee",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "candidate_assertions": 106,
     "candidate_observations": 1

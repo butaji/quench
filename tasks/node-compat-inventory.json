@@ -82,7 +82,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.format escapes quote and whitespace characters in a host-like path; assertions L4-L6."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-1474/crypto-rsa-pss-digest-aliases.js",
@@ -100,7 +113,20 @@
       "static_module_specifiers": [
         "node:assert",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.parse returns the protocol-relative URL fields and Url prototype asserted at L4-L19."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-1747/esm-common-index-exports.mjs",
@@ -5120,7 +5146,20 @@
         "assert",
         "node:url",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Bare and node: URL aliases share the parse function; parse results expose resolve and resolveObject methods (L3-L11)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2482/url-format-quoted-host-boundary.js",
@@ -5129,7 +5168,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.format escapes quoted input across HTTP, HTTPS, FTP and pathname positions (L4-L16)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2483/dgram-send-overload-shape.js",
@@ -5301,7 +5353,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy parse/resolveObject results retain Url identity and prototype; normalization and format fields match (L4-L50)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2498/url-parse-invalid-received.js",
@@ -5311,7 +5376,21 @@
         "../../node/common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "URL.parse rejects non-string inputs with ERR_INVALID_ARG_TYPE and Node received-value descriptions (L5-L13); the common helper itself is test support."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2499/argv0-child.fixture",
@@ -5380,7 +5459,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy format and resolveObject preserve opaque file URL forms and fragment updates (L4-L14)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2504/process-really-exit-output.js",
@@ -5398,7 +5490,20 @@
       "static_module_specifiers": [
         "node:assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy parse query mode returns search text and a null-prototype query object (L4-L8)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2505/buffer-indexof-encoding.js",
@@ -7195,7 +7300,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.format handles object and string inputs, protocol/authority formatting and IPv6 authority (L4-L17)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-legacy-constructor.js",
@@ -7203,7 +7321,20 @@
       "role": "assertion_case",
       "static_module_specifiers": [
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "The URL module exposes the Url constructor and permits construction of an empty Url object (L1-L4)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-parse-invalid-args.js",
@@ -7212,7 +7343,21 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "URL.parse rejects invalid argument types with TypeError and ERR_INVALID_ARG_TYPE (L4-L8)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-parse-query.js",
@@ -7221,7 +7366,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy query parsing preserves own keys and returns a null-prototype query object (L4-L13)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-parse.js",
@@ -7230,7 +7388,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.parse decodes auth and returns protocol, path, query and href fields (L4-L9)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-resolve-authority.js",
@@ -7239,7 +7410,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.resolve applies authority and credential precedence for absolute and relative inputs (L3-L18)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-resolve-object-relative.js",
@@ -7248,7 +7432,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Url.resolveObject resolves a relative pathname against the parsed source (L3-L5)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-resolve-object.js",
@@ -7257,7 +7454,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy resolve and resolveObject expose the expected empty-source behavior (L3-L5)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/url-resolve-opaque-format.js",
@@ -7266,7 +7476,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy resolveObject and format preserve opaque HTTP and file URLs with fragments (L4-L10)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2701/domain-identity-and-stack.js",
@@ -8207,7 +8430,22 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Calling legacy URL.parse emits the DEP0169 deprecation warning once through process warning/nextTick observation (L4-L11)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2794/util-promisify-fs-stat.js",
@@ -8523,7 +8761,20 @@
       "static_module_specifiers": [
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.parse normalizes surrounding whitespace, protocol/host case, backslashes, path and href (L4-L25)."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2820/exec-error-identity.js",
@@ -12950,7 +13201,21 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "domainToASCII/domainToUnicode round-trip the asserted UTS-46 domain cases when Intl is available (L9-L26)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-format.js",
@@ -12961,7 +13226,22 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.format normalizes the pinned URL/object matrix and preserves expected fields and output (L9-L279)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-fileurltopath.js",
@@ -12972,7 +13252,24 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/path.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_file.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "fileURLToPath validates arguments/scheme/host and converts encoded POSIX/Windows file URLs; platform-specific branches remain in scope (L8-L156)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-format-invalid-input.js",
@@ -12983,7 +13280,20 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "URL.format rejects invalid argument types with Node error metadata and preserves empty-string/empty-object behavior (L9-L29)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-format-whatwg.js",
@@ -12994,7 +13304,22 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "URL.format accepts WHATWG URL instances and applies auth, fragment, search and unicode options with Node coercion/errors (L9-L156)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-invalid-file-url-path-input.js",
@@ -13004,7 +13329,23 @@
         "../common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_file.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "fileURLToPath rejects encoded separators with ERR_INVALID_FILE_URL_PATH and retains the URL input object (L3-L23)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-is-url-internal.js",
@@ -13016,7 +13357,23 @@
         "node:assert",
         "node:test",
         "node:url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/js_runtime_internal_binding.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "internal url.isURL recognizes a WHATWG URL instance and rejects legacy Url/plain-object lookalikes (L6-L18)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-pathtofileurl.js",
@@ -13026,7 +13383,24 @@
         "../common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/path.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_file.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "pathToFileURL encodes POSIX/Windows path bytes, validates UNC hosts and honors explicit platform options (L8-L281)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-parse-query.js",
@@ -13036,7 +13410,20 @@
         "../common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.parse query mode returns the asserted parsed fields, key order and non-Object prototype (L14-L91)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-parse-format.js",
@@ -13048,7 +13435,22 @@
         "node:test",
         "node:url",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.parse/format match the pinned parse table, normalization, fields and Url prototype (L9-L1050); Intl-gated cases retain their fixture conditions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-revokeobjecturl.js",
@@ -13068,7 +13470,20 @@
         "assert",
         "url",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "Legacy URL.resolve/resolveObject/format match the pinned relative-resolution matrix (L8-L438)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-urlpattern-types.js",
@@ -13078,7 +13493,22 @@
         "../common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_url_pattern.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/polyfills/bootstrap/url.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "The URL module URLPattern constructor enforces construct/type errors and coerces ignoreCase while exposing parsed component properties (L8-L163)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-format.js",
@@ -13205,7 +13635,22 @@
         "../common",
         "assert",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "urlToHttpOptions maps WHATWG URL fields, bracketed IPv6, copied-URL brand state and invalid inputs (L6-L44)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-whatwg-url-custom-deepequal.js",
@@ -15216,7 +15661,25 @@
         "assert",
         "buffer",
         "url"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/buffer.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/url.rs",
+          "crates/quench-node/src/modules/url_whatwg.rs",
+          "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs",
+          "crates/quench-node/src/polyfills/post_bootstrap/module_surface_15_tail.rs",
+          "crates/quench-node/src/registry.rs"
+        ],
+        "obligations": [
+          "URL.createObjectURL/revokeObjectURL preserve Blob identity, size, bytes, one-shot removal and invalid-input errors (L11-L53)."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-beforeexit-event-exit.js",
