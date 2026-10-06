@@ -11939,7 +11939,7 @@
         "owners": [
           "crates/quench-node/src/modules/events.rs",
           "crates/quench-node/src/modules/async_hooks.rs",
-          "crates/quench-node/src/shared/pump.rs"
+          "crates/quench-node/src/modules/pump.rs"
         ],
         "obligations": [
           "events.once promise completion, rejection and listener lifecycle."

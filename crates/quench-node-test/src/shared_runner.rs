@@ -8,15 +8,18 @@ use quench_node::{
 use std::path::Path;
 
 pub fn run_file(path: &Path) -> NodeOutcome {
-    run_shared_file(path, EntryGoal::Node)
+    run_shared_file(path, file_entry_goal(path))
 }
 
 pub fn run_parallel_fixture(path: &Path) -> NodeOutcome {
-    let goal = match path.extension().and_then(|extension| extension.to_str()) {
+    run_shared_file(path, file_entry_goal(path))
+}
+
+fn file_entry_goal(path: &Path) -> EntryGoal {
+    match path.extension().and_then(|extension| extension.to_str()) {
         Some("mjs") => EntryGoal::Node,
         _ => EntryGoal::CommonJs,
-    };
-    run_shared_file(path, goal)
+    }
 }
 
 fn run_shared_file(path: &Path, goal: EntryGoal) -> NodeOutcome {

@@ -13,6 +13,13 @@ const FROZEN_MEMBERSHIP_STATE: &str = "implemented_frozen";
 
 pub struct NodeInventory {
     document: InventoryDocument,
+    sha256: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ObservationInput {
+    pub path: PathBuf,
+    pub sha256: String,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +71,7 @@ impl NodeInventory {
     /// Validate every input before selecting cases, including support-file hashes.
     pub fn read(path: &Path, repository: &Path) -> Result<Self, String> {
         let bytes = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
         let inventory: InventoryDocument = serde_json::from_slice(&bytes)
             .map_err(|error| format!("parse {}: {error}", path.display()))?;
         if inventory.schema != INPUT_INVENTORY_SCHEMA || inventory.entries.is_empty() {
@@ -85,7 +93,7 @@ impl NodeInventory {
                     return Err(format!(
                         "support input has case membership: {}",
                         input.path.display()
-                    ))
+                    ));
                 }
                 (
                     Some(Implementation::Included {
@@ -132,6 +140,7 @@ impl NodeInventory {
         }
         Ok(Self {
             document: inventory,
+            sha256,
         })
     }
 
@@ -143,6 +152,25 @@ impl NodeInventory {
             .filter(|input| matches!(&input.implementation, Some(Implementation::Included { .. })))
             .map(|input| repository.join(&input.path))
             .collect()
+    }
+
+    pub(crate) fn included_observations(&self) -> Vec<ObservationInput> {
+        self.document
+            .entries
+            .iter()
+            .filter(|input| {
+                matches!(input.role, Role::ObservationCase)
+                    && matches!(&input.implementation, Some(Implementation::Included { .. }))
+            })
+            .map(|input| ObservationInput {
+                path: input.path.clone(),
+                sha256: input.sha256.clone(),
+            })
+            .collect()
+    }
+
+    pub(crate) fn sha256(&self) -> &str {
+        &self.sha256
     }
 
     pub fn validate_execution(
@@ -199,11 +227,12 @@ impl NodeInventory {
     }
 
     fn validate_observations(&self, repository: &Path, selected: &[PathBuf]) -> Result<(), String> {
-        if self.document.entries.iter().any(|input| {
-            matches!(input.role, Role::ObservationCase)
-                && selected.contains(&repository.join(&input.path))
-        }) {
-            return Err("observation cases require matched oracle traces; this assertion runner cannot qualify them".into());
+        let observations = self.included_observations();
+        if observations
+            .iter()
+            .any(|input| selected.contains(&repository.join(&input.path)))
+        {
+            crate::node_observations::validate_evidence(self, repository, selected)?;
         }
         Ok(())
     }
