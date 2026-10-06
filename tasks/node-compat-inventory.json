@@ -3640,7 +3640,7 @@
     {
       "path": "tests/node-compat/stage-2364/fs-access-identity.js",
       "sha256": "f783e06d74b57ea2001589541f05fcf8c8c5598d2831ef794c27c5e30846e482",
-      "role": "assertion_case",
+      "role": "observation_case",
       "static_module_specifiers": [
         "assert",
         "fs"
