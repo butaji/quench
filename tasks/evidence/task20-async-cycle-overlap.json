@@ -1,0 +1,99 @@
+{
+  "schema": "task20-async-cycle-overlap-v1",
+  "task": "20",
+  "source": {
+    "revision": "ac09a19e82ea2f6aad807c879eb22f4a75c111ea",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "owner_sha256": {
+      "crates/quench-runtime-next/src/vm/module.rs": "2400874ca71543a23e413689d5752c09b02e44afe36e203307f11d30c22962d3",
+      "crates/quench-runtime-next/src/vm/promise.rs": "8182f9a0fef267966a05d6bb09b6d7f7468b9328237730722315602250c0784d"
+    }
+  },
+  "corpus": {
+    "submodule": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "worktree_clean": true
+  },
+  "selection": {
+    "stage_ids": [10, 16, 20],
+    "basis": "async module cycle-root merge and errored-cycle dynamic import affect expression, import, and module-code stages",
+    "full_test262_run": false,
+    "unit_tests_run": false
+  },
+  "runner": {
+    "path": "target/iteration/run-stages-next",
+    "sha256": "94247ab6a712d564f77e8063861a2d9e8e5f952b2874744582652fa9c3297f4f",
+    "profile": "iteration",
+    "timeout_ms": 60000,
+    "jobs": 8
+  },
+  "result": {
+    "total": 11829,
+    "passed": 11829,
+    "failed": 0,
+    "all_selected_stages_pass": true
+  },
+  "stage_results": [
+    {
+      "stage": 10,
+      "total": 11102,
+      "passed": 11102,
+      "failed": 0,
+      "report": "target/iteration/task20-scc-stage-10.json",
+      "report_sha256": "c18b3ef2e190833f77135978291fa41d131419093528ad6839bcf4d4ef4b45ed",
+      "compared_with": "target/iteration/test262-pin-f2d-stage-10-final.json",
+      "comparison": "regressions=0"
+    },
+    {
+      "stage": 16,
+      "total": 128,
+      "passed": 128,
+      "failed": 0,
+      "report": "target/iteration/task20-scc-stage-16.json",
+      "report_sha256": "2efc6495fdf2bc5cbf60347fb260e7c3b910fe4bca82b5555c03f2840fe0d507",
+      "compared_with": "target/iteration/test262-pin-f2d-stage-16-final.json",
+      "comparison": "regressions=0"
+    },
+    {
+      "stage": 20,
+      "total": 599,
+      "passed": 599,
+      "failed": 0,
+      "report": "target/iteration/task20-scc-stage-20.json",
+      "report_sha256": "14fa91d146e59d94a6f782b1dd5ae5eebf21fb270183fa7d943fe6128cc56f84",
+      "compared_with": "target/iteration/test262-pin-f2d-stage-20-final.json",
+      "comparison": "regressions=0"
+    }
+  ],
+  "focused_cases": {
+    "runner": "target/iteration/run-all-next --case <temporary Test262-style case>",
+    "runner_sha256": "4efe5fbbeb33d069a88b4a94b4be7ddae50416c62e93af02a6522f14c2a687e5",
+    "node": {
+      "version": "v26.10.0",
+      "path": "/opt/homebrew/bin/node"
+    },
+    "scenarios": [
+      {
+        "graph": ["A imports B", "B imports C then D", "C imports B", "D imports A"],
+        "rejection": "A rejects after top-level await",
+        "assertion": "a later dynamic import of C rejects with the same Error object as the import of A",
+        "node": "pass",
+        "quench": "pass"
+      },
+      {
+        "graph": ["B imports C then D", "C imports B", "D imports C"],
+        "rejection": "B rejects after top-level await",
+        "assertion": "a later dynamic import of D rejects with the same Error object as the import of B",
+        "node": "pass",
+        "quench": "pass"
+      }
+    ],
+    "pinned_regression": "language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle.js passes"
+  },
+  "limitations": [
+    "The two focused module graphs were temporary diagnostics and are not additions to the pinned Test262 corpus.",
+    "Comparisons are pass-retention checks against saved reports from older dirty source snapshots, not same-build equivalence.",
+    "This affected-stage check does not close task 20 or Stage A."
+  ]
+}

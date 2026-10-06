@@ -1,0 +1,262 @@
+{
+  "schema": "task20-pinned-test262-affected-stages-v1",
+  "task": "20",
+  "source": {
+    "revision": "ac09a19e82ea2f6aad807c879eb22f4a75c111ea",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "owner_sha256": {
+      "crates/quench-runtime-next/src/vm/promise.rs": "63af227582ca5287238186ec0958918662b9792dd86eb0a001c39a830300cade",
+      "crates/quench-runtime-next/src/vm/disposal.rs": "355a24b5f5fc7eab897c7ce3bb3bba5614c2b30af1d1f25d5902bff9117fdf7a"
+    }
+  },
+  "corpus": {
+    "submodule": "tests/test262",
+    "previous_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "worktree_clean": true,
+    "changed_paths_count": 32,
+    "changed_paths": [
+      "features.txt",
+      "harness/asyncHelpers.js",
+      "harness/testIntlNumberFormat.js",
+      "test/built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/invokes-return.js",
+      "test/built-ins/Iterator/prototype/Symbol.dispose/invokes-return.js",
+      "test/built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js",
+      "test/built-ins/TypedArrayConstructors/internals/GetOwnProperty/BigInt/index-prop-desc.js",
+      "test/built-ins/TypedArrayConstructors/internals/GetOwnProperty/index-prop-desc.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/null-tobigint.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/number-tobigint.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/string-nan-tobigint.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/symbol-tobigint.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/tonumber-value-throws.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/BigInt/undefined-tobigint.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/bigint-tonumber.js",
+      "test/built-ins/TypedArrayConstructors/internals/Set/tonumber-value-throws.js",
+      "test/intl402/Locale/constructor-apply-options-canonicalizes-twice.js",
+      "test/intl402/Locale/likely-subtags-grandfathered.js",
+      "test/intl402/Locale/prototype/calendar/canonicalize.js",
+      "test/intl402/NumberFormat/prototype/format/unit-ja-JP.js",
+      "test/intl402/NumberFormat/prototype/format/unit-zh-TW.js",
+      "test/intl402/NumberFormat/prototype/formatToParts/unit-ja-JP.js",
+      "test/intl402/NumberFormat/prototype/formatToParts/unit-zh-TW.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle-a_FIXTURE.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle-b_FIXTURE.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle-c_FIXTURE.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle-main_FIXTURE.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle-x_FIXTURE.js",
+      "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle.js",
+      "test/language/import/import-defer/deferred-namespace-object/json-module.js",
+      "test/language/import/import-defer/deferred-namespace-object/json-module_FIXTURE.json"
+    ],
+    "changed_case_examples_by_stage": {
+      "10": "test/language/expressions/dynamic-import/import-fulfilled-member-of-errored-cycle.js",
+      "16": "test/language/import/import-defer/deferred-namespace-object/json-module.js",
+      "39": "test/built-ins/AsyncIteratorPrototype/Symbol.asyncDispose/invokes-return.js",
+      "52": "test/built-ins/Iterator/prototype/Symbol.dispose/invokes-return.js",
+      "61": "test/built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "76": "test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js",
+      "105": "test/intl402/Locale/constructor-apply-options-canonicalizes-twice.js",
+      "107": "test/intl402/NumberFormat/prototype/format/unit-ja-JP.js"
+    }
+  },
+  "selection": {
+    "stage_ids": [
+      10,
+      16,
+      20,
+      39,
+      52,
+      61,
+      76,
+      77,
+      105,
+      107
+    ],
+    "basis": "Map changed Test262 test roots to most-specific docs/STAGES.md owners; include Stage 20 as a module-evaluation canary for runtime module lifecycle changes.",
+    "full_test262_run": false,
+    "unit_tests_run": false
+  },
+  "runner": {
+    "path": "target/iteration/run-stages-next",
+    "sha256": "0ce4768941b594a34958ab6fd269750dc9ed8ee74187df7b861ac597ddce16ac",
+    "profile": "iteration",
+    "command": "TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/test262-pin-f2d-stage-<stage>.json target/iteration/run-stages-next <stage> <stage>",
+    "timeout_ms": 30000,
+    "jobs": 8
+  },
+  "result": {
+    "total": 15670,
+    "passed": 15670,
+    "failed": 0,
+    "all_selected_stages_pass": true
+  },
+  "stage_results": [
+    {
+      "stage": 10,
+      "total": 11102,
+      "passed": 11102,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-10-final.json",
+      "report_sha256": "479d3b830f7239ee8f10a16a2c767e7e6a135d1fcfaa42dc4b944cf01d69cb25",
+      "outcomes_sha256": "04ea2df2b3a12645d35d42cbbef7be0aa0bbb245b1b583ed122348a5592253d1"
+    },
+    {
+      "stage": 16,
+      "total": 128,
+      "passed": 128,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-16-final.json",
+      "report_sha256": "83d189ef087bb44fc942b0cdc793b893bc512f74a2b253234326f684ddbdfe5b",
+      "outcomes_sha256": "6fb0a8bc4f27df21a5dcd38fb62ab7fe552f0e47ca417e001c30725e69bac83a"
+    },
+    {
+      "stage": 20,
+      "total": 599,
+      "passed": 599,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-20-final.json",
+      "report_sha256": "b4e3919637c6752471853e1ec42ef650264c73a476d22467050e013b715e3512",
+      "outcomes_sha256": "5b821464e6b7f10f9238f74ec49935984fd6afc62d4c74ef197f7398c0a159b8"
+    },
+    {
+      "stage": 39,
+      "total": 13,
+      "passed": 13,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-39.json",
+      "report_sha256": "32568d12ec676fa032fdb2887b10f5ddf56cb68e8cfa99c0c5888f426cc26a0e",
+      "outcomes_sha256": "1aa5dfc26da195315ae74f70a47b468f9499132004785729dcd62ff20eef158c"
+    },
+    {
+      "stage": 52,
+      "total": 514,
+      "passed": 514,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-52.json",
+      "report_sha256": "99f5cf577f1a6c3a32c391530d911021424500abecb9be35f048609f17a62047",
+      "outcomes_sha256": "6a14a8f2b70d709ff5889accfb01eec261c538ecf3cbed73bba76e6a0a82ad9c"
+    },
+    {
+      "stage": 61,
+      "total": 729,
+      "passed": 729,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-61.json",
+      "report_sha256": "500bd15240061ba2e72a268b49bd1593aeca31976220ee58892f31a3efbfc05d",
+      "outcomes_sha256": "5c6f8089f93f022ecfca570aa5adb3bfc51d0d18aff93e5ca1c88c16dbe66e84"
+    },
+    {
+      "stage": 76,
+      "total": 1446,
+      "passed": 1446,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-76.json",
+      "report_sha256": "da3cf81d40cfcbff29c97a199adf511250e5879214ee6dd9c74cb1743ccb3f37",
+      "outcomes_sha256": "d5ff68ebfc49b86cc45cbe41aa51148aac6efe8620759642cf0a845773cafcfd"
+    },
+    {
+      "stage": 77,
+      "total": 738,
+      "passed": 738,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-77.json",
+      "report_sha256": "23e7955cd7acb037ed7db98a8da1a154871add794b8f2b0cb90119d473a98779",
+      "outcomes_sha256": "28ef34ba6dec80c81df80257401ca2437e013fb8059d60e60daecc20586f4dde"
+    },
+    {
+      "stage": 105,
+      "total": 152,
+      "passed": 152,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-105.json",
+      "report_sha256": "4a155177767f2202c81ae29926568f9d95494d5b3eacd4ab2ede59e59395a3f4",
+      "outcomes_sha256": "89c6daaef838da5e563ecb953f0ecf33fb020ee1e7ef27d4df9f0ed452b61265"
+    },
+    {
+      "stage": 107,
+      "total": 249,
+      "passed": 249,
+      "failed": 0,
+      "report": "target/iteration/test262-pin-f2d-stage-107.json",
+      "report_sha256": "b06634cd553ccbe2e2ffac8c1de149b6f11fe3ed6c75c54a9d441c651d2979ce",
+      "outcomes_sha256": "e5438e61ca1288d77ac217798b1494646a31b77bc02f6642e746e8d040a1d088"
+    }
+  ],
+  "comparisons": [
+    {
+      "stages": [
+        10,
+        16
+      ],
+      "baseline_test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+      "basis": "saved pre-pin pass reports; exact common case paths compared",
+      "stage_results": [
+        {
+          "stage": 10,
+          "common_cases": 11101,
+          "lost_passes": 0,
+          "new_cases": 1,
+          "new_cases_passed": 1
+        },
+        {
+          "stage": 16,
+          "common_cases": 127,
+          "lost_passes": 0,
+          "new_cases": 1,
+          "new_cases_passed": 1
+        }
+      ]
+    },
+    {
+      "stages": [
+        20
+      ],
+      "before_report": "target/iteration/task20-dirty-owner-stages-20-20.json",
+      "before_report_sha256": "5beac637cc803a65f380e09f7eed6b961ef81421614a3fa180a87a28af8fae09",
+      "after_report": "target/iteration/test262-pin-f2d-stage-20-final.json",
+      "comparison_command": "target/iteration/compare-runs --reports target/iteration/task20-dirty-owner-stages-20-20.json target/iteration/test262-pin-f2d-stage-20-final.json",
+      "compare_runs": "regressions=0",
+      "interpretation": "exact inventory, 599/599 saved passes"
+    },
+    {
+      "stages": [
+        39
+      ],
+      "before_report": "target/iteration/task20-affected-stage-39-before.json",
+      "before_report_sha256": "031cfd9b88b15c199f1af1d610e63f5f8e245d2a4afae47086cd595eaa025c50",
+      "after_report": "target/iteration/test262-pin-f2d-stage-39.json",
+      "comparison_command": "target/iteration/compare-runs --reports target/iteration/task20-affected-stage-39-before.json target/iteration/test262-pin-f2d-stage-39.json",
+      "compare_runs": "regressions=0",
+      "interpretation": "exact case inventory; changed pinned assertion also passes"
+    },
+    {
+      "stages": [
+        52
+      ],
+      "before_report": "target/iteration/task20-stage52-before-filtered.json",
+      "before_report_sha256": "92e57e4a98975d44143d12b2322e83b904dfdccbc35ac5534ff528e1686a8721",
+      "after_report": "target/iteration/test262-pin-f2d-stage-52.json",
+      "comparison_command": "target/iteration/compare-runs --reports target/iteration/task20-stage52-before-filtered.json target/iteration/test262-pin-f2d-stage-52.json",
+      "compare_runs": "regressions=0",
+      "interpretation": "exact case inventory; changed pinned assertion also passes"
+    },
+    {
+      "stages": [
+        61
+      ],
+      "before_report": "target/iteration/task20-stage61-current-3ba64.json",
+      "before_report_sha256": "067155521d313d67c912f3e5391f11ef01708f490255ee855abfb5c8b1cec630",
+      "after_report": "target/iteration/test262-pin-f2d-stage-61.json",
+      "comparison_command": "target/iteration/compare-runs --reports target/iteration/task20-stage61-current-3ba64.json target/iteration/test262-pin-f2d-stage-61.json",
+      "compare_runs": "regressions=0",
+      "interpretation": "same case identities; upstream correction changes the prior fixture/helper failure to pass"
+    }
+  ],
+  "limitations": [
+    "This is affected-stage evidence, not a full Test262 gate or Task 20 completion.",
+    "Stage 94 is not included in this selection; its latest stored qualification is from an older dirty source snapshot and still records one Annex B expectation conflict.",
+    "The previous Task 20 reports use older dirty source snapshots; comparisons are pass-retention checks, not same-build performance or equivalence claims."
+  ]
+}
