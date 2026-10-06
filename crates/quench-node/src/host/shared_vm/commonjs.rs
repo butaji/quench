@@ -1,6 +1,6 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
-use crate::host::{ModuleCache, NodeHost, ProcessModule};
+use crate::host::{EntryGoal, ModuleCache, NodeHost, ProcessModule};
 use rqj::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
@@ -55,10 +55,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     if context.is_module()? {
         return Ok(());
     }
-    if let Some(path) = context.host_mut().commonjs_entry.clone() {
-        let filename =
-            std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()))?;
-        load(context, &filename, None)?;
+    if let Some(entry) = context.host_mut().commonjs_entry.clone() {
+        let filename = std::fs::canonicalize(entry.path)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        load(context, &filename, None, entry.goal)?;
     } else {
         let filename = std::env::current_dir()
             .map_err(|error| RootedError::host(error.to_string()))?
@@ -105,7 +105,7 @@ pub(super) fn require(
     }
     let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
-    load(context, &filename, Some(parent))
+    load(context, &filename, Some(parent), EntryGoal::Node)
 }
 
 pub(super) fn resolve(
@@ -314,6 +314,7 @@ fn load(
     context: &mut Context<'_>,
     filename: &Path,
     parent: Option<RootId>,
+    goal: EntryGoal,
 ) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
     let state = context.host_mut().state();
@@ -356,7 +357,9 @@ fn load(
                 ))
             }
             _ => {
-                if source_kind(filename).map_err(RootedError::host)? == rqj::SourceKind::Module {
+                if goal == EntryGoal::Node
+                    && source_kind(filename).map_err(RootedError::host)? == rqj::SourceKind::Module
+                {
                     return Err(RootedError::host(
                         "requiring an ES module is not implemented on the shared VM",
                     ));
