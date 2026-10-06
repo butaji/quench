@@ -1,0 +1,237 @@
+{
+  "task": "20",
+  "scope": "Affected JavaScript Test262 stages mapped from current runtime owners; Wasm-only and formatting-only changes excluded. No full Test262 run.",
+  "inputs": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage_definitions": {
+      "path": "docs/STAGES.md",
+      "sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+    }
+  },
+  "source": {
+    "revision": "3ba64b0b7b72ebd85d15ece53af352d6b916de63",
+    "dirty": true
+  },
+  "runner": {
+    "path": "target/iteration/run-stages-next",
+    "sha256": "1936344d3158bc61419b93f0d6f97c0a4f32cb85ba65a9e8e2ad113e19363158",
+    "host": "macos-aarch64",
+    "jobs": 8,
+    "timeout_ms": 10000
+  },
+  "result": {
+    "stages": 23,
+    "total": 9466,
+    "passed": 9465,
+    "failed": 1
+  },
+  "run_command_pattern": "TEST262_TEST_TIMEOUT_MS=10000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task20-stage<id>-current-3ba64.json target/iteration/run-stages-next <id> <id>",
+  "comparison": {
+    "command_pattern": "target/iteration/compare-runs --reports <baseline-report> target/iteration/task20-stage<id>-current-3ba64.json",
+    "predecessor_pattern": "target/iteration/task20-affected-stage-<id>-before.json",
+    "matched_stage_ids": [
+      14,
+      31,
+      35,
+      36,
+      37,
+      38,
+      39,
+      46,
+      47,
+      49,
+      50,
+      58,
+      60,
+      61,
+      66,
+      68,
+      79,
+      80,
+      81
+    ],
+    "baseline_override": {
+      "68": "target/iteration/task20-binding-model-commit/before-ShadowRealm.json"
+    },
+    "baseline_report_sha256": {
+      "14": "ba129d4af7e862488d68fec14b820ffd97bad2a7dde50f66f009fc00a44b2216",
+      "31": "cf92afe1d434f26a01e1f531e32a2dd31bcbddcb014c7dbc038aeb1f802eee37",
+      "35": "932b868ccfec0208b3173a7d9a2cb518291538d7f52237fa667b3dd0f64a3c52",
+      "36": "2f24abca0e7d91d3b3300c492ee0db696eadba8e51a48a18b85f45c7175cfb97",
+      "37": "4fc93607ee1c0d41c7bb38efed3b0aaeef8020a0441055125cf4698cb000bdf5",
+      "38": "55b89d244b06ebebb01ba832b2b1911e4315b462a7e17459c48e3769ee43014b",
+      "39": "031cfd9b88b15c199f1af1d610e63f5f8e245d2a4afae47086cd595eaa025c50",
+      "46": "423a27d81deb1124e3855fa0b45fedc5290b313b68d10b3576fd874505498971",
+      "47": "f5a374977a9de175980b9460bdeda9d997f1ee77c31816257403b0c887da7da9",
+      "49": "d1d3006e5d869a32a761b3054e731bfaebc712ba5d277bc661ba6b84ca6b94f4",
+      "50": "8a2a992198b8927d7db5bec6f5caf59ea646447ffbdaabe696f6f539fa6579ce",
+      "58": "4a6e9c91d4ce44ae69dd74a3a68a946c720e455f7b84e9c22e5c73aec10373b3",
+      "60": "ef0694e798c65e3552ab723051a516e43ac1631e814b938fb59bf25720b2ae32",
+      "61": "507e05978fe1b65c105cf7834bc71613e6fc545e77d7978daadd14bca1e61c27",
+      "66": "8435132baf2c587280cb9fc6950cb4a3d647c55af453f59e0e68dbd69b5824e4",
+      "68": "498b4cca9d5e4c9cd8c86a5d66ffa22df3e329314c34db1a5da16cb122ac988f",
+      "79": "e5878f7dd34b9c45e7faa44260723e679f5c440bae7f206cd85ea8ba153de6c8",
+      "80": "c1610a5db61159d5dddcc05f8b0c8ccf51625c759173cba60d2219a8f6e17eb4",
+      "81": "bae7fd0592a3bec236c52bd6161f1c4a7681d04506dc9e241df09037d2d5c98e"
+    },
+    "verdict": "zero regressions; exact case inventories matched"
+  },
+  "stage_counts": {
+    "order": [
+      "total",
+      "passed",
+      "failed"
+    ],
+    "by_stage": {
+      "14": [
+        14,
+        14,
+        0
+      ],
+      "31": [
+        3081,
+        3081,
+        0
+      ],
+      "35": [
+        38,
+        38,
+        0
+      ],
+      "36": [
+        18,
+        18,
+        0
+      ],
+      "37": [
+        23,
+        23,
+        0
+      ],
+      "38": [
+        48,
+        48,
+        0
+      ],
+      "39": [
+        13,
+        13,
+        0
+      ],
+      "46": [
+        93,
+        93,
+        0
+      ],
+      "47": [
+        47,
+        47,
+        0
+      ],
+      "48": [
+        509,
+        509,
+        0
+      ],
+      "49": [
+        23,
+        23,
+        0
+      ],
+      "50": [
+        61,
+        61,
+        0
+      ],
+      "58": [
+        94,
+        94,
+        0
+      ],
+      "60": [
+        3411,
+        3411,
+        0
+      ],
+      "61": [
+        729,
+        728,
+        1
+      ],
+      "62": [
+        311,
+        311,
+        0
+      ],
+      "63": [
+        153,
+        153,
+        0
+      ],
+      "66": [
+        383,
+        383,
+        0
+      ],
+      "68": [
+        64,
+        64,
+        0
+      ],
+      "73": [
+        98,
+        98,
+        0
+      ],
+      "79": [
+        141,
+        141,
+        0
+      ],
+      "80": [
+        29,
+        29,
+        0
+      ],
+      "81": [
+        85,
+        85,
+        0
+      ]
+    }
+  },
+  "current_report_sha256": {
+    "14": "d75f4915058b9df98d369523179047bde31db5b0bf182c33442e013df5e83e07",
+    "31": "1ba89f6ad48f05ae8b6048544762001500325f9b58aa22ae606a23be6a12c5ba",
+    "35": "0346581cdaec01cd0de6d6b4f0fd9698a9e51baa5db14eff285bbee2f7ef7631",
+    "36": "86ae04803caac59c759728d5b5c5c2762eb1a7c3bd57c7f5a837ddeeb2e1741c",
+    "37": "795b3960901df7e3f61c78410f425339ad18fb718dffc9d78489aa9ba44c6a45",
+    "38": "ddd12876a1ae5c1ac140da680eb80f83752940674d05bb9721a82a11824dd5ee",
+    "39": "3d9d60389c75cf83627eb9ace0f7bc55324257e59f226a564705b4cecfa25a59",
+    "46": "cbbaafc77b761481817adb04afc6933b442a5791255fd3dffbed30ee3a67bb19",
+    "47": "3750f4155f014de423218e4a41a69e3e4247511062a5c5507f35abf995576b3d",
+    "48": "5956bb4b9798cd27986840eea64f8b930d6d967ca59facfcdf34c717b2e7d030",
+    "49": "4010f8fb5e7143fd818e03ee80fe9047ebcd4d36e0098e7150c4077a10b1d750",
+    "50": "7dbf9f89b61ae3dc86923cfe835b30ca2ab937745cc189346ede57d2ad5d2227",
+    "58": "1b2dcde6838219fd306dd5fe1f91ac2280ded566aca8080c9d91753ec737feb2",
+    "60": "b8df98828dfae795dbc4829996606f6910682e0f273a8207851a3518458b10eb",
+    "61": "067155521d313d67c912f3e5391f11ef01708f490255ee855abfb5c8b1cec630",
+    "62": "08d52e4d64d3ac4ecc2fdb54948a2ff931132c6dc46086d51c59f9c5a3f1e02e",
+    "63": "f5bd24321776f85cc88a2d8d0d2b3d6ce4608d9eb1dea5b903144d211e8ad7c1",
+    "66": "e178f7f466ae59bc129420bb67481dc79eec245e67b0c9e6801d030cafec08d8",
+    "68": "4a05769d8b6e2ffd7a983e759b367d9f84665193b22ed130f8fba3fd77b54a65",
+    "73": "d21175617bc11ba191f5489ff0a14b41f062e503f039577822cccec25a050c20",
+    "79": "12137084ddaf8277d59dcc0f2f992ffcb6ef6f29f703066842afa59c32a70e3c",
+    "80": "049abe0a789ac9b6298ae1645bfdf9529a7b27b37ce31baf972a67c9e7b226fd",
+    "81": "c4687e738d172b00e5d23e820c3ed44a04c8da7a43967f812f5eefb673d56b29"
+  },
+  "failures": [
+    {
+      "stage": 61,
+      "path": "built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "outcome": "failed",
+      "reason": "next runtime async: TypeError: cannot convert null or undefined to object"
+    }
+  ],
+  "limitations": "Stage 61 retains the known pinned allSettledKeyed fixture/helper conflict. Stages 48, 62, 63 and 73 have no matched full-stage predecessor in the Task 20 owner set. This does not close task 20 or Stage A."
+}
