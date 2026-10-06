@@ -623,6 +623,15 @@ impl<H: Host> Vm<H> {
         Ok(Value::UNDEFINED)
     }
 
+    pub(crate) fn drain_host_jobs(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        self.advance_static_module_jobs(program)?;
+        self.advance_dynamic_import_jobs(program, true)?;
+        self.drain_jobs(program)
+    }
+
     pub(crate) fn drain_jobs_until_promise(
         &mut self,
         program: &ResidualProgram,
