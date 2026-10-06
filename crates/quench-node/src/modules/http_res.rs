@@ -56,10 +56,10 @@ pub fn res_set_header(
             "Cannot set headers after they are sent to the client",
         ));
     }
-    let name = args.first().map(execute::to_js_string).transpose()?;
-    let Some(name) = name else {
+    let Some(raw_name) = args.first() else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    let name = validated_header_name(raw_name)?;
     let values = header_values_for(&name, args.get(1))?;
     if values.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -283,6 +283,9 @@ fn header_values(value: Option<&Value>) -> Result<Vec<String>, VmError> {
 }
 
 fn header_values_for(name: &str, value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    if value.is_none_or(|value| matches!(value, Value::Undefined)) {
+        return Err(invalid_header_value(name));
+    }
     let mut values = header_values(value)?;
     if NON_REPEATABLE_HEADERS
         .iter()
@@ -339,6 +342,11 @@ pub fn res_remove_header(
     let Some(name) = args.first().map(execute::to_js_string).transpose()? else {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     };
+    if name.eq_ignore_ascii_case("date") {
+        if let Some(receiver) = receiver {
+            execute::set_property_in_place(receiver, "sendDate", Value::Boolean(false));
+        }
+    }
     if let Some(res) = state.borrow_mut().http.res.get_mut(&id) {
         res.headers
             .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
@@ -355,12 +363,38 @@ pub fn res_write_head(
     let Some(id) = res_state(receiver) else {
         return Ok(Value::Undefined);
     };
+    let headers_sent = state
+        .borrow()
+        .http
+        .res
+        .get(&id)
+        .is_some_and(|res| res.headers_sent)
+        || matches!(
+            execute::get_property(receiver.unwrap_or(&Value::Undefined), "headersSent"),
+            Value::Boolean(true)
+        );
+    if headers_sent {
+        return Err(headers_sent_error(
+            "Cannot write headers after they are sent to the client",
+        ));
+    }
     let requested = args.first().unwrap_or(&Value::Undefined);
     let Some(status) = valid_status(requested) else {
         return Err(invalid_status(requested));
     };
+    if let Some(Value::Array(headers)) = args.get(1) {
+        let length = headers.logical_len();
+        if !length.is_multiple_of(2) {
+            return Err(invalid_write_head_headers(args.get(1).unwrap()));
+        }
+    }
     if let Some(receiver) = receiver {
         execute::set_property_in_place(receiver, "statusCode", Value::Number(status as f64));
+        let status_message = match args.get(1) {
+            Some(Value::String(reason)) => reason.clone(),
+            _ => default_status_message(status).to_owned(),
+        };
+        execute::set_property_in_place(receiver, "statusMessage", Value::String(status_message));
         execute::set_property_in_place(receiver, "headersSent", Value::Boolean(true));
     }
     if let Some(Value::Array(_)) = args.get(1) {
@@ -373,9 +407,7 @@ pub fn res_write_head(
                 let (Some(name), Some(value)) = (pair.first(), pair.get(1)) else {
                     continue;
                 };
-                let Ok(name) = execute::to_js_string(&execute::get_property(&array, name)) else {
-                    continue;
-                };
+                let name = validated_header_name(&execute::get_property(&array, name))?;
                 let Ok(values) =
                     header_values_for(&name, Some(&execute::get_property(&array, value)))
                 else {
@@ -424,6 +456,21 @@ fn headers_sent_error(message: &str) -> VmError {
         error,
         "code",
         Value::String("ERR_HTTP_HEADERS_SENT".into()),
+    ))
+}
+
+fn invalid_write_head_headers(value: &Value) -> VmError {
+    let received = execute::to_js_string(value).unwrap_or_else(|_| "[headers]".into());
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(format!(
+            "The argument 'headers' is invalid. Received {received}"
+        ))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_INVALID_ARG_VALUE".into()),
     ))
 }
 
@@ -493,19 +540,77 @@ pub fn res_uncork(
 
 fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
     for key in execute::own_enumerable_keys(object) {
-        if let Ok(item) = execute::get_property_result(object, &key) {
-            if let Ok(values) = header_values_for(&key, Some(&item)) {
-                for value in &values {
-                    validate_header_value(&key, value)?;
-                }
-                res.headers
-                    .retain(|(name, _)| !name.eq_ignore_ascii_case(&key));
-                res.headers
-                    .extend(values.into_iter().map(|value| (key.clone(), value)));
-            }
+        let name = validated_header_name(&Value::String(key.clone()))?;
+        let item = execute::get_property_result(object, &key)?;
+        let values = header_values_for(&name, Some(&item))?;
+        for value in &values {
+            validate_header_value(&name, value)?;
         }
+        res.headers
+            .retain(|(header, _)| !header.eq_ignore_ascii_case(&name));
+        res.headers
+            .extend(values.into_iter().map(|value| (name.clone(), value)));
     }
     Ok(())
+}
+
+fn validated_header_name(value: &Value) -> Result<String, VmError> {
+    let Value::String(name) = value else {
+        return Err(invalid_header_name(&execute::to_js_string(value)?));
+    };
+    if name.is_empty() || !name.chars().all(is_http_token_char) {
+        return Err(invalid_header_name(name));
+    }
+    Ok(name.clone())
+}
+
+fn is_http_token_char(character: char) -> bool {
+    character.is_ascii_alphanumeric()
+        || matches!(
+            character,
+            '!' | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '*'
+                | '+'
+                | '-'
+                | '.'
+                | '^'
+                | '_'
+                | '`'
+                | '|'
+                | '~'
+        )
+}
+
+fn invalid_header_name(name: &str) -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(format!(
+            "Header name must be a valid HTTP token [\"{name}\"]"
+        ))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_INVALID_HTTP_TOKEN".into()),
+    ))
+}
+
+fn invalid_header_value(name: &str) -> VmError {
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(format!(
+            "Invalid value \"undefined\" for header \"{name}\""
+        ))],
+    );
+    VmError::Thrown(execute::set_property(
+        error,
+        "code",
+        Value::String("ERR_HTTP_INVALID_HEADER_VALUE".into()),
+    ))
 }
 
 fn validate_header_value(name: &str, value: &str) -> Result<(), VmError> {
@@ -858,15 +963,7 @@ pub fn res_end(
             || (matches!(status_message, Value::String(ref value) if value == "OK")
                 && status != 200)
         {
-            let message = match status as u16 {
-                200 => "OK",
-                201 => "Created",
-                204 => "No Content",
-                400 => "Bad Request",
-                417 => "Expectation Failed",
-                404 => "Not Found",
-                _ => "",
-            };
+            let message = default_status_message(status as u16);
             execute::set_property_in_place(
                 response,
                 "statusMessage",
@@ -963,6 +1060,37 @@ pub fn res_end(
         execute::call(callback, receiver.unwrap_or(&Value::Undefined), &[])?;
     }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn default_status_message(status: u16) -> &'static str {
+    match status {
+        200 => "OK",
+        201 => "Created",
+        202 => "Accepted",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        304 => "Not Modified",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        408 => "Request Timeout",
+        409 => "Conflict",
+        410 => "Gone",
+        413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
+        418 => "I'm a Teapot",
+        422 => "Unprocessable Entity",
+        429 => "Too Many Requests",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
+        _ => "unknown",
+    }
 }
 
 /// `res.destroy([error])` — close the response socket. The normal net close

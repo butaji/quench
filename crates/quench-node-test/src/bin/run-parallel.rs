@@ -2,13 +2,15 @@
 //! submodule through the host.
 //!
 //! Default mode runs the manifest (one test file name per line, `#`
-//! comments allowed) and fails if any listed test regresses.
+//! comments allowed) and fails if any listed test regresses. An inline
+//! `profile=NAME` comment selects a reviewed subset with `--profile NAME`.
 //! `--triage` sweeps the whole `parallel/` directory and prints the
 //! tests that pass — diagnostic output for growing the manifest,
 //! never a conformance gate.
 //!
 //! Usage:
 //!   cargo run -p quench-node-test --bin run-parallel
+//!   cargo run -p quench-node-test --bin run-parallel -- --profile framework-core
 //!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
 
 use std::path::PathBuf;
@@ -20,6 +22,11 @@ use quench_node_test::case_process::{
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
 const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
+
+struct ManifestEntry {
+    name: String,
+    profiles: Vec<String>,
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -71,7 +78,15 @@ fn main() -> ExitCode {
             .and_then(|i| args.get(i + 1));
         return run_all(filter, timeout, results);
     }
-    run_manifest()
+    let profile = args
+        .iter()
+        .position(|arg| arg == "--profile")
+        .and_then(|index| args.get(index + 1));
+    if args.iter().any(|arg| arg == "--profile") && profile.is_none() {
+        eprintln!("error: --profile requires a profile name");
+        return ExitCode::from(2);
+    }
+    run_manifest(profile.map(String::as_str))
 }
 
 fn print_help() {
@@ -79,6 +94,7 @@ fn print_help() {
     println!();
     println!("usage:");
     println!("  run-parallel                         run the checked-in stage manifest");
+    println!("  run-parallel --profile NAME          run a tagged manifest subset");
     println!("  run-parallel --one PATH               run one fixture");
     println!("  run-parallel --all [options]         run the recursive fixture inventory");
     println!("  run-parallel --triage [options]        print passing triage fixtures");
@@ -124,17 +140,30 @@ fn run_one(path: PathBuf) -> ExitCode {
     }
 }
 
-fn manifest_names() -> Vec<String> {
+fn manifest_entries() -> Vec<ManifestEntry> {
     let manifest = std::fs::read_to_string(MANIFEST).unwrap_or_default();
     manifest
         .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_string)
+        .filter_map(|line| {
+            let (name, annotation) = line.split_once('#').unwrap_or((line, ""));
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let profiles = annotation
+                .split_whitespace()
+                .filter_map(|part| part.strip_prefix("profile="))
+                .map(str::to_string)
+                .collect();
+            Some(ManifestEntry {
+                name: name.to_string(),
+                profiles,
+            })
+        })
         .collect()
 }
 
-fn run_manifest() -> ExitCode {
+fn run_manifest(profile: Option<&str>) -> ExitCode {
     if !std::path::Path::new(PARALLEL_DIR).is_dir() {
         eprintln!(
             "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
@@ -142,14 +171,27 @@ fn run_manifest() -> ExitCode {
         );
         return ExitCode::from(2);
     }
-    let names = manifest_names();
-    if names.is_empty() {
+    let entries = manifest_entries();
+    if entries.is_empty() {
         eprintln!("read {MANIFEST}: missing or empty manifest");
         return ExitCode::from(2);
     }
+    let all_names: Vec<String> = entries.iter().map(|entry| entry.name.clone()).collect();
     let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Err(error) = validate_manifest(&names, &root.join(PARALLEL_DIR)) {
+    if let Err(error) = validate_manifest(&all_names, &root.join(PARALLEL_DIR)) {
         eprintln!("invalid {MANIFEST}: {error}");
+        return ExitCode::from(2);
+    }
+    let names: Vec<&str> = entries
+        .iter()
+        .filter(|entry| profile.is_none_or(|profile| entry.profiles.iter().any(|p| p == profile)))
+        .map(|entry| entry.name.as_str())
+        .collect();
+    if names.is_empty() {
+        eprintln!(
+            "error: manifest has no members for profile {}",
+            profile.unwrap_or("")
+        );
         return ExitCode::from(2);
     }
     let mut counts = [0usize; RunResult::COUNT];

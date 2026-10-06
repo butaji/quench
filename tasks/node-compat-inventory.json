@@ -1,8 +1,8 @@
 {
   "schema": 2,
   "state": "input_sources_classified_capability_audit_pending",
-  "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the existing curated upstream manifest without adding new upstream selections. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
-  "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+  "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the curated upstream manifest. The framework-core profile is tagged in that manifest and remains a derived test selection, not a second inventory or proof of implementation. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
+  "source_head": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
   "entries": [
     {
       "path": "tests/node-compat/stage-1005/readable-state.js",
@@ -104,7 +104,19 @@
       "static_module_specifiers": [
         "node:assert",
         "node:crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "crypto.hash accepts sha384/sha512 digest aliases and returns the expected 96/128 hex characters."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-1526/url-parse-protocol-relative.js",
@@ -5975,7 +5987,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "randomBytes truncates fractional size and rejects NaN with ERR_OUT_OF_RANGE."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2537/fs-promises-access-mode.js",
@@ -6186,7 +6210,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "crypto.getHashes returns the exact expected ordering."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2551/crypto-rsa-small-key-error.js",
@@ -6195,7 +6231,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "createSign/update/sign on a small RSA key exposes the asserted OpenSSL error fields."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2552/crypto-hmac-sha512-block.js",
@@ -6204,7 +6252,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "HMAC-SHA512 digest matches the fixture vector."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2553/crypto-sha512-and-invalid-hmac.js",
@@ -6213,7 +6273,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "SHA-512 digest matches the vector and invalid HMAC digest reports the expected error."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2554/stream-pipeline-function-stage.js",
@@ -6403,7 +6475,19 @@
       "static_module_specifiers": [
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Synchronous and callback HKDF reject an invalid digest with the expected error code."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2565/udp-host-roundtrip.js",
@@ -10757,7 +10841,19 @@
       "role": "assertion_case",
       "static_module_specifiers": [
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "randomBytes validates negative/fractional sizes and callback arguments."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-541/util-style-text.js",
@@ -10858,7 +10954,7 @@
     },
     {
       "path": "crates/quench-node-test/node-tests/parallel.txt",
-      "sha256": "d26c858f1910d046be8a0f54c882ac6e4d0a9ed0a2c07fbcf88f58ca51d240cd",
+      "sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc",
       "role": "inventory_manifest"
     },
     {
@@ -11685,7 +11781,18 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/shared/pump.rs"
+        ],
+        "obligations": [
+          "events.once promise completion, rejection and listener lifecycle."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-eventsource.js",
@@ -13669,7 +13776,17 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/util_inherits.rs",
+          "crates/quench-node/src/modules/util.rs"
+        ],
+        "obligations": [
+          "util.inherits prototype linkage, constructor identity and inherited behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-isDeepStrictEqual.js",
@@ -15604,7 +15721,17 @@
         "assert",
         "string_decoder",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/string_decoder.rs",
+          "crates/quench-node/src/modules/buffer_enc.rs"
+        ],
+        "obligations": [
+          "StringDecoder input chunk boundaries, encoding state and output text."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-binding-constants.js",
@@ -18733,7 +18860,19 @@
         "../common/crypto",
         "node:assert",
         "node:crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "The implemented argon2 entry point returns the asserted unsupported-operation error code."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dep0181.js",
@@ -18743,7 +18882,20 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Hmac invocation without new preserves constructor identity and emits the expected DEP0181 warning."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dep0183.js",
@@ -18753,7 +18905,20 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "setEngine accepts the asserted error variants and emits the expected DEP0183 warning."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-certificate.js",
@@ -18765,7 +18930,19 @@
         "../common/fixtures",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Certificate SPKAC verification/export results and invalid-input behavior match the assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-classes.js",
@@ -18776,7 +18953,21 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs",
+          "crates/quench-node/src/modules/crypto_cipher.rs"
+        ],
+        "obligations": [
+          "Hash, Hmac, cipher, sign/verify and DH factory results carry the asserted class identities."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-default-shake-lengths.js",
@@ -18786,7 +18977,19 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "SHAKE createHash defaults output length correctly and rejects invalid copy use."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-default-shake-lengths-oneshot.js",
@@ -18796,7 +18999,19 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "One-shot SHAKE hashing uses the asserted default output length and validation."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dh-curves.js",
@@ -18807,7 +19022,20 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs"
+        ],
+        "obligations": [
+          "DH/ECDH curve selection, verifyError, encodings, secrets and invalid inputs match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dh-errors.js",
@@ -18818,7 +19046,20 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs"
+        ],
+        "obligations": [
+          "DiffieHellman constructor and method argument validation expose the asserted errors."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dh-group-setters.js",
@@ -18828,7 +19069,20 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs"
+        ],
+        "obligations": [
+          "Named DH group identity and unsupported setter behavior match the assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dep0204.js",
@@ -18838,7 +19092,23 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/webcrypto.rs",
+          "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+        ],
+        "obligations": [
+          "KeyObject.from rejects nonextractable/tampered CryptoKey values and converts extractable keys; DEP0204 warning is observable."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dep0206.js",
@@ -18848,7 +19118,20 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Repeated Hmac.digest calls preserve the asserted output/state transition and DEP0206 warning."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-hash.js",
@@ -18860,7 +19143,20 @@
         "assert",
         "crypto",
         "fs"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Hash construction, streaming/copy/digest encodings, SHAKE behavior and errors match assertions; DEP0179 warning remains an obligation."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-hmac.js",
@@ -18871,7 +19167,19 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "HMAC digest vectors, encodings and input validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-sign-verify.js",
@@ -18886,7 +19194,19 @@
         "child_process",
         "crypto",
         "fs"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Sign/Verify construction, stream and direct signature/key/error behavior match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-randomfillsync-regression.js",
@@ -18896,7 +19216,19 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "randomFillSync mutates the target bytes as asserted."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-randomuuid.js",
@@ -18906,7 +19238,19 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "UUID v4 format, variant, uniqueness and option validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-randomuuidv7.js",
@@ -18916,7 +19260,19 @@
         "../common",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "UUID v7 version, monotonic timestamp, uniqueness and option validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-pbkdf2.js",
@@ -18927,7 +19283,19 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Synchronous/callback PBKDF2 derivation and argument validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-scrypt.js",
@@ -18938,7 +19306,19 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Synchronous/callback scrypt derivation and option validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-hkdf.js",
@@ -18950,7 +19330,19 @@
         "assert",
         "buffer",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Synchronous/callback HKDF derivation and argument validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-keygen.js",
@@ -18962,7 +19354,19 @@
         "assert",
         "crypto",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "Synchronous/asynchronous key-pair option validation and callback behavior match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-cipheriv-decipheriv.js",
@@ -18973,7 +19377,20 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_cipher.rs"
+        ],
+        "obligations": [
+          "Cipheriv/Decipheriv identities, update/final transitions and errors match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-authenticated.js",
@@ -18986,7 +19403,20 @@
         "assert",
         "crypto",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_cipher.rs"
+        ],
+        "obligations": [
+          "Authenticated cipher text/tag behavior, authentication failure and state transitions match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-verify-failure.js",
@@ -18997,7 +19427,20 @@
         "../common/fixtures",
         "crypto",
         "tls"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/tls.rs"
+        ],
+        "obligations": [
+          "Invalid createVerify input preserves the asserted TLS connection behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-rsa-dsa.js",
@@ -19009,7 +19452,19 @@
         "../common/fixtures",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "RSA/DSA key parsing, encryption/decryption and signing/verification match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-rsa-oaep-mgf1.js",
@@ -19021,7 +19476,19 @@
         "../common/fixtures",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "RSA OAEP/MGF1 option handling, round trips and validation match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-rsa-pss-default-salt-length.js",
@@ -19032,7 +19499,19 @@
         "../common/fixtures",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "RSA-PSS default salt length is consistent across hash, sign and verify."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dh.js",
@@ -19043,7 +19522,20 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs"
+        ],
+        "obligations": [
+          "DiffieHellman key generation, prime/generator, verifyError and secret exchange match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-dh-shared.js",
@@ -19054,7 +19546,20 @@
         "../common/crypto",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_dh.rs"
+        ],
+        "obligations": [
+          "Named group peers derive the same shared secret."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-x509.js",
@@ -19068,7 +19573,19 @@
         "crypto",
         "fs",
         "internal/crypto/x509"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs"
+        ],
+        "obligations": [
+          "X509 parsing, fields, fingerprints, legacy view, identity and check methods match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-dns-memory-error.js",
@@ -19133,7 +19650,20 @@
         "assert",
         "crypto",
         "utf8"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/crypto_cipher.rs"
+        ],
+        "obligations": [
+          "Cipher and random input encoding validation returns the asserted errors."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-crypto-subtle-zero-length.js",
@@ -19195,7 +19725,22 @@
         "crypto",
         "internal/crypto/util",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/webcrypto.rs",
+          "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+        ],
+        "obligations": [
+          "KeyObject.from asymmetric details and WebCrypto generated-key interoperability match assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-webcrypto-derivekey.js",
@@ -19250,7 +19795,22 @@
         "assert",
         "buffer",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/webcrypto.rs",
+          "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+        ],
+        "obligations": [
+          "Legacy createHash output equals subtle.digest output for the asserted algorithms."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-webcrypto-encrypt-decrypt-chacha20-poly1305.js",
@@ -19273,7 +19833,22 @@
         "../common/fixtures",
         "assert",
         "crypto"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/host.rs",
+          "crates/quench-node/src/modules/webcrypto.rs",
+          "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+        ],
+        "obligations": [
+          "KeyObject.toCryptoKey/export interoperability with subtle import matches assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-webcrypto-export-import-ec.js",
@@ -19835,7 +20410,20 @@
         "assert",
         "crypto",
         "tls"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/tls.rs"
+        ],
+        "obligations": [
+          "TLS peer certificate is an X509Certificate with the asserted issuer and serial identity."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-tls-get-ca-certificates-worker-no-use-system-ca.js",
@@ -20735,7 +21323,21 @@
         "crypto",
         "https",
         "tls"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/crypto.rs",
+          "crates/quench-node/src/modules/tls.rs",
+          "crates/quench-node/src/modules/http.rs"
+        ],
+        "obligations": [
+          "X509 parsing/fingerprint behavior remains correct across HTTPS SNI selection."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-https-socket-options.js",
@@ -20804,6 +21406,223 @@
         "../common/tmpdir",
         "https"
       ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-server.js",
+      "sha256": "9adbaf9262b3e38d0362ff7dc635dabdb6dc39b58b4bbff674982d9e315d25fa",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "net",
+        "http",
+        "url",
+        "querystring"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/net/mod.rs"
+        ],
+        "obligations": [
+          "HTTP server request/response lifecycle and client-visible status/body behavior."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+      "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs"
+        ],
+        "obligations": [
+          "Automatically generated response headers and explicit header overrides."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-content-length.js",
+      "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http",
+        "../common/countdown"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/net/mod.rs"
+        ],
+        "obligations": [
+          "Request and response framing for empty, fixed-length and chunked bodies, including Date suppression."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-write-head.js",
+      "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/net/mod.rs"
+        ],
+        "obligations": [
+          "writeHead header validation, status messages, and rejection after headers are sent."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-generic-streams.js",
+      "sha256": "a401a903cd1ba9dc37f03556b90075b798096bc354fbd727005fd4fb9e412e35",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "http",
+        "stream"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/net/mod.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "HTTP request and response interoperability with generic readable/writable streams."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
+      "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "../common/fixtures",
+        "assert",
+        "fs"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/fs.rs",
+          "crates/quench-node/src/polyfills/bootstrap/streams.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "File ReadStream pause/resume lifecycle, data order, and completion."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+      "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "stream"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "Readable-to-writable pipe flow, backpressure, and completion ordering."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js",
+      "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "async_hooks"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "AsyncResource.runInAsyncScope callback receiver and argument forwarding."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback.js",
+      "sha256": "8dd2f7203d3e6da2942691ea6c4f984c3cafa6d6e5a57cb8dd5850694d691111",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/diagnostics_channel.rs"
+        ],
+        "obligations": [
+          "diagnostics_channel tracingChannel callback lifecycle and payload identity."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-http-server-start.js",
+      "sha256": "23ca6fec9d9517c6b85690e96adfc659088d9f2b49501e31ced077eaf1f6b153",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "async_hooks",
+        "diagnostics_channel",
+        "assert",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "HTTP server request-start and response-finish diagnostic events with request context."
+        ]
+      }
     }
   ],
   "sources": [

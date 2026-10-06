@@ -1,44 +1,31 @@
-# Web-framework scenarios
+# Express, Koa and Fastify scenarios
 
-Real, unmodified web frameworks pinned by `package-lock.json`. They define the
-deferred framework investigation ([task 88](../../tasks/88.md) and
-[task 89](../../tasks/89.md)). It adds no gate to the current two-stage plan.
+These are the Stage A framework targets, using unmodified packages pinned by
+`package-lock.json`. Their minimum shared Node behavior is represented by the
+19 official upstream fixtures tagged `profile=framework-core` in the single
+[`parallel.txt` manifest](../../crates/quench-node-test/node-tests/parallel.txt).
+Run the legacy baseline with `run-parallel --profile framework-core`; task 21
+will route the same identities through the shared VM. The broader proposals in
+tasks 88/89 are superseded.
 
-| Scenario                | Packages                                                   |
-| ----------------------- | ---------------------------------------------------------- |
-| `scenarios/express.cjs` | express                                                    |
-| `scenarios/koa.cjs`     | koa                                                        |
-| `scenarios/fastify.cjs` | fastify                                                    |
-| `scenarios/hono.cjs`    | hono, @hono/node-server                                    |
-| `scenarios/nest.cjs`    | @nestjs/core, @nestjs/common, @nestjs/platform-express     |
-| `scenarios/h3.cjs`      | h3 (the Nuxt/Nitro server core)                            |
-| `scenarios/next.cjs`    | next, react, react-dom (production server for `next-app/`) |
+| Scenario | Package |
+| --- | --- |
+| `scenarios/express.cjs` | express |
+| `scenarios/koa.cjs` | koa |
+| `scenarios/fastify.cjs` | fastify |
 
-Every scenario serves the same loopback request set from `driver.cjs`: an HTML
+Each scenario serves the same loopback requests from `driver.cjs`: an HTML
 `GET /`, a JSON `POST /echo` body, a streamed `GET /stream`, a static
-`GET /asset.txt` and a `GET /missing` 404, with `Accept-Encoding: gzip`.
+`GET /asset.txt` and a `GET /missing` 404, with gzip accepted.
 
-## Setup
-
-Installation and the Next.js production build are setup steps, not part of the
-runtime contract. `next build` uses a native SWC addon and runs only under
-Node; Quench runs the prebuilt server.
+Installing pinned packages is setup, not part of the runtime contract. Run the
+Node oracle and Quench scenario from this directory:
 
 ```sh
-cd tests/frameworks
 npm ci
-(cd next-app && ../node_modules/.bin/next build)
 node driver.cjs scenarios/express.cjs
+../../target/iteration/quench-node driver.cjs scenarios/express.cjs
 ```
 
-## Tracing
-
-The inventory derivation runs each scenario under local Node with:
-
-- `trace/requests.cjs`: builtin specifiers each package requests (`--require`,
-  writes `OUT`);
-- `trace/calls.cjs`: builtin exports and web globals that framework or
-  scenario code calls (`--require`, writes `OUT`).
-
-The scenarios contain no Quench-specific code and must keep matching local
-Node exactly.
+The `trace` scripts record builtin specifiers and calls made by the three
+scenarios under local Node.

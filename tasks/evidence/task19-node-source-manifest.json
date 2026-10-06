@@ -77,7 +77,7 @@
     "tools/check-task-coherence.mjs": "e77370c6442ee03945d636a942e9cebf39bbfea1e97c1884f220bcbf3834798d",
     "crates/quench-node-test/src/bin/run-parallel.rs": "822b00384e84357b908b7131e7d1199a5c4c41ba4f9d2ce17d89ca67c1608bbd"
   },
-  "obligation": "The Node compatibility audit must include existing local fixtures and the curated upstream manifest, not only tests/node-compat. Manifest membership remains the existing authored list; no new upstream cases were selected and no outcomes determine membership.",
+  "obligation": "This revision-bound snapshot records the Node compatibility census before the framework-core profile was selected. The current authored manifest adds that profile; no outcomes determine membership.",
   "representation": "Inventory sources declare input discovery once. The coherence checker derives the expected paths from tracked trees and the existing manifest, then checks roles, hashes, support consumers and upstream revision. Package helpers, docs and the manifest are non-case inputs. Lexical assertion classification locates review obligations, not implementation proof.",
   "verification": {
     "coherence": "node tools/check-task-coherence.mjs passed",
@@ -107,6 +107,7 @@
     }
   },
   "limits": [
+    "This snapshot predates the 10 framework-core fixture additions recorded in the current task 19 inventory; its input counts and manifest hash are historical.",
     "Implementation ownership review is still required before freezing implemented-case membership.",
     "20 observation candidates need exact local-Node traces; bare exit zero is insufficient.",
     "The existing runner still discovers package helpers recursively and needs inventory-driven case selection before final gate qualification.",

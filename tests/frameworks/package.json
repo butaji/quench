@@ -2,7 +2,7 @@
   "name": "quench-framework-scenarios",
   "private": true,
   "type": "commonjs",
-  "description": "Pinned real web frameworks for the Stage A framework inventory (tasks/88.md, tasks/89.md).",
+  "description": "Pinned Express, Koa and Fastify scenarios for Stage A Node compatibility.",
   "dependencies": {
     "@hono/node-server": "2.1.3",
     "@nestjs/common": "12.1.2",

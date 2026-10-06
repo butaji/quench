@@ -4868,11 +4868,12 @@ fn build_incoming(
             execute::set_property_in_place(&res, "domain", domain);
         }
     }
+    let headers = execute::set_prototype_of(&host_api::object(headers), &Value::Null)?;
     let props = vec![
         ("statusCode".to_string(), Value::Number(status as f64)),
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
-        ("headers".to_string(), host_api::object(headers)),
+        ("headers".to_string(), headers),
         ("rawHeaders".to_string(), host_api::array(raw_headers)),
         ("req".to_string(), request_alias),
         (
