@@ -190,9 +190,31 @@ for (const source of nodeInventory.sources) {
         `Node source manifest is not inventoried: ${source.manifest}`,
       );
     }
-    const names = fs.readFileSync(path.join(root, source.manifest), "utf8")
-      .split("\n").map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("#"));
+    const manifestLines = fs.readFileSync(
+      path.join(root, source.manifest),
+      "utf8",
+    )
+      .split("\n");
+    const manifestEntries = manifestLines.flatMap((line) => {
+      const [namePart, annotation = ""] = line.split("#", 2);
+      const name = namePart.trim();
+      if (!name) return [];
+      const tagged = [...annotation.matchAll(/(?:^|\s)profile=([^\s]+)/g)]
+        .map((match) => match[1]);
+      if (new Set(tagged).size !== tagged.length) {
+        errors.push(`duplicate profile tag for Node manifest member: ${name}`);
+      }
+      for (const profile of tagged) {
+        if (!/^[a-z][a-z0-9-]*$/.test(profile)) {
+          errors.push(`invalid profile tag ${profile}: ${name}`);
+        }
+      }
+      if (annotation.includes("profile=") && !tagged.length) {
+        errors.push(`malformed profile tag for Node manifest member: ${name}`);
+      }
+      return [{ name, profiles: tagged }];
+    });
+    const names = manifestEntries.map((entry) => entry.name);
     if (!names.length) errors.push(`empty Node manifest: ${source.manifest}`);
     if (new Set(names).size !== names.length) {
       errors.push(`duplicate Node manifest member: ${source.manifest}`);

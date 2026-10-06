@@ -1,6 +1,6 @@
-# Real Node.js test/parallel fixtures verified passing through the host.
-# Only list tests that genuinely exercise implemented APIs — no vacuous
-# stub passes. Grow by failure families, verify before adding.
+# Reviewed upstream Node.js test/parallel fixtures selected for host behavior.
+# Inline profile tags derive targeted fixture runs; default mode runs all.
+# A selected case stays here when it exposes an implemented API gap.
 test-assert-fail.js
 test-assert-if-error.js
 test-events-getmaxlisteners.js
@@ -9,7 +9,7 @@ test-events-list.js
 test-events-listener-count-with-listener.js
 test-events-static-geteventlisteners.js
 test-events-uncaught-exception-stack.js
-test-events-once.js
+test-events-once.js # profile=framework-core
 test-eventsource.js
 test-eventsource-disabled.js
 test-fs-exists.js
@@ -38,7 +38,7 @@ test-stream-err-multiple-callback-construction.js
 test-stream-error-once.js
 test-stream-event-names.js
 test-stream-base-prototype-accessors-enumerability.js
-test-stream-auto-destroy.js
+test-stream-auto-destroy.js # profile=framework-core
 test-stream-add-abort-signal.js
 test-stream-duplex-end.js
 test-stream-end-of-streams.js
@@ -104,13 +104,13 @@ test-path-dirname.js
 test-path-extname.js
 test-path-glob.js
 test-path-isabsolute.js
-test-path-join.js
+test-path-join.js # profile=framework-core
 test-path-makelong.js
 test-path-normalize.js
 test-path-parse-format.js
 test-path-posix-exists.js
 test-path-relative.js
-test-path-resolve.js
+test-path-resolve.js # profile=framework-core
 test-path-win32-exists.js
 test-path-zero-length-strings.js
 test-path.js
@@ -126,7 +126,7 @@ test-url-format-whatwg.js
 test-url-invalid-file-url-path-input.js
 test-url-is-url-internal.js
 test-url-pathtofileurl.js
-test-url-parse-query.js
+test-url-parse-query.js # profile=framework-core
 test-url-parse-format.js
 test-url-revokeobjecturl.js
 test-url-relative.js
@@ -143,7 +143,7 @@ test-util-types-exists.js
 test-util.js
 test-url-urltooptions.js
 test-whatwg-url-custom-deepequal.js
-test-util-inherits.js
+test-util-inherits.js # profile=framework-core
 test-util-isDeepStrictEqual.js
 test-util-primordial-monkeypatching.js
 test-util-sleep.js
@@ -208,7 +208,7 @@ test-buffer-slow.js
 test-buffer-swap.js
 test-buffer-swap-fast.js
 test-buffer-tostring-4gb.js
-test-buffer-tostring.js
+test-buffer-tostring.js # profile=framework-core
 test-buffer-tostring-range.js
 test-buffer-tostring-rangeerror.js
 test-buffer-write.js
@@ -225,7 +225,7 @@ test-buffer-constants.js
 test-btoa-atob.js
 test-string-decoder-end.js
 test-string-decoder-fuzz.js
-test-string-decoder.js
+test-string-decoder.js # profile=framework-core
 test-binding-constants.js
 test-bad-unicode.js
 test-blob.js
@@ -502,7 +502,7 @@ test-crypto-dh-errors.js
 test-crypto-dh-group-setters.js
 test-crypto-dep0204.js
 test-crypto-dep0206.js
-test-crypto-hash.js
+test-crypto-hash.js # profile=framework-core
 test-crypto-hmac.js
 test-crypto-sign-verify.js
 test-crypto-randomfillsync-regression.js
@@ -671,3 +671,13 @@ test-https-timeout-server-2.js
 test-https-timeout-server.js
 test-https-truncate.js
 test-https-unix-socket-self-signed.js
+test-http-server.js # profile=framework-core
+test-http-automatic-headers.js # profile=framework-core
+test-http-content-length.js # profile=framework-core
+test-http-write-head.js # profile=framework-core
+test-http-generic-streams.js # profile=framework-core
+test-fs-read-stream-resume.js # profile=framework-core
+test-stream-pipe-flow.js # profile=framework-core
+test-async-hooks-run-in-async-scope-this-arg.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-callback.js # profile=framework-core
+test-diagnostics-channel-http-server-start.js # profile=framework-core
