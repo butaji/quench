@@ -9,6 +9,8 @@ pub(crate) use commonjs::source_kind;
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     rqj::host_functions![
         method "uptime" (0) => crate::modules::process::shared_vm::uptime,
+        method "nextTick" (1) => crate::modules::process::shared_vm::next_tick,
+        method "on" (2) => crate::modules::process::shared_vm::on,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
         method "assert" (1) => crate::modules::assert::shared_vm::ok,

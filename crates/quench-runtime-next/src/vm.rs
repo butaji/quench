@@ -791,6 +791,24 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_bindings.extend(bindings);
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        self.execute_with_job_drain(program, true)
+    }
+
+    pub(crate) fn execute_deferred_jobs(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        self.execute_with_job_drain(program, false)
+    }
+
+    fn execute_with_job_drain(
+        &mut self,
+        program: &ResidualProgram,
+        drain_jobs: bool,
+    ) -> Result<Value, JsError> {
+        if program.functions.is_empty() {
+            return Err(JsError::validation("program has no entry function".into()));
+        }
         self.initialize(program)?;
         if program.is_module() {
             self.instantiate_main_module(program)?;
@@ -809,15 +827,25 @@ impl<H: Host> Vm<H> {
         };
         let result = self.call_value(program, root, this, &[]);
         self.finish_main_module(program, &result)?;
-        self.advance_dynamic_import_jobs(program, true)?;
-        let jobs = self.drain_jobs(program);
+        if drain_jobs {
+            self.advance_dynamic_import_jobs(program, true)?;
+            let jobs = self.drain_jobs(program);
+            self.report_execution(program);
+            jobs?;
+        }
+        result
+    }
+
+    pub(crate) fn finish_deferred_execution(&mut self, program: &ResidualProgram) {
+        self.report_execution(program);
+    }
+
+    fn report_execution(&mut self, program: &ResidualProgram) {
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("RQJ_MEMORY").is_some() {
             self.report_memory("complete");
         }
-        jobs?;
-        result
     }
     #[cfg(feature = "profile-memory")]
     fn report_memory(&self, phase: &str) {

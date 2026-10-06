@@ -1,6 +1,10 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_is_callable(&self, root: RootId) -> Result<bool, JsError> {
+        Ok(self.is_function(self.embedding_value(root)?))
+    }
+
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(match self.heap.get(value) {

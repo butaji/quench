@@ -4,6 +4,7 @@
 //! and timer callbacks enqueue into them.
 
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, VecDeque};
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
@@ -11,7 +12,23 @@ use quench_runtime::value::Value;
 pub struct EventLoop {
     pub microtasks: RefCell<Vec<Microtask>>,
     pub immediates: RefCell<Vec<Immediate>>,
+    shared: SharedCallbacks,
     process_scope: Cell<u64>,
+}
+
+/// Guest callbacks retained by the shared VM host between execution phases.
+/// Legacy callbacks continue to use `Value` in the legacy queues above.
+pub struct SharedCallback {
+    pub callback: rqj::RootId,
+    pub receiver: rqj::RootId,
+    pub args: Vec<rqj::RootId>,
+}
+
+#[derive(Default)]
+struct SharedCallbacks {
+    next_ticks: VecDeque<SharedCallback>,
+    listeners: HashMap<String, Vec<SharedCallback>>,
+    exiting: bool,
 }
 
 pub struct Immediate {
@@ -41,12 +58,51 @@ impl EventLoop {
         Self {
             microtasks: RefCell::new(Vec::new()),
             immediates: RefCell::new(Vec::new()),
+            shared: SharedCallbacks::default(),
             process_scope: Cell::new(0),
         }
     }
 
+    pub fn queue_shared_next_tick(&mut self, callback: SharedCallback) {
+        if !self.shared.exiting {
+            self.shared.next_ticks.push_back(callback);
+        }
+    }
+
+    pub fn add_shared_listener(&mut self, event: String, callback: SharedCallback) {
+        self.shared
+            .listeners
+            .entry(event)
+            .or_default()
+            .push(callback);
+    }
+
+    pub fn take_shared_next_tick(&mut self) -> Option<SharedCallback> {
+        self.shared.next_ticks.pop_front()
+    }
+
+    pub fn has_shared_next_ticks(&self) -> bool {
+        !self.shared.next_ticks.is_empty()
+    }
+
+    pub fn shared_is_exiting(&self) -> bool {
+        self.shared.exiting
+    }
+
+    pub fn begin_shared_exit(&mut self) -> Vec<SharedCallback> {
+        if self.shared.exiting {
+            return Vec::new();
+        }
+        self.shared.exiting = true;
+        self.shared.listeners.remove("exit").unwrap_or_default()
+    }
+
     pub fn process_scope(&self) -> u64 {
         self.process_scope.get()
+    }
+
+    pub fn reset_shared(&mut self) {
+        self.shared = SharedCallbacks::default();
     }
 
     pub fn set_process_scope(&self, scope: u64) {

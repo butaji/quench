@@ -79,6 +79,30 @@ impl<H: Host> Runtime<H> {
         self.execute_value(program).map(drop)
     }
 
+    /// Execute the entry while leaving VM jobs queued for the embedder's
+    /// event-loop checkpoint. Call `run_host_jobs` after host nextTick work,
+    /// then `finish_deferred_execution` once the host loop is complete.
+    pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Drain VM jobs at a host-selected checkpoint, including module jobs.
+    pub fn run_host_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.drain_host_jobs(program).map(drop)
+    }
+
+    /// Finish profiling and execution reporting after deferred host work.
+    pub fn finish_deferred_execution(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<(), JsError> {
+        program.validate().map_err(JsError::validation)?;
+        self.vm.finish_deferred_execution(program);
+        Ok(())
+    }
+
     /// Query the main module's existing evaluation state after execution/jobs.
     /// The host decides what an unsettled evaluation means when its event loop ends.
     pub fn module_evaluation_pending(&self, program: &ResidualProgram) -> Result<bool, JsError> {
