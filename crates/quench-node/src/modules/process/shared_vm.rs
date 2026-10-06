@@ -12,6 +12,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let state = state.borrow();
         (state.process.argv.clone(), state.exec_argv.clone())
     };
+    let env = context.object_rooted()?;
+    for (name, value) in std::env::vars() {
+        let key = context.string_rooted(&name);
+        let value = context.string_rooted(&value);
+        if !context.set_property_rooted(env, key, value, env)? {
+            return Err(RootedError::host("cannot install process.env entry"));
+        }
+    }
+    install(context, process, "env", env)?;
     for (name, values) in [("argv", argv), ("execArgv", exec_argv)] {
         let values = values
             .iter()
