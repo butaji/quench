@@ -18,32 +18,6 @@ use crate::host::HostState;
 /// `exec()` output contract for commands that use shell syntax.
 pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::Result<Output> {
     let uses_host_exec = crate::host::command_uses_host_exec(command);
-    let command = if uses_host_exec {
-        let current = std::env::current_exe()
-            .ok()
-            .and_then(|path| std::fs::canonicalize(path).ok());
-        let engine = current
-            .as_ref()
-            .and_then(|path| path.parent().map(|parent| parent.join("quench-node")));
-        let runner = current.as_ref().and_then(|path| {
-            path.parent()
-                .map(|parent| parent.join("run"))
-                .filter(|candidate| candidate.is_file())
-        });
-        match (current, engine) {
-            (Some(current), Some(engine)) => command.replace(
-                engine.to_string_lossy().as_ref(),
-                runner
-                    .as_ref()
-                    .unwrap_or(&current)
-                    .to_string_lossy()
-                    .as_ref(),
-            ),
-            _ => command.to_string(),
-        }
-    } else {
-        command.to_string()
-    };
     let mut process = if cfg!(windows) {
         let mut shell = Command::new("cmd");
         shell.args(["/C", &command]);
@@ -63,7 +37,7 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
     }
     clear_worker_markers(&mut process);
     if uses_host_exec {
-        process.env("QUENCH_CHILD_RUNNER", "1");
+        process.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
     let process = process
@@ -473,28 +447,10 @@ pub fn spawn_sync(
             }
         }
     }
-    let executable = if is_host_exec {
-        std::env::current_exe()
-            .ok()
-            .and_then(|path| {
-                path.parent().map(|dir| {
-                    let runner = dir.join("run");
-                    if runner.is_file() {
-                        runner
-                    } else {
-                        dir.join("quench-node")
-                    }
-                })
-            })
-            .filter(|path| path.is_file())
-            .unwrap_or_else(|| std::path::PathBuf::from(&command))
-    } else {
-        std::path::PathBuf::from(&command)
-    };
-    let mut cmd = std::process::Command::new(executable);
+    let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
     if is_host_exec {
-        cmd.env("QUENCH_CHILD_RUNNER", "1");
+        cmd.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
     }
 
     let mut input: Option<Vec<u8>> = None;
@@ -540,7 +496,7 @@ pub fn spawn_sync(
     // pass the parent as an explicit fact after option.env has been applied.
     clear_worker_markers(&mut cmd);
     if is_host_exec {
-        cmd.env("QUENCH_CHILD_RUNNER", "1");
+        cmd.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
         if let Some(eval_index) = child_args
             .iter()
@@ -548,7 +504,7 @@ pub fn spawn_sync(
         {
             let exec_argv =
                 serde_json::to_string(&child_args[..eval_index]).unwrap_or_else(|_| "[]".into());
-            cmd.env("QUENCH_EXEC_ARGV", exec_argv);
+            cmd.env(crate::modules::process::EXEC_ARGV_ENV, exec_argv);
         }
         let argv0 = options
             .and_then(|value| opt_str(value, "argv0"))
@@ -702,7 +658,7 @@ fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Val
     let mut command = std::process::Command::new(executable);
     command.arg(fixture).args(args.iter().skip(index + 1));
     clear_worker_markers(&mut command);
-    command.env("QUENCH_CHILD_RUNNER", "1");
+    command.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
     let output = command
         .output()
         .map_err(|error| VmError::EvalError(error.to_string()))?;

@@ -207,13 +207,5 @@ Object.defineProperty(globalThis, "performance", {
   enumerable: false,
   value: __nodePerformance,
 });
-const __nodePrototypeNames = new WeakMap();
-const __nodeSetPrototypeOf = Object.setPrototypeOf;
-Object.setPrototypeOf = (object, prototype) => {
-  if (prototype === null && object && object.constructor?.name) {
-    __nodePrototypeNames.set(object, object.constructor.name);
-  }
-  return __nodeSetPrototypeOf(object, prototype);
-};
 "#
 );

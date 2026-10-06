@@ -13,6 +13,9 @@ use quench_runtime::execute::{self, VmError};
 use quench_runtime::ops::FunctionKind;
 use quench_runtime::value::{IteratorState, Value};
 
+#[path = "util/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 pub const PROMISIFY_CUSTOM_KEY: &str = "Symbol.for.nodejs.util.promisify.custom\0";
 pub const PROMISIFY_CUSTOM_ARGS_KEY: &str = "Symbol.for.nodejs.util.promisify.customArgs\0";
 
