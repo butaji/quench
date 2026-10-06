@@ -91,6 +91,7 @@ pub struct HttpState {
     /// Keep this host-side so the parser-detached guard does not add public
     /// stream listeners or alter observable listener counts.
     pub idle_sockets: HashSet<u64>,
+    pub(crate) shared: shared_vm::State,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -159,6 +160,7 @@ impl HttpState {
             client_request_prototype: None,
             outgoing_prototype: None,
             idle_sockets: HashSet::new(),
+            shared: shared_vm::State::new(),
         }
     }
 }

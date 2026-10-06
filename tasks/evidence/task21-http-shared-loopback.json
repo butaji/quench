@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "official_node_parallel_shared_http_loopback_probe",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "166ad2eea44ecfa54ca324615598e49eb3a4842b",
+  "source_state": "Dirty worktree; source SHA-256 values bind the tested shared host owners.",
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc",
+    "runner": "quench-node-test run-parallel-next / shared NodeHost"
+  },
+  "build": {
+    "command": "cargo check -p quench-node-test --bin run-parallel-next",
+    "status": "pass",
+    "notes": "Only pre-existing quench-runtime fetch_update deprecation warnings."
+  },
+  "cases": [
+    {
+      "path": "tests/node/test/parallel/test-http-methods.js",
+      "sha256": "8f002f7fd5486e2923715290ac40578fd5320eb677aeec121d47350551fa8cbd",
+      "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-http-methods.js",
+      "status": "pass",
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+      "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+      "command": "cargo run --quiet --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core --filter test-http-automatic-headers.js",
+      "status": "pass",
+      "result": {
+        "pass": 1,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 1
+      }
+    }
+  ],
+  "local_node_oracle": {
+    "node": "v26.10.0",
+    "status": "pass",
+    "check": "A loopback GET receives status 200, caller headers, a Date header, Connection: keep-alive, and Content-Length: 0 for an empty response.",
+    "command": "node -e with node:http and node:assert/strict; binds 127.0.0.1 on an ephemeral port and checks the fixture's asserted response headers."
+  },
+  "owner_sha256": {
+    "crates/quench-node/src/host/shared_vm.rs": "0495ad764dc9164ca919922b43419ddd219396e20e4c1085fd9deae44c0f2bd3",
+    "crates/quench-node/src/modules/http.rs": "28632bfb0ac4bfd7fba14a9e8478b8480c7ba716ea211c54aa5f1fa80cc20559",
+    "crates/quench-node/src/modules/http/shared_vm.rs": "4f9b41cb9315e5b95e7b2ba755f5a05a2911408d286920e4ed7e7d1f9aab0dbd",
+    "crates/quench-node/src/modules/http/shared_vm/operations.rs": "e0a874001be79ff7e6196f2b8873ede84e2a7af90755cd23a74ddaf84b2a206e",
+    "crates/quench-node/src/modules/http/shared_vm/poll.rs": "bbed946662eae83b237c5cc2c50b69d95da58eb690242261edbe2b69b63a9c76",
+    "crates/quench-node/src/modules/http/shared_vm/state.rs": "b13c45b9ab10dfbca0f22feb76fe40f1f62d0327b8ccb72145a2889fe8dd9585",
+    "crates/quench-node/src/modules/http_client.rs": "35b7485a918acbd06cff58e585fd18f48fb79a7ed35e58c5e46ff986320f972e",
+    "crates/quench-node/src/modules/http_res.rs": "b8d7e4f8f09d9006841249a5dbab93b7f10d2adcff859548a6fc67afbceba745",
+    "crates/quench-node/src/modules/net/mod.rs": "2111f101aac3b79aec1e5d50870447dde73ef6a14013de74553f99f195ef3873",
+    "crates/quench-node/src/modules/net/shared_vm.rs": "90479a23b965631a46b3eb853ed6c9866c2c489ae0dea26d9bdd43db2419fe83",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "61e07454f19be22f2f6ea4a7d159f2c2334cde118a6aa69a69a65b24257ff234",
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/parallel_profile.rs": "f63cfdbd628d65d845bf64ce998e359db305ccb251b33f642a7d32d0963c0eff",
+    "crates/quench-node-test/src/shared_runner.rs": "a21fad01f23d3910168d726c9cf375c5b0dd48bd38619669d475e88c1aed52e1",
+    "crates/quench-node-test/node-tests/parallel.txt": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc"
+  },
+  "limits": "This qualifies the canonical HTTP methods and the single GET/empty-response path exercised by these fixtures. It does not qualify request bodies, response streams, arbitrary HTTP framing, or general net APIs."
+}

@@ -265,6 +265,7 @@ pub(crate) fn finish_execution(
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     let checkpoint = drain_checkpoint(runtime, program, state);
+    crate::modules::http::shared_vm::cleanup(runtime, state);
     let exit_code = match checkpoint {
         Ok(()) => state.borrow().process.exit_code.unwrap_or(0),
         Err(_) => {
@@ -283,6 +284,7 @@ pub(crate) fn finish_after_uncaught_error(
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     state.borrow_mut().process.exit_code = Some(1);
+    crate::modules::http::shared_vm::cleanup(runtime, state);
     emit_exit(runtime, program, state, 1)
 }
 
@@ -295,6 +297,9 @@ fn drain_checkpoint(
         drain_shared_jobs(runtime, program, state)?;
 
         if crate::modules::fetch_shared_vm::poll(runtime, program, state)? {
+            continue;
+        }
+        if crate::modules::http::shared_vm::poll(runtime, program, state)? {
             continue;
         }
 
@@ -325,8 +330,11 @@ fn drain_checkpoint(
         let immediate_cutoff = state.borrow().event_loop.shared_immediate_cutoff();
         let Some(cutoff) = immediate_cutoff else {
             let next_timer = state.borrow().event_loop.next_shared_timer_due();
-            if crate::modules::fetch_shared_vm::has_pending(state) {
-                let poll_interval = crate::modules::fetch_shared_vm::poll_interval();
+            if crate::modules::fetch_shared_vm::has_pending(state)
+                || crate::modules::http::shared_vm::has_work(state)
+            {
+                let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
+                    .min(crate::modules::net::shared_vm::poll_interval());
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
@@ -372,8 +380,11 @@ fn drain_checkpoint(
         }
         if !ran_immediate {
             let next_timer = state.borrow().event_loop.next_shared_timer_due();
-            if crate::modules::fetch_shared_vm::has_pending(state) {
-                let poll_interval = crate::modules::fetch_shared_vm::poll_interval();
+            if crate::modules::fetch_shared_vm::has_pending(state)
+                || crate::modules::http::shared_vm::has_work(state)
+            {
+                let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
+                    .min(crate::modules::net::shared_vm::poll_interval());
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));

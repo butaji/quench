@@ -564,7 +564,7 @@ fn validated_header_name(value: &Value) -> Result<String, VmError> {
     Ok(name.clone())
 }
 
-fn is_http_token_char(character: char) -> bool {
+pub(crate) fn is_http_token_char(character: char) -> bool {
     character.is_ascii_alphanumeric()
         || matches!(
             character,
@@ -613,11 +613,14 @@ fn invalid_header_value(name: &str) -> VmError {
     ))
 }
 
+pub(crate) fn valid_header_value(value: &str) -> bool {
+    !value.chars().any(|character| {
+        (character != '\t' && (character as u32) < 0x20) || character as u32 > 0xFF
+    })
+}
+
 fn validate_header_value(name: &str, value: &str) -> Result<(), VmError> {
-    if value
-        .chars()
-        .any(|character| character != '\t' && (character as u32) < 0x20 || character as u32 > 0xFF)
-    {
+    if !valid_header_value(value) {
         let error = quench_runtime::builtins::error(
             quench_runtime::ops::Builtin::TypeError,
             &[Value::String(format!(
@@ -1191,7 +1194,7 @@ fn status_code(receiver: Option<&Value>, default: u16) -> u16 {
 }
 
 /// Serialize an HTTP/1.1 response.
-fn compose(
+pub(crate) fn compose(
     status: u16,
     text: &str,
     headers: &[(String, String)],

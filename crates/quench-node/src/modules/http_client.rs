@@ -2699,7 +2699,7 @@ fn request_host(target: &RequestTarget) -> String {
     }
 }
 
-fn request_head(
+pub(crate) fn request_head(
     host: &str,
     method: &str,
     path: &str,
