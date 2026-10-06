@@ -15,6 +15,7 @@ pub mod buffer_rw;
 pub mod buffer_write;
 pub mod child_process;
 pub mod clone;
+pub(crate) mod clone_shared_vm;
 pub mod cluster;
 pub mod compat_extra;
 pub mod console;

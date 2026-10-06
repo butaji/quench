@@ -125,6 +125,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Structured-clone a rooted value using the active realm's object graph.
+    pub fn structured_clone_rooted(
+        &mut self,
+        value: RootId,
+        options: Option<RootId>,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_structured_clone(value, options);
+        self.completion(result)
+    }
+
     pub fn array_rooted(&mut self, values: &[RootId]) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_array(values);
         self.completion(result)
