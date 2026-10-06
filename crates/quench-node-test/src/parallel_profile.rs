@@ -1,6 +1,6 @@
 //! The checked-in Node `test/parallel` manifest is the profile selection authority.
 
-use crate::case_process::{observe_case, RunResult};
+use crate::case_process::{observe_parallel_case, RunResult};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
@@ -23,7 +23,7 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
     let mut counts = [0usize; RunResult::COUNT];
     for fixture in &fixtures {
         let (result, reason) =
-            match observe_case(&executable, fixture, Duration::from_secs(timeout_secs)) {
+            match observe_parallel_case(&executable, fixture, Duration::from_secs(timeout_secs)) {
                 Ok(observation) => {
                     let reason = match observation.worker.as_ref() {
                         Some(crate::NodeOutcome::Fail { reason }) => Some(reason.clone()),
