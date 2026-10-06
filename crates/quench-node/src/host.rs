@@ -37,7 +37,19 @@ pub fn process_uptime_capability() -> Value {
 
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
-    pub(crate) commonjs_entry: Option<std::path::PathBuf>,
+    pub(crate) commonjs_entry: Option<CommonJsEntry>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryGoal {
+    Node,
+    CommonJs,
+}
+
+#[derive(Clone)]
+pub(crate) struct CommonJsEntry {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) goal: EntryGoal,
 }
 
 /// One canonical process identity in the active VM. The legacy variant is
@@ -86,6 +98,8 @@ pub struct HostState {
     pub timers: crate::modules::timers::TimerRegistry,
     pub event_loop: crate::modules::event_loop::EventLoop,
     pub process: crate::modules::process::ProcessState,
+    /// Invocation flags supplied by the embedder for this logical process.
+    pub exec_argv: Vec<String>,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
     pub http: crate::modules::http::HttpState,
@@ -193,6 +207,7 @@ impl NodeHost {
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
             process: crate::modules::process::ProcessState::new(argv),
+            exec_argv: Vec::new(),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
             http: crate::modules::http::HttpState::new(),
@@ -253,7 +268,21 @@ impl NodeHost {
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.
     pub fn with_commonjs_entry(mut self, path: std::path::PathBuf) -> Self {
-        self.commonjs_entry = Some(path);
+        self.commonjs_entry = Some(CommonJsEntry {
+            path,
+            goal: EntryGoal::Node,
+        });
+        self
+    }
+
+    pub fn with_commonjs_entry_goal(mut self, path: std::path::PathBuf, goal: EntryGoal) -> Self {
+        self.commonjs_entry = Some(CommonJsEntry { path, goal });
+        self
+    }
+
+    /// Retain the Node invocation flags supplied by the fixture adapter.
+    pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Self {
+        self.state.borrow_mut().exec_argv = exec_argv;
         self
     }
 

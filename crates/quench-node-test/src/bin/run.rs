@@ -120,5 +120,9 @@ fn main() -> ExitCode {
             println!("SKIP {}: {reason}", path.display());
             ExitCode::from(0)
         }
+        quench_node_test::NodeOutcome::GuestExit { code } => {
+            eprintln!("UNCLASSIFIED {}: guest exit status {code}", path.display());
+            ExitCode::from(1)
+        }
     }
 }

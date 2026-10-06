@@ -7,6 +7,19 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let process = context.object_rooted()?;
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
+    let (argv, exec_argv) = {
+        let state = context.host_mut().state();
+        let state = state.borrow();
+        (state.process.argv.clone(), state.exec_argv.clone())
+    };
+    for (name, values) in [("argv", argv), ("execArgv", exec_argv)] {
+        let values = values
+            .iter()
+            .map(|value| context.string_rooted(value))
+            .collect::<Vec<_>>();
+        let values = context.array_rooted(&values)?;
+        install(context, process, name, values)?;
+    }
     let global = context.global_root()?;
     install(context, global, "process", process)?;
     let retained = context.retain(process)?;
