@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use quench_node_test::case_process::{
-    observe_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
+    observe_parallel_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
 };
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";
@@ -107,7 +107,7 @@ fn run_one(path: PathBuf) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match observe_case(
+    match observe_parallel_case(
         &executable,
         &path,
         std::time::Duration::from_secs(DEFAULT_CASE_TIMEOUT_SECS),
@@ -178,7 +178,7 @@ fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
 }
 
 fn triage_one(exe: &std::path::Path, path: &std::path::Path, timeout_secs: u64) -> RunResult {
-    match observe_case(exe, path, std::time::Duration::from_secs(timeout_secs)) {
+    match observe_parallel_case(exe, path, std::time::Duration::from_secs(timeout_secs)) {
         Ok(observation) => observation.outcome(),
         Err(error) => {
             eprintln!("worker {}: {error}", path.display());
@@ -210,7 +210,8 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
     let mut counts = [0usize; RunResult::COUNT];
     let mut results = Vec::with_capacity(entries.len());
     for path in &entries {
-        let observation = observe_case(&exe, path, std::time::Duration::from_secs(timeout_secs));
+        let observation =
+            observe_parallel_case(&exe, path, std::time::Duration::from_secs(timeout_secs));
         let result = observation
             .as_ref()
             .map(|record| record.outcome())

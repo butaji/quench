@@ -100,6 +100,30 @@ pub fn observe_case(
     fixture: &Path,
     timeout: Duration,
 ) -> Result<CaseObservation, String> {
+    observe_case_with_environment(executable, fixture, timeout, &[], false)
+}
+
+/// Run an upstream `test/parallel` fixture with the same metadata boundary as
+/// Node's Python harness: apply `// Env:` before the worker and prevent the
+/// shared helper from parsing flags a second time.
+pub fn observe_parallel_case(
+    executable: &Path,
+    fixture: &Path,
+    timeout: Duration,
+) -> Result<CaseObservation, String> {
+    let source = fs::read_to_string(fixture)
+        .map_err(|error| format!("read {}: {error}", fixture.display()))?;
+    let metadata = crate::reader::fixture_metadata(&source);
+    observe_case_with_environment(executable, fixture, timeout, &metadata.env, true)
+}
+
+fn observe_case_with_environment(
+    executable: &Path,
+    fixture: &Path,
+    timeout: Duration,
+    env: &[(String, String)],
+    skip_flag_check: bool,
+) -> Result<CaseObservation, String> {
     if timeout.is_zero() || !fixture.is_file() {
         return Err("Node cases require an existing fixture and a positive deadline".into());
     }
@@ -111,6 +135,11 @@ pub fn observe_case(
         .arg(fixture)
         .arg(&result)
         .env(quench_node::modules::process::CHILD_RUNNER_ENV, "1");
+    command.envs(env.iter().cloned());
+    if skip_flag_check {
+        // The official Node test runner sets this after applying fixture Env.
+        command.env("NODE_SKIP_FLAG_CHECK", "true");
+    }
     observe_process_in(command, timeout, &directory, Some(&result))
 }
 
