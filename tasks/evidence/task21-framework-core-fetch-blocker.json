@@ -161,5 +161,40 @@
     "The profile runner prints per-case failure lines but does not emit raw worker stdout/stderr reports.",
     "This confirms global-name resolution only; it does not qualify structuredClone operation semantics or any fixture assertions.",
     "No local Node comparison was part of this command; no fixture passes are claimed."
-  ]
+  ],
+  "current_replay": {
+    "source_revision": "fd07ca69d9a14c1a39d8cdd4f1ce34ff0f14c5f2",
+    "source_dirty": true,
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core",
+    "suite_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest_sha256": "1db49b2a3d1a5131eb0452ec8611243c1758aab79985bfc7c087891e4f8a82dc",
+    "runner": {
+      "path": "target/iteration/run-parallel-next",
+      "sha256": "ee5d6b2b649c3c13f8828854772a479d185c6980dad44f115e33ee63bb421ee2"
+    },
+    "result": {
+      "pass": 0,
+      "skip": 0,
+      "fail": 19,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 19,
+      "common_failure": "ReferenceError: fetch is not defined"
+    },
+    "failure_order": "All selected fixtures stop in tests/node/test/common/index.js while it evaluates the bare fetch binding for knownGlobals; no fixture assertion ran."
+  },
+  "current_express_probe": {
+    "source_revision": "fd07ca69d9a14c1a39d8cdd4f1ce34ff0f14c5f2",
+    "source_dirty": true,
+    "command": "cargo run --profile iteration -p quench-node --bin quench-node-next -- tests/frameworks/driver.cjs tests/frameworks/scenarios/express.cjs",
+    "runner": {
+      "path": "target/iteration/quench-node-next",
+      "sha256": "bd32b2ee3ddb6d5adaa3153fcc5d59e0cae38e5fce3cafbf04fd9478a2348316"
+    },
+    "exit": 1,
+    "first_failure": "Error: Cannot find module 'node:http'",
+    "require_stack": "tests/frameworks/driver.cjs",
+    "assertions_reached": false
+  }
 }
