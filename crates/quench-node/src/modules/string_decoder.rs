@@ -9,6 +9,23 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+pub(crate) const MAX_STRING_BYTES: usize = 0x1fff_ffe8;
+const LAST_CHAR_LENGTH: usize = 4;
+
+pub(crate) mod shared_vm;
+
+#[derive(Clone, Copy)]
+pub(crate) enum DecodeMode {
+    Streaming,
+    Final,
+}
+
+pub(crate) struct DecodedChunk {
+    pub units: Vec<u16>,
+    pub pending: Vec<u8>,
+    pub last_total: usize,
+}
+
 pub fn new_decoder(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let requested = match _args.first() {
         None | Some(Value::Undefined) => "utf8".to_string(),
@@ -79,80 +96,56 @@ pub fn write(
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let input = args.first().ok_or(VmError::NotCallable)?;
     let key = decoder_key(state, receiver)?;
-    let mut bytes = state
+    let prior_pending = state
         .borrow()
         .string_decoder_pending
         .get(&key)
         .cloned()
         .unwrap_or_default();
-    let had_pending = !bytes.is_empty();
-    bytes.extend(input_bytes(input)?);
-    if bytes.len() > 0x1fffffe8 {
+    let input_length = input_byte_length(input)?;
+    if prior_pending.len().saturating_add(input_length) > MAX_STRING_BYTES {
         return Err(crate::modules::buffer_enc::string_too_long());
     }
+    let input = input_bytes(input)?;
     let encoding = decoder_encoding(state, key, receiver);
-    let (text, pending) = decode_chunk(&bytes, &encoding, had_pending, true);
+    let decoded = decode_chunk_units(&prior_pending, &input, &encoding, DecodeMode::Streaming);
+    let text = quench_runtime::execute::string_from_units(decoded.units);
+    let pending = decoded.pending;
     state
         .borrow_mut()
         .string_decoder_pending
         .insert(key, pending.clone());
-    let total: usize = if encoding == "utf8" {
-        bytes
-            .first()
-            .map(|byte| match byte {
-                0xC0..=0xDF => 2,
-                0xE0..=0xEF => 3,
-                0xF0..=0xF7 => 4,
-                _ => 0,
-            })
-            .unwrap_or(0)
-    } else if encoding == "utf16le" {
-        2
-    } else {
-        0
-    };
-    if total != 0 || !pending.is_empty() {
-        let pending_value = host_api::bytes(&pending);
-        let updated =
-            quench_runtime::execute::set_property(receiver.clone(), "\0pending", pending_value);
-        let updated = quench_runtime::execute::set_property(
-            updated,
-            "lastNeed",
-            Value::Number(total.saturating_sub(pending.len()) as f64),
-        );
-        let updated = quench_runtime::execute::set_property(
-            updated,
-            "lastTotal",
-            Value::Number(total as f64),
-        );
-        let mut last_char = pending;
-        last_char.resize(4, 0);
-        let updated = quench_runtime::execute::set_property(
-            updated,
-            "lastChar",
-            crate::modules::buffer_proto::make_buffer(&last_char[..4]),
-        );
-        quench_runtime::execute::replace_value(receiver, &updated);
-    }
+    update_decoder_fields(receiver, &pending, decoded.last_total);
     let _ = (state, key);
     Ok(text)
 }
 
 fn input_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
+    let (buffer, offset, length) = input_view(value)?;
+    view_bytes(buffer, offset, length)
+}
+
+fn input_byte_length(value: &Value) -> Result<usize, VmError> {
+    Ok(input_view(value)?.2)
+}
+
+fn input_view(
+    value: &Value,
+) -> Result<(&Rc<quench_runtime::value::ArrayBufferData>, usize, usize), VmError> {
     match value {
-        Value::Float64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
-        Value::Float32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
-        Value::Int8Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
-        Value::Int16Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 2),
-        Value::Int32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
-        Value::BigInt64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
-        Value::BigUint64Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 8),
-        Value::Uint32Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 4),
-        Value::Uint8Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
-        Value::Uint8ClampedArray(view) => view_bytes(&view.buffer, view.byte_offset, view.length),
-        Value::Uint16Array(view) => view_bytes(&view.buffer, view.byte_offset, view.length * 2),
-        Value::DataView(view) => view_bytes(&view.buffer, view.byte_offset, view.byte_length),
-        Value::ArrayBuffer(buffer) => Ok(buffer.bytes.borrow().clone()),
+        Value::Float64Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 8)),
+        Value::Float32Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 4)),
+        Value::Int8Array(view) => Ok((&view.buffer, view.byte_offset, view.length)),
+        Value::Int16Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 2)),
+        Value::Int32Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 4)),
+        Value::BigInt64Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 8)),
+        Value::BigUint64Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 8)),
+        Value::Uint32Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 4)),
+        Value::Uint8Array(view) => Ok((&view.buffer, view.byte_offset, view.length)),
+        Value::Uint8ClampedArray(view) => Ok((&view.buffer, view.byte_offset, view.length)),
+        Value::Uint16Array(view) => Ok((&view.buffer, view.byte_offset, view.length * 2)),
+        Value::DataView(view) => Ok((&view.buffer, view.byte_offset, view.byte_length)),
+        Value::ArrayBuffer(buffer) => Ok((buffer, 0, buffer.bytes.borrow().len())),
         _ => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
             "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView. Received {}",
             received_type(value),
@@ -184,40 +177,55 @@ fn view_bytes(
         .ok_or(VmError::NotCallable)
 }
 
-fn decode_chunk(
-    bytes: &[u8],
+pub(crate) fn decode_chunk_units(
+    prior_pending: &[u8],
+    input: &[u8],
     encoding: &str,
-    preserve_trailing_high: bool,
-    streaming: bool,
-) -> (Value, Vec<u8>) {
-    match encoding {
+    mode: DecodeMode,
+) -> DecodedChunk {
+    let streaming = matches!(mode, DecodeMode::Streaming);
+    let mut bytes = Vec::with_capacity(prior_pending.len().saturating_add(input.len()));
+    bytes.extend_from_slice(prior_pending);
+    bytes.extend_from_slice(input);
+    let had_pending = !prior_pending.is_empty();
+    let (mut units, mut pending) = match encoding {
         "base64" | "base64url" => {
             // Streaming base64 emits complete three-byte groups and keeps
             // the tail for the next write (or end(), where padding is added).
-            let complete = bytes.len() / 3 * 3;
-            let text = crate::modules::buffer_enc::decode_str(&bytes[..complete], encoding);
-            (text, bytes[complete..].to_vec())
+            let complete = if streaming {
+                bytes.len() / 3 * 3
+            } else {
+                bytes.len()
+            };
+            (
+                crate::modules::buffer_enc::decode_units(&bytes[..complete], encoding),
+                bytes[complete..].to_vec(),
+            )
         }
         "hex" => {
-            let complete = bytes.len() / 2 * 2;
-            let text = crate::modules::buffer_enc::decode_str(&bytes[..complete], encoding);
-            (text, bytes[complete..].to_vec())
+            let complete = if streaming {
+                bytes.len() / 2 * 2
+            } else {
+                bytes.len()
+            };
+            (
+                crate::modules::buffer_enc::decode_units(&bytes[..complete], encoding),
+                bytes[complete..].to_vec(),
+            )
         }
         "latin1" => (
-            Value::String(bytes.iter().map(|byte| *byte as char).collect()),
+            bytes.iter().map(|byte| u16::from(*byte)).collect(),
             Vec::new(),
         ),
         "ascii" => (
-            Value::String(bytes.iter().map(|byte| (byte & 0x7f) as char).collect()),
+            bytes.iter().map(|byte| u16::from(byte & 0x7f)).collect(),
             Vec::new(),
         ),
         "utf16le" => {
             let mut complete = bytes.len() / 2 * 2;
             if complete >= 2 {
                 let last = u16::from_le_bytes([bytes[complete - 2], bytes[complete - 1]]);
-                if (0xd800..=0xdbff).contains(&last)
-                    && (preserve_trailing_high || bytes.len() == complete)
-                {
+                if (0xd800..=0xdbff).contains(&last) && (had_pending || bytes.len() == complete) {
                     complete -= 2;
                 }
             }
@@ -225,16 +233,53 @@ fn decode_chunk(
                 .chunks_exact(2)
                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                 .collect::<Vec<_>>();
-            (
-                quench_runtime::execute::string_from_units(units),
-                bytes[complete..].to_vec(),
-            )
+            (units, bytes[complete..].to_vec())
         }
-        _ => decode_utf8(bytes, preserve_trailing_high, streaming),
+        _ => {
+            let (text, pending) = decode_utf8(&bytes, had_pending, streaming);
+            (text.encode_utf16().collect(), pending)
+        }
+    };
+    if !streaming {
+        match encoding {
+            "utf8" if !pending.is_empty() => units.push(0xfffd),
+            "utf16le" if pending.len() >= 2 => {
+                units.push(u16::from_le_bytes([pending[0], pending[1]]));
+            }
+            _ => {}
+        }
+        pending.clear();
+    }
+    let last_total = pending_sequence_length(&pending, encoding);
+    DecodedChunk {
+        units,
+        pending,
+        last_total,
     }
 }
 
-fn decode_utf8(bytes: &[u8], had_pending: bool, streaming: bool) -> (Value, Vec<u8>) {
+fn pending_sequence_length(pending: &[u8], encoding: &str) -> usize {
+    match encoding {
+        "utf8" => pending.first().map_or(0, |byte| match byte {
+            0xc0..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf7 => 4,
+            _ => 0,
+        }),
+        "utf16le" if pending.len() >= 2 => {
+            let unit = u16::from_le_bytes([pending[0], pending[1]]);
+            if (0xd800..=0xdbff).contains(&unit) {
+                4
+            } else {
+                2
+            }
+        }
+        "utf16le" if !pending.is_empty() => 2,
+        _ => 0,
+    }
+}
+
+fn decode_utf8(bytes: &[u8], had_pending: bool, streaming: bool) -> (String, Vec<u8>) {
     if streaming
         && !had_pending
         && bytes.len() < 3
@@ -242,7 +287,7 @@ fn decode_utf8(bytes: &[u8], had_pending: bool, streaming: bool) -> (Value, Vec<
             .first()
             .is_some_and(|byte| (0xF5..=0xFF).contains(byte))
     {
-        return (Value::String(String::new()), bytes.to_vec());
+        return (String::new(), bytes.to_vec());
     }
     let mut rest = bytes;
     let mut text = String::new();
@@ -250,12 +295,12 @@ fn decode_utf8(bytes: &[u8], had_pending: bool, streaming: bool) -> (Value, Vec<
         match std::str::from_utf8(rest) {
             Ok(value) => {
                 text.push_str(value);
-                return (Value::String(text), Vec::new());
+                return (text, Vec::new());
             }
             Err(error) if error.error_len().is_none() => {
                 let valid = error.valid_up_to();
                 text.push_str(&String::from_utf8_lossy(&rest[..valid]));
-                return (Value::String(text), rest[valid..].to_vec());
+                return (text, rest[valid..].to_vec());
             }
             Err(error) => {
                 let valid = error.valid_up_to();
@@ -273,91 +318,54 @@ pub fn end(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if !args.is_empty() {
-        let receiver = receiver.ok_or(VmError::NotCallable)?;
-        let key = decoder_key(state, receiver)?;
-        let encoding = decoder_encoding(state, key, receiver);
-        if encoding == "utf16le" {
-            let pending = state
-                .borrow()
-                .string_decoder_pending
-                .get(&key)
-                .cloned()
-                .unwrap_or_default();
-            let high = pending.len() >= 2
-                && (0xd800..=0xdbff).contains(&u16::from_le_bytes([pending[0], pending[1]]));
-            if high && pending.len() > 2 {
-                let updated = quench_runtime::execute::set_property(
-                    receiver.clone(),
-                    "\0pending",
-                    host_api::bytes(&[]),
-                );
-                quench_runtime::execute::replace_value(receiver, &updated);
-                state
-                    .borrow_mut()
-                    .string_decoder_pending
-                    .insert(key, Vec::new());
-                return Ok(Value::StringUnits(Rc::new(
-                    quench_runtime::value::StringUnitsData::new(vec![u16::from_le_bytes([
-                        pending[0], pending[1],
-                    ])]),
-                )));
-            }
-            // Keep any incomplete code unit in the decoder state while
-            // decoding the supplied final bytes. `write()` prepends that
-            // state, which is required for an odd UTF-16 byte split (for
-            // example `41 00 42` followed by `00`).
-            return write(state, Some(receiver), args);
-        }
-        let prefix = end(state, Some(receiver), &[])?;
-        let suffix = write(state, Some(receiver), args)?;
-        let mut units = value_units(&prefix);
-        units.extend(value_units(&suffix));
-        return Ok(quench_runtime::execute::string_from_units(units));
-    }
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     let key = decoder_key(state, receiver)?;
-    let bytes = state
+    let prior_pending = state
         .borrow()
         .string_decoder_pending
         .get(&key)
         .cloned()
         .unwrap_or_default();
-    let updated =
-        quench_runtime::execute::set_property(receiver.clone(), "\0pending", host_api::bytes(&[]));
-    quench_runtime::execute::replace_value(receiver, &updated);
+    let input = args.first();
+    let input_length = input
+        .map(input_byte_length)
+        .transpose()?
+        .unwrap_or_default();
+    if prior_pending.len().saturating_add(input_length) > MAX_STRING_BYTES {
+        return Err(crate::modules::buffer_enc::string_too_long());
+    }
+    let input = input.map(input_bytes).transpose()?.unwrap_or_default();
+    let encoding = decoder_encoding(state, key, receiver);
+    let decoded = decode_chunk_units(&prior_pending, &input, &encoding, DecodeMode::Final);
     state
         .borrow_mut()
         .string_decoder_pending
         .insert(key, Vec::new());
-    let encoding = decoder_encoding(state, key, receiver);
-    if matches!(encoding.as_str(), "base64" | "base64url" | "hex") {
-        return Ok(crate::modules::buffer_enc::decode_str(&bytes, &encoding));
-    }
-    let (text, pending) = decode_chunk(&bytes, &encoding, false, false);
-    if pending.is_empty() {
-        return Ok(text);
-    }
-    if encoding == "utf16le" {
-        let units = pending
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect::<Vec<_>>();
-        let mut all = value_units(&text);
-        all.extend(units);
-        return Ok(quench_runtime::execute::string_from_units(all));
-    }
-    let mut all = value_units(&text);
-    all.push(0xfffd);
-    Ok(quench_runtime::execute::string_from_units(all))
+    update_decoder_fields(receiver, &[], 0);
+    Ok(quench_runtime::execute::string_from_units(decoded.units))
 }
 
-fn value_units(value: &Value) -> Vec<u16> {
-    match value {
-        Value::String(value) => value.encode_utf16().collect(),
-        Value::StringUnits(value) => value.iter().copied().collect(),
-        _ => Vec::new(),
-    }
+fn update_decoder_fields(receiver: &Value, pending: &[u8], last_total: usize) {
+    let pending_value = host_api::bytes(pending);
+    let updated =
+        quench_runtime::execute::set_property(receiver.clone(), "\0pending", pending_value);
+    let last_need = last_total.saturating_sub(pending.len());
+    let updated =
+        quench_runtime::execute::set_property(updated, "lastNeed", Value::Number(last_need as f64));
+    let updated = quench_runtime::execute::set_property(
+        updated,
+        "lastTotal",
+        Value::Number(last_total as f64),
+    );
+    let mut last_char = [0; LAST_CHAR_LENGTH];
+    let count = pending.len().min(LAST_CHAR_LENGTH);
+    last_char[..count].copy_from_slice(&pending[..count]);
+    let updated = quench_runtime::execute::set_property(
+        updated,
+        "lastChar",
+        crate::modules::buffer_proto::make_buffer(&last_char),
+    );
+    quench_runtime::execute::replace_value(receiver, &updated);
 }
 
 fn decoder_encoding(state: &Rc<RefCell<HostState>>, key: u64, receiver: &Value) -> String {
