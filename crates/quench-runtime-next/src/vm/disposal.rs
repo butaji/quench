@@ -460,7 +460,7 @@ impl<H: Host> Vm<H> {
             self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
             return Ok(promise);
         }
-        let result = match self.call_value(p, method, receiver, &[Value::UNDEFINED]) {
+        let result = match self.call_value(p, method, receiver, &[]) {
             Ok(result) => result,
             Err(error) => {
                 let reason = self.thrown_value_for(p, error);
