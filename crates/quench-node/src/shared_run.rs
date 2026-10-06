@@ -92,11 +92,34 @@ fn execute_shared_on_worker(
         kind,
     })
     .map_err(|error| format!("{error:?}"))?;
-    let execution = runtime.execute(&program);
+    let execution = runtime.execute_deferred_jobs(&program);
+    let completion = match execution {
+        Ok(()) => crate::modules::process::shared_vm::finish_execution(
+            &mut runtime,
+            &program,
+            &host_state,
+        ),
+        Err(error) => {
+            let message = runtime.format_error(&program, &error);
+            let exit = crate::modules::process::shared_vm::finish_after_uncaught_error(
+                &mut runtime,
+                &program,
+                &host_state,
+            );
+            match exit {
+                Ok(()) => Err(message),
+                Err(exit_error) => Err(format!("{message}; exit handler failed: {exit_error}")),
+            }
+        }
+    };
+    let reporting = runtime
+        .finish_deferred_execution(&program)
+        .map_err(|error| error.to_string());
+    completion?;
+    reporting?;
     if let Some(code) = host_state.borrow().process.exit_code {
         return Ok(SharedCompletion::GuestExit { code });
     }
-    execution.map_err(|error| runtime.format_error(&program, &error))?;
     match runtime
         .module_evaluation_pending(&program)
         .map_err(|error| error.to_string())?

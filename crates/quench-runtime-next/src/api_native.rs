@@ -181,6 +181,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.root_value(root)
     }
 
+    /// Check callability without coercion or invoking guest code.
+    pub fn is_callable_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_callable(root)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn number(&mut self, value: f64) -> RootId {
         self.scoped_value(Value::number(value))
     }
