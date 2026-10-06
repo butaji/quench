@@ -41,15 +41,22 @@ pub fn join(
 ) -> Result<Value, VmError> {
     let mut parts: Vec<String> = Vec::new();
     for arg in args {
-        let s = shared::validate_string(arg, "path")?;
-        if !s.is_empty() {
-            parts.push(s);
-        }
+        parts.push(shared::validate_string(arg, "path")?);
     }
+    Ok(Value::String(join_strings(&parts)))
+}
+
+/// Node's POSIX `join` transformation over already validated strings.
+pub(crate) fn join_strings(parts: &[String]) -> String {
+    let parts = parts
+        .iter()
+        .filter(|part| !part.is_empty())
+        .map(String::as_str)
+        .collect::<Vec<_>>();
     if parts.is_empty() {
-        return Ok(Value::String(".".into()));
+        return ".".into();
     }
-    Ok(Value::String(normalize_str(&parts.join("/"))))
+    normalize_str(&parts.join("/"))
 }
 
 pub fn resolve(
@@ -57,28 +64,24 @@ pub fn resolve(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    for (i, arg) in args.iter().enumerate() {
-        shared::validate_string(arg, &format!("paths[{i}]"))?;
-    }
-    let cwd = || shared::js_cwd(state);
-    let single_dot = args.len() == 1
-        && matches!(args.first(), Some(Value::String(s)) if s.is_empty() || s == ".");
-    if args.is_empty() || single_dot {
-        let cwd = cwd();
-        if cwd.starts_with('/') {
-            return Ok(Value::String(cwd));
-        }
-    }
-    Ok(Value::String(resolve_tail(args, cwd)))
+    let paths = args
+        .iter()
+        .enumerate()
+        .map(|(i, arg)| shared::validate_string(arg, &format!("paths[{i}]")))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::String(resolve_strings(&paths, &shared::js_cwd(state))))
 }
 
-fn resolve_tail(args: &[Value], cwd: impl Fn() -> String) -> String {
+/// Node's POSIX `resolve` transformation with the process cwd supplied by its
+/// owner. Shared and legacy VM adapters use this same string-level operation.
+pub(crate) fn resolve_strings(paths: &[String], cwd: &str) -> String {
     let mut resolved = String::new();
     let mut absolute = false;
-    for arg in args.iter().rev() {
-        let Ok(s) = shared::validate_string(arg, "path") else {
-            continue;
-        };
+    let single_dot = paths.len() == 1 && (paths[0].is_empty() || paths[0] == ".");
+    if (paths.is_empty() || single_dot) && cwd.starts_with('/') {
+        return cwd.to_owned();
+    }
+    for s in paths.iter().rev() {
         if s.is_empty() {
             continue;
         }
@@ -89,7 +92,6 @@ fn resolve_tail(args: &[Value], cwd: impl Fn() -> String) -> String {
         }
     }
     if !absolute {
-        let cwd = cwd();
         resolved = format!("{cwd}/{resolved}");
         absolute = cwd.starts_with('/');
     }
@@ -154,22 +156,25 @@ pub fn relative(
 ) -> Result<Value, VmError> {
     let from = shared::validate_string(args.first().unwrap_or(&Value::Undefined), "from")?;
     let to = shared::validate_string(args.get(1).unwrap_or(&Value::Undefined), "to")?;
-    if from == to {
-        return Ok(Value::String(String::new()));
-    }
-    let from = resolve_str(state, &from)?;
-    let to = resolve_str(state, &to)?;
-    if from == to {
-        return Ok(Value::String(String::new()));
-    }
-    Ok(Value::String(relative_str(&from, &to)))
+    Ok(Value::String(relative_strings(
+        &from,
+        &to,
+        &shared::js_cwd(state),
+    )))
 }
 
-fn resolve_str(state: &Rc<RefCell<HostState>>, path: &str) -> Result<String, VmError> {
-    match resolve(state, None, &[Value::String(path.to_string())])? {
-        Value::String(s) => Ok(s),
-        _ => Ok(String::new()),
+/// Node's POSIX `relative` transformation with the process cwd supplied by its
+/// owner. Inputs are validated by the VM adapter before entering this core.
+pub(crate) fn relative_strings(from: &str, to: &str, cwd: &str) -> String {
+    if from == to {
+        return String::new();
     }
+    let from = resolve_strings(&[from.to_owned()], cwd);
+    let to = resolve_strings(&[to.to_owned()], cwd);
+    if from == to {
+        return String::new();
+    }
+    relative_str(&from, &to)
 }
 
 fn relative_str(from: &str, to: &str) -> String {

@@ -15,6 +15,9 @@ use quench_runtime::vm::get_property;
 
 use crate::modules::buffer_enc as enc;
 
+#[path = "buffer/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 /// Node's `buffer.constants.MAX_LENGTH` on 64-bit platforms (2^53-1).
 pub const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
 /// Node's `buffer.constants.MAX_STRING_LENGTH`.

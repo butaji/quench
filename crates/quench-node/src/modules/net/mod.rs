@@ -23,6 +23,7 @@ use crate::modules::emitter::{emitter_id, Listener};
 
 mod methods;
 mod pump;
+pub(crate) mod shared_vm;
 
 pub use methods::{
     bound_socket_address, bound_socket_close, bound_socket_construct, bound_socket_fd,
@@ -206,6 +207,10 @@ impl NetState {
             socket_prototype: None,
             performance_record: None,
         }
+    }
+
+    pub(crate) fn set_auto_select_family_attempt_timeout(&mut self, timeout_ms: u64) {
+        self.auto_select_family_attempt_timeout = timeout_ms.max(10);
     }
 }
 

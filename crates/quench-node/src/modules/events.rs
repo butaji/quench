@@ -15,6 +15,9 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMITTER_ID_PROP};
 
+#[path = "events/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 const CAPTURE_SUPPRESSED_PROP: &str = "\0quench:events:capture-suppressed";
 
 thread_local! {

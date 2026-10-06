@@ -15,6 +15,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[path = "path/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 pub const WINDOWS: bool = cfg!(target_os = "windows");
 
 /// `validateString` — coded `TypeError` (`ERR_INVALID_ARG_TYPE`).

@@ -102,6 +102,7 @@ pub struct HostState {
     pub exec_argv: Vec<String>,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
+    pub fetch: crate::modules::fetch_shared_vm::FetchState,
     pub http: crate::modules::http::HttpState,
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
@@ -152,6 +153,9 @@ pub struct HostState {
     pub process_module: Option<ProcessModule>,
     /// One retained shared-VM export for `assert` and its `node:` alias.
     pub assert_module: Option<rqj::RootId>,
+    /// Canonical retained shared-VM `path` namespace; `posix` and `win32`
+    /// projections are derived from its cross-linked properties.
+    pub path_module: Option<rqj::RootId>,
     /// Canonical `require("module")` namespace for this realm.
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
@@ -210,6 +214,7 @@ impl NodeHost {
             exec_argv: Vec::new(),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
+            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             http: crate::modules::http::HttpState::new(),
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
@@ -238,6 +243,7 @@ impl NodeHost {
             console_module: None,
             process_module: None,
             assert_module: None,
+            path_module: None,
             module_api: None,
             module_extensions: None,
             string_decoder_aliases: std::collections::HashMap::new(),
@@ -403,28 +409,14 @@ pub fn install_script_with_args(
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     script: &str,
     args: &[String],
+    exec_argv: &[String],
 ) -> (Rc<NodeHost>, VmContext) {
     let exec_path = host_exec_path();
     let argv = std::iter::once(exec_path)
         .chain(std::iter::once(script.to_string()))
         .chain(args.iter().cloned())
         .collect();
-    install_with_argv(realm, sink, argv)
-}
-
-pub fn install_script_with_args_and_title(
-    realm: RealmId,
-    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
-    script: &str,
-    args: &[String],
-    title: &str,
-) -> (Rc<NodeHost>, VmContext) {
-    let exec_path = host_exec_path();
-    let argv = std::iter::once(exec_path)
-        .chain(std::iter::once(script.to_string()))
-        .chain(args.iter().cloned())
-        .collect();
-    install_with_argv_and_title(realm, sink, argv, title)
+    install_with_argv_and_title_and_exec_argv(realm, sink, argv, "quench-node", exec_argv)
 }
 
 fn host_exec_path() -> String {
@@ -498,10 +490,7 @@ pub fn install_with_argv_and_title(
     argv: Vec<String>,
     title: &str,
 ) -> (Rc<NodeHost>, VmContext) {
-    let exec_argv = std::env::var("QUENCH_EXEC_ARGV")
-        .ok()
-        .and_then(|value| serde_json::from_str::<Vec<String>>(&value).ok())
-        .unwrap_or_default();
+    let exec_argv = crate::modules::process::inherited_exec_argv();
     install_with_argv_and_title_and_exec_argv(realm, sink, argv, title, &exec_argv)
 }
 
@@ -515,6 +504,11 @@ pub fn install_with_argv_and_title_and_exec_argv(
     title: &str,
     exec_argv: &[String],
 ) -> (Rc<NodeHost>, VmContext) {
+    let title = exec_argv
+        .iter()
+        .rev()
+        .find_map(|flag| flag.strip_prefix("--title="))
+        .unwrap_or(title);
     quench_runtime::date::set_local_timezone(None);
     // Node exposes a default stack-trace limit on the global Error
     // constructor. Keep this host fact available before any internal error

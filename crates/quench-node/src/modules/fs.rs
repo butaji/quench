@@ -17,6 +17,9 @@ use quench_runtime::value::{PromiseData, PromiseState, Value};
 use crate::host::HostState;
 use crate::modules::{fs_error, fs_stats};
 
+#[path = "fs/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 pub struct FsState {
     next_fd: i32,
     pub(crate) descriptors: HashMap<i32, FileDescriptor>,

@@ -18,6 +18,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[path = "timers/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 /// Hidden own property storing the host-side timer id on the JS
 /// Timeout/Immediate object.
 const TIMER_ID_PROP: &str = "\0quench:timer:id";

@@ -19,37 +19,69 @@ pub fn relative(
 ) -> Result<Value, VmError> {
     let from = shared::validate_string(args.first().unwrap_or(&Value::Undefined), "from")?;
     let to = shared::validate_string(args.get(1).unwrap_or(&Value::Undefined), "to")?;
+    Ok(Value::String(relative_strings(
+        &from,
+        &to,
+        &shared::js_cwd(state),
+        |device| drive_cwd(state, device),
+    )))
+}
+
+/// Node's Win32 `relative` transformation with process cwd lookup supplied by
+/// the owner. Both VM adapters enter this string-only semantic core.
+pub(crate) fn relative_strings(
+    from: &str,
+    to: &str,
+    cwd: &str,
+    mut drive_cwd: impl FnMut(&str) -> String,
+) -> String {
     if from == to {
-        return Ok(Value::String(String::new()));
+        return String::new();
     }
-    let from_orig = resolve_str(state, &from)?;
-    let to_orig = resolve_str(state, &to)?;
+    let from_orig = crate::modules::path_win32::resolve_strings(
+        &[from.to_owned()],
+        cwd,
+        &mut drive_cwd,
+    );
+    let to_orig = crate::modules::path_win32::resolve_strings(
+        &[to.to_owned()],
+        cwd,
+        &mut drive_cwd,
+    );
     if from_orig == to_orig {
-        return Ok(Value::String(String::new()));
+        return String::new();
     }
     let from_lower = from_orig.to_lowercase();
     let to_lower = to_orig.to_lowercase();
     if from_lower == to_lower {
-        return Ok(Value::String(String::new()));
+        return String::new();
     }
     if from_orig.chars().count() != from_lower.chars().count()
         || to_orig.chars().count() != to_lower.chars().count()
     {
-        return Ok(Value::String(relative_split(&from_orig, &to_orig)));
+        return relative_split(&from_orig, &to_orig);
     }
-    Ok(Value::String(relative_scan(
+    relative_scan(
         &from_orig,
         &to_orig,
         &from_lower,
         &to_lower,
-    )))
+    )
 }
 
-fn resolve_str(state: &Rc<RefCell<HostState>>, path: &str) -> Result<String, VmError> {
-    match win32::resolve(state, None, &[Value::String(path.to_string())])? {
-        Value::String(s) => Ok(s),
-        _ => Ok(String::new()),
+fn drive_cwd(state: &Rc<RefCell<HostState>>, device: &str) -> String {
+    let path = shared::js_env(state, &format!("={device}"))
+        .unwrap_or_else(|| shared::js_cwd(state));
+    let chars: Vec<char> = path.chars().collect();
+    let drive_matches = chars.len() >= 2
+        && chars[..2]
+            .iter()
+            .collect::<String>()
+            .eq_ignore_ascii_case(device);
+    if !drive_matches && chars.get(2) == Some(&'\\') {
+        return format!("{device}\\");
     }
+    path
 }
 
 /// Length-changing lowercase fallback: compare segment-wise.
@@ -432,18 +464,21 @@ pub fn join(
 ) -> Result<Value, VmError> {
     let mut parts: Vec<String> = Vec::new();
     for arg in args {
-        let s = shared::validate_string(arg, "path")?;
-        if !s.is_empty() {
-            parts.push(s);
-        }
+        parts.push(shared::validate_string(arg, "path")?);
     }
-    if parts.is_empty() {
-        return Ok(Value::String(".".into()));
-    }
-    Ok(Value::String(join_str(&parts)))
+    Ok(Value::String(join_strings(&parts)))
 }
 
-fn join_str(parts: &[String]) -> String {
+/// Node's Win32 `join` transformation over already validated strings.
+pub(crate) fn join_strings(parts: &[String]) -> String {
+    let parts = parts
+        .iter()
+        .filter(|part| !part.is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return ".".into();
+    }
     let first: Vec<char> = parts[0].chars().collect();
     let mut joined = parts.join("\\");
     let mut needs_replace = true;

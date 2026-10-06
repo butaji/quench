@@ -15,6 +15,8 @@ use crate::modules::querystring::{
     decode_str, is_hex, module_fn, units_of_value, Decode, EQ_DEFAULT, PLUS_DECODED, PLUS_ENCODED,
     SEP_DEFAULT,
 };
+
+const MAX_KEYS_DEFAULT: i64 = 1000;
 // ---- parse ----
 
 /// Mutable state of Node's character-by-character parse scan.
@@ -224,12 +226,12 @@ fn codes(arg: Option<&Value>, default: &[u16]) -> Result<Vec<u16>, VmError> {
 /// numeric means unlimited, non-numbers keep the default of 1000.
 fn max_keys(options: Option<&Value>) -> i64 {
     let Some(options) = options else {
-        return 1000;
+        return MAX_KEYS_DEFAULT;
     };
     match execute::get_property(options, "maxKeys") {
         Value::Number(n) if n > 0.0 => n as i64,
         Value::Number(_) => -1,
-        _ => 1000,
+        _ => MAX_KEYS_DEFAULT,
     }
 }
 
@@ -275,7 +277,49 @@ pub fn parse(
     null_object(out)
 }
 
+/// Default Node query decoding as ordered data, shared by the URL adapter.
+pub(crate) fn parse_default_entries(input: &str) -> Vec<(String, Vec<String>)> {
+    let units = input.encode_utf16().collect::<Vec<_>>();
+    if units.is_empty() {
+        return Vec::new();
+    }
+    let mut scan = Scan::default(&units);
+    let mut entries = Vec::new();
+    let mut indices = HashMap::new();
+    let decode = Decode::Builtin;
+    if !scan.run(&mut entries, &mut indices, &decode, &decode) {
+        finish_scan(
+            &mut scan,
+            &units,
+            &mut entries,
+            &mut indices,
+            &decode,
+            &decode,
+        );
+    }
+    entries
+}
+
 impl<'a> Scan<'a> {
+    fn default(units: &'a [u16]) -> Self {
+        Self {
+            units,
+            sep: SEP_DEFAULT.to_vec(),
+            eq: EQ_DEFAULT.to_vec(),
+            last_pos: 0,
+            sep_idx: 0,
+            eq_idx: 0,
+            key: Vec::new(),
+            value: Vec::new(),
+            key_encoded: false,
+            val_encoded: false,
+            encode_check: 0,
+            pairs: MAX_KEYS_DEFAULT,
+            plus_char: PLUS_DECODED,
+            custom: false,
+        }
+    }
+
     fn new(
         units: &'a [u16],
         args: &[Value],

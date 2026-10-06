@@ -4,7 +4,7 @@
 //! and timer callbacks enqueue into them.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
@@ -24,11 +24,46 @@ pub struct SharedCallback {
     pub args: Vec<rqj::RootId>,
 }
 
-#[derive(Default)]
 struct SharedCallbacks {
     next_ticks: VecDeque<SharedCallback>,
+    immediates: VecDeque<SharedImmediate>,
+    next_immediate_id: u64,
+    timers: VecDeque<SharedTimer>,
+    next_timer_id: u64,
+    firing_timers: HashSet<u64>,
+    cancelled_timers: HashSet<u64>,
     listeners: HashMap<String, Vec<SharedCallback>>,
     exiting: bool,
+}
+
+pub struct SharedImmediate {
+    pub id: u64,
+    pub callback: SharedCallback,
+}
+
+pub struct SharedTimer {
+    pub id: u64,
+    pub due: std::time::Instant,
+    pub interval: Option<std::time::Duration>,
+    pub callback: SharedCallback,
+}
+
+const FIRST_SHARED_IMMEDIATE_ID: u64 = 1;
+
+impl Default for SharedCallbacks {
+    fn default() -> Self {
+        Self {
+            next_ticks: VecDeque::new(),
+            immediates: VecDeque::new(),
+            next_immediate_id: FIRST_SHARED_IMMEDIATE_ID,
+            timers: VecDeque::new(),
+            next_timer_id: FIRST_SHARED_IMMEDIATE_ID,
+            firing_timers: HashSet::new(),
+            cancelled_timers: HashSet::new(),
+            listeners: HashMap::new(),
+            exiting: false,
+        }
+    }
 }
 
 pub struct Immediate {
@@ -67,6 +102,109 @@ impl EventLoop {
         if !self.shared.exiting {
             self.shared.next_ticks.push_back(callback);
         }
+    }
+
+    pub fn reserve_shared_immediate_id(&mut self) -> Option<u64> {
+        let id = self.shared.next_immediate_id;
+        self.shared.next_immediate_id = id.checked_add(1)?;
+        Some(id)
+    }
+
+    pub fn queue_shared_immediate(&mut self, id: u64, callback: SharedCallback) {
+        self.shared.immediates.push_back(SharedImmediate { id, callback });
+    }
+
+    pub fn shared_immediate_cutoff(&self) -> Option<u64> {
+        self.shared.next_immediate_id.checked_sub(1)
+    }
+
+    pub fn take_shared_immediate_through(&mut self, cutoff: u64) -> Option<SharedImmediate> {
+        let index = self
+            .shared
+            .immediates
+            .iter()
+            .position(|immediate| immediate.id <= cutoff)?;
+        self.shared.immediates.remove(index)
+    }
+
+    pub fn cancel_shared_immediate(&mut self, id: u64) -> Option<SharedCallback> {
+        let index = self.shared.immediates.iter().position(|item| item.id == id)?;
+        self.shared
+            .immediates
+            .remove(index)
+            .map(|item| item.callback)
+    }
+
+    pub fn reserve_shared_timer_id(&mut self) -> Option<u64> {
+        let id = self.shared.next_timer_id;
+        self.shared.next_timer_id = id.checked_add(1)?;
+        Some(id)
+    }
+
+    pub fn queue_shared_timer(
+        &mut self,
+        id: u64,
+        delay: std::time::Duration,
+        interval: Option<std::time::Duration>,
+        callback: SharedCallback,
+    ) {
+        self.shared.timers.push_back(SharedTimer {
+            id,
+            due: std::time::Instant::now() + delay,
+            interval,
+            callback,
+        });
+    }
+
+    pub fn take_due_shared_timer(&mut self, now: std::time::Instant) -> Option<SharedTimer> {
+        let index = self
+            .shared
+            .timers
+            .iter()
+            .enumerate()
+            .filter(|(_, timer)| timer.due <= now)
+            .min_by_key(|(_, timer)| timer.due)
+            .map(|(index, _)| index)?;
+        let timer = self.shared.timers.remove(index)?;
+        self.shared.firing_timers.insert(timer.id);
+        Some(timer)
+    }
+
+    pub fn next_shared_timer_due(&self) -> Option<std::time::Instant> {
+        self.shared.timers.iter().map(|timer| timer.due).min()
+    }
+
+    pub fn cancel_shared_timer(&mut self, id: u64) -> Option<SharedCallback> {
+        if self.shared.firing_timers.contains(&id) {
+            self.shared.cancelled_timers.insert(id);
+            return None;
+        }
+        let index = self.shared.timers.iter().position(|timer| timer.id == id)?;
+        self.shared.timers.remove(index).map(|timer| timer.callback)
+    }
+
+    pub fn complete_shared_timer(
+        &mut self,
+        timer: SharedTimer,
+        completed_at: std::time::Instant,
+    ) -> Option<SharedCallback> {
+        self.shared.firing_timers.remove(&timer.id);
+        if self.shared.cancelled_timers.remove(&timer.id) {
+            return Some(timer.callback);
+        }
+        let Some(interval) = timer.interval else {
+            return Some(timer.callback);
+        };
+        let Some(next_due) = completed_at.checked_add(interval) else {
+            return Some(timer.callback);
+        };
+        self.shared.timers.push_back(SharedTimer {
+            id: timer.id,
+            due: next_due,
+            interval: Some(interval),
+            callback: timer.callback,
+        });
+        None
     }
 
     pub fn add_shared_listener(&mut self, event: String, callback: SharedCallback) {

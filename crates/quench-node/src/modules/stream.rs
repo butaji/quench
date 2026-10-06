@@ -20,7 +20,10 @@ use crate::registry::{
     SPEC_STREAM_WRITABLE, SPEC_STREAM_WRITABLE_WRITE_ADAPTER,
 };
 
-const PRELUDE: &str = include_str!("stream_prelude.js");
+#[path = "stream/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
+pub(crate) const PRELUDE: &str = include_str!("stream_prelude.js");
 
 pub fn new_readable(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(stream_object("Readable"))

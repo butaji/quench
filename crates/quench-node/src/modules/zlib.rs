@@ -13,6 +13,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+const DEFAULT_ZLIB_CHUNK_BYTES: usize = 16_384;
+const ZLIB_FINISH_FLUSH: f64 = 4.0;
+
 /// Compression constants are facts, not behavior. Keep the table once and
 /// derive both `constants` and `codes` from it, matching Node's frozen views.
 const ZLIB_CONSTANTS: &[(&str, f64)] = &[
@@ -30,7 +33,7 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("Z_PARTIAL_FLUSH", 1.0),
     ("Z_SYNC_FLUSH", 2.0),
     ("Z_FULL_FLUSH", 3.0),
-    ("Z_FINISH", 4.0),
+    ("Z_FINISH", ZLIB_FINISH_FLUSH),
     ("Z_BLOCK", 5.0),
     ("Z_TREES", 6.0),
     ("Z_DEFAULT_COMPRESSION", -1.0),
@@ -58,7 +61,7 @@ const ZLIB_CONSTANTS: &[(&str, f64)] = &[
     ("Z_MAX_WINDOWBITS", 15.0),
     ("Z_DEFAULT_WINDOWBITS", 15.0),
     ("Z_MIN_CHUNK", 64.0),
-    ("Z_DEFAULT_CHUNK", 16384.0),
+    ("Z_DEFAULT_CHUNK", DEFAULT_ZLIB_CHUNK_BYTES as f64),
     ("Z_MIN_MEMLEVEL", 1.0),
     ("Z_MAX_MEMLEVEL", 9.0),
     ("Z_DEFAULT_MEMLEVEL", 8.0),
@@ -137,7 +140,8 @@ fn frozen_constants() -> Value {
         &quench_runtime::execute::get_property(&global, "Object"),
         "freeze",
     );
-    quench_runtime::execute::call(&freeze, &Value::Undefined, &[value.clone()]).unwrap_or(value)
+    quench_runtime::execute::call(&freeze, &Value::Undefined, std::slice::from_ref(&value))
+        .unwrap_or(value)
 }
 
 #[derive(Clone, Copy)]
@@ -576,7 +580,7 @@ fn stream_value(
         ("readable", Value::Boolean(true)),
         ("writable", Value::Boolean(true)),
         ("closed", Value::Boolean(false)),
-        ("_chunkSize", Value::Number(16_384.0)),
+        ("_chunkSize", Value::Number(DEFAULT_ZLIB_CHUNK_BYTES as f64)),
         ("_outOffset", Value::Number(0.0)),
         ("_handle", host_api::object(Vec::new())),
         ("_closed", Value::Boolean(false)),
@@ -825,7 +829,7 @@ fn queue_stream_chunks(stream: &Value, key: &str, bytes: &[u8]) {
 fn has_data_listener(stream: &Value) -> bool {
     let listener = execute::get_property(&execute::get_property(stream, "_events"), "data");
     quench_runtime::is_callable(&listener)
-        || matches!(listener, Value::Array(ref list) if list.len() > 0)
+        || matches!(listener, Value::Array(ref list) if !list.is_empty())
 }
 
 fn write_to_pipe(stream: &Value) -> Result<(), VmError> {
@@ -974,47 +978,92 @@ fn flate_transform_with_dictionary(
     let raw = matches!(mode, StreamMode::DeflateRaw | StreamMode::InflateRaw);
     if matches!(mode, StreamMode::Deflate | StreamMode::DeflateRaw) {
         let mut compressor = Compress::new(flate_level(options), !raw);
-        compressor
-            .set_dictionary(dictionary)
-            .map_err(|error| error.to_string())?;
-        let mut output = Vec::with_capacity(input.len().saturating_add(64));
-        compressor
-            .compress_vec(input, &mut output, FlushCompress::Finish)
-            .map_err(|error| error.to_string())?;
-        return Ok(output);
-    }
-    let mut decompressor = Decompress::new(!raw);
-    let mut output = Vec::with_capacity(input.len().saturating_mul(2));
-    let first = decompressor.decompress_vec(input, &mut output, FlushDecompress::Finish);
-    if let Err(error) = first {
-        if error.needs_dictionary().is_some() {
-            if dictionary.is_empty() {
-                return Err("Missing dictionary".into());
-            }
-            decompressor
+        if !dictionary.is_empty() {
+            compressor
                 .set_dictionary(dictionary)
-                .map_err(|_| "Bad dictionary".to_string())?;
-            decompressor
-                .decompress_vec(input, &mut output, FlushDecompress::Finish)
-                .map_err(|retry_error| retry_error.to_string())?;
-        } else {
-            return Err(error.to_string());
+                .map_err(|error| error.to_string())?;
+        }
+        let mut output = Vec::new();
+        loop {
+            output.reserve(DEFAULT_ZLIB_CHUNK_BYTES);
+            let before = (compressor.total_in(), output.len());
+            let status = compressor
+                .compress_vec(
+                    &input[compressor.total_in() as usize..],
+                    &mut output,
+                    FlushCompress::Finish,
+                )
+                .map_err(|error| error.to_string())?;
+            if matches!(status, Status::StreamEnd) {
+                return Ok(output);
+            }
+            if before == (compressor.total_in(), output.len()) {
+                return Err("compression made no progress".into());
+            }
         }
     }
-    Ok(output)
+    let mut decompressor = Decompress::new(!raw);
+    if raw && !dictionary.is_empty() {
+        decompressor
+            .set_dictionary(dictionary)
+            .map_err(|error| error.to_string())?;
+    }
+    let finish = !matches!(
+        execute::get_property(options, "finishFlush"),
+        Value::Number(value) if !value.is_nan() && value != ZLIB_FINISH_FLUSH
+    );
+    let mut output = Vec::new();
+    loop {
+        output.reserve(DEFAULT_ZLIB_CHUNK_BYTES);
+        let before = (decompressor.total_in(), output.len());
+        // None permits bounded output windows; Finish promises enough space
+        // for the entire decoded stream, which cannot be known in advance.
+        match decompressor.decompress_vec(
+            &input[decompressor.total_in() as usize..],
+            &mut output,
+            FlushDecompress::None,
+        ) {
+            Ok(Status::StreamEnd) => return Ok(output),
+            Ok(_) => {}
+            Err(error) if error.needs_dictionary().is_some() => {
+                if dictionary.is_empty() {
+                    return Err("Missing dictionary".into());
+                }
+                decompressor
+                    .set_dictionary(dictionary)
+                    .map_err(|_| "Bad dictionary".to_string())?;
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+        if before == (decompressor.total_in(), output.len()) {
+            return if finish {
+                Err("unexpected end of file".into())
+            } else {
+                Ok(output)
+            };
+        }
+    }
 }
 
 fn zlib_error(message: &str) -> VmError {
-    if message == "unknown compression method" {
-        let error = quench_runtime::builtins::error(
-            quench_runtime::ops::Builtin::Error,
-            &[Value::String(message.into())],
-        );
-        let _ =
-            execute::set_property_in_place(&error, "code", Value::String("Z_DATA_ERROR".into()));
-        return VmError::Thrown(error);
-    }
-    execute::type_error(message)
+    let code = match message {
+        "unknown compression method" => "Z_DATA_ERROR",
+        "unexpected end of file" => "Z_BUF_ERROR",
+        "Missing dictionary" | "Bad dictionary" => "Z_NEED_DICT",
+        _ => return execute::type_error(message),
+    };
+    let error = quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::Error,
+        &[Value::String(message.into())],
+    );
+    execute::set_property_in_place(&error, "code", Value::String(code.into()));
+    let errno = ZLIB_CONSTANTS
+        .iter()
+        .find_map(|(name, value)| (*name == code).then_some(*value))
+        .expect("zlib error codes belong to the constants table");
+    execute::set_property_in_place(&error, "errno", Value::Number(errno));
+    VmError::Thrown(error)
 }
 
 fn coded_zlib_error(message: &str) -> VmError {
@@ -2106,7 +2155,7 @@ pub fn build() -> Value {
     )
     .unwrap_or(module);
     let codes = frozen_constants();
-    let module = quench_runtime::builtins::define_own_property_public(
+    quench_runtime::builtins::define_own_property_public(
         &module,
         "codes",
         &[
@@ -2116,6 +2165,5 @@ pub fn build() -> Value {
             ("configurable".into(), Value::Boolean(false)),
         ],
     )
-    .unwrap_or(module);
-    module
+    .unwrap_or(module)
 }

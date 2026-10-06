@@ -16,6 +16,7 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "report" => report,
     "performance" => performance,
     "support" => support,
+    "event-emitter" => event_emitter,
     "punycode" => punycode,
     "dns" => dns,
     "dgram-head" => dgram_head,
@@ -28,3 +29,17 @@ abilities!(crate::polyfills::Phase::Bootstrap;
     "vfs-head" => vfs_head,
     "vfs" => vfs,
 );
+
+/// Installed Node globals shared by file, eval and embedded entry points.
+pub fn entry_globals_source() -> String {
+    [
+        web_streams::JS,
+        performance::JS,
+        r#"
+Object.defineProperty(globalThis, "URL", { value: URL, writable: true, configurable: true });
+Object.defineProperty(globalThis, "__nodeURL", { value: globalThis.URL, configurable: true });
+Object.defineProperty(globalThis, "__nodeURLSearchParams", { value: globalThis.URLSearchParams, configurable: true });
+"#,
+    ]
+    .join("\n")
+}
