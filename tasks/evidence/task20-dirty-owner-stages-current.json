@@ -1,0 +1,529 @@
+{
+  "schema": "task20-dirty-owner-stage-union-v1",
+  "task": "20",
+  "scope": "Sparse union of Test262 stages mapped to current dirty runtime owners and cross-cutting VM canaries; excludes Wasm-only and formatting-only edits. No full Test262 run.",
+  "inputs": {
+    "test262_revision": "6eec1ac9ee144dafd8f344d73a21f36bfc9f6755",
+    "stage_definitions": {
+      "path": "docs/STAGES.md",
+      "sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+    }
+  },
+  "source": {
+    "revision": "661155853409568633afc034c03480147185e01a",
+    "dirty": true
+  },
+  "runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages-next",
+    "sha256": "1936344d3158bc61419b93f0d6f97c0a4f32cb85ba65a9e8e2ad113e19363158",
+    "host": "macos-aarch64",
+    "jobs": 4,
+    "timeout_ms": 900000
+  },
+  "run_command_pattern": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=target/iteration/task20-dirty-owner-stages-<first>-<last>.json target/iteration/run-stages-next <first> <last>",
+  "selection": {
+    "stage_ids": [
+      0,
+      1,
+      3,
+      8,
+      9,
+      10,
+      11,
+      13,
+      14,
+      16,
+      20,
+      26,
+      31,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      45,
+      46,
+      47,
+      49,
+      50,
+      52,
+      53,
+      58,
+      60,
+      61,
+      68,
+      72,
+      73,
+      79,
+      80,
+      81,
+      86,
+      94,
+      114
+    ],
+    "range_report_count": 21
+  },
+  "result": {
+    "stages": 38,
+    "total": 33642,
+    "passed": 33640,
+    "failed": 2
+  },
+  "stage_counts": {
+    "order": [
+      "total",
+      "passed",
+      "failed"
+    ],
+    "by_stage": {
+      "0": [
+        116,
+        116,
+        0
+      ],
+      "1": [
+        263,
+        263,
+        0
+      ],
+      "3": [
+        145,
+        145,
+        0
+      ],
+      "8": [
+        347,
+        347,
+        0
+      ],
+      "9": [
+        3,
+        3,
+        0
+      ],
+      "10": [
+        11101,
+        11101,
+        0
+      ],
+      "11": [
+        217,
+        217,
+        0
+      ],
+      "13": [
+        42,
+        42,
+        0
+      ],
+      "14": [
+        14,
+        14,
+        0
+      ],
+      "16": [
+        127,
+        127,
+        0
+      ],
+      "20": [
+        599,
+        599,
+        0
+      ],
+      "26": [
+        9337,
+        9337,
+        0
+      ],
+      "31": [
+        3081,
+        3081,
+        0
+      ],
+      "34": [
+        104,
+        104,
+        0
+      ],
+      "35": [
+        38,
+        38,
+        0
+      ],
+      "36": [
+        18,
+        18,
+        0
+      ],
+      "37": [
+        23,
+        23,
+        0
+      ],
+      "38": [
+        48,
+        48,
+        0
+      ],
+      "39": [
+        13,
+        13,
+        0
+      ],
+      "45": [
+        93,
+        93,
+        0
+      ],
+      "46": [
+        93,
+        93,
+        0
+      ],
+      "47": [
+        47,
+        47,
+        0
+      ],
+      "49": [
+        23,
+        23,
+        0
+      ],
+      "50": [
+        61,
+        61,
+        0
+      ],
+      "52": [
+        514,
+        514,
+        0
+      ],
+      "53": [
+        165,
+        165,
+        0
+      ],
+      "58": [
+        94,
+        94,
+        0
+      ],
+      "60": [
+        3411,
+        3411,
+        0
+      ],
+      "61": [
+        729,
+        728,
+        1
+      ],
+      "68": [
+        64,
+        64,
+        0
+      ],
+      "72": [
+        22,
+        22,
+        0
+      ],
+      "73": [
+        98,
+        98,
+        0
+      ],
+      "79": [
+        141,
+        141,
+        0
+      ],
+      "80": [
+        29,
+        29,
+        0
+      ],
+      "81": [
+        85,
+        85,
+        0
+      ],
+      "86": [
+        10,
+        10,
+        0
+      ],
+      "94": [
+        845,
+        844,
+        1
+      ],
+      "114": [
+        1482,
+        1482,
+        0
+      ]
+    }
+  },
+  "failures": [
+    {
+      "stage": "61",
+      "path": "built-ins/Promise/allSettledKeyed/result-property-descriptors.js",
+      "outcome": "failed",
+      "reason": "next runtime async: TypeError: cannot convert null or undefined to object",
+      "context": "Known allSettledKeyed fixture/helper conflict: the configurable-property verifier deletes the property before the fixture reads it."
+    },
+    {
+      "stage": "94",
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "outcome": "failed",
+      "reason": "next runtime: Test262Error: Expected SameValue(«\"function arguments() {}\"», «\"[object Arguments]\"») to be true",
+      "context": "Pinned Annex B arguments expectation conflicts with Stage 114 behavior; keep both Test262 inputs and conforming runtime semantics unchanged."
+    }
+  ],
+  "comparison": {
+    "exact_saved_before_stage_ids": [
+      9,
+      10,
+      11,
+      14,
+      16,
+      20,
+      26,
+      31,
+      35,
+      36,
+      37,
+      38,
+      39,
+      46,
+      47,
+      49,
+      50,
+      53,
+      58,
+      60,
+      61,
+      79,
+      80,
+      81
+    ],
+    "case_count_identical_to_saved_before": 29497,
+    "baseline_report_sha256": {
+      "9": "8b45ea4ae746ed816184a47dfc0b015181a7fef6e5121124016a7d8e50f8c20b",
+      "10": "d2e8f5be507d03f78003131960e9e7634b497a66950e26c4c3ed7d91fcb24e4b",
+      "11": "4949599e922a75ca79f729592c514100bd767afe51557225b0289340f25777b1",
+      "14": "ba129d4af7e862488d68fec14b820ffd97bad2a7dde50f66f009fc00a44b2216",
+      "16": "bb0c3e33f2cdb4f3d74489e28675a74dfd739b716f7c4ee3802a90e2ca45e10e",
+      "20": "d47251d0c4742c06d4e274f95975ddfd899e461e4041a4424195e1e2fd900710",
+      "26": "dbc383b07778da40dc25c8cbe30acc9f251be1d9d2de3816d9cff12b09a7da40",
+      "31": "cf92afe1d434f26a01e1f531e32a2dd31bcbddcb014c7dbc038aeb1f802eee37",
+      "35": "932b868ccfec0208b3173a7d9a2cb518291538d7f52237fa667b3dd0f64a3c52",
+      "36": "2f24abca0e7d91d3b3300c492ee0db696eadba8e51a48a18b85f45c7175cfb97",
+      "37": "4fc93607ee1c0d41c7bb38efed3b0aaeef8020a0441055125cf4698cb000bdf5",
+      "38": "55b89d244b06ebebb01ba832b2b1911e4315b462a7e17459c48e3769ee43014b",
+      "39": "031cfd9b88b15c199f1af1d610e63f5f8e245d2a4afae47086cd595eaa025c50",
+      "46": "423a27d81deb1124e3855fa0b45fedc5290b313b68d10b3576fd874505498971",
+      "47": "f5a374977a9de175980b9460bdeda9d997f1ee77c31816257403b0c887da7da9",
+      "49": "d1d3006e5d869a32a761b3054e731bfaebc712ba5d277bc661ba6b84ca6b94f4",
+      "50": "8a2a992198b8927d7db5bec6f5caf59ea646447ffbdaabe696f6f539fa6579ce",
+      "53": "7b2c98608d01cfb0e01ff7d55119df352f9abeb63f71f226506c22d4a32aa799",
+      "58": "4a6e9c91d4ce44ae69dd74a3a68a946c720e455f7b84e9c22e5c73aec10373b3",
+      "60": "ef0694e798c65e3552ab723051a516e43ac1631e814b938fb59bf25720b2ae32",
+      "61": "507e05978fe1b65c105cf7834bc71613e6fc545e77d7978daadd14bca1e61c27",
+      "79": "e5878f7dd34b9c45e7faa44260723e679f5c440bae7f206cd85ea8ba153de6c8",
+      "80": "c1610a5db61159d5dddcc05f8b0c8ccf51625c759173cba60d2219a8f6e17eb4",
+      "81": "bae7fd0592a3bec236c52bd6161f1c4a7681d04506dc9e241df09037d2d5c98e"
+    },
+    "stages_without_identical_saved_before": [
+      0,
+      1,
+      3,
+      8,
+      13,
+      34,
+      45,
+      52,
+      68,
+      72,
+      73,
+      86,
+      94,
+      114
+    ],
+    "basis": "(stage, path, outcome, reason) rows and case identities match exactly",
+    "caveat": "Saved predecessor runs used different timeout/jobs and dirty source snapshots. Exact rows match where a before report exists; this is not same-build qualification."
+  },
+  "raw_outcomes_sha256": "59bea898ca0e843f40713846295229862f7a00535187935fa8db1ba9fb191344",
+  "source_reports": [
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-0-0.json",
+      "sha256": "a9d68f36bf5a852751677f971d8dc354a51075ce6b00793e234b8008f8161d4b",
+      "stages": [
+        0
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-1-1.json",
+      "sha256": "3ec5b914b9cf8ce3500425160f19cc6448f0663398489f1a0cc0d6cc6be6471f",
+      "stages": [
+        1
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-114-114.json",
+      "sha256": "0bdffe9de8af8159ecc181f989d63afce90d040bfde8e595a6de09ec6283766f",
+      "stages": [
+        114
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-13-14.json",
+      "sha256": "f4241a0164770b26de4e905b6b30f0809811492872676b79bb2042e99bd0e3a2",
+      "stages": [
+        13,
+        14
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-16-16.json",
+      "sha256": "284821f8b55ef3aabd676e8d27854ace7441f571088b9e90db7f502157899fa6",
+      "stages": [
+        16
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-20-20.json",
+      "sha256": "5beac637cc803a65f380e09f7eed6b961ef81421614a3fa180a87a28af8fae09",
+      "stages": [
+        20
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-26-26.json",
+      "sha256": "61564d9c155713b0c10c1e33e4de0c147d3c3193780b57c1661425f35c6266f5",
+      "stages": [
+        26
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-3-3.json",
+      "sha256": "89b1cd9e8e4b86033b1ecc259b87b07bce7432e6d4de3d49a3ea959ba809dbf3",
+      "stages": [
+        3
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-31-31.json",
+      "sha256": "e9b1b1a0834536a758fc93d09415982468e711c21dfb00d486591a38377845fe",
+      "stages": [
+        31
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-34-39.json",
+      "sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+      "stages": [
+        34,
+        35,
+        36,
+        37,
+        38,
+        39
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-45-47.json",
+      "sha256": "7b42cabadfb80db1686367dfadd9ed5c45aa48007ed7a08c5131ed4ded0e06fe",
+      "stages": [
+        45,
+        46,
+        47
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-49-50.json",
+      "sha256": "2aca7169917ac41bae8f8bbf4ce93dc74e1cbadd7612a5e9079b73b878f14dbc",
+      "stages": [
+        49,
+        50
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-52-53.json",
+      "sha256": "4311fb1c9e6660701d975a325e3c30de3cee32550da1f9e174f373def5f8f0c6",
+      "stages": [
+        52,
+        53
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-58-58.json",
+      "sha256": "a94f95566ec05e9d88065a9c58b0a29b9e35bb0a14314556295923680f93d0af",
+      "stages": [
+        58
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-60-61.json",
+      "sha256": "21f285506bf26f6d158447a1e2bfde7fd20cb92da8a40c145d17ec07f040956d",
+      "stages": [
+        60,
+        61
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-68-68.json",
+      "sha256": "7281ad8a275aeb7dc60297f9549b611b126aff7fda12d1960a2c0d83a693aca4",
+      "stages": [
+        68
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-72-73.json",
+      "sha256": "a1501216ea8f031bd268c3c727df209651bba342b4ef507eeaf84f640191825d",
+      "stages": [
+        72,
+        73
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-79-81.json",
+      "sha256": "1443d62c08a47823fe0ab4dca39514248c40c00c3601304fbece0bc4979cf90d",
+      "stages": [
+        79,
+        80,
+        81
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-8-11.json",
+      "sha256": "e618b6432972aeed2933329298262bdb56c06934d496d856a4514da9eef0015c",
+      "stages": [
+        8,
+        9,
+        10,
+        11
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-86-86.json",
+      "sha256": "42c9427b1d9811215942383d5a790eacfde930d342250a81077c550c5f982bf8",
+      "stages": [
+        86
+      ]
+    },
+    {
+      "path": "target/iteration/task20-dirty-owner-stages-94-94.json",
+      "sha256": "c46e551229a4ce2cec7232f4e0fcc9f7e1cf1ff5d7aacf427346de12c82bdb03",
+      "stages": [
+        94
+      ]
+    }
+  ],
+  "limitations": "The raw range reports are retained under target/iteration and are not committed; their hashes and the canonical raw-outcomes digest bind this summary to the run. This affected-stage union is not full Test262 or Stage A qualification."
+}
