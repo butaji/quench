@@ -31,7 +31,7 @@ test-fs-truncate-clear-file-zero.js
 test-fs-truncate-sync.js
 test-fs-unlink-type-check.js
 test-fs-write-file-buffer.js
-test-http-methods.js
+test-http-methods.js # profile=framework-core
 test-regression-object-prototype.js
 test-stream-end-paused.js
 test-stream-err-multiple-callback-construction.js
@@ -160,7 +160,7 @@ test-buffer-arraybuffer.js
 test-buffer-backing-arraybuffer.js
 test-buffer-badhex.js
 test-buffer-bigint64.js
-test-buffer-bytelength.js
+test-buffer-write-utf8-two-byte.js # profile=framework-core
 test-buffer-compare.js
 test-buffer-compare-offset.js
 test-buffer-concat.js
@@ -502,7 +502,7 @@ test-crypto-dh-errors.js
 test-crypto-dh-group-setters.js
 test-crypto-dep0204.js
 test-crypto-dep0206.js
-test-crypto-hash.js # profile=framework-core
+test-crypto-hash.js
 test-crypto-hmac.js
 test-crypto-sign-verify.js
 test-crypto-randomfillsync-regression.js
@@ -671,11 +671,9 @@ test-https-timeout-server-2.js
 test-https-timeout-server.js
 test-https-truncate.js
 test-https-unix-socket-self-signed.js
-test-http-server.js # profile=framework-core
 test-http-automatic-headers.js # profile=framework-core
 test-http-content-length.js # profile=framework-core
 test-http-write-head.js # profile=framework-core
-test-http-generic-streams.js # profile=framework-core
 test-fs-read-stream-resume.js # profile=framework-core
 test-stream-pipe-flow.js # profile=framework-core
 test-async-hooks-run-in-async-scope-this-arg.js # profile=framework-core
