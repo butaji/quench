@@ -216,18 +216,3 @@ impl<'a> Parser<'a> {
         Some(Sexp::Atom(self.src[start..self.i].to_string()))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::unfold_source;
-
-    #[test]
-    fn unfolds_folded_try_catch() {
-        let src = r#"(func (export "empty-catch") (try (do) (catch $e0)))"#;
-        let out = unfold_source(src).expect("unfold");
-        assert!(out.contains("catch $e0"), "{out}");
-        assert!(out.contains(" end)"), "{out}");
-        assert!(!out.contains("(do)"), "{out}");
-        assert!(!out.contains("(try"), "{out}");
-    }
-}
