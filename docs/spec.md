@@ -1,8 +1,10 @@
 # WebAssembly boundary
 
-`quench-wasm` owns decoding, validation and spec-script adaptation;
-`quench-runtime-next` owns shared execution; the legacy `quench-runtime` still
-owns the remaining memory, table, exception and host-call coverage.
+`quench-wasm` owns decoding, validation and spec-script adaptation. The shared
+runtime owns Wasm execution through the same values, heap, roots and dispatch as
+JavaScript; the canonical Wasm suite already uses this path. The remaining
+legacy runtime is not a Wasm executor. Task 27 will promote the shared runtime
+to the canonical `quench-runtime` package and remove the legacy VM.
 Third-party decoding/validation is allowed; a separate guest executor is not.
 
 Use the shared typed register machinery and preserve distinct Wasm traps,
@@ -19,7 +21,7 @@ These are requirements, not an assertion of complete conformance.
 
 The shared scalar API lowers validated module functions with a selected export
 using `quench_wasm::Module::lower_shared(export)`, then executes through
-`rqj::Runtime::execute_wasm(&function, args)`. `WasmSignature` owns parameter
+`quench_runtime_next::Runtime::execute_wasm(&function, args)`. `WasmSignature` owns parameter
 and result types. `WasmValue` carries i32/i64 values and exact f32/f64 IEEE bits,
 preserving signed zero and NaN payloads. Constants, locals (with typed zero
 initialization), calls, branches and select preserve all four scalar forms.
@@ -45,10 +47,12 @@ Integer division and remainder retain signed/unsigned rules; traps distinguish
 division by zero, signed division overflow, unreachable and call-stack exhaustion.
 Ordinary Wasm calls retain their callers and use the shared stack budget.
 Execution starts fresh and invalidates previous host roots, like JavaScript
-`Runtime::execute`. The legacy harness still owns remaining Wasm coverage.
+`Runtime::execute`. The WAST adapter applies the syntax normalization required
+by pinned legacy-format inputs before it submits execution to the shared VM;
+that parser compatibility step is not a second executor.
 
-Run the focused shared execution regressions with:
+Run the pinned Wasm suite through the shared VM with:
 
 ```sh
-cargo test -p quench-wasm --lib shared:: -- --nocapture
+WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/wasm-shared.json crates/quench-wasm-test/testsuite
 ```
