@@ -16,10 +16,14 @@ record their source revisions and commands.
 
 The rewrite target is an interpreter-only runtime derived from the pinned
 `../v2` snapshot. Node host behavior remains in `quench-node`; JavaScript
-semantics remain in `quench-runtime`; OXC owns syntax. The final conformance
-gates are 100% of pinned Test262 and Wasm, plus every upstream Node fixture
-tagged `framework-core` in `parallel.txt` and the pinned Express, Koa and
-Fastify scenarios. The broader Node inventory is diagnostic only.
+semantics remain in Quench's shared runtime; OXC owns syntax. The final
+conformance gates are every non-conflicting pinned Test262 case, every pinned
+Wasm directive, every upstream Node fixture tagged `framework-core` in
+`parallel.txt`, and the pinned Express, Koa and Fastify scenarios. Direct
+Test262 conflicts follow the local Node-oracle rule recorded in
+[task 20](../tasks/20.md#current-conflict-resolution); waived higher-stage
+outcomes remain visible as failures and never count as passes. The broader Node
+inventory is diagnostic only.
 The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).
 
 The rewrite gate must use the v2-derived runtime explicitly. Test262 progress
@@ -139,7 +143,7 @@ next-runtime ratchet.
 
 ## Shared runtime host roots
 
-The development `rqj::Runtime` exposes `global_root`, `string_rooted`,
+The development `quench_runtime_next::Runtime` exposes `global_root`, `string_rooted`,
 `get_property_rooted`, `set_property_rooted` and `call_rooted`. These use the
 existing VM semantics and derive program context from its owned program store.
 All inputs are live roots belonging to that runtime; validation precedes guest
@@ -219,7 +223,7 @@ discovery as a pass; `inventory_complete: false` rejects qualification.
 
 ```sh
 WASM_FILE_TIMEOUT_MS=60000 \
-  cargo run --profile iteration -p quench-wasm-test --bin run-shared -- \
+  cargo run --profile iteration -p quench-wasm-test --bin run -- \
   --report target/iteration/wasm-shared.json \
   crates/quench-wasm-test/testsuite/i32.wast
 ```
