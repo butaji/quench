@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "official_node_parallel_shared_vm_focused_profile",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "d69f95b73270dc07652064192fe0c6ffa66ed53b",
+  "source_state": "Dirty shared worktree; source SHA-256 values bind this focused result to current bytes.",
+  "build_command": "cargo build --profile iteration -p quench-node-test --bin run-parallel-next",
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "5c894e7a5d878273f1d25670bb450b7100a1e729bbdf699d2f7919898ee557f3",
+    "inventory": "tasks/node-compat-inventory.json",
+    "inventory_sha256": "a03a27f6b889bcb9e58e2a5e6cfb8f23ad24b139105e6dd431b7e86508db80f2",
+    "profile": "web-stream-bridge",
+    "runner": "quench-node-test run-parallel-next / shared NodeHost",
+    "runner_sha256": "fbc1b8e90312f01a89ca81d8187f2ca89fcbd8cbc14ca953257a54fde2ba7745"
+  },
+  "shared_vm_run": {
+    "command": "target/iteration/run-parallel-next --profile web-stream-bridge --timeout-secs 60",
+    "result": {
+      "pass": 8,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 8
+    },
+    "cases": [
+      {
+        "path": "tests/node/test/parallel/test-stream-duplex.js",
+        "sha256": "aea1b7a5eb0f0146315997f4513dd3146e5a34ad3e4eb911c598b5b031e95dd1",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-readable-to-web-byob.js",
+        "sha256": "7b39d7cbec3dba9224f327b808b7cd8e15bb69e34dee7688561eebd3337c08cc",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-readable-strategy-option.js",
+        "sha256": "b3f5846455679ee7ac77d0ce6e7288017199bda60efb39aaeec44f21b16d0f96",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-readable-to-web-termination-byob.js",
+        "sha256": "4a72f6e32ee389d07fbd9937d586acf9ecf3ede26f284d5f7ef55a7af93126d6",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-readable-from-web-enqueue-then-close.js",
+        "sha256": "735b0ff669434b70b92b0ddc2e9eef3552dd9c66c43ecdfa1b66071174d28322",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-toWeb-allows-server-response.js",
+        "sha256": "d6fa98890fb89aebd25dd7f3eaf58d081e4024fc51b8b75c919e02144fd19f3e",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-webstreams-abort-controller.js",
+        "sha256": "520370a830229d640ea8235254f69be93eb93bb5f8a3d375b5d825588b6b0b20",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-webstreams-finished.js",
+        "sha256": "3054293ca750d448df9b6f6bbd244cca8ce431cff0be343d73c8dd0bb69cc3fe",
+        "status": "pass"
+      }
+    ]
+  },
+  "local_node_oracle": {
+    "version": "v26.10.0",
+    "status": "pass",
+    "cases": 8,
+    "invocation": "Each upstream CommonJS fixture was compiled through a temporary CommonJS wrapper because the repository root package.json sets type=module."
+  },
+  "out_of_profile": [
+    {
+      "path": "tests/node/test/parallel/test-stream-readable-to-web-termination.js",
+      "reason": "The fixture imports timers/promises, which is still unmigrated in the shared NodeHost."
+    },
+    {
+      "path": "tests/node/test/parallel/test-whatwg-readablestream.js",
+      "reason": "This broad internal Web Streams suite requires private internals and timer modules unavailable through the current shared CommonJS host; direct locked-cancel qualification remains open."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webstreams-compose.js",
+      "reason": "The shared compose implementation does not yet classify a bare Web WritableStream as a sink stage; this separate composition gap is outside the eight-case lifecycle profile."
+    }
+  ],
+  "owner_sha256": {
+    "crates/quench-node/src/polyfills/bootstrap/web_streams.rs": "142da9d5c6ddad7881e8021e790d817de2f51519ab339a2a8e04b8d262e17f1a",
+    "crates/quench-node/src/modules/stream_prelude.js": "b8efa96e7ffab90816a13d5cd9acb7c5528ee25493b98f14aba71d1b39da4d5d",
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "929b39332ccd1f4429d859cea4077acc81d3cf98b3a260150cb82896d65a928b",
+    "crates/quench-node/src/modules/stream/shared_vm.rs": "7c2f9974486854a06b7ab7235e9f98f089977199c41082694ddf5eab39cc65fc",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "e157c2a5f895301a665d731d18f3769d4d2df55097758029221f5bd77e5f1467",
+    "crates/quench-node/src/host/shared_vm.rs": "a30c88586729aefdaa8696b9c1b592c769dfc920a72ae65f6ed5da2d4f2da085",
+    "crates/quench-node/src/modules/event_loop.rs": "c5f2c025555a5bc4e393594324b5776885e3eb8833bcd6e2f9244aa06595e925",
+    "crates/quench-node/src/modules/assert/shared_vm.rs": "27e8904f589920c7c77b62460cc450c636bf8d66443acaa199dad3a2085de579"
+  },
+  "qualification": "This is a diagnostic Task 21 fixture profile, not a frozen Task 19 membership decision or Task 22 suite qualification. The eight tagged fixtures pass on the recorded shared-VM snapshot and local Node v26.10.0. The profile verifies stream/promises.finished signal handling and Web stream abort lifetimes, but does not qualify full WHATWG BYOB or direct locked ReadableStream.cancel semantics.",
+  "adopted_design": "Readable pull state records started, pulling and pullAgain so start settles before pulling, one pull runs at a time, and concurrent demand triggers one recheck. Readable phase remains the terminal authority; queues and pending reads remain FIFO data. Writable sink calls route through one operation boundary that turns synchronous throws and promise rejections into stream errors. Node stream finished retains its documented returned-cleanup behavior while cleanup remains effective after settlement; addAbortSignal delegates completion to finished's stream-side observation instead of treating any one Duplex event as terminal. stream/promises is projected from the shared stream module so require aliases reuse the same functions and state."
+}

@@ -699,3 +699,12 @@ test-http-allow-content-length-304.js # profile=framework-core
 test-http-listening.js # profile=framework-core
 test-global-webstreams.js # profile=framework-core
 test-queue-microtask.js
+test-stream-duplex.js # profile=web-stream-bridge
+test-stream-readable-to-web-byob.js # profile=web-stream-bridge
+test-stream-readable-strategy-option.js # profile=web-stream-bridge
+test-stream-readable-to-web-termination.js
+test-stream-readable-to-web-termination-byob.js # profile=web-stream-bridge
+test-readable-from-web-enqueue-then-close.js # profile=web-stream-bridge
+test-stream-toWeb-allows-server-response.js # profile=web-stream-bridge
+test-webstreams-abort-controller.js # profile=web-stream-bridge
+test-webstreams-finished.js # profile=web-stream-bridge
