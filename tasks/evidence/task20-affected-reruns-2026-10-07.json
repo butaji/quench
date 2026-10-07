@@ -1,0 +1,338 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "affected_test262_requalification",
+  "reviewed_on": "2026-10-07",
+  "source": {
+    "revision": "14aefd181d46ef3f95f3b78662a659b147036d16",
+    "dirty": true,
+    "runner": "target/iteration/run-stages-next",
+    "runner_sha256": "eaadb49a88414cab3666ebf0e519b173e5dac96c38a19a5c77aba632a2589bff",
+    "snapshot_sha256_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "ae18f214d5c5949b3c0285b75ea587c46a02010d5b86037c9701e0ad5623a83a",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ],
+    "host": "macOS arm64",
+    "timeout_ms": 30000,
+    "jobs": 1
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "stage_definitions": "docs/STAGES.md",
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "scope": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "stage_ids": [
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      47,
+      49,
+      50,
+      61,
+      64,
+      79,
+      80,
+      81,
+      94
+    ]
+  },
+  "stage_reports": [
+    {
+      "stage": 34,
+      "pass": 104,
+      "fail": 0,
+      "total": 104,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-34.json",
+      "report_sha256": "9071093ec52520a8b8c89165e207097555cb53ffaf6a7542573f5095bf63e63a"
+    },
+    {
+      "stage": 35,
+      "pass": 38,
+      "fail": 0,
+      "total": 38,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-35.json",
+      "report_sha256": "c429f3681f5a1000f5cbf41f142da09a34fe646860ea1516c8c52d071912f110"
+    },
+    {
+      "stage": 36,
+      "pass": 18,
+      "fail": 0,
+      "total": 18,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-36.json",
+      "report_sha256": "a2c6adb1978d860ffeb9663c958f307f3289acfc4aaf0f0a3f35cd733daae957"
+    },
+    {
+      "stage": 37,
+      "pass": 23,
+      "fail": 0,
+      "total": 23,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-37.json",
+      "report_sha256": "ac3a8f43ce7e12e0eac75b5fdfd2b4282941d50b342ddf51a8300c7373c0b562"
+    },
+    {
+      "stage": 38,
+      "pass": 48,
+      "fail": 0,
+      "total": 48,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-38.json",
+      "report_sha256": "6e3e90016ed3862c7e230f927d07bf5b2d17a046fe3cee74f5c5fda4d9db7beb"
+    },
+    {
+      "stage": 39,
+      "pass": 13,
+      "fail": 0,
+      "total": 13,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-39.json",
+      "report_sha256": "31833eb5bb5511329736b09e6d654d50e39c2ad68720acb785b2ae62d60e7a82"
+    },
+    {
+      "stage": 40,
+      "pass": 389,
+      "fail": 0,
+      "total": 389,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-40.json",
+      "report_sha256": "e20d94cbfac4d685dc7e46a7fce461b4d8a701a85bdc6b51847ab6e5b7ced67a"
+    },
+    {
+      "stage": 47,
+      "pass": 47,
+      "fail": 0,
+      "total": 47,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-47.json",
+      "report_sha256": "c9c9c0652f4d619a9f6ad88e0d4478105d8ab13de842038c09785fc08b9b34e5"
+    },
+    {
+      "stage": 49,
+      "pass": 23,
+      "fail": 0,
+      "total": 23,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-49.json",
+      "report_sha256": "d731dd5d3a7619d2e31012a23fdf899306c2319958d6d726ff2f7a8cab8adb36"
+    },
+    {
+      "stage": 50,
+      "pass": 61,
+      "fail": 0,
+      "total": 61,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-50.json",
+      "report_sha256": "8d299189cfcf89a2d1d62dc3315e115284f87f0029e18a90ccc4cc13e60e469c"
+    },
+    {
+      "stage": 61,
+      "pass": 729,
+      "fail": 0,
+      "total": 729,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-61.json",
+      "report_sha256": "4adf6a691a2c5fab6918d62371f9b4ae20d0c05c170b3003d200bac35d426afe"
+    },
+    {
+      "stage": 79,
+      "pass": 141,
+      "fail": 0,
+      "total": 141,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-79.json",
+      "report_sha256": "4701ab1914e57047c0b2833b59f1d8c21ae91695e996018c77fe7ab0634edfa3"
+    },
+    {
+      "stage": 80,
+      "pass": 29,
+      "fail": 0,
+      "total": 29,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-80.json",
+      "report_sha256": "f072741d6c2967528838976c0180c7c7fa7e27096c164469cde046cdc25bb9e8"
+    },
+    {
+      "stage": 81,
+      "pass": 85,
+      "fail": 0,
+      "total": 85,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-81.json",
+      "report_sha256": "661daae24f50934652556de488c50c0ccef09b9bb443894b13c9165b8ec8a10d"
+    },
+    {
+      "stage": 94,
+      "pass": 844,
+      "fail": 1,
+      "total": 845,
+      "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage-94.json",
+      "report_sha256": "eea70a2a3691a6a7bfd9b519563c59b7dfd3024a6c24cb5b3805ca665897eeaf"
+    }
+  ],
+  "stage64_previous_timeout_retries": {
+    "pass": 28,
+    "fail": 0,
+    "total": 28,
+    "cases": [
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_New_Tai_Lue.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_New_Tai_Lue.json",
+        "report_sha256": "6bdfe5d3cb7e2b557149804f7f7ad4f8bda639800aeb761f39bc7c5d9bf898ef"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Newa.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Newa.json",
+        "report_sha256": "9cb957f783c9776b01878719bc12bcf4ba57a91156ce8efafe5722c72526fe48"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Nko.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Nko.json",
+        "report_sha256": "27dade387279f15b3b9913c98e7a1a539e15b713869d2cf0d21f2f2d97ba8eb5"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Nushu.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Nushu.json",
+        "report_sha256": "04bfbdc2da5dc3680a55bde2ba30307dd86a8e5e14fa476d022df9d360406be0"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Nyiakeng_Puachue_Hmong.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Nyiakeng_Puachue_Hmong.json",
+        "report_sha256": "15e4316939133a3337fc83659e3c0a941c564dbfff02a76f92412143a017d4c6"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Ogham.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Ogham.json",
+        "report_sha256": "a3a96cb9f3c1960560690251d7a40eb075bb7e3de1a7e344ee9891dcdc0ce2be"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Ol_Chiki.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Ol_Chiki.json",
+        "report_sha256": "31167f16831e9902e33ff72bdec970ca122572501ddc1d6418a1e5f1329b3404"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Ol_Onal.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Ol_Onal.json",
+        "report_sha256": "93c5e00319397fd0f6ee29afb4fc608f8549b507c31292a1c5c806a5d689f393"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Hungarian.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Hungarian.json",
+        "report_sha256": "71755c380a15342683b8929da9ebcd3b19fb00e77599238d53525c8f746e2a74"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Italic.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Italic.json",
+        "report_sha256": "8ca0dd019a9c18f31c10dbbf387ec39f0eaa8177bad8a1e62d1207b1d377c74c"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_North_Arabian.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_North_Arabian.json",
+        "report_sha256": "36985395c75a639fa49c4d02004fa4147691fd24e030665afa68dc67a901b4c1"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Permic.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Permic.json",
+        "report_sha256": "436fb2262049390102ee78e6e275d6f311901d8ea46b54f938b1aefd34283946"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Persian.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Persian.json",
+        "report_sha256": "588766e06dbdbe4c4c7f950598dcd7720f6ff2395ecc09574a07c64b3d73700b"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Sogdian.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Sogdian.json",
+        "report_sha256": "a6cd949d9bc5bc0f5b3867e896b4d13667f01bdb4523d66fe295c8635a9f3286"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_South_Arabian.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_South_Arabian.json",
+        "report_sha256": "c5534e641bfa23bf190f6e485ed18928333f0d77b25c8c6b339c0050fd3f4a6a"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Turkic.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Turkic.json",
+        "report_sha256": "5c3ff66fd917e0ea5279719b11095eb906f2bd04f697dacf9934e66716d3a9f7"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Old_Uyghur.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Old_Uyghur.json",
+        "report_sha256": "f609e78b74a518284c05d32c10621d25c17986aeae1af4d54c6475f8d071f3a8"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Oriya.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Oriya.json",
+        "report_sha256": "b5c1ff1b715ec24d3205ee6f1f71f1820b540a06dbfa1e1975b902a3cc0addda"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Osage.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Osage.json",
+        "report_sha256": "0ccd377885f2d1ca4ad569827afc9f14028a831f7d722b46a9442fa5135ee21e"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Osmanya.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Osmanya.json",
+        "report_sha256": "443ac743ae4e3ed36d732e5da6f27ffdf234f6e48c19373490447139ffe628be"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Pahawh_Hmong.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Pahawh_Hmong.json",
+        "report_sha256": "127c55df87c58d8f0cabc6936ab136e05acc2c046200ad6b336347d191b1ad09"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Palmyrene.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Palmyrene.json",
+        "report_sha256": "caba88eea1d6f03feb8f456293efc632a446ebfadd39884d86c9775b07b80127"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Pau_Cin_Hau.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Pau_Cin_Hau.json",
+        "report_sha256": "4369321c627184eceeff8fb4ee5d4b319f7ce24348c07fbef3e7052bbc47b92a"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Phags_Pa.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Phags_Pa.json",
+        "report_sha256": "d77dcec293ec872dbc85e593cf0557dae644137445c44b3227ac83fcc2a3c34f"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Phoenician.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Phoenician.json",
+        "report_sha256": "6e4fc53adf09d0fed85036de554014f25a6381fbe111ba00170b15108c01f20c"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Psalter_Pahlavi.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Psalter_Pahlavi.json",
+        "report_sha256": "a0dfb716548f4fd75b778c5ebe138352c05fef6fe39294d1dfd8127873c0e495"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Rejang.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Rejang.json",
+        "report_sha256": "bbe17372c99227fa58c9d959e94ebb6d7dda178b6ca7c38d2779ab44e403fe22"
+      },
+      {
+        "path": "built-ins/RegExp/property-escapes/generated/Script_Extensions_-_Runic.js",
+        "report": "target/iteration/test262-stagea-2026-10-07/final-current/stage64-retries/Script_Extensions_-_Runic.json",
+        "report_sha256": "874d22f339c5d0d852001d8ebe27f9349f7b451fbf24a590734b9e981c0641e4"
+      }
+    ],
+    "selection_basis": "The exact 28 previously timed-out paths in the full staged report; each was rerun alone on the current binary."
+  },
+  "result": {
+    "affected_stage_cases_passed": 2592,
+    "affected_stage_cases_failed": 1,
+    "affected_stage_cases_total": 2593,
+    "stage64_retry_cases_passed": 28,
+    "only_failure": "annexB/language/function-code/block-decl-func-skip-arguments.js"
+  },
+  "stage94_note": "The pinned Test262 case conflicts with its Stage 114 counterpart and current engine behavior. Upstream correction PR 5112 remains open; the fixture and expectation were not changed.",
+  "qualification_limit": "This is affected-stage evidence, not the task24 same-build full inventory gate. The final Test262 gate remains blocked by Stage 94."
+}

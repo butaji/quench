@@ -107,7 +107,7 @@
     "OXC owns JavaScript syntax; the specializer compiles OXC AST directly to residual bytecode. The JavaScript conformance gate is 100% of the pinned Test262 inventory.",
     "JavaScript and Wasm run on one VM: one heap, one Value representation, one root set, one opcodes! vocabulary, one dispatch loop, one activation stack, and one Engine entry. quench-wasm owns only binary/text decoding, validation and wast scripting; no other crate executes Wasm. The Wasm conformance gate is 100% of the pinned Wasm suite through that shared VM.",
     "Runtime boundary: quench-runtime owns the sole JavaScript/Wasm VM and OXC JavaScript syntax. quench-node is the Node compatibility and host/API layer on top of the runtime public embedding API; Node policy stays out of the runtime. quench-wasm owns Wasm format decoding/validation and wast scripting, and uses the shared runtime for execution. Keep necessary pure algorithms in their single surviving authority. Production hosts and all suite runners use the same core. CLI/runner crate extraction, a new decoded-operator vocabulary, and unrelated package reshuffling are not completion gates. At cutover remove the executable legacy runtime and transitional second-VM names; derive dependency and vendor deletion from actual surviving consumers.",
-    "The Node host/API layer remains separate from JavaScript semantics and the Node compatibility gate is 100% of the implemented Node compatibility cases, frozen by task 19 according to implemented capabilities, including existing failures; unimplemented upstream cases are outside this gate. Passing on legacy is not a membership criterion.",
+    "The Node host/API layer remains separate from JavaScript semantics. The Stage A Node gate is every upstream fixture tagged framework-core in crates/quench-node-test/node-tests/parallel.txt plus the pinned Express, Koa and Fastify scenarios defined by tests/frameworks; the broad node-compat-inventory.json audit is diagnostic only and does not add gate cases or APIs.",
     "Preserve Quench CLI behavior and observable ECMAScript, Node, and Wasm behavior; internal Rust APIs may change.",
     "Guide Stage B with Ershov binding-time analysis, Futamura specialization, and Self VM research on maps, customization, inline caches and type feedback, using the pinned ../v2 source and measured wins/rejections as the implementation reference. Adapt ideas to the single interpreter VM, proven facts or guards with exact fallback, and paired Score/RSS evidence; no sibling build dependency or extra architecture gate.",
     "Production behavior may not select between old and new engines through a runtime flag; pre-cutover comparison uses separate development binaries.",
@@ -120,13 +120,13 @@
     "Unit tests cover internal invariants or scenarios not covered by the pinned Test262, Wasm or implemented Node suites. Retain complicated regression tests only for their distinct internal or uncovered obligation. Remove duplicate language/API/suite-case unit tests; a regression label or multiple execution modes alone do not justify duplicating conformance coverage. Keep suite inventories and assertions unchanged.",
     "The deferred lane is outside the current two-stage plan, non-blocking, and not a third stage. Retain truthful statuses; no active stage depends on deferred work. The only active framework work is the minimum profile specified by task 21 and selected from the Node parallel manifest for Express, Koa and Fastify; refresh its source-bound evidence after affected changes. Tasks 88/89's broad inventory and seven-framework gate are superseded.",
     "Reuse final gate reports when production source, binary, configuration and exact inventories are unchanged; recording completion alone never requires another full run. Changed implementations require affected-scope verification and refreshed final stage qualification.",
-    "Stage A work is limited to the three frozen inventories (Test262, Wasm, implemented Node cases), one production OXC/Wasm VM in quench-runtime, and removal of legacy/clutter and duplicate suite unit tests. Prioritize concrete failing cases, missing shared-VM execution paths and cutover blockers; implement no discretionary architecture or new host capability beyond what the frozen inventories require. Tasks 20/22/23 own behavior gaps and affected-scope checks; task 24 alone owns the initial same-build 100% qualification and baseline for all three inventories. A gate failure reopens the responsible owner. Task 27 removes legacy, and task 86 qualifies the cleaned build. After 86 passes, proceed directly through 62 and 61 to per-benchmark Score/maximum-RSS qualification.",
+    "Stage A is limited to the pinned Test262 inventory, pinned Wasm directives, the framework-core Node profile and the pinned Express/Koa/Fastify scenarios, one production OXC/Wasm VM in quench-runtime, and removal of legacy/clutter and duplicate suite unit tests. The broad Node inventory remains diagnostic only. Prioritize concrete failing cases, missing shared-VM execution paths and cutover blockers; add no discretionary architecture or host APIs beyond the framework gate. Tasks 20/22/23 own behavior gaps and affected-scope checks; task 24 alone owns the initial same-build 100% qualification and baseline for these gates. A gate failure reopens its owner. Task 27 removes legacy, and task 86 qualifies the cleaned build. After 86 passes, proceed directly through 62 and 61 to per-benchmark Score/maximum-RSS qualification.",
     "Phase task lists identify ownership, not mandatory implementation checklists. Suite closures depend on their inventory and shared-VM integration; support tasks supply required fixes and internal checks without imposing their historical plans. Only the Stage A gate enables Stage B; unused optimization candidates never block final qualification."
   ],
   "phases": {
     "order": ["A_correctness", "B_performance"],
     "A_correctness": {
-      "goal": "One production VM for OXC and Wasm; remove all legacy code and audited clutter; retain unit tests only for internals or scenarios not covered by the conformance suites; pass 100% pinned Test262, 100% pinned Wasm directives, and 100% of the frozen implemented Node compatibility cases on the final cleaned build",
+      "goal": "One production VM for OXC and Wasm; remove all legacy code and audited clutter; retain unit tests only for internals or scenarios not covered by the conformance suites; pass 100% pinned Test262, 100% pinned Wasm directives, and the framework-core Node profile plus pinned Express, Koa and Fastify scenarios on the final cleaned build",
       "gate": "86",
       "tasks": [
         "01",
@@ -337,8 +337,8 @@
     {
       "id": "19",
       "file": "19.md",
-      "title": "Freeze conformance inventories and finish shared-VM runners",
-      "status": "in_progress",
+      "title": "Freeze Stage A suite inputs and shared-VM runners",
+      "status": "done",
       "depends_on": ["05", "48"]
     },
     {
@@ -351,14 +351,14 @@
     {
       "id": "21",
       "file": "21.md",
-      "title": "Migrate implemented Node APIs to the shared VM",
+      "title": "Migrate framework Node APIs to the shared VM",
       "status": "pending",
       "depends_on": ["19", "43"]
     },
     {
       "id": "22",
       "file": "22.md",
-      "title": "Close implemented Node compatibility gaps",
+      "title": "Qualify framework Node compatibility",
       "status": "pending",
       "depends_on": ["19", "21"]
     },

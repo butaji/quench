@@ -17,8 +17,9 @@ record their source revisions and commands.
 The rewrite target is an interpreter-only runtime derived from the pinned
 `../v2` snapshot. Node host behavior remains in `quench-node`; JavaScript
 semantics remain in `quench-runtime`; OXC owns syntax. The final conformance
-gates are 100% of pinned Test262, pinned Wasm, and task 19's frozen implemented
-Node cases. Unimplemented upstream Node cases are outside this gate.
+gates are 100% of pinned Test262 and Wasm, plus every upstream Node fixture
+tagged `framework-core` in `parallel.txt` and the pinned Express, Koa and
+Fastify scenarios. The broader Node inventory is diagnostic only.
 The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).
 
 The rewrite gate must use the v2-derived runtime explicitly. Test262 progress
@@ -64,12 +65,11 @@ observations on both sides: signals, timeouts, failed launches and missing
 statuses fail verification even if their outputs match. Completed nonzero exits
 remain comparable. The directory report derives `inventory_complete` from
 its records; this is process completion, not proof that Node APIs are implemented.
-The development `quench-node-next` entry runs shared-VM JavaScript with the
-existing Node host and a partial CommonJS migration. The
-implemented Node case set remains to be frozen by implemented-capability
-ownership, including existing failures, with helper inputs classified separately.
-Legacy/oracle outcomes establish observations, not inventory membership
-([audit](../tasks/evidence/task19-node-verifier-completion.json)).
+The development shared-VM entry runs JavaScript with the existing Node host.
+The Stage A Node gate is the `framework-core` profile selected from
+`parallel.txt` and the three pinned package scenarios in `tests/frameworks`.
+The broader inventory and owner audits remain diagnostic and do not add gate
+cases.
 
 Node inventory review uses implementation owners and per-case obligations in
 `tasks/node-compat-inventory.json`. Run from the repository root:
@@ -79,15 +79,12 @@ cargo run --profile iteration -p quench-node-test --bin run-compat -- \
   --inventory tasks/node-compat-inventory.json --list
 ```
 
-This lists reviewed included cases in inventory order and validates every input
-hash, including support files. Use `--filter NAME` for a focused listing.
-The complete source census and upstream pin are checked by task coherence.
-Listing is diagnostic. Execution refuses unfrozen membership and observation
-cases without matched oracle traces; directory runs are not implemented-set
-qualification. Both Node runners use the same isolated child deadline and
-completion protocol, preserving stdout/stderr separately from case results.
-Complete ownership review, oracle traces and final adapter provenance remain
-required before the final Node gate.
+This lists the diagnostic broad Node inventory and validates every input hash,
+including support files. Use `--filter NAME` for a focused diagnostic query.
+It does not define the Stage A Node gate; profile membership comes from
+`parallel.txt`, and package scenarios come from `tests/frameworks`. Both Node
+runners use isolated child deadlines and preserve stdout/stderr separately from
+case results.
 
 `run-all-next` writes its full per-test report to
 `target/test262-next-report.json` and compares a full-inventory run against
@@ -188,20 +185,16 @@ a validated root are discarded.
 Fresh execution invalidates promoted roots too. This mechanism currently covers
 nonconstructible functions; Node classes and host migration remain task 43 work.
 
-The development `quench-node-next` entry uses the existing `NodeHost` on this
-VM. CommonJS files compile through the standard wrapper in the active runtime;
-relative/package resolution and file I/O stay in `quench-node`. The canonical
-process namespace exposes `uptime`; `require('process')` and
-`require('node:process')` return that same object. The shared cache retains
-module records through cycles and reads their current exports. Captured parent
-modules use the VM's existing traced environments; named script re-entry
-preserves active roots.
+The development shared-VM Node entry uses the existing `NodeHost` on this VM.
+CommonJS files compile through the standard wrapper; relative/package
+resolution and file I/O stay in `quench-node`. The selected framework profile
+and package scenarios, rather than a broad Node API inventory, define the Stage
+A Node gate.
 
 The CLI selects Module for `.mjs` and package-scoped `.js` with `type: module`;
-CommonJS files and eval retain their respective scopes. The remaining Node APIs,
-public cache/extensions, resolve options, module prototypes, synchronous ESM
-interop, full diagnostics and host scheduling are unqualified. This entry does
-not yet qualify the implemented Node suite. Production cutover remains task 27.
+CommonJS files and eval retain their respective scopes. Production cutover
+remains task 27; task 24 owns integrated qualification of the selected Node
+gate together with Test262 and Wasm.
 See
 [task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
 

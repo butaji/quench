@@ -3,7 +3,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 
 const root = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -146,122 +145,151 @@ for (const item of queue.items) {
   }
 }
 
-const nodeInventory = JSON.parse(
-  fs.readFileSync(path.join(root, "tasks/node-compat-inventory.json"), "utf8"),
-);
-const nodeEntries = new Map();
-const caseRoles = new Set(["assertion_case", "observation_case"]);
-const supportRoles = new Set(["module", "package_metadata", "child_process"]);
-const nonExecutableRoles = new Set(["documentation", "inventory_manifest"]);
-for (const entry of nodeInventory.entries) {
-  if (nodeEntries.has(entry.path)) {
-    errors.push(`duplicate Node input ${entry.path}`);
+const frameworkManifest = "crates/quench-node-test/node-tests/parallel.txt";
+const frameworkTestRoot = "tests/node/test/parallel";
+const frameworkManifestBytes = fs.readFileSync(path.join(root, frameworkManifest));
+const frameworkManifestText = frameworkManifestBytes.toString("utf8");
+const frameworkLines = frameworkManifestText.split("\n");
+const manifestNames = new Set();
+const frameworkFixtures = [];
+for (const [index, line] of frameworkLines.entries()) {
+  const [namePart, annotation = ""] = line.split("#", 2);
+  const name = namePart.trim();
+  if (!name) continue;
+  if (manifestNames.has(name)) {
+    errors.push(`duplicate Node manifest member at line ${index + 1}: ${name}`);
   }
-  nodeEntries.set(entry.path, entry);
+  manifestNames.add(name);
   if (
-    !caseRoles.has(entry.role) && !supportRoles.has(entry.role) &&
-    !nonExecutableRoles.has(entry.role)
+    path.isAbsolute(name) ||
+    name.split("/").some((part) => part === ".." || part === "." || !part)
   ) {
-    errors.push(`unknown Node input role ${entry.role}: ${entry.path}`);
-  }
-  const inputPath = path.join(root, entry.path);
-  if (!fs.existsSync(inputPath)) {
-    errors.push(`missing Node input ${entry.path}`);
+    errors.push(`invalid Node manifest member: ${name}`);
     continue;
   }
-  const digest = createHash("sha256").update(fs.readFileSync(inputPath)).digest(
-    "hex",
-  );
-  if (digest !== entry.sha256) errors.push(`changed Node input ${entry.path}`);
+  const tags = [...annotation.matchAll(/(?:^|\s)profile=([^\s]+)/g)]
+    .map((match) => match[1]);
+  if (new Set(tags).size !== tags.length) {
+    errors.push(`duplicate profile tag for Node manifest member: ${name}`);
+  }
+  for (const tag of tags) {
+    if (!/^[a-z][a-z0-9-]*$/.test(tag)) {
+      errors.push(`invalid profile tag ${tag}: ${name}`);
+    }
+  }
+  if (annotation.includes("profile=") && !tags.length) {
+    errors.push(`malformed profile tag for Node manifest member: ${name}`);
+  }
+  const fixture = path.posix.join(frameworkTestRoot, name);
+  if (!fs.existsSync(path.join(root, fixture))) {
+    errors.push(`missing Node manifest fixture ${fixture}`);
+  }
+  if (tags.includes("framework-core")) frameworkFixtures.push(fixture);
 }
-const declaredNodeInputs = [];
-for (const source of nodeInventory.sources) {
-  if (source.kind === "tracked_inputs") {
-    declaredNodeInputs.push(
-      ...execFileSync(
-        "git",
-        ["ls-files", "--", source.root],
-        { cwd: root, encoding: "utf8" },
-      ).trim().split("\n").filter(Boolean),
-    );
-  } else if (source.kind === "manifest") {
-    if (nodeEntries.get(source.manifest)?.role !== "inventory_manifest") {
-      errors.push(
-        `Node source manifest is not inventoried: ${source.manifest}`,
-      );
-    }
-    const manifestLines = fs.readFileSync(
-      path.join(root, source.manifest),
-      "utf8",
-    )
-      .split("\n");
-    const manifestEntries = manifestLines.flatMap((line) => {
-      const [namePart, annotation = ""] = line.split("#", 2);
-      const name = namePart.trim();
-      if (!name) return [];
-      const tagged = [...annotation.matchAll(/(?:^|\s)profile=([^\s]+)/g)]
-        .map((match) => match[1]);
-      if (new Set(tagged).size !== tagged.length) {
-        errors.push(`duplicate profile tag for Node manifest member: ${name}`);
-      }
-      for (const profile of tagged) {
-        if (!/^[a-z][a-z0-9-]*$/.test(profile)) {
-          errors.push(`invalid profile tag ${profile}: ${name}`);
-        }
-      }
-      if (annotation.includes("profile=") && !tagged.length) {
-        errors.push(`malformed profile tag for Node manifest member: ${name}`);
-      }
-      return [{ name, profiles: tagged }];
-    });
-    const names = manifestEntries.map((entry) => entry.name);
-    if (!names.length) errors.push(`empty Node manifest: ${source.manifest}`);
-    if (new Set(names).size !== names.length) {
-      errors.push(`duplicate Node manifest member: ${source.manifest}`);
-    }
-    for (const name of names) {
-      if (
-        path.isAbsolute(name) ||
-        name.split("/").some((part) => part === ".." || part === "." || !part)
-      ) {
-        errors.push(`invalid Node manifest member: ${name}`);
-      }
-      const fixture = path.posix.join(source.root, name);
-      declaredNodeInputs.push(fixture);
-      if (!caseRoles.has(nodeEntries.get(fixture)?.role)) {
-        errors.push(`Node manifest member is not a case: ${fixture}`);
-      }
-    }
-  } else {
-    errors.push(`unknown Node input source: ${source.kind}`);
+if (frameworkFixtures.length === 0) {
+  errors.push(`empty framework-core profile in ${frameworkManifest}`);
+}
+
+const nodeEvidencePath = "tasks/evidence/task21-framework-core-final-2026-10-07.json";
+const nodeEvidence = JSON.parse(
+  fs.readFileSync(path.join(root, nodeEvidencePath), "utf8"),
+);
+const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const fileSha256 = (relativePath) =>
+  sha256(fs.readFileSync(path.join(root, relativePath)));
+const recordedCases = nodeEvidence.authority?.cases ?? [];
+const recordedFixturePaths = recordedCases.map((item) => item.path);
+if (nodeEvidence.authority?.node_parallel_manifest !== frameworkManifest) {
+  errors.push(`Node evidence points at a different manifest: ${nodeEvidencePath}`);
+}
+if (nodeEvidence.authority?.profile !== "framework-core") {
+  errors.push(`Node evidence has the wrong profile: ${nodeEvidencePath}`);
+}
+if (
+  nodeEvidence.authority?.node_parallel_manifest_sha256 !==
+  sha256(frameworkManifestBytes)
+) {
+  errors.push(`changed Node profile manifest: ${frameworkManifest}`);
+}
+if (
+  nodeEvidence.authority?.cases_selected_from_manifest !== frameworkFixtures.length ||
+  recordedFixturePaths.length !== frameworkFixtures.length ||
+  recordedFixturePaths.some((fixture, index) => fixture !== frameworkFixtures[index])
+) {
+  errors.push(`Node qualification evidence does not match ${frameworkManifest}`);
+}
+for (const item of recordedCases) {
+  if (item.quench_status !== "pass") {
+    errors.push(`Node framework fixture did not pass: ${item.path}`);
+  }
+  if (!fs.existsSync(path.join(root, item.path))) {
+    errors.push(`missing Node evidence fixture ${item.path}`);
+  } else if (item.sha256 !== fileSha256(item.path)) {
+    errors.push(`changed Node framework fixture ${item.path}`);
   }
 }
 if (
-  JSON.stringify(declaredNodeInputs) !== JSON.stringify([...nodeEntries.keys()])
+  nodeEvidence.profile_result?.total !== frameworkFixtures.length ||
+  nodeEvidence.profile_result?.pass !== frameworkFixtures.length ||
+  nodeEvidence.profile_result?.skip !== 0 ||
+  nodeEvidence.profile_result?.fail !== 0 ||
+  nodeEvidence.profile_result?.timeout !== 0 ||
+  nodeEvidence.profile_result?.crash !== 0 ||
+  nodeEvidence.profile_result?.unclassified !== 0
 ) {
-  errors.push(
-    "Node inventory must contain all declared inputs in discovery order",
-  );
+  errors.push(`Node framework qualification is not all-pass: ${nodeEvidencePath}`);
 }
-const nodeRevision = execFileSync(
-  "git",
-  ["rev-parse", "HEAD"],
-  { cwd: path.join(root, nodeInventory.upstream.root), encoding: "utf8" },
-).trim();
-if (nodeRevision !== nodeInventory.upstream.revision) {
-  errors.push("Node inventory upstream revision changed");
-}
-for (const entry of nodeEntries.values()) {
-  if (!supportRoles.has(entry.role)) continue;
-  if (!entry.consumers?.length) {
-    errors.push(`Node support input has no consumer: ${entry.path}`);
+
+const frameworkReadme = fs.readFileSync(
+  path.join(root, "tests/frameworks/README.md"),
+  "utf8",
+);
+const scenarioRows = [...frameworkReadme.matchAll(
+  /^\|\s*`scenarios\/([^`]+)`\s*\|\s*([^|]+)\|\s*$/gm,
+)];
+const scenarioNames = new Set();
+for (const [, file, packageName] of scenarioRows) {
+  if (scenarioNames.has(file)) errors.push(`duplicate framework scenario ${file}`);
+  scenarioNames.add(file);
+  if (!fs.existsSync(path.join(root, "tests/frameworks/scenarios", file))) {
+    errors.push(`missing framework scenario ${file}`);
   }
-  for (const consumer of entry.consumers ?? []) {
-    if (!caseRoles.has(nodeEntries.get(consumer)?.role)) {
-      errors.push(
-        `Node support ${entry.path} has unknown/non-case consumer ${consumer}`,
-      );
-    }
+  if (!packageName.trim()) errors.push(`missing package for framework scenario ${file}`);
+}
+if (scenarioRows.length === 0) errors.push("no pinned framework scenarios listed");
+if (!fs.existsSync(path.join(root, "tests/frameworks/package-lock.json"))) {
+  errors.push("missing pinned framework package lock");
+}
+const scenarioInputHashes = nodeEvidence.authority?.framework_scenario_inputs_sha256 ?? {};
+const expectedScenarioInputs = [
+  "tests/frameworks/driver.cjs",
+  ...[...scenarioNames].map((file) => `tests/frameworks/scenarios/${file}`),
+  "tests/frameworks/package-lock.json",
+].sort();
+const recordedScenarioInputs = Object.keys(scenarioInputHashes).sort();
+if (
+  expectedScenarioInputs.length !== recordedScenarioInputs.length ||
+  expectedScenarioInputs.some((file, index) => file !== recordedScenarioInputs[index])
+) {
+  errors.push(`Node scenario evidence does not match ${nodeEvidencePath}`);
+}
+for (const [file, expectedHash] of Object.entries(scenarioInputHashes)) {
+  if (!fs.existsSync(path.join(root, file))) {
+    errors.push(`missing Node scenario input ${file}`);
+  } else if (expectedHash !== fileSha256(file)) {
+    errors.push(`changed Node scenario input ${file}`);
+  }
+}
+for (const [name, result] of Object.entries(nodeEvidence.scenarios ?? {})) {
+  if (
+    result.timeout ||
+    result.exit_status?.node !== 0 ||
+    result.exit_status?.quench !== 0 ||
+    result.exit_equal !== true ||
+    result.stdout_equal !== true ||
+    result.stderr_equal !== true
+  ) {
+    errors.push(`Node framework scenario is not an exact successful match: ${name}`);
   }
 }
 
@@ -270,5 +298,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  `task queue coherent: ${items.size} tasks, ${active.length} active, next=${queue.next_task}, Node inputs=${nodeEntries.size}`,
+  `task queue coherent: ${items.size} tasks, ${active.length} active, next=${queue.next_task}, framework-core fixtures=${frameworkFixtures.length}, package scenarios=${scenarioRows.length}`,
 );

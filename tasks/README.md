@@ -7,7 +7,7 @@ Stage membership remains separate because a lane can span both stages.
 
 | Stage                       | Required result                                                                                                                              | Closure                                            |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; 100% Test262, Wasm and implemented Node cases | [86](86.md), on the final cleaned production build |
+| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; 100% Test262 and Wasm, plus the framework-core Node profile and pinned Express/Koa/Fastify scenarios | [86](86.md), on the final cleaned production build |
 | B — performance             | Best Score and lowest maximum RSS on **every** V8-v7 benchmark against QuickJS, Bun/JSC without JIT and Node/V8 without JIT                  | [61](61.md), recorded by [28](28.md)               |
 
 ## Stage A — single VM and correctness
@@ -21,35 +21,35 @@ Stage membership remains separate because a lane can span both stages.
   surviving authority. CLI and suite runners compose these layers; extracting
   them into new crates adds no completion gate.
 
-  Today the VM lives in `quench-runtime-next` (library `rqj`, binaries
-  `quench-next`, `quench-node-next`, `*-next` runners) next to the legacy
-  `quench-runtime`. [Task 27](27.md) leaves one `quench-runtime` and no
-  second-VM names.
+  The shared VM and legacy engine still have separate package and binary
+  identities. [Task 27](27.md) folds the shared VM into the canonical runtime
+  and removes transitional second-engine identifiers.
 
 - Remove legacy execution, migration adapters and audited unused clutter.
 - Keep unit tests only for internals or scenarios absent from the pinned suites.
   A complicated regression may remain for its uncovered obligation; a regression
   label or multiple execution modes alone does not justify duplicate suite
   cases.
-- Pass 100% of pinned Test262, 100% of pinned Wasm directives and 100% of the
-  implemented Node compatibility cases frozen by [task 19](19.md). Membership
-  follows implemented capabilities and includes existing failures; unimplemented
-  upstream Node cases are outside the gate.
+- Pass 100% of pinned Test262 and Wasm directives, every upstream fixture tagged
+  `framework-core` in `parallel.txt`, and the pinned Express, Koa and Fastify
+  scenarios. The manifest owns fixture membership; `tests/frameworks` owns the
+  package scenarios. The broad Node inventory is diagnostic only and adds no
+  gate cases.
 
-Framework expansion ([88](88.md)/[89](89.md)) is deferred outside the current
-two-stage plan. It adds no suite inventory or dependency to Stage A. Existing
-implemented Node cases remain in task 19 regardless of framework use.
+The three package scenarios define the Stage A framework target. Do not expand
+the Node gate to unrelated upstream APIs or the broader proposals in
+[88](88.md)/[89](89.md).
 
-Stage A remains open: production still uses legacy execution, the implemented
-Node inventory is not yet frozen, and the complete shared-VM Wasm inventory is
-not qualified. Partial Test262 or Wasm reports do not permit Stage B.
+Stage A remains open: the pinned Test262 run still has the Stage 94 corpus
+conflict, and production cutover, integrated qualification and final cleanup
+remain outstanding. The current shared-VM Wasm and scoped Node reports are
+partial evidence until task 24 and task 86 close their gates.
 
 The remaining work is:
 
 - [20](20.md): close audited Test262 behavior gaps with affected-stage checks.
-- [19](19.md), [21](21.md) and [22](22.md): freeze the implemented Node case set
-  and close known shared-VM gaps. Unimplemented upstream cases are outside the
-  inventory; migration failures cannot remove cases from the frozen set.
+- [19](19.md), [21](21.md) and [22](22.md): freeze and pass the manifest-owned
+  framework profile and pinned package scenarios on the shared VM.
 - [37](37.md), [40](40.md) and [23](23.md): finish shared Wasm lowering and
   integration and close known directive gaps.
 - [24](24.md): verify integrated correctness; [27](27.md): switch all production
@@ -59,22 +59,23 @@ The remaining work is:
 Prioritize failing suite cases, missing shared-VM execution paths and production
 cutover blockers. Do not start discretionary architecture or new host
 capabilities. Task 48's report/ratchet tooling is complete independently of the
-100% suite gate. Use it while freezing task 19's implemented inventory so Node
-migration has a fixed target. Audit support tasks against required suite
-behavior and necessary internal invariants. Close satisfied obligations with
-evidence and implement only actual gaps. Historical plans, host rewrites,
-runner-speed targets, new APIs and broad architecture proposals add no gates.
+100% suite gate. The existing parallel manifest and package lock are the fixed
+Node target. Audit support tasks against required suite behavior and necessary
+internal invariants. Close satisfied obligations with evidence and implement
+only actual gaps. Historical plans, host rewrites, runner-speed targets, new
+APIs and broad architecture proposals add no gates.
 Performance campaigns are not required in A.
 
 Task 24 is the sole initial full-inventory campaign and owns the same-build
-100% reports for all three suites. If it finds a failure, reopen the responsible
-implementation task, fix and verify the affected scope, then repeat Task 24.
+100% reports for Test262, Wasm and the scoped Node gate. If it finds a failure,
+reopen the responsible implementation task, fix and verify the affected scope,
+then repeat Task 24.
 Tasks 27 and 86 reuse those reports only when source, binaries, configuration
 and inventories are unchanged.
 
 Wasm lowering uses the completed VM foundation; tasks 07/10 own required fixes
 without making their full historical plans prerequisites. Wasm suite closure
-does not wait for Node inventory freezing. Task 24 still requires all three
+does not wait for Node profile qualification. Task 24 still requires all three
 suite closures together.
 
 Task 24 depends on the three suite closures. Support tasks supply required fixes

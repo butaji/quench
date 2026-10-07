@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "task": "23",
+  "kind": "full_shared_wasm_suite_run",
+  "reviewed_on": "2026-10-07",
+  "source": {
+    "revision": "14aefd181d46ef3f95f3b78662a659b147036d16",
+    "dirty": true,
+    "platform": "macOS arm64",
+    "snapshot_sha256_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 284,
+    "snapshot_sha256": "2b15f16185cf2cd70c92461db38107a7e6fdcb39a7c29c85c09322e9100cd506",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-wasm/Cargo.toml",
+      "crates/quench-wasm-test/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml"
+    ]
+  },
+  "suite": {
+    "name": "pinned Wasm testsuite",
+    "path": "crates/quench-wasm-test/testsuite",
+    "files": 288,
+    "input_manifest_sha256": "c7ebeaaa1e4ce2938d22806b0dd3d454177dcc0b091e8982b5e8bb142a653914",
+    "input_manifest_algorithm": "SHA-256 over sorted relative path, NUL, file SHA-256 hex, newline records"
+  },
+  "binary": {
+    "path": "target/iteration/run-shared",
+    "sha256": "484e7352ab2fe8e7d43de1fca4b39e3c54b4e5e4bdfc941225ed37aeb7204f52",
+    "report_path": "target/iteration/wasm-stagea-2026-10-07/wasm-shared-final.json",
+    "report_sha256": "8690f071eee357fa4770303c2793b27dd34ee2446172d78cca3a4bb7239bd0b5"
+  },
+  "command": "WASM_FILE_TIMEOUT_MS=60000 target/iteration/run-shared --report target/iteration/wasm-stagea-2026-10-07/wasm-shared-final.json crates/quench-wasm-test/testsuite",
+  "result": {
+    "passed": 67124,
+    "failed": 0,
+    "total": 67124,
+    "inventory_complete": true,
+    "file_timeouts": 0,
+    "failed_files": []
+  },
+  "qualification_limit": "This proves the pinned WAST inventory on the shared-VM runner for this dirty build. Task 24 still owns the integrated same-build gate with Test262 and the scoped Node framework suite; task 27/86 cutover and cleanup remain open."
+}
