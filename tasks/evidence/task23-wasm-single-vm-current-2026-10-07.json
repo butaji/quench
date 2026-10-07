@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "task": "23",
+  "kind": "pinned-wasm-shared-vm-qualification",
+  "recorded_at": "2026-10-07",
+  "source": {
+    "revision": "4a7fa2c50a0720f8e22bcf6b0076f618072eb666",
+    "dirty": true,
+    "platform": "Darwin arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 283,
+    "snapshot_sha256": "e34e467e7e8f37281a6d0b42658b28414b3192b0c17a248a99e036ac61158ad6",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-wasm/Cargo.toml",
+      "crates/quench-wasm-test/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml"
+    ]
+  },
+  "suite": {
+    "name": "pinned Wasm testsuite",
+    "path": "crates/quench-wasm-test/testsuite",
+    "files": 288,
+    "input_manifest_sha256": "e06ab2dc8b479bb7d733db147c54906e7f652a890fb19965b54a76976c6cc0aa",
+    "input_mismatches": 0
+  },
+  "run": {
+    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task23-current-shared-vm-2026-10-07.json crates/quench-wasm-test/testsuite",
+    "binary": "target/iteration/run",
+    "binary_sha256": "d0c5e8174609a3ad7682d057b378bb4ed3ea137b889251a86bbca09a7dd7d1dc",
+    "report": "target/iteration/task23-current-shared-vm-2026-10-07.json",
+    "report_sha256": "fdf67e6cd20fbad4eafec9a2d72b1daac1516b329b81c903371600c73093fa4e"
+  },
+  "result": {
+    "passed": 67124,
+    "failed": 0,
+    "total": 67124,
+    "inventory_complete": true,
+    "file_timeouts": 0,
+    "failed_files": []
+  },
+  "qualification_limit": "This is current-tree Wasm suite evidence. Task 24 still requires one same-build integrated Test262, Wasm and Node gate; Task 27/86 production cutover and cleanup remain open."
+}
