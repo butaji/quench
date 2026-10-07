@@ -2,53 +2,77 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithWebStreams = globalThis.require;
 const __quenchWebStreamsState = Symbol("kState");
+const __quenchWebStreamControllerError = Symbol.for("nodejs.webstream.controllerErrorFunction");
 Object.defineProperty(globalThis, "__quenchWebStreamsState", {
   configurable: true,
   enumerable: false,
   value: __quenchWebStreamsState,
 });
-const __quenchReadableEnqueue = (stream, value) => {
-  const waiter = stream._readWaiters.shift();
-  if (waiter) {
+const __quenchReadableDrain = (stream) => {
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase === "errored") {
+    while (stream._readWaiters.length) {
+      stream._readWaiters.shift().reject(state.storedError);
+    }
+    return;
+  }
+  while (stream._queue.length && stream._readWaiters.length) {
+    const waiter = stream._readWaiters.shift();
+    const item = stream._queue.shift();
+    stream._queueSize -= item.size;
+    let value = item.value;
     if (waiter.view && ArrayBuffer.isView(value) && ArrayBuffer.isView(waiter.view)) {
       const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
       const count = Math.min(bytes.byteLength, waiter.view.byteLength);
-      const output = new Uint8Array(waiter.view.buffer, waiter.view.byteOffset, count);
-      output.set(bytes.subarray(0, count));
+      value = new Uint8Array(waiter.view.buffer, waiter.view.byteOffset, count);
+      value.set(bytes.subarray(0, count));
       if (count < bytes.byteLength) {
         const remainder = bytes.slice(count);
         const size = stream._size(remainder);
         stream._queue.unshift({ value: remainder, size });
         stream._queueSize += size;
       }
-      return waiter.resolve({ value: output, done: false });
     }
-    return waiter.resolve({ value, done: false });
+    waiter.resolve({ value, done: false });
+  }
+  if (state.phase === "closeRequested" && !stream._queue.length) {
+    state.phase = "closed";
+    stream._resolveClosed();
+  }
+  if (state.phase === "closed") {
+    while (stream._readWaiters.length) {
+      stream._readWaiters.shift().resolve({ value: undefined, done: true });
+    }
+    while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+  }
+};
+const __quenchReadableEnqueue = (stream, value) => {
+  if (stream[__quenchWebStreamsState].phase !== "readable") {
+    throw new TypeError("The stream is not in a readable state");
   }
   const size = stream._size(value);
   stream._queue.push({ value, size });
   stream._queueSize += size;
+  __quenchReadableDrain(stream);
+  __quenchReadableCallPullIfNeeded(stream);
 };
 const __quenchReadableClose = (stream) => {
-  stream._closed = true;
-  stream[__quenchWebStreamsState].state = "closed";
-  stream._resolveClosed();
-  while (stream._readWaiters.length) {
-    stream._readWaiters.shift().resolve({ value: undefined, done: true });
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase !== "readable") {
+    throw new TypeError("The stream is not in a readable state");
   }
-  if (!stream._queue.length) {
-    while (stream._finishWaiters.length) stream._finishWaiters.shift()();
-  }
+  state.phase = "closeRequested";
+  __quenchReadableDrain(stream);
 };
 const __quenchReadableError = (stream, error) => {
-  stream._error = error;
-  stream._closed = true;
-  stream[__quenchWebStreamsState].state = "errored";
-  stream[__quenchWebStreamsState].storedError = error;
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase !== "readable" && state.phase !== "closeRequested") return;
+  state.phase = "errored";
+  state.storedError = error;
+  stream._queue.length = 0;
+  stream._queueSize = 0;
   stream._rejectClosed(error);
-  while (stream._readWaiters.length) {
-    stream._readWaiters.shift().reject(error);
-  }
+  __quenchReadableDrain(stream);
   while (stream._finishWaiters.length) stream._finishWaiters.shift()(error);
 };
 const __quenchReadableController = (stream) => ({
@@ -61,8 +85,15 @@ const __quenchReadableController = (stream) => ({
 });
 const __quenchStartReadable = (stream, source) => {
   try {
-    const started = source.start ? source.start(stream._controller) : undefined;
-    if (started?.then) started.catch((error) => stream._errorStream(error));
+    const result = source.start ? source.start(stream._controller) : undefined;
+    Promise.resolve(result).then(
+      () => {
+        const state = stream[__quenchWebStreamsState];
+        state.started = true;
+        __quenchReadableCallPullIfNeeded(stream);
+      },
+      (error) => stream._errorStream(error),
+    );
   } catch (error) {
     stream._errorStream(error);
   }
@@ -72,65 +103,63 @@ const __quenchValidateCompressionFormat = (format) => {
   throw Object.assign(new TypeError("The compression format is invalid"), { code: "ERR_INVALID_ARG_VALUE" });
 };
 const __quenchReadableRead = (stream, view) => {
-  if (stream._error) return Promise.reject(stream._error);
-  if (stream._queue.length) {
-    const item = stream._queue.shift();
-    stream._queueSize -= item.size;
-    if (view && ArrayBuffer.isView(item.value) && ArrayBuffer.isView(view)) {
-      const bytes = new Uint8Array(item.value.buffer, item.value.byteOffset, item.value.byteLength);
-      const count = Math.min(bytes.byteLength, view.byteLength);
-      const output = new Uint8Array(view.buffer, view.byteOffset, count);
-      output.set(bytes.subarray(0, count));
-      if (count < bytes.byteLength) {
-        const remainder = bytes.slice(count);
-        const size = stream._size(remainder);
-        stream._queue.unshift({ value: remainder, size });
-        stream._queueSize += size;
-      }
-      return Promise.resolve({ value: output, done: false });
-    }
-    if (stream._closed && !stream._queue.length) {
-      while (stream._finishWaiters.length) stream._finishWaiters.shift()();
-    }
-    return Promise.resolve({ value: item.value, done: false });
-  }
-  if (stream._closed) return Promise.resolve({ value: undefined, done: true });
-  // Register the read waiter before invoking a synchronous pull algorithm.
-  // Otherwise an enqueue+close performed during pull lands in the queue and
-  // can be observed twice by two reads issued in the same turn.
-  const pending = new Promise((resolve, reject) => stream._readWaiters.push({ resolve, reject, view }));
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase === "errored") return Promise.reject(state.storedError);
+  if (state.phase === "closed") return Promise.resolve({ value: undefined, done: true });
+  const pending = new Promise((resolve, reject) => {
+    stream._readWaiters.push({ resolve, reject, view });
+  });
   pending.catch(() => undefined);
-  if (stream._pull && !stream._pulling) {
-    stream._pulling = true;
-    try {
-      Promise.resolve(stream._pull(stream._controller))
-        .catch((error) => stream._errorStream(error))
-        .finally(() => { stream._pulling = false; })
-        .catch(() => undefined);
-    } catch (error) {
-      stream._pulling = false;
-      // A synchronous pull failure has no underlying read operation to keep
-      // pending. Remove the waiter and return the rejection directly so the
-      // caller's await/for-await chain owns the error promise.
-      stream._readWaiters.pop();
-      stream._error = error;
-      stream._closed = true;
-      stream[__quenchWebStreamsState].state = "errored";
-      stream[__quenchWebStreamsState].storedError = error;
-      const rejection = Promise.reject(error);
-      rejection.catch(() => undefined);
-      return rejection;
-    }
+  __quenchReadableDrain(stream);
+  if (state.phase === "readable") {
+    __quenchReadableCallPullIfNeeded(stream);
   }
   return pending;
 };
+const __quenchReadableCallPullIfNeeded = (stream) => {
+  const state = stream[__quenchWebStreamsState];
+  if (
+    !stream._pull || !state.started || state.phase !== "readable" ||
+    (stream._readWaiters.length === 0 &&
+      stream._highWaterMark - stream._queueSize <= 0)
+  ) return;
+  if (state.pulling) {
+    state.pullAgain = true;
+    return;
+  }
+  state.pulling = true;
+  let result;
+  try {
+    result = stream._pull(stream._controller);
+  } catch (error) {
+    state.pulling = false;
+    __quenchReadableError(stream, error);
+    return;
+  }
+  Promise.resolve(result).then(
+    () => {
+      state.pulling = false;
+      if (state.pullAgain) {
+        state.pullAgain = false;
+        __quenchReadableCallPullIfNeeded(stream);
+      }
+    },
+    (error) => {
+      state.pulling = false;
+      __quenchReadableError(stream, error);
+    },
+  ).catch(() => undefined);
+};
 const __quenchReadableCancel = async (stream, reason) => {
-  stream._closed = true;
-  stream[__quenchWebStreamsState].state = "closed";
-  if (typeof stream._cancel === "function") await stream._cancel(reason);
-  stream._cancelReason = reason;
-  while (stream._readWaiters.length) {
-    stream._readWaiters.shift().resolve({ value: undefined, done: true });
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase === "errored") throw state.storedError;
+  if (state.phase !== "closed") {
+    state.phase = "closed";
+    stream._queue.length = 0;
+    stream._queueSize = 0;
+    stream._resolveClosed();
+    __quenchReadableDrain(stream);
+    if (typeof stream._cancel === "function") await stream._cancel(reason);
   }
 };
 const __quenchReadableReader = (stream) => ({
@@ -141,6 +170,25 @@ const __quenchReadableReader = (stream) => ({
     stream.locked = false;
   }
 });
+const __quenchWritableError = (stream, error) => {
+  const state = stream[__quenchWebStreamsState];
+  if (state.state !== "writable" && state.state !== "closing") return;
+  state.state = "errored";
+  state.storedError = error;
+  stream._rejectClosed(error);
+  while (stream._finishWaiters.length) stream._finishWaiters.shift()(error);
+};
+const __quenchWritableInvoke = (stream, algorithm) => {
+  try {
+    return Promise.resolve(algorithm()).catch((error) => {
+      __quenchWritableError(stream, error);
+      throw error;
+    });
+  } catch (error) {
+    __quenchWritableError(stream, error);
+    return Promise.reject(error);
+  }
+};
 class __quenchReadableStream {
   constructor(source = {}, options = {}) {
     this._queue = [];
@@ -148,10 +196,38 @@ class __quenchReadableStream {
     this._highWaterMark =
       options.highWaterMark === undefined ? 1 : Number(options.highWaterMark);
     this._size = typeof options.size === "function" ? options.size : () => 1;
-    this._closed = false;
     this.locked = false;
     this._readWaiters = [];
     this._finishWaiters = [];
+    const state = {
+      phase: "readable",
+      started: false,
+      pulling: false,
+      pullAgain: false,
+    };
+    Object.defineProperties(state, {
+      state: {
+        enumerable: true,
+        get() {
+          return this.phase === "closeRequested" ? "readable" : this.phase;
+        }
+      }
+    });
+    this[__quenchWebStreamsState] = state;
+    Object.defineProperties(this, {
+      _closed: {
+        configurable: true,
+        get() {
+          return state.phase !== "readable";
+        }
+      },
+      _error: {
+        configurable: true,
+        get() {
+          return state.phase === "errored" ? state.storedError : undefined;
+        }
+      }
+    });
     this._closedPromise = new Promise((resolve, reject) => {
       this._resolveClosed = resolve;
       this._rejectClosed = reject;
@@ -163,8 +239,6 @@ class __quenchReadableStream {
     this._closedPromise.catch(() => undefined);
     this._cancel = source.cancel?.bind(source);
     this._pull = source.pull?.bind(source);
-    this._pulling = false;
-    this[__quenchWebStreamsState] = { state: "readable" };
     const controller = __quenchReadableController(this);
     this._enqueue = controller.enqueue;
     this._close = controller.close;
@@ -172,6 +246,9 @@ class __quenchReadableStream {
     this[__quenchWebStreamsState].controller = controller;
     this._controller = controller;
     __quenchStartReadable(this, source);
+  }
+  [__quenchWebStreamControllerError](error) {
+    this._errorStream(error);
   }
   getReader() {
     if (this.locked) {
@@ -182,15 +259,13 @@ class __quenchReadableStream {
   }
   cancel(reason) {
     if (this.locked) {
-      // Host abort integration may need to terminate a stream while its
-      // reader is held.  Surface the supplied abort reason through the
-      // reader's `closed` promise instead of producing an unrelated lock
-      // error.
-      this._errorStream?.(reason);
-      return Promise.resolve();
+      return Promise.reject(
+        Object.assign(new TypeError("ReadableStream is locked"), {
+          code: "ERR_INVALID_STATE",
+        }),
+      );
     }
-    this._closed = true;
-    return Promise.resolve();
+    return __quenchReadableCancel(this, reason);
   }
   pipeThrough(transform) {
     if (this.locked) {
@@ -253,6 +328,9 @@ class __quenchReadableStream {
           }
         })
     );
+    reader.closed.catch((error) => {
+      controllers.forEach((controller) => controller.error(error));
+    });
     return branches;
   }
   [Symbol.asyncIterator]() {
@@ -270,13 +348,31 @@ class __quenchWritableStream {
   constructor(sink = {}) {
     this._sink = sink;
     this.locked = false;
-    this[__quenchWebStreamsState] = { state: "writable" };
+    const state = { state: "writable" };
+    this[__quenchWebStreamsState] = state;
+    Object.defineProperties(this, {
+      _closed: {
+        configurable: true,
+        get() {
+          return state.state === "closed";
+        }
+      },
+      _error: {
+        configurable: true,
+        get() {
+          return state.state === "errored" ? state.storedError : undefined;
+        }
+      }
+    });
     this._finishWaiters = [];
     this._closedPromise = new Promise((resolve, reject) => {
       this._resolveClosed = resolve;
       this._rejectClosed = reject;
     });
     this._closedPromise.catch(() => undefined);
+  }
+  [__quenchWebStreamControllerError](error) {
+    __quenchWritableError(this, error);
   }
   getWriter() {
     if (this.locked) {
@@ -286,21 +382,43 @@ class __quenchWritableStream {
     const sink = this._sink;
     const stream = this;
     return {
-      write: (value) => Promise.resolve(
-        typeof sink.write === "function" ? sink.write(value) : undefined
-      ),
-      close: async () => {
-        if (typeof sink.close === "function") await sink.close();
-        stream._closed = true;
-        stream._resolveClosed();
-        stream[__quenchWebStreamsState].state = "closed";
-        while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+      get closed() {
+        return stream._closedPromise;
       },
-      abort: async (error) => {
-        if (typeof sink.abort === "function") await sink.abort(error);
-        stream[__quenchWebStreamsState].state = "errored";
-        stream[__quenchWebStreamsState].storedError = error;
-        stream._rejectClosed(error);
+      write: (value) => {
+        const state = stream[__quenchWebStreamsState];
+        if (state.state === "errored") return Promise.reject(state.storedError);
+        if (state.state !== "writable") {
+          return Promise.reject(new TypeError("The stream is not writable"));
+        }
+        return __quenchWritableInvoke(stream, () =>
+          typeof sink.write === "function" ? sink.write(value) : undefined
+        );
+      },
+      close: () => {
+        const state = stream[__quenchWebStreamsState];
+        if (state.state === "errored") return Promise.reject(state.storedError);
+        if (state.state !== "writable") {
+          return Promise.reject(new TypeError("The stream is not writable"));
+        }
+        state.state = "closing";
+        return __quenchWritableInvoke(stream, async () => {
+          if (typeof sink.close === "function") await sink.close();
+          if (state.state === "errored") throw state.storedError;
+          state.state = "closed";
+          stream._resolveClosed();
+          while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+        });
+      },
+      abort: (error) => {
+        const state = stream[__quenchWebStreamsState];
+        if (state.state === "closed" || state.state === "errored") {
+          return Promise.resolve();
+        }
+        __quenchWritableError(stream, error);
+        return __quenchWritableInvoke(stream, () =>
+          typeof sink.abort === "function" ? sink.abort(error) : undefined
+        );
       },
       releaseLock() {
         stream.locked = false;
@@ -315,21 +433,27 @@ class __quenchTransformStream {
       enqueue: (item) => this.readable._enqueue(item),
       close: () => this.readable._close(),
       error: (error) => {
-        this.readable[__quenchWebStreamsState].state = "errored";
-        this.readable[__quenchWebStreamsState].storedError = error;
-        this.writable[__quenchWebStreamsState].state = "errored";
-        this.writable[__quenchWebStreamsState].storedError = error;
+        __quenchWritableError(this.writable, error);
         this.readable._errorStream(error);
       }
     };
     this.writable = new __quenchWritableStream({
-      write: (value) =>
+      write: (value) => Promise.resolve().then(() =>
         transform.transform
           ? transform.transform(value, this._controller)
-          : this._controller.enqueue(value),
+          : this._controller.enqueue(value)
+      ).catch((error) => {
+        this._controller.error(error);
+        throw error;
+      }),
       close: async () => {
-        if (transform.flush) await transform.flush(this._controller);
-        this.readable._close();
+        try {
+          if (transform.flush) await transform.flush(this._controller);
+          this.readable._close();
+        } catch (error) {
+          this._controller.error(error);
+          throw error;
+        }
       }
     });
   }
