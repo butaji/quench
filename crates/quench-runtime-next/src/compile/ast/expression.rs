@@ -342,11 +342,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn annex_b_outer_binding_allowed(&self, atom: Atom, declaration_start: u32) -> bool {
+        let replaces_arguments_object = self.arguments_slot.is_some()
+            && self.owner.atoms[atom as usize].as_ref() == "arguments";
         let parameter_binding = self
             .local_slots
             .get(&atom)
             .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        !parameter_binding && !self.annex_b_collisions.contains(&declaration_start)
+        !replaces_arguments_object
+            && !parameter_binding
+            && !self.annex_b_collisions.contains(&declaration_start)
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
