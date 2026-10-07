@@ -13,6 +13,7 @@
     "v2_basis": "V2 supports data-backed local representation and execution changes, while rejecting unmeasured global mechanisms. No v2 RegExp result was treated as a transferred win; the candidate was admitted only after paired measurement."
   },
   "source": {
+    "implementation_commit": "b69bf8248d61ffcdbcfbe6062ef6f958314ea830",
     "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
     "dirty": true,
     "baseline_regexp_source_sha256": "3b28b90b0161afcc357f10a7cbb99759e49b0712d2baa573c81f9199081acfb5",
@@ -72,11 +73,23 @@
       }
     },
     "limitations": [
-      "Only one of eight V8-v7 fixtures and three of the required eleven rounds were measured.",
+      "All eight V8-v7 fixtures were screened once; only RegExp has three rounds, short of eleven for every fixture.",
       "The source tree was dirty; this is not a production or clean-source qualification.",
       "Median RSS improved by about 0.64 MiB, but the candidate's highest sample was 3.72 MiB above the baseline's highest sample.",
-      "The benchmark report is complete for the selected fixture but marks qualification_ready=false and fixture_set_matches=false because this was not the complete suite."
-    ]
+      "The three-round RegExp-only report is complete for that fixture but marks qualification_ready=false and fixture_set_matches=false; the separate all-eight report has one round and also marks qualification_ready=false."
+    ],
+    "all_eight_screen": {
+      "baseline_report": "target/iteration/stageb-pilots/all-current-pin-2026-10-07.json",
+      "baseline_report_sha256": "6c359ba181a8e45c9459a0ac971f0e8a1446bf181d9160300d4dbfc66423972b",
+      "candidate_report": "target/iteration/stageb-pilots/all-after-regexp-lazy-2026-10-07.json",
+      "candidate_report_sha256": "e1a26af6defcc2b8b5bb60ff5158f1a36fc1b60c55a2408b661b8cbd56765fc5",
+      "candidate_source_revision": "b69bf8248d61ffcdbcfbe6062ef6f958314ea830",
+      "candidate_rounds": 1,
+      "candidate_complete": true,
+      "candidate_fixture_set_matches": true,
+      "candidate_all_fixture_rows_valid": true,
+      "screen_observation": "Quench scored higher on seven fixtures and lower on Navier-Stokes by 2.7%; its maximum-RSS sample was lower on all eight. This is a one-round screen only: reference scores also varied between reports, so it does not establish paired intervals or a cross-benchmark performance claim."
+    }
   },
   "correctness": {
     "affected_test262_stages": [
