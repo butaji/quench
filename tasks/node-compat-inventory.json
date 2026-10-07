@@ -25910,7 +25910,20 @@
         "../common",
         "assert",
         "http"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "IncomingMessage.destroy() returns the same IncomingMessage instance."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-http-write-head.js",
@@ -26371,7 +26384,28 @@
         "assert",
         "http",
         "stream"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_res.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs"
+        ],
+        "obligations": [
+          "Writable.toWeb() accepts a live HTTP ServerResponse and returns a WritableStream; server/listen/request callbacks complete and close."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-webstreams-abort-controller.js",
