@@ -264,6 +264,8 @@ const scenarioInputHashes = nodeEvidence.authority?.framework_scenario_inputs_sh
 const expectedScenarioInputs = [
   "tests/frameworks/driver.cjs",
   ...[...scenarioNames].map((file) => `tests/frameworks/scenarios/${file}`),
+  "tests/frameworks/scenarios/asset.txt",
+  "tests/frameworks/package.json",
   "tests/frameworks/package-lock.json",
 ].sort();
 const recordedScenarioInputs = Object.keys(scenarioInputHashes).sort();
