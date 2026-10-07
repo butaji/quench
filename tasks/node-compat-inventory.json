@@ -3273,7 +3273,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "static listenerCount overloads."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2223/abort-signal-timeout-unref.js",
@@ -3322,7 +3337,22 @@
         "timers",
         "timers/promises",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "promisify preserves timers/promises setTimeout and setImmediate identities."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2230/fetch-http.js",
@@ -8536,7 +8566,21 @@
       "static_module_specifiers": [
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/vm_api.rs"
+        ],
+        "obligations": [
+          "util.types predicates recognize the VM module namespace and handle empty key-predicate arguments."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2560/passthrough-readable-chain.js",
@@ -9543,7 +9587,23 @@
         "assert",
         "domain",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/domain.rs"
+        ],
+        "obligations": [
+          "domain routing and error metadata."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/custom-event-target.js",
@@ -9581,7 +9641,25 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "events.on for EventEmitter/EventTarget, AbortSignal cleanup, and abort listener despite stopped propagation."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/events-on-async-iterator.js",
@@ -9589,7 +9667,25 @@
       "role": "assertion_case",
       "static_module_specifiers": [
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "async-iterator listener cleanup and invalid signal validation."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/events-once-concurrent.js",
@@ -9598,7 +9694,25 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "once results/errors for emitters and EventTarget, concurrent calls, and abort."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/events-once.js",
@@ -9607,7 +9721,25 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "once results, error cleanup, option validation, and abort."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2681/node-test-identity.js",
@@ -9830,7 +9962,23 @@
         "assert",
         "domain",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/domain.rs"
+        ],
+        "obligations": [
+          "domain membership, removal, and nested stack."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2702/array-push-identity.js",
@@ -10001,7 +10149,22 @@
         "timers",
         "timers/promises",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Promisified setImmediate preserves identity, result and callback count."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2717/buffer-generic-typed-array.js",
@@ -10059,7 +10222,20 @@
         "assert",
         "util",
         "util/types"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "require(util/types) is identical to util.types; isNativeError exists and recognizes Error."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2720/util-parse-env.js",
@@ -10068,7 +10244,20 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "parseEnv handles exports, comments, multiline/empty values and invalid input."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2721/buffer-typed-array-method-family.js",
@@ -10103,7 +10292,21 @@
         "assert",
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/vm_api.rs"
+        ],
+        "obligations": [
+          "util.types recognizes arguments, Float16/Uint16 arrays and VM module namespaces."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2723/util-format-functions.js",
@@ -10112,7 +10315,20 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "util.format renders function and nested-object values."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2724/util-inspect-functions.js",
@@ -10121,7 +10337,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect renders the asserted functions, regexps, dates, strings, arrays, typed views, accessors and cycles/options."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2725/events-prototype-delete.js",
@@ -10130,7 +10360,24 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "emitter prototype/deletion, capture rejections, process listener removal, and special event keys."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2726/wasi-rust-surface.js",
@@ -10622,7 +10869,22 @@
         "timers",
         "timers/promises",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Promisified timer retains timers/promises identity."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2761/timers-promisify-settimeout.js",
@@ -10632,7 +10894,22 @@
         "assert",
         "timers",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Promisified timeout resolves with the supplied value."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2762/timer-handle-primitive.js",
@@ -10738,7 +11015,25 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "abort listener, disposable, and once-only delivery."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2780/buffer-constants.js",
@@ -10883,7 +11178,23 @@
         "assert",
         "fs",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/fs.rs",
+          "crates/quench-node/src/dispatch_fs.rs",
+          "crates/quench-node/src/modules/fs_stats.rs"
+        ],
+        "obligations": [
+          "Promisify callback conversion, custom symbol/arguments, receiver, errors and fs.stat results."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2794/util-promisify-warning.js",
@@ -10892,7 +11203,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Promise-returning promisify emits the asserted warning count and DEP0174 code."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2795/esm-require-surface.mjs",
@@ -10949,7 +11274,20 @@
         "../../node/test/common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "callbackify result conversion for multiple/no values, errors, arguments and thrown errors."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2796/promisify-warning-off.js",
@@ -10958,7 +11296,21 @@
       "static_module_specifiers": [
         "../../node/test/common",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Removing the warning listener suppresses observed promisify-warning delivery while setup remains valid."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2797/abortsignal-timeout-rust.js",
@@ -11018,7 +11370,22 @@
         "timers",
         "timers/promises",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Promisified timeout identity, resolution value and callback timing."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2804/timers-libuv-now.js",
@@ -11036,7 +11403,20 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "Signal-to-exit-code mapping and invalid-signal error code."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2806/child-process-kill-state.js",
@@ -11142,7 +11522,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "once listener fires twice across emits and is removed."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2816/execfile-abort-contract.js",
@@ -11152,7 +11547,26 @@
         "assert",
         "child_process",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/modules/child_process.rs"
+        ],
+        "obligations": [
+          "execFile callback, abort error, signal listener removal, and child launch; child cancellation is not asserted."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2817/execfile-promisify-abort.js",
@@ -11162,7 +11576,22 @@
         "assert",
         "child_process",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/polyfills/bootstrap/child_process.rs"
+        ],
+        "obligations": [
+          "Promisified execFile rejects on abort and validates the signal argument."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2818/execfile-maxbuffer.js",
@@ -11745,7 +12174,22 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/assert.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect truncates actual/expected assertion diagnostics as asserted."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2903/test-assert-source-call.js",
@@ -11834,7 +12278,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "async-iteration results and listener cleanup."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-events-on-error-lifecycle.js",
@@ -11844,7 +12303,25 @@
         "assert",
         "events",
         "internal/event_target"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "iterator rejection/throw lifecycle, EventTarget event state, and AbortSignal registration."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-fs-chmod-string-mode.js",
@@ -12057,7 +12534,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "util.deprecate emits the warning once."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-util-get-call-sites-shape.js",
@@ -12066,7 +12557,20 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "getCallSites(1) returns the asserted string/number property shapes."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-util-inspect-regexp-colors.js",
@@ -12075,7 +12579,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect renders the asserted colored regexp output."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-util-promisify-warning-contract.js",
@@ -12084,7 +12602,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Promise-returning promisify warning name/code and delivery count."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2905/test-vm-source-text-module-dependencies.js",
@@ -12105,7 +12637,22 @@
         "assert",
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/vm_api.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect renders the module namespace before and after evaluation."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2906/events-async-iterator-error-waiters.js",
@@ -12114,7 +12661,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "concurrent pending iterator waiters settle on error."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2906/events-async-iterator-throw-return.js",
@@ -12123,7 +12685,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "iterator throw/return result and listener cleanup."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2907/process-warning-off.js",
@@ -12140,7 +12717,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Removing the warning listener prevents observed promisify warning delivery."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2908/readable-lazy-activation.js",
@@ -12281,7 +12872,22 @@
         "assert",
         "child_process",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/polyfills/bootstrap/child_process.rs"
+        ],
+        "obligations": [
+          "Promisified exec and execFile reject with command-specific errors."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2921/exec-promise-child.js",
@@ -12292,7 +12898,22 @@
         "assert",
         "child_process",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/polyfills/bootstrap/child_process.rs"
+        ],
+        "obligations": [
+          "Promisified exec exposes its child and resolves stdout/stderr."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2924/event-static.js",
@@ -12348,7 +12969,29 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/worker_threads.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "EventTarget, MessagePort, and AbortSignal listener-limit warnings and process warning delivery."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2993/event-emitter-state.js",
@@ -12357,7 +13000,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "symbol/null event state and emitter reinitialization."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2994/event-constants.js",
@@ -12382,7 +13040,22 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "concurrent iterator waiter ordering and cleanup."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2996/event-capture-lifecycle.js",
@@ -12391,7 +13064,24 @@
       "static_module_specifiers": [
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "rejection capture and uncaught-exception delivery."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-2997/diagnostics-channel-facts.js",
@@ -12671,7 +13361,25 @@
         "assert",
         "domain",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/domain.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "domain context for an implicitly attached emitter."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3029/domain-add-readstream.js",
@@ -12732,7 +13440,23 @@
         "assert",
         "domain",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/domain.rs"
+        ],
+        "obligations": [
+          "nested domain error handling and parent propagation after child handler throws."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3042/async-resource-domain-removed.js",
@@ -12834,7 +13558,26 @@
       "static_module_specifiers": [
         "events",
         "internal/event_target"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "NodeEventTarget async iteration and interval lifecycle."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3051/buffer-inspect-own-undefined.js",
@@ -13029,7 +13772,25 @@
         "assert",
         "child_process",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "once listener registration/counts and pre-abort rejection."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-3068/stream-uint8array.js",
@@ -13308,7 +14069,22 @@
         "assert",
         "timers",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Promisified timer rejects an invalid delay type."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-366/timer-timeout.js",
@@ -13427,7 +14203,21 @@
       "static_module_specifiers": [
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/util_style_text.rs"
+        ],
+        "obligations": [
+          "styleText emits the asserted color/style sequences and honors colors:false."
+        ]
+      }
     },
     {
       "path": "tests/node-compat/stage-550/stream-pass-through.js",
@@ -14320,7 +15110,25 @@
         "../common",
         "node:assert",
         "node:events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs"
+        ],
+        "obligations": [
+          "max-listener queries/setters on emitters, EventTarget, and AbortSignal."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-customevent.js",
@@ -14331,7 +15139,24 @@
         "internal/event_target",
         "node:assert",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs"
+        ],
+        "obligations": [
+          "The asserted util.inspect output includes the CustomEvent name."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-list.js",
@@ -14341,7 +15166,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "event-name order for string and symbol keys."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-listener-count-with-listener.js",
@@ -14351,7 +15191,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "listener counts for regular and once listeners."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-static-geteventlisteners.js",
@@ -14362,7 +15217,24 @@
         "assert",
         "events",
         "internal/event_target"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs"
+        ],
+        "obligations": [
+          "listener snapshots for EventEmitter/EventTarget, including the internal weak-handler case."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-uncaught-exception-stack.js",
@@ -14372,7 +15244,24 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "unhandled emitter error, process uncaught handler, and stack shape."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-events-once.js",
@@ -16424,7 +17313,20 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "util.format conversions, substitutions, separators and formatting options."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-callbackify.js",
@@ -16436,7 +17338,20 @@
         "assert",
         "child_process",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "callbackify callback delivery, result/error conversion and callback properties."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-deprecate-invalid-code.js",
@@ -16446,7 +17361,21 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "util.deprecate rejects invalid code argument types."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-exception-with-host-port.js",
@@ -16457,7 +17386,21 @@
         "node:assert",
         "node:os",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/os.rs"
+        ],
+        "obligations": [
+          "_exceptionWithHostPort fields/message/stack and getSystemErrorName results."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-inspect.js",
@@ -16473,7 +17416,21 @@
         "v8",
         "vm",
         "worker_threads"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect output and options for colors, hooks, errors, collections and numeric formatting."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-inspect-getters-accessing-this.js",
@@ -16483,7 +17440,21 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect getter invocation and receiver behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-parse-env.js",
@@ -16495,7 +17466,20 @@
         "node:assert",
         "node:fs",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "parseEnv parses dotenv values, duplicate keys, empty input and invalid arguments."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-types.js",
@@ -16508,7 +17492,20 @@
         "internal/test/binding",
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "util.types predicates over the asserted builtin value kinds."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-types-exists.js",
@@ -16519,7 +17516,20 @@
         "assert",
         "util",
         "util/types"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs"
+        ],
+        "obligations": [
+          "util/types and util.types namespace identity."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util.js",
@@ -16531,7 +17541,21 @@
         "internal/errors",
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/util_strip.rs"
+        ],
+        "obligations": [
+          "isArray, _extend, toUSVString, types.isNativeError and stripVTControlCharacters."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-urltooptions.js",
@@ -16596,7 +17620,21 @@
         "assert",
         "node:test",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/deep_equal.rs"
+        ],
+        "obligations": [
+          "util.isDeepStrictEqual comparison behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-primordial-monkeypatching.js",
@@ -16606,7 +17644,21 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "util.inspect remains correct when guest Object.keys is replaced."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-sleep.js",
@@ -16626,7 +17678,21 @@
         "../common",
         "node:test",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/util_strip.rs"
+        ],
+        "obligations": [
+          "stripVTControlCharacters strips controls and rejects non-string input."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-styletext-hex.js",
@@ -16638,7 +17704,21 @@
         "node:test",
         "node:tty",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/util_style_text.rs"
+        ],
+        "obligations": [
+          "styleText hex-color and style handling."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-styletext.js",
@@ -16649,7 +17729,21 @@
         "node:assert",
         "node:tty",
         "node:util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/util_style_text.rs"
+        ],
+        "obligations": [
+          "styleText output and color-option behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-text-decoder.js",
@@ -18564,7 +19658,23 @@
         "internal/webstreams/util",
         "os",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs",
+          "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams_blob.rs"
+        ],
+        "obligations": [
+          "util.inspect output for Blob values at multiple depths."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-blob-file-backed.js",
@@ -18578,7 +19688,26 @@
         "fs",
         "fs/promises",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/text_decoder.rs",
+          "crates/quench-node/src/modules/fs.rs",
+          "crates/quench-node/src/modules/fs_async.rs",
+          "crates/quench-node/src/modules/fs_promises.rs",
+          "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams_blob.rs"
+        ],
+        "obligations": [
+          "util.TextDecoder output plus file-backed Blob reads, streams and errors."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-blob-createobjecturl.js",
@@ -18720,7 +19849,22 @@
         "assert",
         "child_process",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/child_process.rs",
+          "crates/quench-node/src/polyfills/bootstrap/child_process.rs"
+        ],
+        "obligations": [
+          "getSystemErrorName output for spawn errors and asserted spawn result fields."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-child-process-spawnsync-non-string-args.js",
@@ -19092,7 +20236,22 @@
         "crypto",
         "node:test",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/assert.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs"
+        ],
+        "obligations": [
+          "Direct util.inspect/defaultOptions formatting of assertion diagnostics."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-assert-checktag.js",
@@ -19500,7 +20659,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "invalid receiver and emit return value."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-error-monitor.js",
@@ -19510,7 +20684,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "error-monitor ordering, once behavior, and rejected once."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-errors.js",
@@ -19620,7 +20809,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "listener storage shape and mutation side effects."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-listeners.js",
@@ -19654,7 +20858,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "max-listener validation and maxListeners event."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-method-names.js",
@@ -19664,7 +20883,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "EventEmitter prototype method aliases/names."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-modify-in-emit.js",
@@ -19698,7 +20932,24 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "emitted argument counts and process exit callback."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-once.js",
@@ -19757,7 +21008,24 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "removal order, snapshots, and process exit callback assertions."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-remove-listeners.js",
@@ -19792,7 +21060,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "emitter backing-state side effects."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-special-event-names.js",
@@ -19802,7 +21085,24 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "prototype-sensitive event names and process emitter behavior."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-event-emitter-symbols.js",
@@ -19812,7 +21112,22 @@
         "../common",
         "assert",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs"
+        ],
+        "obligations": [
+          "symbol event add/remove/listeners."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-eventtarget-once-twice.js",
@@ -19821,7 +21136,26 @@
       "static_module_specifiers": [
         "../common",
         "events"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/pump.rs"
+        ],
+        "obligations": [
+          "events.once on EventTarget and async completion."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-console-log-stdio-broken-dest.js",
@@ -19884,7 +21218,22 @@
         "../common",
         "assert",
         "util"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/util.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/js_runtime_util_inspect.rs",
+          "crates/quench-node/src/modules/console.rs"
+        ],
+        "obligations": [
+          "util.inspect does not call a function’s overridden toString."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-console-self-assign.js",
@@ -22833,7 +24182,26 @@
         "node:assert",
         "node:events",
         "node:test"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/modules/test.rs"
+        ],
+        "obligations": [
+          "abort-listener validation, disposal, and stopped propagation."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-util-promisify-custom-names.mjs",
@@ -24895,7 +26263,29 @@
         "assert",
         "events",
         "https"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_client.rs",
+          "crates/quench-node/src/modules/net/methods.rs",
+          "crates/quench-node/src/modules/tls.rs"
+        ],
+        "obligations": [
+          "HTTPS request signal-listener lifecycle and abort errors before TLS handshake/data."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-https-agent-constructor.js",
@@ -25052,7 +26442,26 @@
         "../common",
         "events",
         "worker_threads"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/pump.rs",
+          "crates/quench-node/src/modules/worker_threads.rs",
+          "crates/quench-node/src/modules/async_hooks.rs"
+        ],
+        "obligations": [
+          "worker construction/exit events and absence of max-listener warning."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-https-agent-additional-options.js",
@@ -25235,7 +26644,29 @@
         "assert",
         "events",
         "https"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/events.rs",
+          "crates/quench-node/src/modules/emitter.rs",
+          "crates/quench-node/src/polyfills/bootstrap/event_emitter.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/modules/http.rs",
+          "crates/quench-node/src/modules/http_client.rs",
+          "crates/quench-node/src/modules/net/methods.rs",
+          "crates/quench-node/src/modules/tls.rs"
+        ],
+        "obligations": [
+          "agent connection/request abort and signal-listener lifecycle before TLS handshake/data."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-https-agent-checkserveridentity-reuse.js",
