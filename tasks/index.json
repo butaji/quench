@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "24",
+  "next_task": "27",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": [
@@ -342,7 +342,7 @@
       "id": "24",
       "file": "24.md",
       "title": "Prove integrated correctness and safety",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": ["20", "22", "23"]
     },
     {
@@ -356,7 +356,7 @@
       "id": "27",
       "file": "27.md",
       "title": "Cut over to the single VM and delete the legacy runtime",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": ["24"]
     },
     {

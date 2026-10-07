@@ -37,6 +37,14 @@
         "stdout": "object\n"
       }
     ],
+    "fixture_assertion_probe": {
+      "fixture": "tests/test262/test/annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "execution": "Node vm.runInThisContext on the unchanged fixture with assert.sameValue implemented by Object.is",
+      "result": "fails its first SameValue assertion",
+      "actual": "function arguments() {}",
+      "expected": "[object Arguments]",
+      "node_version": "v26.10.0"
+    },
     "upstream_adjudication": "https://github.com/tc39/test262/issues/5113",
     "spec": "https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-functiondeclarationinstantiation"
   },
