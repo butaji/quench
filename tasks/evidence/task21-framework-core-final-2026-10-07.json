@@ -259,8 +259,8 @@
       "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
       "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
       "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
-      "tests/frameworks/package-lock.json": "80d0926dc5cbf7c2a03b9b1ea0b08bf394644c6db1114d414ac368646b49bbbf",
-      "tests/frameworks/package.json": "ac12d20a360ff07f9dd25f711e38ba796aa4ab75ea6d6cfb16909e7a1e5e25ab",
+      "tests/frameworks/package-lock.json": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "tests/frameworks/package.json": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
       "tests/frameworks/scenarios/asset.txt": "d74d6fb7af1951d71bc36de5b5f9f50c09c6adb8ab00b82e2041415715b213ce"
     }
   },
@@ -299,18 +299,18 @@
         "quench": 0
       },
       "timeout": false,
-      "stdout_bytes": 207,
+      "stdout_bytes": 29,
       "stderr_bytes": 0,
-      "stdout_sha256": "709efda43ef70db68c181491029212c98812f8d52f09d3ac6c67c5aaa2fa661a",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
       "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "stdout_equal": true,
       "stderr_equal": true,
       "exit_equal": true,
       "raw_artifacts": {
-        "node_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/express-node.stdout",
-        "node_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/express-node.stderr",
-        "quench_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/express-quench.stdout",
-        "quench_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/express-quench.stderr"
+        "node_stdout": "target/iteration/node-framework-pruned-2026-10-07/express-node.stdout",
+        "node_stderr": "target/iteration/node-framework-pruned-2026-10-07/express-node.stderr",
+        "quench_stdout": "target/iteration/node-framework-pruned-2026-10-07/express-quench.stdout",
+        "quench_stderr": "target/iteration/node-framework-pruned-2026-10-07/express-quench.stderr"
       }
     },
     "koa": {
@@ -337,10 +337,10 @@
       "stderr_equal": true,
       "exit_equal": true,
       "raw_artifacts": {
-        "node_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/koa-node.stdout",
-        "node_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/koa-node.stderr",
-        "quench_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/koa-quench.stdout",
-        "quench_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/koa-quench.stderr"
+        "node_stdout": "target/iteration/node-framework-pruned-2026-10-07/koa-node.stdout",
+        "node_stderr": "target/iteration/node-framework-pruned-2026-10-07/koa-node.stderr",
+        "quench_stdout": "target/iteration/node-framework-pruned-2026-10-07/koa-quench.stdout",
+        "quench_stderr": "target/iteration/node-framework-pruned-2026-10-07/koa-quench.stderr"
       }
     },
     "fastify": {
@@ -367,10 +367,10 @@
       "stderr_equal": true,
       "exit_equal": true,
       "raw_artifacts": {
-        "node_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/fastify-node.stdout",
-        "node_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/fastify-node.stderr",
-        "quench_stdout": "target/iteration/node-framework-stagea-current-2026-10-07/fastify-quench.stdout",
-        "quench_stderr": "target/iteration/node-framework-stagea-current-2026-10-07/fastify-quench.stderr"
+        "node_stdout": "target/iteration/node-framework-pruned-2026-10-07/fastify-node.stdout",
+        "node_stderr": "target/iteration/node-framework-pruned-2026-10-07/fastify-node.stderr",
+        "quench_stdout": "target/iteration/node-framework-pruned-2026-10-07/fastify-quench.stdout",
+        "quench_stderr": "target/iteration/node-framework-pruned-2026-10-07/fastify-quench.stderr"
       }
     }
   },

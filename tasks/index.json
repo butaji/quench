@@ -428,7 +428,7 @@
     {
       "id": "29",
       "file": "29.md",
-      "title": "Add property-access inline caches",
+      "title": "Measure property-access inline caches",
       "status": "pending",
       "depends_on": ["86", "62"]
     },
