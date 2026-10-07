@@ -7,7 +7,7 @@ Stage membership remains separate because a lane can span both stages.
 
 | Stage                       | Required result                                                                                                                              | Closure                                            |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; 100% Test262 and Wasm, plus the framework-core Node profile and pinned Express/Koa/Fastify scenarios | [86](86.md), on the final cleaned production build |
+| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; 100% of Node-consistent pinned Test262 cases, 100% Wasm, plus the framework-core Node profile and pinned Express/Koa/Fastify scenarios | [86](86.md), on the final cleaned production build |
 | B — performance             | Best Score and lowest maximum RSS on **every** V8-v7 benchmark against QuickJS, Bun/JSC without JIT and Node/V8 without JIT                  | [61](61.md), recorded by [28](28.md)               |
 
 ## Stage A — single VM and correctness
@@ -30,9 +30,11 @@ Stage membership remains separate because a lane can span both stages.
   A complicated regression may remain for its uncovered obligation; a regression
   label or multiple execution modes alone does not justify duplicate suite
   cases.
-- Pass 100% of pinned Test262 and Wasm directives, every upstream fixture tagged
+- Pass every pinned Test262 case consistent with the local Node oracle, every
+  pinned Wasm directive, every upstream fixture tagged
   `framework-core` in `parallel.txt`, and the pinned Express, Koa and Fastify
-  scenarios. The manifest owns fixture membership; `tests/frameworks` owns the
+  scenarios. Keep direct higher-stage conflicts visible as waivers, never
+  passes. The manifest owns fixture membership; `tests/frameworks` owns the
   package scenarios. The broad Node inventory is diagnostic only and adds no
   gate cases.
 
@@ -40,15 +42,16 @@ The three package scenarios define the Stage A framework target. Do not expand
 the Node gate to unrelated upstream APIs or the broader proposals in
 [88](88.md)/[89](89.md).
 
-Stage A remains open for two concrete reasons: the pinned Test262 corpus has a
-Stage 94 contradiction, and production cutover plus final cleanup remain
-outstanding. The shared-VM Wasm and framework Node gates have current
-source-bound passes; Task 24 still needs all three suites to pass on one build.
+Stage A remains open because integrated qualification, production cutover and
+final cleanup remain. Test262 conflicts follow the local Node oracle: Stage 114
+defines the Annex B behavior, and the contradictory Stage 94 case remains an
+explicit waiver rather than a pass. The current source-bound resolution is in
+[Task 20](20.md#current-conflict-resolution). The shared-VM Wasm and framework
+Node gates have current source-bound passes; Task 24 still needs the complete
+gate on one build.
 
 The remaining work is:
 
-- [20](20.md): wait for the upstream Stage 94 correction and qualify the pinned
-  Test262 inventory without changing its semantics or expectations.
 - [24](24.md): pass all three suite gates on one build; [27](27.md): promote the
   shared VM and delete legacy execution; [86](86.md): remove audited clutter and
   close Stage A on the final production build.
@@ -64,7 +67,8 @@ APIs and broad architecture proposals add no gates.
 Performance campaigns are not required in A.
 
 Task 24 is the sole initial full-inventory campaign and owns the same-build
-100% reports for Test262, Wasm and the scoped Node gate. If it finds a failure,
+reports for all raw Test262 outcomes plus the adjudicated pass count, Wasm and
+the scoped Node gate. If it finds a non-waived failure,
 reopen the responsible implementation task, fix and verify the affected scope,
 then repeat Task 24.
 Tasks 27 and 86 reuse those reports only when source, binaries, configuration

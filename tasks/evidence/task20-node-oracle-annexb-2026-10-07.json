@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "test262_node_oracle_conflict_adjudication",
+  "recorded_at": "2026-10-07",
+  "policy": {
+    "rule": "When pinned Test262 expectations conflict, use the local Node oracle and current ECMAScript algorithm to adjudicate behavior.",
+    "accounting": "Preserve every fixture and inventory identity. Keep oracle-contradicted raw failures visible as explicit waivers, never passes.",
+    "authority": "Latest user instruction in this session"
+  },
+  "source": {
+    "revision": "935cc951d3a75f88f7bd1ff58a750bbca4f564c7",
+    "dirty": true,
+    "host": "macOS arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "changed_owner_sha256": {
+      "crates/quench-runtime-next/src/compile.rs": "c9e335ef7f432f83ff3cae6a489d87f764d4f8327fcb58193871ee3b5b8a1d44",
+      "crates/quench-runtime-next/src/compile/ast.rs": "ddd9db1cee763222531c504d4e44fb4ab48e2e78b63f7c6699ca1b98d7c8999e",
+      "crates/quench-runtime-next/src/compile/ast/expression.rs": "41cf75084dddc8a2fe70d39f25f61c132e4a87a3758903312e01e10173970498",
+      "crates/quench-runtime-next/src/compile/arrow.rs": "95fdb2943422c5a20c4f00727ba3fa3fb8fb69c01e9709e0fd40a0f95e0389ba",
+      "crates/quench-runtime-next/src/compile/early.rs": "c0c1e63c4886c1717a6ebd1861d02560f4032f82864a115f3a00048b316ce84f"
+    }
+  },
+  "oracle": {
+    "node_version": "v26.10.0",
+    "observations": [
+      {
+        "command": "node -e 'console.log((function(){ { function arguments() {} } return typeof arguments; })())'",
+        "stdout": "function\n"
+      },
+      {
+        "command": "node -e 'function test(arg) { eval(arg); { function arguments() { return 1; } } return arguments; } console.log(typeof test(\"42\"), test(\"42\")())'",
+        "stdout": "function 1\n"
+      },
+      {
+        "command": "node -e 'function f(x = arguments) { function arguments() {} return typeof x; } console.log(f())'",
+        "stdout": "object\n"
+      }
+    ],
+    "upstream_adjudication": "https://github.com/tc39/test262/issues/5113",
+    "spec": "https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-functiondeclarationinstantiation"
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "clean": true,
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "inputs_changed": false
+  },
+  "conflict": {
+    "node_and_current_algorithm_result": "A sloppy block function named arguments replaces the containing function's arguments binding.",
+    "stage_114_fixtures": [
+      {
+        "path": "staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab",
+        "result": "pass"
+      },
+      {
+        "path": "staging/sm/regress/regress-602621.js",
+        "sha256": "43ec595a2220317a7b295e1ab23c3d0f94bb104bc65398e606a38a0d323f95cf",
+        "result": "pass"
+      }
+    ],
+    "waived_fixture": {
+      "stage": "94",
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "result": "fail",
+      "reason": "Its 2017 info block cites an obsolete FunctionDeclarationInstantiation step. The fixture expectation contradicts local Node and current FDI/Annex B behavior; Test262 issue #5113 records this conflict."
+    },
+    "inventory_and_fixtures_preserved": true
+  },
+  "verification": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "affected_stages": [
+      {
+        "stage": 94,
+        "passed": 844,
+        "failed": 1,
+        "total": 845,
+        "report": "target/iteration/node-arbitrage-2026-10-07/stage-94.json",
+        "report_sha256": "706097267b2faa1f542e675fdbe21da96f74ec69636c35c81f3796596ddfc73b",
+        "compare_to": "target/iteration/task20-recheck-2026-10-07/stages-94-114.json",
+        "comparison": "regressions=0",
+        "failure": "annexB/language/function-code/block-decl-func-skip-arguments.js"
+      },
+      {
+        "stage": 114,
+        "passed": 1482,
+        "failed": 0,
+        "total": 1482,
+        "report": "target/iteration/node-arbitrage-2026-10-07/stage-114.json",
+        "report_sha256": "6ccd41de17713e7b9c99c7268adb8b3e6112c67d681610d09fd75cde9bd69724",
+        "compare_to": "target/iteration/task20-recheck-2026-10-07/stage-114.json",
+        "comparison": "regressions=0"
+      }
+    ],
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --profile iteration -p quench-test262 --bin run-stages-next",
+    "runner_sha256": "62f53c7e7164e44c1a9e417142c8374d52f3497391f70c53598678d10afb6fec",
+    "compare_runs_sha256": "7667d4435e4fea32d6d2b00b34509250ffac1d2dac882688c9fd732321031ba2",
+    "commands": [
+      "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/node-arbitrage-2026-10-07/stage-94.json target/iteration/run-stages-next 94 94",
+      "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/node-arbitrage-2026-10-07/stage-114.json target/iteration/run-stages-next 114 114",
+      "TEST262_TEST_TIMEOUT_MS=900000 target/iteration/compare-runs --reports target/iteration/task20-recheck-2026-10-07/stages-94-114.json target/iteration/node-arbitrage-2026-10-07/stage-94.json",
+      "TEST262_TEST_TIMEOUT_MS=900000 target/iteration/compare-runs --reports target/iteration/task20-recheck-2026-10-07/stage-114.json target/iteration/node-arbitrage-2026-10-07/stage-114.json"
+    ]
+  },
+  "result": "Current runtime behavior agrees with local Node for both conflicting shapes. Stage 114 passes 1482/1482. Stage 94 retains one raw failure for the stale conflicting fixture; all other cases pass. The prior lower-stage experiment and its evidence are superseded."
+}
