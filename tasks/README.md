@@ -100,20 +100,31 @@ those same reference samples for its baseline, closes measured gaps and owns
 qualification; [28](28.md) records final closure. Use task 61's sampling and
 provenance contract. Optimization tasks are optional candidates selected by
 measured gaps, not a mandatory implementation list. Prioritize applicable
-measured v2 wins: compact canonical specialization facts, the physical phase
-boundary, static lexical addressing/site-local caches, narrow local rules and
-deterministic corpus PGO. Census the current path first; prior success does not
-replace a Quench paired experiment. Ordinary lexical access already uses
-`LoadLocal` and capture slots; task 49 is limited to activation facts still
-rediscovered at runtime and remains optional until a measured gap points there.
-Remove rejected experiments. No v2-parity, watermark, broad restructuring or
+measured v2 wins: compact residual facts (task 50), the physical phase
+boundary (25), narrow local rules (33), and corpus PGO (84). Quench already
+has direct site-indexed field caches; task 29's only v2-inspired candidate is
+the measured own-property-only path. V2's uniform BTA (82) maps to task 57, with
+task 68 supplying selected counts; extend Quench's existing analysis only for
+domains that explain measured work. Census the current path first; prior
+success does not replace a Quench paired experiment. Ordinary lexical reads
+and writes already use local and capture slots. V2's task 28 measured dynamic
+name lookup, so it can inform task 70 only if Quench's task 68 census finds the
+same hot global-resolution work; it does not justify rebuilding direct local
+addressing. Task 49 covers only activation facts Quench still rediscovers and
+remains optional until a measured gap points there.
+Keep method caches separate unless Quench's census identifies their cost: v2's
+direct field-site index and own-property cache were retained, while its direct
+megamorphic method index was removed after the expanded paired run. Remove
+rejected experiments. No v2-parity, watermark, broad restructuring or
 Wasm-speed requirement blocks either stage.
 
 Stop when all eight benchmarks meet both targets and final correctness still
 passes. Unselected optimization proposals do not create more work to complete.
 
 Guide implementation with Ershov binding-time analysis, Futamura specialization
-and the pinned `../v2` measured wins and rejections. Self research supplies
+and the pinned `../v2` measured wins and rejections. Recheck assumptions against
+Quench's current residual representation and admit changes only with affected
+correctness checks and paired Quench Score/RSS evidence. Self research supplies
 [object maps and customization](https://bibliography.selflanguage.org/implementation.html),
 [site-local polymorphic caches](https://bibliography.selflanguage.org/pics.html)
 and [type feedback](https://bibliography.selflanguage.org/type-feedback.html).
