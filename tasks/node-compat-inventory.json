@@ -16010,7 +16010,19 @@
         "../common",
         "assert",
         "querystring"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/querystring.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs"
+        ],
+        "obligations": [
+          "escape applies JavaScript coercion, UTF-8 percent encoding and surrogate handling, with Node URIError/TypeError behavior for invalid inputs."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-querystring-maxKeys-non-finite.js",
@@ -16020,7 +16032,20 @@
         "../common",
         "assert",
         "querystring"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/querystring.rs",
+          "crates/quench-node/src/modules/querystring_parse.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs"
+        ],
+        "obligations": [
+          "parse treats numeric Infinity and NaN maxKeys as unlimited while string forms use the default 1,000-pair limit."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-querystring-multichar-separator.js",
@@ -16030,7 +16055,21 @@
         "../common",
         "assert",
         "querystring"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/querystring.rs",
+          "crates/quench-node/src/modules/querystring_parse.rs",
+          "crates/quench-node/src/modules/querystring_stringify.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs"
+        ],
+        "obligations": [
+          "parse/stringify round-trip multichar and overlapping separator/equality strings while preserving asserted keys and values."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-querystring.js",
@@ -16042,7 +16081,22 @@
         "querystring",
         "util",
         "vm"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/querystring.rs",
+          "crates/quench-node/src/modules/querystring_parse.rs",
+          "crates/quench-node/src/modules/querystring_stringify.rs",
+          "crates/quench-node/src/modules/buffer_proto.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs"
+        ],
+        "obligations": [
+          "querystring parse/stringify/escape/unescape/unescapeBuffer behavior across duplicates, prototype-sensitive keys, custom separators/codecs, maxKeys, coercion, aliases, malformed encodings and Buffer output."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-url-domain-ascii-unicode.js",
