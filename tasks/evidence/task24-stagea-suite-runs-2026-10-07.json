@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "recorded_at": "2026-10-07",
+  "qualification": "incomplete",
+  "source": {
+    "revision": "a63cfa65dffb811b5ac74612a3ef0474136ee475",
+    "dirty": true,
+    "host": "macos-aarch64",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "test262_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2"
+  },
+  "test262": {
+    "command": "TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=N TEST262_REPORT=... target/iteration/run-stages-next STAGE_FIRST STAGE_LAST",
+    "runner_sha256": "eaadb49a88414cab3666ebf0e519b173e5dac96c38a19a5c77aba632a2589bff",
+    "stages": {
+      "first": 0,
+      "last": 115,
+      "count": 116,
+      "all_present": true,
+      "all_outcomes_unique": true,
+      "stage_manifest_sha256": "9edddd14aa2424fe5b8a387bb8a42d2792883af89fa2175fcd5dbce3a2d750da"
+    },
+    "total": 53406,
+    "passed": 53405,
+    "failed": 1,
+    "canonical_outcomes_sha256": "5099282ff6ded89a7ce8cf4983a88ab40c702327fd10bce07dd4c9bc71bf7669",
+    "reports": [
+      { "path": "target/iteration/test262-full-2026-10-07/stages-0-31.json", "total": 26943, "passed": 26943, "failed": 0, "sha256": "5ac2814c06accdec609d1eb5c8e1220d858fc4c99bddfcfcbd1cf52b929b4a45" },
+      { "path": "target/iteration/test262-full-2026-10-07/stages-32-63.json", "total": 9261, "passed": 9261, "failed": 0, "sha256": "35c76c3013f1849a5abdda24dfeef97cad5dd48b31c1b66714cb09c6f9ddb092" },
+      { "path": "target/iteration/test262-full-2026-10-07/stage-64-jobs4.json", "total": 1879, "passed": 1879, "failed": 0, "sha256": "008e46368e1e6f2d85c0a2b3c0c01fb5d517d328036f23bf6267ccc191fdde75" },
+      { "path": "target/iteration/test262-full-2026-10-07/stages-65-93.json", "total": 9655, "passed": 9655, "failed": 0, "sha256": "5ec883fbb442bf8af75b4273ed97a40aab4a96cf61d49e44584615ad56593184" },
+      { "path": "target/iteration/test262-full-2026-10-07/stage-94.json", "total": 845, "passed": 844, "failed": 1, "sha256": "980f4b8e7a7243866ece95ff5860f866893767d5248d73e01081fb1b36fd21c2" },
+      { "path": "target/iteration/test262-full-2026-10-07/stages-95-115.json", "total": 4823, "passed": 4823, "failed": 0, "sha256": "4dc89197924f31382c4b8643b87283030a3f2c619c9e0f6715910a29dad90251" }
+    ],
+    "failure": {
+      "stage": 94,
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "reason": "Expected function arguments() {} but the stale fixture expects the arguments object.",
+      "classification": "pinned corpus contradiction with Stage 114 and current ECMA-262 behavior",
+      "upstream_issue": "https://github.com/tc39/test262/issues/5113",
+      "upstream_correction": "https://github.com/tc39/test262/pull/5112",
+      "correction_merged": false
+    }
+  },
+  "wasm": {
+    "command": "WASM_FILE_TIMEOUT_MS=60000 target/iteration/run-shared --report target/iteration/stagea-current-2026-10-07/wasm.json crates/quench-wasm-test/testsuite",
+    "runner_sha256": "484e7352ab2fe8e7d43de1fca4b39e3c54b4e5e4bdfc941225ed37aeb7204f52",
+    "report": "target/iteration/stagea-current-2026-10-07/wasm.json",
+    "report_sha256": "bbf58fe519b710b448a6f8a54d415ba4a51191d158e106bbe5b915debd1dee41",
+    "files": 288,
+    "directives": 67124,
+    "passed": 67124,
+    "failed": 0,
+    "timed_out": 0,
+    "file_errors": 0,
+    "inventory_complete": true
+  },
+  "node_framework_profile": {
+    "command": "target/iteration/run-parallel-next --profile framework-core --timeout-secs 60",
+    "runner_sha256": "876e27aa5c246ba6e5fb9d7d07621cf52b0bbb70499488ccb194395a64d0862b",
+    "log": "target/iteration/stagea-current-2026-10-07/node-framework-core.log",
+    "log_sha256": "b8633f54bb9d2a30cadd505230edaa8da0a0c3eaaa984ffd83fd0dba5aa3c902",
+    "exit_status": 0,
+    "passed": 43,
+    "skipped": 0,
+    "failed": 0,
+    "timed_out": 0,
+    "crashed": 0,
+    "unclassified": 0,
+    "total": 43
+  },
+  "framework_scenarios": {
+    "local_node_version": "v26.10.0",
+    "local_node_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+    "quench_binary_sha256": "40c37f9fd4df29aaa42b06e11f3e87006af38dd72d8152fbb08ccf9105eeca2d",
+    "report": "target/iteration/stagea-current-2026-10-07/node-framework-scenarios.json",
+    "report_sha256": "c5fa981d80060984f7d9fe13a010d1f825eb192d4f0cd457a4585776b4242f48",
+    "all_exact_match": true,
+    "scenarios": {
+      "express": { "node_exit": 0, "quench_exit": 0, "stdout_bytes": 207, "stderr_bytes": 0, "exact_match": true },
+      "koa": { "node_exit": 0, "quench_exit": 0, "stdout_bytes": 29, "stderr_bytes": 0, "exact_match": true },
+      "fastify": { "node_exit": 0, "quench_exit": 0, "stdout_bytes": 29, "stderr_bytes": 0, "exact_match": true }
+    }
+  },
+  "unit_tests": "not run",
+  "stage_a_result": "not qualified: Test262 is 53405/53406; task 24 requires 100%, and task 27/86 still own production cutover and final cleanup"
+}
