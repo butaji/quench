@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "pre_gate_regexp_matcher_diagnostic",
+  "recorded_at": "2026-10-07",
+  "qualification_ready": false,
+  "decision": "retain as a measured candidate; production performance qualification remains open",
+  "scope": "One pinned V8-v7 RegExp fixture, three rotating paired rounds, and the two affected Test262 stages. This is diagnostic evidence, not Task 61 qualification.",
+  "method": {
+    "lisp_mindset": "The parsed Expr tree is the single static representation of a RegExp pattern. Matching now passes a continuation through that tree so ordered backtracking states are visited only when the enclosing expression rejects a candidate; literal, dot, and class repetitions use iterative positions to avoid per-character State materialization and recursion.",
+    "binding_time": "Expr nodes, quantifier bounds, and greediness are known from RegExp construction; input positions and captures remain dynamic execution state.",
+    "futamura_application": "Specialize traversal by existing Expr variants without generating guest-specific code, changing semantics, or adding benchmark-dependent behavior.",
+    "v2_basis": "V2 supports data-backed local representation and execution changes, while rejecting unmeasured global mechanisms. No v2 RegExp result was treated as a transferred win; the candidate was admitted only after paired measurement."
+  },
+  "source": {
+    "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
+    "dirty": true,
+    "baseline_regexp_source_sha256": "3b28b90b0161afcc357f10a7cbb99759e49b0712d2baa573c81f9199081acfb5",
+    "candidate_regexp_source_sha256": "d430fe7b935c3cf6991ba3bf4cb249574a50cbe3a362034d8514a78ba8a4e1ec",
+    "candidate_binary_sha256": "bc2fb1ab794c12a0200d9ca55f87a7a141cc0ce0095b095ee6ff9ac2e675c39e",
+    "baseline_binary_sha256": "955ac5ee501bc938a355dfd6bb1215c77344c4d0ea1d6a291d6c52ca286e73b9"
+  },
+  "benchmark": {
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+    "input_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "rounds": 3,
+    "timeout_ms": 300000,
+    "host": "Apple M4 / macOS 26.5",
+    "toolchain": "rustc 1.99.0, LLVM 23.1.2",
+    "commands": {
+      "build": "CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node",
+      "run": "cargo run --release -p quench-bench -- quench-bench/js-engine-benchmark/v8-v7/regexp.js --runs 3 --timeout-ms 300000 --quench <binary> --qjs /Users/admin/Code/GitHub/quickjs/qjs --bun /opt/homebrew/bin/bun --node /opt/homebrew/bin/node --out <report>"
+    },
+    "engines": {
+      "quench": "shared-VM interpreter, no guest JIT",
+      "quickjs": "QuickJS 2026-06-04 interpreter",
+      "bun": "Bun 1.4.2; JSC useJIT=false",
+      "node": "Node v26.10.0 --jitless"
+    },
+    "baseline": {
+      "report": "target/iteration/stageb-pilots/regexp-before-3-2026-10-07.json",
+      "report_sha256": "0384981163f03bd05ab7cf5f98b5aee6a15a21c9998df7831959a89e17467304",
+      "quench_score_samples": [20.8, 20.7, 20.7],
+      "quench_score_median": 20.7,
+      "quench_max_rss_bytes_samples": [63733760, 64749568, 65044480],
+      "quench_max_rss_bytes_median": 64749568
+    },
+    "candidate": {
+      "report": "target/iteration/stageb-pilots/regexp-after-lazy-corrected-3-2026-10-07.json",
+      "report_sha256": "0b01c6dca6a2bd05e6a1cf602da5738612370cb9c3756d7e6d6da5a7a0e98c95",
+      "quench_score_samples": [31.5, 32.4, 32.7],
+      "quench_score_median": 32.4,
+      "quench_max_rss_bytes_samples": [68943872, 64077824, 63881216],
+      "quench_max_rss_bytes_median": 64077824
+    },
+    "median_change": {
+      "score_percent": 56.5217391304,
+      "max_rss_bytes": -671744,
+      "max_rss_percent": -1.037454
+    },
+    "reference_medians": {
+      "baseline": {
+        "quickjs_score": 1047,
+        "bun_score": 1698,
+        "node_score": 5995
+      },
+      "candidate": {
+        "quickjs_score": 1049,
+        "bun_score": 1692,
+        "node_score": 6000
+      }
+    },
+    "limitations": [
+      "Only one of eight V8-v7 fixtures and three of the required eleven rounds were measured.",
+      "The source tree was dirty; this is not a production or clean-source qualification.",
+      "Median RSS improved by about 0.64 MiB, but the candidate's highest sample was 3.72 MiB above the baseline's highest sample.",
+      "The benchmark report is complete for the selected fixture but marks qualification_ready=false and fixture_set_matches=false because this was not the complete suite."
+    ]
+  },
+  "correctness": {
+    "affected_test262_stages": [
+      {
+        "stage": 64,
+        "report": "target/iteration/stageb-regexp-lazy-2026-10-07/stage-64-corrected.json",
+        "report_sha256": "ea7c4d95db8cc82492324cf1af82718bef119c226d2f2c99110f4306a5b34018",
+        "passed": 1879,
+        "failed": 0,
+        "compare_to": "target/iteration/task24-node-arbitration-2026-10-07/stage-64.json",
+        "compare_result": "regressions=0"
+      },
+      {
+        "stage": 70,
+        "report": "target/iteration/stageb-regexp-lazy-2026-10-07/stage-70-corrected.json",
+        "report_sha256": "087954dbe71de86c5e1b5c5e40f1880b27367f75c84c033453085f25f6a8098b8",
+        "passed": 1223,
+        "failed": 0,
+        "compare_to": "target/iteration/test262-stagea-2026-10-07/stage-70.json",
+        "compare_result": "regressions=0"
+      }
+    ],
+    "node_oracle": "No changed failing case appeared in the affected-stage comparisons, so no new Node arbitration was required.",
+    "other_suites": "No unit, Wasm, or Node compatibility suites were run; this change is confined to the shared RegExp fallback and its affected Test262 stages."
+  }
+}

@@ -4,7 +4,7 @@
 //! guarded compiled backend is retained for supported patterns, with the
 //! repository-owned matcher as the complete semantic fallback.
 
-use std::{cell::RefCell, collections::VecDeque, ops::Range};
+use std::{cell::RefCell, ops::Range};
 
 use oxc::regular_expression::{ast, LiteralParser, Options};
 
@@ -1146,25 +1146,44 @@ fn legacy_class_control(contents: &[ast::CharacterClassContents<'_>], source: &s
 }
 
 fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option<State> {
+    match_expr_with(expr, input, state, flags, &mut Some)
+}
+
+fn match_expr_with(
+    expr: &Expr,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+    continuation: &mut dyn FnMut(State) -> Option<State>,
+) -> Option<State> {
     match expr {
-        Expr::Sequence(parts) => match_sequence(parts, input, state, flags),
-        Expr::Alternation(alternatives) => alternatives
-            .iter()
-            .find_map(|alternative| match_expr(alternative, input, state.clone(), flags)),
+        Expr::Sequence(parts) => match_sequence_with(parts, 0, input, state, flags, continuation),
+        Expr::Alternation(alternatives) => {
+            for alternative in alternatives {
+                if let Some(found) =
+                    match_expr_with(alternative, input, state.clone(), flags, continuation)
+                {
+                    return Some(found);
+                }
+            }
+            None
+        }
         Expr::Literal(value) => input
             .get(state.position)
             .filter(|unit| equal(*value, unit.value, flags.ignore_case, flags.unicode))
             .map(|_| State {
                 position: state.position + 1,
                 ..state
-            }),
+            })
+            .and_then(continuation),
         Expr::Dot => input
             .get(state.position)
             .filter(|unit| flags.dot_all || !is_line_terminator(unit.value))
             .map(|_| State {
                 position: state.position + 1,
                 ..state
-            }),
+            })
+            .and_then(continuation),
         Expr::Class(class) => class_match_widths(
             class,
             input,
@@ -1177,29 +1196,41 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
         .map(|width| State {
             position: state.position + width,
             ..state
-        }),
+        })
+        .and_then(continuation),
         Expr::Capture { index, body } => {
             let start = state.position;
-            let mut result = match_expr(body, input, state, flags)?;
-            if let Some(capture) = result.captures.get_mut(*index) {
-                if !flags.reverse || capture.is_none() {
-                    *capture = Some(start..result.position);
+            match_expr_with(body, input, state, flags, &mut |mut result| {
+                if let Some(capture) = result.captures.get_mut(*index) {
+                    if !flags.reverse || capture.is_none() {
+                        *capture = Some(start..result.position);
+                    }
                 }
-            }
-            Some(result)
+                continuation(result)
+            })
         }
         Expr::Repeat {
             body,
             min,
             max,
             greedy,
-        } => repeat_options(body, input, state, flags, *min, *max, *greedy)
-            .into_iter()
-            .next(),
-        Expr::Assertion(assertion) => {
-            assertion_matches(*assertion, input, state.position, flags).then_some(state)
+        } => repeat_with(
+            body,
+            input,
+            state,
+            flags,
+            *min,
+            *max,
+            *greedy,
+            0,
+            continuation,
+        ),
+        Expr::Assertion(assertion) => assertion_matches(*assertion, input, state.position, flags)
+            .then_some(state)
+            .and_then(continuation),
+        Expr::Lookaround { kind, body } => {
+            lookaround_match(*kind, body, input, state, flags).and_then(continuation)
         }
-        Expr::Lookaround { kind, body } => lookaround_match(*kind, body, input, state, flags),
         Expr::Backreference(reference) => {
             let range = match reference {
                 Backreference::Index(index) => state
@@ -1213,110 +1244,57 @@ fn match_expr(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Option
                         .and_then(Option::as_ref)
                 }),
             };
-            let Some(range) = range else {
-                if flags.reverse {
-                    return None;
-                }
-                return Some(state);
-            };
-            let width = range.end.saturating_sub(range.start);
-            let matches = input
-                .get(state.position..state.position + width)
-                .is_some_and(|actual| {
-                    input[range.clone()]
-                        .iter()
-                        .zip(actual)
-                        .all(|(expected, actual)| {
-                            equal(
-                                expected.value,
-                                actual.value,
-                                flags.ignore_case,
-                                flags.unicode,
-                            )
-                        })
-                });
-            matches.then_some(State {
-                position: state.position + width,
-                ..state
-            })
-        }
-        Expr::Mode { body, flags: local } => {
-            match_expr(body, input, state, merge_flags(flags, *local))
-        }
-    }
-}
-
-fn match_sequence(parts: &[Expr], input: &[Unit], state: State, flags: Flags) -> Option<State> {
-    sequence_options(parts, input, state, flags)
-        .into_iter()
-        .next()
-}
-
-fn sequence_options(parts: &[Expr], input: &[Unit], state: State, flags: Flags) -> Vec<State> {
-    fn visit(
-        parts: &[Expr],
-        index: usize,
-        input: &[Unit],
-        state: State,
-        flags: Flags,
-        output: &mut Vec<State>,
-    ) {
-        if output.len() == MAX_BACKTRACK_STATES {
-            return;
-        }
-        let Some(part) = parts.get(index) else {
-            output.push(state);
-            return;
-        };
-        for candidate in match_options(part, input, state.clone(), flags) {
-            visit(parts, index + 1, input, candidate, flags, output);
-            if output.len() == MAX_BACKTRACK_STATES {
-                return;
-            }
-        }
-    }
-    let mut output = Vec::new();
-    visit(parts, 0, input, state, flags, &mut output);
-    output
-}
-
-fn match_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> Vec<State> {
-    match expr {
-        Expr::Sequence(parts) => sequence_options(parts, input, state, flags),
-        Expr::Repeat {
-            body,
-            min,
-            max,
-            greedy,
-        } => repeat_options(body, input, state, flags, *min, *max, *greedy),
-        Expr::Alternation(alternatives) => alternatives
-            .iter()
-            .flat_map(|alternative| match_options(alternative, input, state.clone(), flags))
-            .take(MAX_BACKTRACK_STATES)
-            .collect(),
-        Expr::Capture { index, body } => {
-            let start = state.position;
-            match_options(body, input, state, flags)
-                .into_iter()
-                .map(|mut result| {
-                    if let Some(capture) = result.captures.get_mut(*index) {
-                        if !flags.reverse || capture.is_none() {
-                            *capture = Some(start..result.position);
-                        }
-                    }
-                    result
+            let next = if let Some(range) = range {
+                let width = range.end.saturating_sub(range.start);
+                let matches = input
+                    .get(state.position..state.position + width)
+                    .is_some_and(|actual| {
+                        input[range.clone()]
+                            .iter()
+                            .zip(actual)
+                            .all(|(expected, actual)| {
+                                equal(
+                                    expected.value,
+                                    actual.value,
+                                    flags.ignore_case,
+                                    flags.unicode,
+                                )
+                            })
+                    });
+                matches.then_some(State {
+                    position: state.position + width,
+                    ..state
                 })
-                .take(MAX_BACKTRACK_STATES)
-                .collect()
+            } else if flags.reverse {
+                None
+            } else {
+                Some(state)
+            };
+            next.and_then(continuation)
         }
         Expr::Mode { body, flags: local } => {
-            match_options(body, input, state, merge_flags(flags, *local))
+            match_expr_with(body, input, state, merge_flags(flags, *local), continuation)
         }
-        _ => match_expr(expr, input, state, flags).into_iter().collect(),
     }
 }
 
-fn repeat_options(
+fn match_sequence_with(
+    parts: &[Expr],
+    index: usize,
+    input: &[Unit],
+    state: State,
+    flags: Flags,
+    continuation: &mut dyn FnMut(State) -> Option<State>,
+) -> Option<State> {
+    let Some(part) = parts.get(index) else {
+        return continuation(state);
+    };
+    match_expr_with(part, input, state, flags, &mut |candidate| {
+        match_sequence_with(parts, index + 1, input, candidate, flags, continuation)
+    })
+}
+
+fn repeat_with(
     body: &Expr,
     input: &[Unit],
     state: State,
@@ -1324,69 +1302,56 @@ fn repeat_options(
     min: usize,
     max: Option<usize>,
     greedy: bool,
-) -> Vec<State> {
+    count: usize,
+    continuation: &mut dyn FnMut(State) -> Option<State>,
+) -> Option<State> {
     if matches!(body, Expr::Literal(_) | Expr::Dot | Expr::Class(_)) {
-        return repeat_simple_options(body, input, state, flags, min, max, greedy);
+        return repeat_simple_with(body, input, state, flags, min, max, greedy, continuation);
     }
     let limit = max.unwrap_or(input.len().saturating_add(1));
-    struct Visit<'a> {
-        body: &'a Expr,
-        input: &'a [Unit],
-        flags: Flags,
-        min: usize,
-        limit: usize,
-        greedy: bool,
+    if !greedy && count >= min {
+        if let Some(found) = continuation(state.clone()) {
+            return Some(found);
+        }
     }
-    fn visit(context: &Visit<'_>, state: State, count: usize, output: &mut Vec<State>) {
-        if output.len() == MAX_BACKTRACK_STATES {
-            return;
-        }
-        if !context.greedy && count >= context.min {
-            output.push(state.clone());
-            if output.len() == MAX_BACKTRACK_STATES {
-                return;
-            }
-        }
-        if count < context.limit {
-            let mut iteration_state = state.clone();
-            if !context.flags.reverse {
-                for index in capture_indices(context.body) {
-                    if let Some(capture) = iteration_state.captures.get_mut(index) {
-                        *capture = None;
-                    }
-                }
-            }
-            for next in match_options(context.body, context.input, iteration_state, context.flags) {
-                if next.position != state.position || count < context.min {
-                    visit(context, next, count + 1, output);
-                    if output.len() == MAX_BACKTRACK_STATES {
-                        return;
-                    }
+    if count < limit {
+        let mut iteration_state = state.clone();
+        if !flags.reverse {
+            for index in capture_indices(body) {
+                if let Some(capture) = iteration_state.captures.get_mut(index) {
+                    *capture = None;
                 }
             }
         }
-        if context.greedy && count >= context.min && output.len() < MAX_BACKTRACK_STATES {
-            output.push(state);
+        let position = state.position;
+        if let Some(found) = match_expr_with(body, input, iteration_state, flags, &mut |next| {
+            if next.position != position || count < min {
+                repeat_with(
+                    body,
+                    input,
+                    next,
+                    flags,
+                    min,
+                    max,
+                    greedy,
+                    count + 1,
+                    continuation,
+                )
+            } else {
+                None
+            }
+        }) {
+            return Some(found);
         }
     }
-    let mut output = Vec::new();
-    visit(
-        &Visit {
-            body,
-            input,
-            flags,
-            min,
-            limit,
-            greedy,
-        },
-        state,
-        0,
-        &mut output,
-    );
-    output
+    if greedy && count >= min {
+        continuation(state)
+    } else {
+        None
+    }
 }
 
-fn repeat_simple_options(
+fn repeat_simple_with(
     body: &Expr,
     input: &[Unit],
     state: State,
@@ -1394,39 +1359,59 @@ fn repeat_simple_options(
     min: usize,
     max: Option<usize>,
     greedy: bool,
-) -> Vec<State> {
+    continuation: &mut dyn FnMut(State) -> Option<State>,
+) -> Option<State> {
     let limit = max.unwrap_or(input.len().saturating_add(1));
-    let mut states = VecDeque::new();
-    let mut current = state.clone();
+    let mut positions = Vec::new();
+    let mut position = state.position;
     let mut count = 0;
     while count < limit {
-        let Some(next) = match_expr(body, input, current.clone(), flags) else {
+        let current = State {
+            position,
+            captures: state.captures.clone(),
+        };
+        let Some(next) = match_expr(body, input, current, flags) else {
             break;
         };
-        if next.position == current.position {
+        if next.position == position {
             break;
         }
+        position = next.position;
         count += 1;
-        current = next;
         if count >= min {
-            if states.len() == MAX_BACKTRACK_STATES {
-                states.pop_front();
-            }
-            states.push_back(current.clone());
+            positions.push(position);
         }
     }
-    if !greedy && min == 0 {
-        states.push_front(state.clone());
-        states.truncate(MAX_BACKTRACK_STATES);
-    }
-    let mut result: Vec<State> = states.into_iter().collect();
+
+    let try_position = |position, continuation: &mut dyn FnMut(State) -> Option<State>| {
+        let mut candidate = state.clone();
+        candidate.position = position;
+        continuation(candidate)
+    };
     if greedy {
-        result.reverse();
-        if min == 0 {
-            result.push(state);
+        for position in positions.into_iter().rev() {
+            if let Some(found) = try_position(position, continuation) {
+                return Some(found);
+            }
         }
+        if min == 0 {
+            try_position(state.position, continuation)
+        } else {
+            None
+        }
+    } else {
+        if min == 0 {
+            if let Some(found) = try_position(state.position, continuation) {
+                return Some(found);
+            }
+        }
+        for position in positions {
+            if let Some(found) = try_position(position, continuation) {
+                return Some(found);
+            }
+        }
+        None
     }
-    result
 }
 
 fn capture_indices(expr: &Expr) -> Vec<usize> {
