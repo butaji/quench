@@ -112,6 +112,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
+    pub(super) arguments_slot: Option<u16>,
     pub(super) statement_completion: StatementCompletion,
     pub(super) parameter_local_count: usize,
     pub(super) super_call_binds_this: bool,
@@ -137,6 +138,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         async_function: bool,
         generator: bool,
         parameter_arguments_slot: Option<u16>,
+        arguments_slot: Option<u16>,
         parameter_local_count: usize,
         with_depth: u16,
     ) -> Self {
@@ -186,6 +188,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
+            arguments_slot,
             statement_completion: StatementCompletion::Ignored,
             parameter_local_count,
             super_call_binds_this: false,

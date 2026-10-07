@@ -17,11 +17,11 @@ record their source revisions and commands.
 The rewrite target is an interpreter-only runtime derived from the pinned
 `../v2` snapshot. Node host behavior remains in `quench-node`; JavaScript
 semantics remain in Quench's shared runtime; OXC owns syntax. The final
-conformance gates are every non-conflicting pinned Test262 case, every pinned
+conformance gates are every lower-stage-adjudicated pinned Test262 case, every pinned
 Wasm directive, every upstream Node fixture tagged `framework-core` in
 `parallel.txt`, and the pinned Express, Koa and Fastify scenarios. Direct
-Test262 conflicts follow the local Node-oracle rule recorded in
-[task 20](../tasks/20.md#current-conflict-resolution); waived higher-stage
+Test262 conflicts follow the lower-numbered-stage rule recorded in
+[task 20](../tasks/20.md#current-conflict-resolution); contradictory higher-stage
 outcomes remain visible as failures and never count as passes. The broader Node
 inventory is diagnostic only.
 The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).

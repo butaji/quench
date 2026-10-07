@@ -2371,6 +2371,7 @@ impl<'a> Compiler<'a> {
             options.async_function,
             options.generator,
             parameter_arguments_slot,
+            arguments_slot,
             parameter_local_count,
             options.with_depth,
         );
