@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "task": "84",
+  "kind": "pre_gate_pgo_instrumentation_feasibility",
+  "recorded_at": "2026-10-07",
+  "qualification_ready": false,
+  "source": {
+    "revision": "502d92f7e88092648613d8649287025a2db9bbab",
+    "dirty": true,
+    "note": "The experiment used isolated target directories and did not change checked-in build policy."
+  },
+  "toolchain": {
+    "rustc": "1.99.0 (LLVM 23.1.2)",
+    "llvm_profdata": "Homebrew LLVM 23.1.2",
+    "host": "Apple M4 / macOS 26.5"
+  },
+  "probe": {
+    "profile": "production opt-level 2 with rustc -Cprofile-generate",
+    "lto_build": {
+      "lto": "fat",
+      "strip": "symbols",
+      "binary_sha256": "8c5246c66c0bbd668a4b5bdd67ceb94d6105bafee890319f71d47c20b0bc8f6a",
+      "result": "quench-node prints its version or micro output, then exits with SIGSEGV 139 during LLVM profile shutdown"
+    },
+    "no_lto_build": {
+      "lto": false,
+      "strip": "none",
+      "codegen_units": 1,
+      "binary_sha256": "c47bd7b05a0f49651bdf30a4746656b318633f9acd30fc29f39389de486f13d2",
+      "result": "same SIGSEGV 139 after output"
+    },
+    "debugger": "LLDB stopped on EXC_BAD_ACCESS (code 1, address 0x1) during exit; the stack enters __cxa_finalize_ranges and then the stripped Quench binary's profile-writer frames.",
+    "raw_profile_merge": "llvm-profdata merge reports 'too much profile data' and 'no profile can be merged' for both generated raw files.",
+    "control": "A minimal Rust binary using profile-generate, opt-level 2, fat LTO, one codegen unit, strip=symbols, and panic=abort exits successfully and writes a profile."
+  },
+  "training": {
+    "planned_disjoint_corpus": "quench-bench/micros/001.js through 100.js (100 files)",
+    "completed": false,
+    "accepted_profiles": 0,
+    "reason": "The Quench-instrumented executable does not exit cleanly and its raw profile is unreadable. Build-helper profiles and the single failing smoke profile were discarded from consideration."
+  },
+  "decision": "Do not use these profiles or admit a PGO build. Leave task 84 pending; investigate the Quench-linked LLVM profile shutdown path after its queue dependencies are satisfied. No performance comparison was produced."
+}
