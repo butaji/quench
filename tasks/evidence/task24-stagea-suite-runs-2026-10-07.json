@@ -39,7 +39,14 @@
       "classification": "pinned corpus contradiction with Stage 114 and current ECMA-262 behavior",
       "upstream_issue": "https://github.com/tc39/test262/issues/5113",
       "upstream_correction": "https://github.com/tc39/test262/pull/5112",
-      "correction_merged": false
+      "correction_merged": false,
+      "candidate_correction_diagnostic": {
+        "commit": "1f3d994e2658c2934a64781ffbb7a9b3782d3310",
+        "fixture_sha256": "907f95c793deafe992ca8240df872357878c37025a3eace99c5d9342e1fd31be",
+        "command": "TEST262_TEST_TIMEOUT_MS=30000 TEST262_DIR=tests/test262 target/iteration/run-stages-next --test-worker /tmp/quench-test262-stage94-upstream-fix.js",
+        "exit_status": 0,
+        "qualification": "diagnostic only; the current pinned suite remains unchanged and still has the Stage 94 failure"
+      }
     }
   },
   "wasm": {
