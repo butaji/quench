@@ -40,21 +40,18 @@ The three package scenarios define the Stage A framework target. Do not expand
 the Node gate to unrelated upstream APIs or the broader proposals in
 [88](88.md)/[89](89.md).
 
-Stage A remains open: the pinned Test262 run still has the Stage 94 corpus
-conflict, and production cutover, integrated qualification and final cleanup
-remain outstanding. The current shared-VM Wasm and scoped Node reports are
-partial evidence until task 24 and task 86 close their gates.
+Stage A remains open for two concrete reasons: the pinned Test262 corpus has a
+Stage 94 contradiction, and production cutover plus final cleanup remain
+outstanding. The shared-VM Wasm and framework Node gates have current
+source-bound passes; Task 24 still needs all three suites to pass on one build.
 
 The remaining work is:
 
-- [20](20.md): close audited Test262 behavior gaps with affected-stage checks.
-- [19](19.md), [21](21.md) and [22](22.md): freeze and pass the manifest-owned
-  framework profile and pinned package scenarios on the shared VM.
-- [37](37.md), [40](40.md) and [23](23.md): finish shared Wasm lowering and
-  integration and close known directive gaps.
-- [24](24.md): verify integrated correctness; [27](27.md): switch all production
-  consumers and delete legacy; [86](86.md): complete cleanup and verify the
-  final build against all three inventories.
+- [20](20.md): wait for the upstream Stage 94 correction and qualify the pinned
+  Test262 inventory without changing its semantics or expectations.
+- [24](24.md): pass all three suite gates on one build; [27](27.md): promote the
+  shared VM and delete legacy execution; [86](86.md): remove audited clutter and
+  close Stage A on the final production build.
 
 Prioritize failing suite cases, missing shared-VM execution paths and production
 cutover blockers. Do not start discretionary architecture or new host
@@ -73,10 +70,9 @@ then repeat Task 24.
 Tasks 27 and 86 reuse those reports only when source, binaries, configuration
 and inventories are unchanged.
 
-Wasm lowering uses the completed VM foundation; tasks 07/10 own required fixes
-without making their full historical plans prerequisites. Wasm suite closure
-does not wait for Node profile qualification. Task 24 still requires all three
-suite closures together.
+The framework Node and shared-VM Wasm suite tasks are complete. Optional broad
+Node embedding and JavaScript WebAssembly adapters do not block the selected
+Stage A profile. Implement only a concrete failure found by the suite gates.
 
 Task 24 depends on the three suite closures. Support tasks supply required fixes
 and checks, including existing specialization fallbacks, roots, host re-entry
