@@ -135,11 +135,11 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let first = args.next();
     match first.as_deref() {
         Some("--help") | Some("-h") => {
-            println!("quench-node-next [-e CODE|SCRIPT]");
+            println!("quench-node [-e CODE|SCRIPT]");
             return Ok(ExitCode::SUCCESS);
         }
         Some("--version") | Some("-v") => {
-            println!("v22.0.0-next");
+            println!("v22.0.0");
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
@@ -147,14 +147,14 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
 
     let input = match first.as_deref() {
         Some("-e") | Some("--eval") => {
-            SharedInput::Eval(args.next().ok_or("missing source after -e")?)
+            SharedInput::Eval(args.next().unwrap_or_default())
         }
         Some(path) => SharedInput::File {
             path: PathBuf::from(path),
             exec_argv: Vec::new(),
             goal: EntryGoal::Node,
         },
-        None => return Err("usage: quench-node-next [-e CODE|SCRIPT]".into()),
+        None => SharedInput::Eval(String::new()),
     };
     execute_shared(input, std::env::args().collect()).map(SharedCompletion::exit_code)
 }

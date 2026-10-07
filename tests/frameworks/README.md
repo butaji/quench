@@ -38,10 +38,10 @@ npm ci
 node driver.cjs scenarios/express.cjs
 node driver.cjs scenarios/koa.cjs
 node driver.cjs scenarios/fastify.cjs
-cargo build --profile iteration -p quench-node --bin quench-node-next
-../../target/iteration/quench-node-next driver.cjs scenarios/express.cjs
-../../target/iteration/quench-node-next driver.cjs scenarios/koa.cjs
-../../target/iteration/quench-node-next driver.cjs scenarios/fastify.cjs
+cargo build --profile iteration -p quench-node --bin quench-node
+../../target/iteration/quench-node driver.cjs scenarios/express.cjs
+../../target/iteration/quench-node driver.cjs scenarios/koa.cjs
+../../target/iteration/quench-node driver.cjs scenarios/fastify.cjs
 cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- \
   --profile framework-core
 ```
