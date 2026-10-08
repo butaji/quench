@@ -2,9 +2,9 @@
 
 `quench-wasm` owns decoding, validation and spec-script adaptation. The shared
 runtime owns Wasm execution through the same values, heap, roots and dispatch as
-JavaScript; the canonical Wasm suite already uses this path. The remaining
-legacy runtime is not a Wasm executor. Task 27 will promote the shared runtime
-to the canonical `quench-runtime` package and remove the legacy VM.
+JavaScript; the canonical Wasm suite already uses this path. The shared OXC/Wasm core is
+the canonical `quench-runtime` package; Task 86 owns final suite qualification
+and the remaining audited cleanup.
 Third-party decoding/validation is allowed; a separate guest executor is not.
 
 Use the shared typed register machinery and preserve distinct Wasm traps,
@@ -21,7 +21,7 @@ These are requirements, not an assertion of complete conformance.
 
 The shared scalar API lowers validated module functions with a selected export
 using `quench_wasm::Module::lower_shared(export)`, then executes through
-`quench_runtime_next::Runtime::execute_wasm(&function, args)`. `WasmSignature` owns parameter
+`quench_runtime::Runtime::execute_wasm(&function, args)`. `WasmSignature` owns parameter
 and result types. `WasmValue` carries i32/i64 values and exact f32/f64 IEEE bits,
 preserving signed zero and NaN payloads. Constants, locals (with typed zero
 initialization), calls, branches and select preserve all four scalar forms.

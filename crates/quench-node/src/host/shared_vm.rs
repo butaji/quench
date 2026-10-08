@@ -1,13 +1,14 @@
 //! The existing Node host adapted to the shared VM; Node policy stays in modules.
 
 use super::NodeHost;
-use rqj::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
+use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
 
+#[path = "shared_vm/commonjs.rs"]
 mod commonjs;
 pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
-    rqj::host_functions![
+    quench_runtime::host_functions![
         method "uptime" (0) => crate::modules::process::shared_vm::uptime,
         method "processCwd" (0) => crate::modules::process::shared_vm::cwd,
         method "processUmask" (0) => crate::modules::process::shared_vm::umask,
@@ -79,17 +80,13 @@ pub(crate) fn operation(name: &str) -> HostFunctionId {
     HostFunctionId(u32::try_from(index).expect("Node binding index fits u32"))
 }
 
-impl rqj::Host for NodeHost {
+impl quench_runtime::Host for NodeHost {
     fn write_line(&mut self, text: &str) {
-        let output = self.state().borrow().output.clone();
-        match output {
-            Some(output) => output(&format!("{text}\n")),
-            None => rqj::Host::write_line(&mut SystemHost, text),
-        }
+        quench_runtime::Host::write_line(&mut SystemHost, text)
     }
 
     fn clock_millis(&mut self) -> f64 {
-        rqj::Host::clock_millis(&mut SystemHost)
+        quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
     fn functions(&self) -> &[HostFunction<Self>] {

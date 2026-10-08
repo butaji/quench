@@ -1,5 +1,5 @@
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const READ_STREAM_FACTORY: &str = quench_js_check::checked_js!(
     r#"((readFileSync, EventEmitter) => {

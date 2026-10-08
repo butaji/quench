@@ -1,7 +1,7 @@
 //! Shared-VM projection of the existing guest stream state machine.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,

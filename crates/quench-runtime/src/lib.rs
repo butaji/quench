@@ -1,215 +1,42 @@
-//! VM DSL: Native | Fast | Dynamic, Arena + GC.
-//!
-//! Layer and storage are independent. NIR | FIR | DIR filter one HIR enum.
-//! Wasm enters as Native. Arena holds linear memory and unboxed locals; GC
-//! holds structs/arrays/exns. QuickJS is the JS layer on top, not store GC.
+#![deny(warnings)]
 
-pub mod build_profile;
-mod bulk;
-pub mod dynamic;
-pub mod fast;
-pub mod gc;
-pub mod hir;
-pub mod hir_gc;
-mod host_jobs;
-pub mod instance;
-pub mod interp;
-pub mod layer;
-pub mod native;
-mod native_control;
-mod native_property;
-pub mod shape_cache;
-pub mod slot;
-pub mod unwind;
-pub mod wasm;
-mod wasm_atomic;
-pub use host_jobs::install_host_job_pump;
-
-mod arrays;
-mod atomics;
-pub use atomics::expire_async_waiters;
-pub mod benchmark;
 mod bigint;
-mod binding_patterns;
-mod blocks;
-mod bounded_resource;
-pub use quench_stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
-mod branch;
-mod builtin_meta;
-pub mod builtins;
-pub mod capability;
-mod classes;
-mod collections;
-pub mod completion;
-mod conditional;
-mod construct;
-mod continuation;
-#[cfg(test)]
-mod continuation_contract_tests;
-mod control_flow;
-mod conversion;
-mod cycle_collector;
-pub use conversion::is_callable;
-pub use conversion::to_number;
-pub use conversion::to_string;
-/// Return the realm associated with a callable value for host wrappers.
-pub fn callable_realm(value: &value::Value) -> ops::RealmId {
-    construct::constructor_realm(value)
-}
-
-/// Consume an iterable through the runtime's canonical iterator protocol.
-pub fn collect_iterable(value: value::Value) -> Result<Vec<value::Value>, execute::VmError> {
-    collections::iterator::collect_iterable(value)
-}
-pub mod date;
-mod disposable_stack;
-mod environment;
-mod equality;
-mod exceptions;
-pub mod execute;
-pub mod execution_trace;
-pub mod facts;
-mod finalization_registry;
-mod function_affine_number;
-mod function_call_fact;
-mod function_code;
-mod function_counter_recurrence;
-mod function_parameters;
-mod function_physical;
-mod function_property_return_fact;
-mod functions;
-mod functions_dynamic;
-mod functions_write;
-mod generator;
-mod global_environment;
-mod globals;
-pub mod hardware_counters;
-pub mod heap;
-pub mod host_api;
-mod identifiers;
-pub mod identity;
-mod intl;
-mod json;
-pub use json::parse as parse_json;
-pub mod ir;
-mod literal;
-mod locals;
-mod logical;
-mod loops;
-pub mod machine;
-mod math;
-mod methods;
-pub mod module_bindings;
-mod number_fmt;
-mod objects;
-pub mod operation;
-pub mod ops;
-mod ops_meta;
-mod own_keys;
-mod private_environment;
-mod private_slots;
-mod promise;
-pub use promise::{
-    drain_microtasks_all as drain_promise_jobs, has_pending_jobs as has_pending_promise_jobs,
-    has_pending_unhandled_rejections, new_promise, promise_resolve, promise_then, reject_promise,
-    resolve_promise, take_unhandled_rejections,
+mod bytecode;
+mod compile;
+mod heap;
+mod host;
+#[cfg(feature = "profile-memory")]
+mod memory_edge;
+mod module_identity;
+mod number_to_string;
+mod profile;
+pub(crate) use quench_stack as stack;
+mod unicode;
+mod value;
+mod value_vec;
+mod vm;
+mod wasm;
+pub use wasm::{
+    WASM_GC_INITIAL_REFERENCE_ID_MASK, WASM_GC_INITIAL_REFERENCE_TAG,
+    WASM_GC_REFERENCE_ARRAY_CLASS, WASM_GC_REFERENCE_CLASS_SHIFT, WASM_GC_REFERENCE_STRUCT_CLASS,
+    WasmElementSegment, WasmFunction, WasmFunctionBody, WasmFunctionRef, WasmGcDescriptor,
+    WasmGcField, WasmGcInitialObject, WasmGcType, WasmGlobalId, WasmI32Function,
+    WasmMemoryAccessKind, WasmMemoryId, WasmMemoryInit, WasmModule, WasmModuleId, WasmSignature,
+    WasmTableId, WasmTableInit, WasmTagId, WasmTrap, WasmType, WasmValue,
 };
-mod compiler_stack;
-mod properties;
-mod property_define;
-pub mod protocol;
-mod proxy;
-pub mod quickening;
-pub mod reduce;
-mod reduce_support;
-mod reflect;
-pub mod regexp;
-pub(crate) use quench_regexp as regexp_backend;
-mod regexp_native;
-pub mod register_file;
-pub mod resource;
-mod semantic;
-mod semantic_catch;
-mod semantic_early;
-mod sequences;
-mod special;
-mod statement_control;
-mod statements;
-mod stencil_admission;
-mod stencil_admission_budget;
-pub mod stencil_arena;
-mod stencil_binding;
-mod stencil_cache;
-mod stencil_call_return;
-mod stencil_cfg;
-mod stencil_dense_array_copy;
-mod stencil_dense_array_fill;
-mod stencil_dense_array_update;
-pub mod stencil_fact;
-mod stencil_forward_call;
-mod stencil_fresh_object_call;
-mod stencil_fusion;
-mod stencil_i32_pattern;
-mod stencil_installation;
-mod stencil_layout;
-pub mod stencil_lifecycle;
-mod stencil_local_affine_sum;
-mod stencil_local_recursive_sum;
-mod stencil_method_call;
-mod stencil_missing_property;
-mod stencil_nullish_truthy;
-mod stencil_number_classify;
-mod stencil_numeric_arguments_selection;
-mod stencil_numeric_bitwise_loop;
-mod stencil_numeric_call_selection;
-mod stencil_numeric_dag;
-mod stencil_numeric_floating_loop;
-mod stencil_numeric_independent_loop;
-mod stencil_numeric_integer_loop;
-mod stencil_numeric_integer_selection;
-mod stencil_numeric_mixed_loop;
-mod stencil_numeric_receiver_selection;
-mod stencil_ordered_neighbor;
-mod stencil_ordered_reduction;
-pub mod stencil_patch;
-mod stencil_physical;
-mod stencil_plan;
-mod stencil_policy;
-mod stencil_predicate_fusion;
-mod stencil_property_numeric;
-mod stencil_property_pair;
-mod stencil_property_return_call;
-mod stencil_property_store_call;
-mod stencil_prototype_call;
-mod stencil_region_builder;
-mod stencil_region_layout;
-mod stencil_region_links;
-pub mod stencil_select;
-mod stencil_string_builtin;
-mod stencil_string_concat;
-#[cfg(test)]
-mod stencil_test_support;
-mod stencil_value_cover;
-mod stencil_value_graph;
-mod stencil_word_composition;
-#[cfg(test)]
-mod test_execution_profile;
 
-#[cfg(all(test, feature = "legacy-native-tests"))]
-mod architecture_invariants;
-pub mod native_core;
-mod strings;
-mod super_scope;
-mod switch;
-mod templates;
-mod temporal;
-mod transparent;
-mod typed_array_base64;
-mod typed_array_ops;
-mod typed_array_prototype;
-mod unary;
-mod using_early;
-mod using_scope;
-pub mod value;
-pub mod vm;
-mod with_scope;
+pub use bytecode::ResidualProgram;
+pub use compile::{Diagnostic, Engine};
+pub use heap::RootId;
+pub use host::{CapabilityId, Host, HostContext, HostGlobal, ModuleSource, SystemHost};
+#[cfg(feature = "profile-memory")]
+pub use memory_edge::report_allocator_memory;
+pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
+pub use value::Value;
+pub use vm::JsError;
+
+mod api;
+pub use api::{
+    ExecutionRequest, HostFunction, HostFunctionId, NativeContext, RootedError, Runtime,
+    RuntimeError, SourceKind,
+};

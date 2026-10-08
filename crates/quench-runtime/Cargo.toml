@@ -1,37 +1,43 @@
 [package]
 name = "quench-runtime"
 version = "0.1.0"
-edition = "2021"
-description = "Residual VM kernel for the Quench program reducer"
+edition = "2024"
+rust-version = "1.97"
 license = "MIT"
+description = "Pinned v2-derived interpreter snapshot for the Quench rewrite"
+
+[lib]
+name = "quench_runtime"
+
+[[bin]]
+name = "quench"
+path = "src/bin/quench.rs"
 
 [features]
-execution-trace = []
-legacy-native-tests = []
+default = []
+profile-aggregate = []
+profile-trace = ["profile-aggregate"]
+profile-memory = []
+reference = []
 
 [dependencies]
 quench-stack = { path = "../quench-stack" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
-icu_collator = { version = "2.3", features = ["compiled_data"] }
-icu_calendar = { version = "2.3", features = ["compiled_data"] }
-icu_casemap = { version = "2.2", features = ["compiled_data"] }
-icu_locale_core = "2.3"
-icu_provider = "2.3"
-icu_properties = { version = "2.3", features = ["compiled_data"] }
+oxc_allocator = "=0.150.0"
+oxc_ast = "=0.150.0"
+oxc_ast_visit = "=0.150.0"
+oxc_parser = { version = "=0.150.0", default-features = false }
+oxc_semantic = "=0.150.0"
+oxc_span = "=0.150.0"
+oxc_syntax = "=0.150.0"
+rustc-hash = "2.1"
 num-bigint = "0.4"
-rug = { version = "1.30", default-features = false, features = ["integer", "std"] }
-oxc = { version = "0.47", features = ["semantic"] }
-regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
 quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
-stacker = "0.1"
-serde_json = "1"
+wasmparser = "0.247"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
-wasmparser = "0.247"
 
 [dev-dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"

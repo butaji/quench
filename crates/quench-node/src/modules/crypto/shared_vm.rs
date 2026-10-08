@@ -2,7 +2,7 @@
 
 use crate::host::NodeHost;
 use base64::Engine;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use sha2::digest::Digest;
 
 type Context<'a> = NativeContext<'a, NodeHost>;

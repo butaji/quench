@@ -2,7 +2,7 @@
 //! No legacy executor or unsupported-directive skip is permitted here.
 
 use crate::{Engine, Error, Module};
-use rqj::{Host, Runtime, WasmFunction, WasmTrap, WasmValue};
+use quench_runtime::{Host, Runtime, WasmFunction, WasmTrap, WasmValue};
 use std::collections::HashMap;
 use wast::core::{NanPattern, WastArgCore, WastRetCore};
 use wast::{Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet};
@@ -153,7 +153,7 @@ fn invoke(
     module: &Module,
     functions: &mut HashMap<String, WasmFunction>,
     runtime: &mut Runtime<TestHost>,
-) -> Result<Option<WasmValue>, rqj::JsError> {
+) -> Result<Option<WasmValue>, quench_runtime::JsError> {
     let WastExecute::Invoke(WastInvoke {
         module: None,
         name,

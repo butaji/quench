@@ -1,11 +1,14 @@
 //! Shared-VM HTTP projection over the shared TCP transport.
 
+#[path = "shared_vm/operations.rs"]
 mod operations;
+#[path = "shared_vm/poll.rs"]
 mod poll;
+#[path = "shared_vm/state.rs"]
 mod state;
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -20,8 +23,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 }
 
 pub(crate) fn poll(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<bool, String> {
     poll::poll(runtime, program, state)
@@ -39,7 +42,7 @@ pub(crate) fn has_work(state: &Rc<RefCell<crate::host::HostState>>) -> bool {
 }
 
 pub(crate) fn cleanup(
-    runtime: &mut rqj::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) {
     poll::cleanup(runtime, state)

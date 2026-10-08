@@ -1,7 +1,7 @@
 //! Shared-VM Node async-hooks surface for the implemented host primitives.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const API: &str = quench_js_check::checked_js!(
     r#"(() => {

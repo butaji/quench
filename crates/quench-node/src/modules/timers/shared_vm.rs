@@ -1,6 +1,6 @@
 use crate::host::NodeHost;
 use crate::modules::event_loop::SharedCallback;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::time::Duration;
 
 const IMMEDIATE_ID: &str = "\0quench:shared-immediate-id";
@@ -266,7 +266,7 @@ fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedC
 }
 
 pub(crate) fn release_runtime_callback(
-    runtime: &mut rqj::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: SharedCallback,
 ) {
     runtime.release_root(callback.callback);
@@ -277,8 +277,8 @@ pub(crate) fn release_runtime_callback(
 }
 
 pub(crate) fn timer_callback(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     callback: &SharedCallback,
 ) -> Result<(), String> {
     match runtime.call_rooted(callback.callback, callback.receiver, &callback.args) {

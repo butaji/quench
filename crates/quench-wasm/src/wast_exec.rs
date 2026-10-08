@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use rqj::WasmSignature;
-use rqj::{
+use quench_runtime::WasmSignature;
+use quench_runtime::{
     Runtime, SystemHost, WasmFunctionRef, WasmGlobalId, WasmMemoryId, WasmModuleId, WasmTableId,
     WasmValue,
 };
@@ -23,7 +23,7 @@ struct Instance {
     tag_exports: HashMap<String, WasmSignature>,
     tag_export_fingerprints: HashMap<String, String>,
     tag_export_indices: HashMap<String, u32>,
-    global_exports: HashMap<String, (u32, rqj::WasmType, bool)>,
+    global_exports: HashMap<String, (u32, quench_runtime::WasmType, bool)>,
     global_export_fingerprints: HashMap<String, String>,
     table_exports: HashMap<String, u32>,
     table_export_types: HashMap<String, crate::shared::TableImport>,
@@ -379,7 +379,7 @@ impl Store {
         module_name: &str,
         name: &str,
         signature: &WasmSignature,
-    ) -> Option<rqj::WasmTagId> {
+    ) -> Option<quench_runtime::WasmTagId> {
         let instance = self.named.get(module_name)?;
         if instance.tag_exports.get(name)? != signature {
             return None;
@@ -993,13 +993,13 @@ fn core_ret_matches(want: &WastRetCore, got: WasmValue) -> bool {
             WasmValue::FuncRef(Some(_)) | WasmValue::ExternRef(Some(_)),
         ) => true,
         (WastRetCore::RefArray, WasmValue::FuncRef(Some(reference))) => {
-            reference >> rqj::WASM_GC_REFERENCE_CLASS_SHIFT == rqj::WASM_GC_REFERENCE_ARRAY_CLASS
+            reference >> quench_runtime::WASM_GC_REFERENCE_CLASS_SHIFT == quench_runtime::WASM_GC_REFERENCE_ARRAY_CLASS
         }
         (WastRetCore::RefStruct, WasmValue::FuncRef(Some(reference))) => {
-            reference >> rqj::WASM_GC_REFERENCE_CLASS_SHIFT == rqj::WASM_GC_REFERENCE_STRUCT_CLASS
+            reference >> quench_runtime::WASM_GC_REFERENCE_CLASS_SHIFT == quench_runtime::WASM_GC_REFERENCE_STRUCT_CLASS
         }
         (WastRetCore::RefFunc(None), WasmValue::FuncRef(Some(reference))) => {
-            reference >> rqj::WASM_GC_REFERENCE_CLASS_SHIFT == 0
+            reference >> quench_runtime::WASM_GC_REFERENCE_CLASS_SHIFT == 0
         }
         (
             WastRetCore::RefFunc(Some(wast::token::Index::Num(want, _))),
