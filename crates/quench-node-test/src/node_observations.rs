@@ -3,7 +3,8 @@
 use crate::{
     case_process::{observe_case, observe_command, CaseObservation, DEFAULT_CASE_TIMEOUT_SECS},
     inventory::{NodeInventory, ObservationInput},
-    reader::{fixture_flags, NodeOutcome},
+    fixture_metadata::fixture_flags,
+    outcome::NodeOutcome,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

@@ -105,7 +105,7 @@ pub fn observe_parallel_case(
 ) -> Result<CaseObservation, String> {
     let source = fs::read_to_string(fixture)
         .map_err(|error| format!("read {}: {error}", fixture.display()))?;
-    let metadata = crate::reader::fixture_metadata(&source);
+    let metadata = crate::fixture_metadata::fixture_metadata(&source);
     observe_case_with_environment(executable, fixture, timeout, &metadata.env, true)
 }
 

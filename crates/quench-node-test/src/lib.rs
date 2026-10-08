@@ -11,14 +11,13 @@
 
 pub mod case_process;
 pub mod compat_cli;
+mod fixture_metadata;
 pub mod inventory;
 pub(crate) mod node_observations;
+mod outcome;
 pub mod parallel_profile;
-pub mod reader;
-pub mod runner;
 pub mod shared_runner;
 pub mod stages;
 
-pub use reader::{NodeFixture, NodeOutcome, NodeRunner};
-pub use runner::{run_file, NodeTestRunner};
+pub use outcome::NodeOutcome;
 pub use stages::{list_stages, resolve_stages, NodeStage, ResolvedStage};

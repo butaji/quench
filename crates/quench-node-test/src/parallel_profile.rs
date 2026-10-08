@@ -150,3 +150,48 @@ fn validate(entries: &[Entry], parallel_root: &std::path::Path) -> Result<(), St
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{validate, Entry};
+    use std::fs;
+
+    fn entry(name: &str) -> Entry {
+        Entry {
+            name: name.to_owned(),
+            profiles: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn manifest_validation_rejects_duplicates_unsafe_paths_and_unknown_extensions() {
+        let root =
+            std::env::temp_dir().join(format!("quench-node-manifest-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("test-a.js"), "").unwrap();
+        fs::write(root.join("test-b.txt"), "").unwrap();
+        assert!(validate(&[entry("test-a.js"), entry("test-a.js")], &root).is_err());
+        assert!(validate(&[entry("test-b.txt")], &root).is_err());
+        for name in [
+            "../test-a.js".to_string(),
+            root.join("test-a.js").display().to_string(),
+        ] {
+            let error = validate(&[entry(&name)], &root).unwrap_err();
+            assert!(error.contains("relative to the parallel suite"));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn manifest_validation_accepts_all_fixture_extensions() {
+        let root =
+            std::env::temp_dir().join(format!("quench-node-manifest-valid-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        for name in ["test-a.js", "test-b.mjs", "test-c.cjs"] {
+            fs::write(root.join(name), "").unwrap();
+        }
+        let entries = ["test-a.js", "test-b.mjs", "test-c.cjs"].map(entry);
+        assert!(validate(&entries, &root).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+}
