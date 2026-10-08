@@ -176,6 +176,17 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return typeof encoding === "string" && canonicalEncoding(encoding) !== undefined;
     }
 
+    static compare(left, right) {
+      if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
+        throw codedTypeError("The \"buf1\" and \"buf2\" arguments must be an instance of Buffer or Uint8Array", "ERR_INVALID_ARG_TYPE");
+      }
+      const length = Math.min(left.length, right.length);
+      for (let index = 0; index < length; index++) {
+        if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+      }
+      return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
+    }
+
     toString(encoding = "utf8", start = 0, end = this.length) {
       const normalized = normalizeEncoding(encoding);
       const index = (value, fallback) => {
@@ -187,6 +198,57 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       const first = index(start, 0);
       const last = Math.max(first, index(end, 0));
       return decode(Array.from(this.subarray(first, last)), normalized);
+    }
+
+    write(value, offset, length, encoding) {
+      if (typeof value !== "string") {
+        throw codedTypeError('The "string" argument must be of type string', "ERR_INVALID_ARG_TYPE");
+      }
+      if (typeof offset === "string") {
+        encoding = offset;
+        offset = 0;
+        length = this.length;
+      } else if (typeof length === "string") {
+        encoding = length;
+        length = undefined;
+      }
+      if (offset === undefined) offset = 0;
+      if (typeof offset !== "number") {
+        throw codedTypeError('The "offset" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+      }
+      if (!Number.isInteger(offset) || offset < 0 || offset > this.length) {
+        const error = new RangeError(`The value of "offset" is out of range. It must be >= 0 && <= ${this.length}. Received ${offset}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      if (length === undefined) length = this.length - offset;
+      if (typeof length !== "number") {
+        throw codedTypeError('The "length" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+      }
+      if (!Number.isInteger(length) || length < 0 || length > this.length - offset) {
+        const error = new RangeError(`The value of "length" is out of range. It must be >= 0 && <= ${this.length - offset}. Received ${length}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      const normalized = normalizeEncoding(encoding === undefined ? "utf8" : encoding);
+      const bytes = encode(value, normalized);
+      let count = Math.min(bytes.length, length);
+      if (normalized === "utf8" && count < bytes.length) {
+        let lead = count;
+        while (lead > 0 && (bytes[lead - 1] & 0xC0) === 0x80) lead--;
+        if (lead < count) {
+          const first = bytes[lead - 1];
+          const width = first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
+          if (lead - 1 + width > count) count = lead - 1;
+        } else if (count > 0) {
+          const first = bytes[count - 1];
+          const width = first < 0x80 ? 1 : first < 0xE0 ? 2 : first < 0xF0 ? 3 : 4;
+          if (count - 1 + width > count) count--;
+        }
+      }
+      if (normalized === "utf16le") count -= count % 2;
+      this.set(bytes.subarray ? bytes.subarray(0, count) : bytes.slice(0, count), offset);
+      return count;
     }
 
     slice(start = 0, end = this.length) {
@@ -205,6 +267,13 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
         if (this[index] !== other[index]) return false;
       }
       return true;
+    }
+
+    compare(target, targetStart = 0, targetEnd = target?.length ?? 0, thisStart = 0, thisEnd = this.length) {
+      if (!(target instanceof Uint8Array)) {
+        throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
+      }
+      return Buffer.compare(this.subarray(thisStart, thisEnd), target.subarray(targetStart, targetEnd));
     }
   }
 
@@ -353,6 +422,20 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       Buffer.prototype[`write${alias}`] = writeMethod;
     }
   }
+  const legacyWrite = (encoding) => function(value, offset, length) {
+    offset = offset === undefined ? 0 : offset;
+    length = length === undefined ? this.length - offset : length;
+    if (typeof offset !== "number" || typeof length !== "number" ||
+        offset < 0 || length < 0 || offset + length > this.length) {
+      const error = new RangeError("Attempt to access memory outside buffer bounds");
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    return this.write(value, offset, length, encoding);
+  };
+  Buffer.prototype.asciiWrite = legacyWrite("ascii");
+  Buffer.prototype.latin1Write = legacyWrite("latin1");
+  Buffer.prototype.utf8Write = legacyWrite("utf8");
 
   // Node exposes Buffer's static API as enumerable own properties. Packages
   // such as safer-buffer derive their constructor view with `for...in`.
