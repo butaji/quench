@@ -336,6 +336,30 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync
   });
 }"#);
 
+const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(readFileSync) => function readFile(path, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const encoding = typeof options === "string" ? options : options?.encoding;
+  if (encoding != null && !Buffer.isEncoding(encoding)) {
+    const error = new TypeError(`The "${typeof options === "string" ? "encoding" : "options.encoding"}" argument is invalid. Received ${String(encoding)}`);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = path.pathname;
+  queueMicrotask(() => {
+    try { Reflect.apply(callback, undefined, [null, readFileSync(path, options)]); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#);
+
 const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) => {
   function realpath(path, options, callback) {
     if (typeof options === "function") callback = options;
@@ -641,6 +665,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.object_rooted()?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
+    let read_file_factory = context.evaluate_script_rooted(
+        ASYNC_READ_FILE_FACTORY,
+        "node:fs/shared-async-read-file.js",
+    )?;
+    let undefined = context.undefined();
+    let read_file_async = context.call_rooted(read_file_factory, undefined, &[read_file])?;
+    set(context, module, "readFile", read_file_async)?;
     let stat_sync = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     set(context, module, "statSync", stat_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
