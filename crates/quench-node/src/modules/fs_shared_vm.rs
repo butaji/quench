@@ -1029,6 +1029,25 @@ const ASYNC_RENAME_API: &str = r#"(renameSync) => {
   };
 }"#;
 
+const ASYNC_UNLINK_API: &str = r#"(unlinkSync) => {
+  return function unlink(path, callback) {
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { unlinkSync(path); Reflect.apply(callback, undefined, [null]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
 const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
   return function lstat(path, options, callback) {
     if (typeof options === 'function') {
@@ -1356,6 +1375,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let rename = context.call_rooted(rename_factory, undefined, &[rename_sync])?;
     set(context, module, "rename", rename)?;
+    let unlink_sync = get(context, module, "unlinkSync")?;
+    let unlink_factory = context.evaluate_script_rooted(
+        ASYNC_UNLINK_API,
+        "node:fs/shared-async-unlink.js",
+    )?;
+    let unlink = context.call_rooted(unlink_factory, undefined, &[unlink_sync])?;
+    set(context, module, "unlink", unlink)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let fstat_sync = get(context, module, "fstatSync")?;
@@ -1416,6 +1442,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let rename_promise =
         context.call_rooted(rename_promise_factory, undefined, &[rename_sync])?;
     set(context, promises, "rename", rename_promise)?;
+    let unlink_promise_factory = context.evaluate_script_rooted(
+        "(unlinkSync) => (...args) => Promise.resolve().then(() => unlinkSync(...args))",
+        "node:fs/promises/shared-unlink.js",
+    )?;
+    let unlink_promise =
+        context.call_rooted(unlink_promise_factory, undefined, &[unlink_sync])?;
+    set(context, promises, "unlink", unlink_promise)?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
         "node:fs/shared-access-promise.js",
