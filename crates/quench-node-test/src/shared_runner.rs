@@ -1,10 +1,7 @@
 //! Shared-VM worker adapter for the inventory-driven compatibility runner.
 
 use crate::NodeOutcome;
-use quench_node::{
-    shared_run::{execute_shared, SharedCompletion, SharedInput},
-    EntryGoal,
-};
+use quench_node::shared_run::{execute_shared, EntryGoal, SharedCompletion, SharedInput};
 use std::path::Path;
 
 pub fn run_file(path: &Path) -> NodeOutcome {

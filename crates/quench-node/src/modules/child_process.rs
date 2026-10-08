@@ -36,7 +36,7 @@ pub(crate) fn shell_output(command: &str, options: Option<&Value>) -> std::io::R
     }
     clear_worker_markers(&mut process);
     if uses_host_exec {
-        process.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        process.env(crate::shared_run::CHILD_RUNNER_ENV, "1");
         process.env("QUENCH_PARENT_PID", std::process::id().to_string());
     }
     let process = process
@@ -311,7 +311,7 @@ pub fn spawn_sync(
     let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
     if is_host_exec {
-        cmd.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        cmd.env(crate::shared_run::CHILD_RUNNER_ENV, "1");
     }
 
     let mut input: Option<Vec<u8>> = None;
@@ -357,7 +357,7 @@ pub fn spawn_sync(
     // pass the parent as an explicit fact after option.env has been applied.
     clear_worker_markers(&mut cmd);
     if is_host_exec {
-        cmd.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        cmd.env(crate::shared_run::CHILD_RUNNER_ENV, "1");
         cmd.env("QUENCH_PARENT_PID", std::process::id().to_string());
         if let Some(eval_index) = child_args
             .iter()
@@ -519,7 +519,7 @@ fn run_compat_test_child(args: &[String], options: Option<&Value>) -> Result<Val
     let mut command = std::process::Command::new(executable);
     command.arg(fixture).args(args.iter().skip(index + 1));
     clear_worker_markers(&mut command);
-    command.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+    command.env(crate::shared_run::CHILD_RUNNER_ENV, "1");
     let output = command
         .output()
         .map_err(|error| VmError::EvalError(error.to_string()))?;

@@ -1,10 +1,18 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
-use crate::{host::EntryGoal, NodeHost};
+use crate::host::NodeHost;
 use quench_runtime_next::{Engine, ExecutionRequest, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
+/// Select the child process's raw stdout/stderr boundary for Quench workers.
+pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryGoal {
+    Node,
+    CommonJs,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SharedCompletion {

@@ -145,7 +145,7 @@ fn observe_case_with_environment(
         .arg(WORKER_OPTION)
         .arg(fixture)
         .arg(&result)
-        .env(quench_node::modules::process::CHILD_RUNNER_ENV, "1");
+        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
     command.envs(env.iter().cloned());
     if skip_flag_check {
         // The official Node test runner sets this after applying fixture Env.
