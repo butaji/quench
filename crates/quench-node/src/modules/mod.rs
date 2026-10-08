@@ -22,6 +22,7 @@ pub mod console;
 pub mod crypto;
 pub mod crypto_cipher;
 pub mod crypto_dh;
+pub(crate) mod crypto_sha1;
 pub mod deep_equal;
 pub mod diagnostics_channel;
 pub mod dns;
