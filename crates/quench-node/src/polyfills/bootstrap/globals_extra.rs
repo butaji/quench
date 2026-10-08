@@ -301,6 +301,10 @@ if (typeof globalThis.URLSearchParams !== "function") {
       return this._pairs.map(([name, value]) => `${encodeFormComponent(name)}=${encodeFormComponent(value)}`).join("&");
     }
   }
+  const URLSearchParamsIteratorPrototype = Object.create(Object.prototype);
+  Object.defineProperty(URLSearchParamsIteratorPrototype, Symbol.toStringTag, {
+    value: "URLSearchParams Iterator",
+  });
   const makeIterator = (pairs, kind) => {
     let index = 0;
     const iterator = {
@@ -323,7 +327,7 @@ if (typeof globalThis.URLSearchParams !== "function") {
         return `URLSearchParams Iterator {\n  ${values.join(",\n  ")} }`;
       },
     };
-    Object.defineProperty(iterator, Symbol.toStringTag, { value: "URLSearchParams Iterator" });
+    Object.setPrototypeOf(iterator, URLSearchParamsIteratorPrototype);
     return iterator;
   };
   Object.defineProperty(URLSearchParams.prototype, "entries", { enumerable: true });
