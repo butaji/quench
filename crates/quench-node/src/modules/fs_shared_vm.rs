@@ -578,7 +578,7 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   };
 }"#;
 
-const EXISTS_API: &str = r#"(statSync, accessHost) => {
+const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost) => {
   const validatePath = (path) => {
     if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
     const received = path === null || path === undefined
@@ -592,6 +592,44 @@ const EXISTS_API: &str = r#"(statSync, accessHost) => {
   };
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
+  const normalizeMode = (mode) => {
+    if (typeof mode === 'string') {
+      const parsed = Number.parseInt(mode, 8);
+      if (Number.isNaN(parsed)) {
+        const error = new TypeError('The "mode" argument must be a valid integer');
+        error.code = 'ERR_INVALID_ARG_VALUE';
+        throw error;
+      }
+      return parsed;
+    }
+    if (typeof mode !== 'number') {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    return mode;
+  };
+  function chmodSync(path, mode) {
+    validatePath(path);
+    return chmodHost(normalizePath(path), normalizeMode(mode));
+  }
+  function chmod(path, mode, callback) {
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    validatePath(path);
+    const normalizedMode = normalizeMode(mode);
+    queueMicrotask(() => {
+      try {
+        chmodHost(normalizePath(path), normalizedMode);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  }
   function accessSync(path, mode = 0) {
     validatePath(path);
     if (typeof mode !== 'number') {
@@ -642,7 +680,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost) => {
       }
     });
   }
-  return { access, accessSync, exists, existsSync };
+  return { access, accessSync, chmod, chmodSync, exists, existsSync };
 }"#;
 
 const UV_FS_SYMLINK_DIR: i32 = 1;
@@ -800,15 +838,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
     let access_host = context.host_function(crate::host::shared_vm::operation("fsAccessSync"))?;
-    let exists_api = context.call_rooted(exists_factory, undefined, &[stat_sync, access_host])?;
+    let chmod_host = context.host_function(crate::host::shared_vm::operation("fsChmodSync"))?;
+    let exists_api = context.call_rooted(
+        exists_factory,
+        undefined,
+        &[stat_sync, access_host, chmod_host],
+    )?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
     let access = get(context, exists_api, "access")?;
     let access_sync = get(context, exists_api, "accessSync")?;
+    let chmod = get(context, exists_api, "chmod")?;
+    let chmod_sync = get(context, exists_api, "chmodSync")?;
     set(context, module, "exists", exists)?;
     set(context, module, "existsSync", exists_sync)?;
     set(context, module, "access", access)?;
     set(context, module, "accessSync", access_sync)?;
+    set(context, module, "chmod", chmod)?;
+    set(context, module, "chmodSync", chmod_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
     let readdir_sync = make_readdir_sync(context)?;
@@ -872,6 +919,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let access_promise = context.call_rooted(access_promise_factory, undefined, &[access_sync])?;
     set(context, promises, "access", access_promise)?;
+    let chmod_promise_factory = context.evaluate_script_rooted(
+        "(chmodSync) => (...args) => Promise.resolve().then(() => chmodSync(...args))",
+        "node:fs/shared-chmod-promise.js",
+    )?;
+    let chmod_promise = context.call_rooted(chmod_promise_factory, undefined, &[chmod_sync])?;
+    set(context, promises, "chmod", chmod_promise)?;
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;

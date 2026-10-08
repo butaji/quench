@@ -3,7 +3,11 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
-use std::{ffi::CString, os::unix::ffi::OsStrExt};
+use std::{
+    ffi::CString,
+    os::unix::ffi::OsStrExt,
+    os::unix::fs::PermissionsExt,
+};
 
 #[cfg(not(unix))]
 const S_IF_DIRECTORY: f64 = 0o040000 as f64;
@@ -133,7 +137,35 @@ pub(crate) fn access_sync(
     let result = std::fs::metadata(&path).map(|_| ());
     match result {
         Ok(()) => Ok(context.undefined()),
-        Err(error) => Err(access_error(context, error, &path)?),
+        Err(error) => Err(path_error(context, error, &path, "access")?),
+    }
+}
+
+pub(crate) fn chmod_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as u32;
+    #[cfg(unix)]
+    let result = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "chmod")?),
     }
 }
 
@@ -418,10 +450,11 @@ fn stat_error(
     Ok(context.throw(exception))
 }
 
-fn access_error(
+fn path_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: io::Error,
     path: &str,
+    syscall: &str,
 ) -> Result<RootedError, RootedError> {
     let code = error_code(&error);
     let description = match error.kind() {
@@ -430,9 +463,9 @@ fn access_error(
         io::ErrorKind::NotADirectory => "not a directory",
         _ => "input/output error",
     };
-    let exception = context.error_rooted(&format!("{code}: {description}, access '{path}'"))?;
+    let exception = context.error_rooted(&format!("{code}: {description}, {syscall} '{path}'"))?;
     set_string(context, exception, "code", code)?;
-    set_string(context, exception, "syscall", "access")?;
+    set_string(context, exception, "syscall", syscall)?;
     set_string(context, exception, "path", path)?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
