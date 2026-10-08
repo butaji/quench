@@ -109,7 +109,7 @@ fn execute_shared_on_worker(
                 .requested_exit_code()
                 .is_some()
             {
-                Ok(())
+                crate::modules::process_shared_vm::finish_requested_exit(&mut runtime, &program)
             } else {
                 let message = runtime.format_error(&program, &error);
                 let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
