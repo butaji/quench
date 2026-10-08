@@ -30,6 +30,28 @@ const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path
   });
 }"#);
 
+const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync) => function readdir(path, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  queueMicrotask(() => {
+    let entries;
+    try {
+      entries = readdirSync(path, options);
+    } catch (error) {
+      Reflect.apply(callback, undefined, [error]);
+      return;
+    }
+    Reflect.apply(callback, undefined, [null, entries]);
+  });
+}"#);
+
 const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) => {
   function realpath(path, options, callback) {
     if (typeof options === "function") callback = options;
@@ -279,6 +301,27 @@ fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Roo
     Ok(constants)
 }
 
+fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let read_directory =
+        context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
+    let factory =
+        context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(factory, undefined, &[read_directory])
+}
+
+fn make_readdir_async(
+    context: &mut NativeContext<'_, NodeHost>,
+    readdir_sync: RootId,
+) -> Result<RootId, RootedError> {
+    let factory = context.evaluate_script_rooted(
+        ASYNC_READDIR_FACTORY,
+        "node:fs/shared-async-readdir.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(factory, undefined, &[readdir_sync])
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -287,11 +330,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "statSync", stat_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
-    let readdir_host = context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
-    let readdir_factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
-    let undefined = context.undefined();
-    let readdir_sync = context.call_rooted(readdir_factory, undefined, &[readdir_host])?;
+    let readdir_sync = make_readdir_sync(context)?;
     set(context, module, "readdirSync", readdir_sync)?;
+    let readdir = make_readdir_async(context, readdir_sync)?;
+    set(context, module, "readdir", readdir)?;
     let readlink_sync = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     set(context, module, "readlinkSync", readlink_sync)?;
     let realpath_sync = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
@@ -345,7 +387,7 @@ pub(crate) fn promises_module(
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     let stat = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let lstat = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
-    let readdir = context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
+    let readdir = make_readdir_sync(context)?;
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     let undefined = context.undefined();
