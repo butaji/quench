@@ -2150,6 +2150,8 @@ impl<'a> Compiler<'a> {
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
+            } else {
+                Self::specialize_plain_local_operations(function, &self.atoms);
             }
         }
         let register_roots = liveness::derive(
@@ -2732,6 +2734,68 @@ impl<'a> Compiler<'a> {
             DispatchClass::Numeric
         } else {
             DispatchClass::General
+        }
+    }
+
+    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &[Rc<str>]) {
+        if !function.plain_local_context_is_safe() {
+            return;
+        }
+
+        let mut tdz_slots = vec![false; usize::from(function.locals)];
+        for instruction in &function.code {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for instruction in &function.wide {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+
+        let plain_slots: Vec<_> = (0..usize::from(function.locals))
+            .map(|slot| {
+                let Some(atom) = function.local_atoms.get(slot) else {
+                    return false;
+                };
+                atoms.get(*atom as usize).is_some_and(|name| {
+                    function.plain_local_slot_is_safe(slot, name, tdz_slots[slot])
+                })
+            })
+            .collect();
+
+        for instruction in &mut function.code {
+            match instruction.op() {
+                Op::LoadLocal | Op::StoreLocal
+                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                {
+                    instruction.set_op(if instruction.op() == Op::LoadLocal {
+                        Op::LoadLocalPlain
+                    } else {
+                        Op::StoreLocalPlain
+                    });
+                }
+                _ => {}
+            }
+        }
+        for instruction in &mut function.wide {
+            match instruction.op() {
+                Op::LoadLocal | Op::StoreLocal
+                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                {
+                    instruction.set_op(if instruction.op() == Op::LoadLocal {
+                        Op::LoadLocalPlain
+                    } else {
+                        Op::StoreLocalPlain
+                    });
+                }
+                _ => {}
+            }
         }
     }
 }

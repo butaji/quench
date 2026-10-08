@@ -57,6 +57,10 @@ impl<H: Host> Vm<H> {
                     })?;
                 self.write(f, i.result_register(), value);
             }
+            Op::LoadLocalPlain => {
+                let value = self.frames[f].locals[i.local_slot()];
+                self.write(f, i.result_register(), value);
+            }
             Op::LoadLocal | Op::LoadEnvLocal => {
                 let value = self.load_local_binding(p, f, i.local_slot(), None)?;
                 self.write(f, i.result_register(), value);
@@ -106,6 +110,13 @@ impl<H: Host> Vm<H> {
                 }
                 self.mirror_global_lexical_binding(p, f, slot, value);
                 self.mapped_argument_store(p, f, slot, value);
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
+                }
+            }
+            Op::StoreLocalPlain => {
+                let value = self.read(f, i.register_a());
+                self.frames[f].locals[i.local_slot()] = value;
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }

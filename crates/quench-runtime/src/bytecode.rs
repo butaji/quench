@@ -653,6 +653,8 @@ opcodes!(
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
 
 );
 
@@ -785,6 +787,54 @@ pub(crate) struct SourcePosition {
 impl Function {
     pub(crate) fn arguments_are_mapped(&self) -> bool {
         !self.strict && self.simple_parameters
+    }
+
+    pub(crate) fn plain_local_context_is_safe(&self) -> bool {
+        self.parent.is_some()
+            && !self.is_async
+            && !self.is_generator
+            && !self.is_class_constructor
+            && !self.class_field_initializer
+            && self.simple_parameters
+            && self.arguments_slot.is_none()
+            && self.code.iter().all(|instruction| {
+                !matches!(
+                    instruction.op(),
+                    Op::MakeClosure
+                        | Op::CallDirectEvalArray
+                        | Op::LoadEnvLocal
+                        | Op::StoreEnvLocal
+                        | Op::ResolveName
+                ) && !(instruction.op() == Op::Call && instruction.direct_eval())
+            })
+            && self.wide.iter().all(|instruction| {
+                !matches!(
+                    instruction.op(),
+                    Op::MakeClosure
+                        | Op::CallDirectEvalArray
+                        | Op::LoadEnvLocal
+                        | Op::StoreEnvLocal
+                        | Op::ResolveName
+                ) && !(instruction.op() == Op::Call
+                    && ImmediateLayout::direct_eval(instruction.imm()))
+            })
+    }
+
+    pub(crate) fn plain_local_slot_is_safe(
+        &self,
+        slot: usize,
+        atom_name: &str,
+        has_tdz: bool,
+    ) -> bool {
+        let Some(&atom) = self.local_atoms.get(slot) else {
+            return false;
+        };
+        slot >= usize::from(self.params)
+            && !has_tdz
+            && !self.is_self_binding_slot(slot)
+            && self.environment_atoms.contains(&atom)
+            && !self.lexical_atoms.contains(&atom)
+            && !atom_name.starts_with('\0')
     }
 
     pub(crate) fn is_self_binding_slot(&self, slot: usize) -> bool {
@@ -1196,14 +1246,16 @@ pub struct ResidualProgram {
 #[inline(never)]
 fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
     code.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
+        !matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain)
+            || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
+        !matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain)
+            || instruction.local_slot() < usize::from(locals)
     })
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 74;
+    pub const FORMAT_VERSION: u8 = 75;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

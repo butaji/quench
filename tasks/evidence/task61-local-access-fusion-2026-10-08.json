@@ -1,0 +1,135 @@
+{
+  "kind": "task61_local_access_and_binary_store_fusion_candidate",
+  "source_revision": "4198902f6914db063e378b6ce22fd823432c2562",
+  "source_tree": "dirty",
+  "format_version": 76,
+  "host": {
+    "os": "macOS 25.5 ARM64",
+    "cpu": "Apple M4",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)"
+  },
+  "local_plain_opcode_experiment": {
+    "baseline_binary_sha256": "f4b025f22fcfbfd294659b2c44f8d0d6b714fa4cf05d83b25b12aea0cfe80bad",
+    "candidate_binary_sha256": "21793d756496faa0e4a95a1a631eaf0d31aed6334dd47f83ddc80306ebed0e05",
+    "pair_runner": "tasks/evidence/task61-local-access-paired-2026-10-08.zsh",
+    "pair_runner_sha256": "60c19ce21a57ac9172001905177afa5b6871bf9b0e037889da8a3e5abc40d54f",
+    "raw_pairs": "tasks/evidence/task61-local-access-paired-final-2026-10-08.csv",
+    "raw_pairs_sha256": "5366fb8a46a6fb1c490b2a808f25417054c6dfae2bd0b2d73e3dcb6ca7d7b98a",
+    "pairs": 11,
+    "bootstrap": "100000 paired resamples; median paired percent delta; seed 61082026",
+    "local_add": {
+      "elapsed_median_delta_percent": -39.024,
+      "elapsed_95_percentile_interval": [-40.217, -36.585],
+      "elapsed_candidate_faster_pairs": 11,
+      "instructions_median_delta_percent": -29.889,
+      "instructions_95_percentile_interval": [-29.928, -29.887],
+      "instructions_candidate_lower_pairs": 11,
+      "max_rss_median_delta_bytes": 98304,
+      "max_rss_95_percentile_interval_bytes": [-16384, 262144]
+    },
+    "local_store": {
+      "elapsed_median_delta_percent": -47.170,
+      "elapsed_95_percentile_interval": [-48.276, -45.161],
+      "elapsed_candidate_faster_pairs": 11,
+      "instructions_median_delta_percent": -36.871,
+      "instructions_95_percentile_interval": [-36.913, -36.870],
+      "instructions_candidate_lower_pairs": 11,
+      "max_rss_median_delta_bytes": 147456,
+      "max_rss_95_percentile_interval_bytes": [-32768, 262144]
+    },
+    "test262": {
+      "command_profile": "iteration",
+      "stages": [1, 3, 8, "10-11", 14, 26, "60-63"],
+      "passed": 26412,
+      "failed": 0,
+      "reports": [
+        "target/iteration/task61-local-access-v75/stages-1-14.json",
+        "target/iteration/task61-local-access-v75/stage-26.json",
+        "target/iteration/task61-local-access-v75/stages-60-63.json"
+      ]
+    },
+    "node_oracle": {
+      "script": "tasks/evidence/task61-local-access-node-oracle-2026-10-08.cjs",
+      "script_sha256": "adaae3b62ae16d6cacce0f63aad258591597c014ebf577f936619bb1d59f7930",
+      "candidate_and_node_exit": 0,
+      "stdout_matches": true,
+      "stderr_empty": true
+    },
+    "candidate_source_sha256": {
+      "crates/quench-runtime/src/bytecode.rs": "e17db4f92bd3e92d097099fe65a67fe3df96a5c6f1f901f11334f8a17ca9e222",
+      "crates/quench-runtime/src/bytecode/validate.rs": "b459bc346a82e94068bf9ff5bcf2cd6d310dd69ac3391f5b5408e4416ba7b9f6",
+      "crates/quench-runtime/src/compile.rs": "d71c777df277e3f8c855ccede099fa6ce81d9e8c1e5bbe73c76862c199bbcd13",
+      "crates/quench-runtime/src/vm/dispatch.rs": "a45087e77ec698f1c66399d84c8a42293982121db2fb4300efb26982074bcbe1",
+      "crates/quench-runtime/src/vm/dispatch_numeric.rs": "b1b8c4b7d4d5cdaf3ce5c8c277edd3d0cfe1dc51afe5ff89b8672cf3b489606c",
+      "Cargo.lock": "02b0a61df0566b30cc3644995cbad9f142abac9c538a276a24cc9f502a1d6d14"
+    }
+  },
+  "binary_store_fusion_experiment": {
+    "baseline_binary_sha256": "21793d756496faa0e4a95a1a631eaf0d31aed6334dd47f83ddc80306ebed0e05",
+    "candidate_binary_sha256": "dffa7c1e72b9b39fb870744308a9f17423eecc227c0be54e8723a87c16d6581b",
+    "raw_pairs": "tasks/evidence/task61-local-binary-store-paired-2026-10-08.csv",
+    "raw_pairs_sha256": "647229629f27213b5cc2da6787df7ae10133425bae822f2d466e7dfe1bd03631",
+    "pair_runner": "tasks/evidence/task61-local-access-paired-2026-10-08.zsh",
+    "pair_runner_sha256": "60c19ce21a57ac9172001905177afa5b6871bf9b0e037889da8a3e5abc40d54f",
+    "pairs": 11,
+    "bootstrap": "100000 paired resamples; median paired percent delta; seed 61102026",
+    "local_add": {
+      "elapsed_median_delta_percent": -5.882,
+      "elapsed_95_percentile_interval": [-7.692, -4.000],
+      "elapsed_candidate_faster_pairs": 11,
+      "instructions_median_delta_percent": -5.090,
+      "instructions_95_percentile_interval": [-5.092, -5.090],
+      "instructions_candidate_lower_pairs": 11,
+      "max_rss_median_delta_percent": 1.340,
+      "max_rss_95_percentile_interval": [1.249, 1.500],
+      "max_rss_median_delta_bytes": 262144
+    },
+    "local_store_control": {
+      "elapsed_median_delta_percent": -3.333,
+      "instructions_median_delta_percent": 0.097,
+      "max_rss_median_delta_percent": 0.996,
+      "max_rss_median_delta_bytes": 196608
+    },
+    "test262": {
+      "passed": 8,
+      "failed": 0,
+      "cases": [
+        "addition/order-of-evaluation.js",
+        "addition/coerce-symbol-to-prim-invocation.js",
+        "addition/coerce-symbol-to-prim-err.js",
+        "addition/bigint-and-number.js",
+        "addition/bigint-errors.js",
+        "compound-assignment/add-eval-strict.js",
+        "compound-assignment/add-arguments-strict.js",
+        "compound-assignment/add-non-simple.js"
+      ],
+      "reports": [
+        "target/iteration/local-fusion-final-addition-order-of-evaluation.js.json",
+        "target/iteration/local-fusion-final-addition-coerce-symbol-to-prim-invocation.js.json",
+        "target/iteration/local-fusion-final-addition-coerce-symbol-to-prim-err.js.json",
+        "target/iteration/local-fusion-final-addition-bigint-and-number.js.json",
+        "target/iteration/local-fusion-final-addition-bigint-errors.js.json",
+        "target/iteration/local-fusion-final-compound-assignment-add-eval-strict.js.json",
+        "target/iteration/local-fusion-final-compound-assignment-add-arguments-strict.js.json",
+        "target/iteration/local-fusion-final-compound-assignment-add-non-simple.js.json"
+      ]
+    },
+    "node_oracle": {
+      "script": "tasks/evidence/task61-local-access-node-oracle-2026-10-08.cjs",
+      "script_sha256": "adaae3b62ae16d6cacce0f63aad258591597c014ebf577f936619bb1d59f7930",
+      "candidate_and_baseline_stdout_match": true,
+      "candidate_and_baseline_exit_match": true,
+      "node_difference": "Node adds ', use explicit conversions' to the mixed BigInt/Number TypeError; the same shorter Quench message is present in the plain-local baseline."
+    },
+    "candidate_source_sha256": {
+      "crates/quench-runtime/src/bytecode.rs": "d11f0d3d99439e4521213297ce28f9fde1c56f6256c2313a64f600392f77f159",
+      "crates/quench-runtime/src/bytecode/validate.rs": "8c6adb0df3d8a3bae1fb57fc0cc51e52d2984e03c3c9c36b7436a16c44841bb7",
+      "crates/quench-runtime/src/compile/numeric.rs": "6ff34a38165430a00a2da22a429291e2491ab1b9a9be96dee24e0348c65d6d32",
+      "crates/quench-runtime/src/compile.rs": "51dd21a743f3e625a3bb57752f2f35d0e2721ca8f78f536dfb67e3e7c303d2d7",
+      "crates/quench-runtime/src/vm/dispatch.rs": "90f411f5ad81c755a6ade50f034d6bd91b589a2588864092e54ad21682c004f2",
+      "Cargo.lock": "02b0a61df0566b30cc3644995cbad9f142abac9c538a276a24cc9f502a1d6d14"
+    },
+    "decision": "Retain as a speed candidate: local_add improved in all 11 pairs and retired instructions fell about 5.1%; the paired peak-RSS interval also shows a small increase. This is microbenchmark evidence, not V8-v7 gate qualification."
+  }
+}

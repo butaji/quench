@@ -107,6 +107,10 @@ impl<H: Host> Vm<H> {
             self.profile.opcode(ins.op() as usize);
             let outcome = (|| -> Result<StepResult, JsError> {
                 match ins.op() {
+                    Op::LoadLocalPlain => {
+                        let value = self.frames[frame].locals[ins.local_slot()];
+                        self.write(frame, ins.result_register(), value);
+                    }
                     Op::LoadLocal => {
                         let local = ins.local_slot();
                         let value = self.load_local_binding(p, frame, local, None)?;
@@ -135,6 +139,13 @@ impl<H: Host> Vm<H> {
                         )?;
                         self.frames[frame].locals[local] = value;
                         self.mirror_global_lexical_binding(p, frame, local, value);
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
+                    }
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        self.frames[frame].locals[ins.local_slot()] = value;
                         if let Some(register) = ins.optional_register_b() {
                             self.write(frame, register, value);
                         }

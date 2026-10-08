@@ -357,6 +357,39 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
+            let mut tdz_slots = vec![false; usize::from(function.locals)];
+            for instruction in &function.code {
+                if instruction.op() == super::Op::InitializeTdz
+                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                {
+                    *slot = true;
+                }
+            }
+            for instruction in &function.wide {
+                if instruction.op() == super::Op::InitializeTdz
+                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                {
+                    *slot = true;
+                }
+            }
+            let plain_local_context_safe = function.plain_local_context_is_safe();
+            let plain_local_slots: Vec<_> = (0..usize::from(function.locals))
+                .map(|slot| {
+                    function
+                        .local_atoms
+                        .get(slot)
+                        .and_then(|atom| usize::try_from(*atom).ok())
+                        .filter(|atom| *atom < self.atoms.len())
+                        .is_some_and(|atom| {
+                            plain_local_context_safe
+                                && function.plain_local_slot_is_safe(
+                                    slot,
+                                    &self.atoms[atom],
+                                    tdz_slots[slot],
+                                )
+                        })
+                })
+                .collect();
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
                     .functions
@@ -520,6 +553,18 @@ impl ResidualProgram {
                 };
                 if instruction.op().is_wide_marker() {
                     return Err(format!("function {index} contains nested wide instruction"));
+                }
+                if matches!(
+                    instruction.op(),
+                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
+                ) && !plain_local_slots
+                    .get(instruction.local_slot())
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return Err(format!(
+                        "function {index} has an unproven plain-local operation"
+                    ));
                 }
                 if !instruction.result_flags_valid() {
                     return Err(format!("function {index} result flags are invalid"));
