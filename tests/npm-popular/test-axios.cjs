@@ -11,6 +11,12 @@ const adapter = async (config) => ({
   config,
 });
 
+const search = new URLSearchParams({ q: 'node compatibility', page: 2 });
+assert.strictEqual(
+  axios.getUri({ url: 'https://example.test/search', params: search }),
+  'https://example.test/search?q=node+compatibility&page=2',
+);
+
 axios.get('https://example.test/items', { adapter })
   .then((response) => {
     assert.strictEqual(response.status, 200);
