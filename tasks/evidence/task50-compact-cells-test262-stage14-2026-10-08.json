@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "provenance": {
+    "source_revision": "f9d15f399e1c8af225d316f22f6f0c77e79b24b7",
+    "source_dirty": true,
+    "binary": "/workspace/quench/target/production/run-stages",
+    "host": "linux-x86_64",
+    "timeout_ms": 300000,
+    "jobs": 4
+  },
+  "total": 14,
+  "passed": 14,
+  "failed": 0,
+  "stages": {
+    "14": {
+      "passed": 14,
+      "total": 14,
+      "failed": 0
+    }
+  },
+  "families": {},
+  "outcomes": [
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T1.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T2.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T3.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T4.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T5.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T6.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T7.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T8.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S10.2.2_A1_T9.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S11.1.2_A1_T1.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/S11.1.2_A1_T2.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/assign-to-global-undefined.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/static-init-invalid-await.js",
+      "stage": "14",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/identifier-resolution/unscopables.js",
+      "stage": "14",
+      "outcome": "pass"
+    }
+  ]
+}

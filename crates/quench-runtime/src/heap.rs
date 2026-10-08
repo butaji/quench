@@ -867,7 +867,7 @@ impl Heap {
                     ..
                 } => {
                     slots.len() * size_of::<EnvironmentSlot>()
-                        + with_objects.capacity() * size_of::<Value>()
+                        + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
                 Cell::BigInt(value) | Cell::Error(value) => value.capacity(),

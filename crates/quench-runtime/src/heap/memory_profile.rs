@@ -242,7 +242,7 @@ fn cell_bytes(cell: &Cell) -> usize {
                 ..
             } => {
                 slots.len() * size_of::<super::EnvironmentSlot>()
-                    + with_objects.capacity() * size_of::<Value>()
+                    + with_objects.len() * size_of::<Value>()
             }
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) | Cell::Error(value) => value.capacity(),

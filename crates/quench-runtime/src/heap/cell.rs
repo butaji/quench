@@ -1312,7 +1312,7 @@ pub(crate) enum Cell {
         done: bool,
         generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
     },
-    ArrayFromAsyncState(ArrayFromAsyncState),
+    ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     Proxy {
         object: Object,
         kind: ProxyKind,
@@ -1340,7 +1340,7 @@ pub(crate) enum Cell {
         function: u32,
         slots: EnvironmentSlots,
         dynamic_bindings: EnvironmentBindings,
-        with_objects: Vec<Value>,
+        with_objects: Box<[Value]>,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
@@ -1375,7 +1375,7 @@ pub(crate) enum Cell {
     Symbol(Option<String>),
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
-        object: Object,
+        object: Box<Object>,
         source: JsString,
         flags: String,
         matcher: Rc<quench_regexp::Regex>,
