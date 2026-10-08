@@ -1,10 +1,14 @@
 use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+  let warnedMkdtempX = false;
   const normalizePath = (path) =>
-    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
+    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
   const writeBytes = (data, options) => {
     const encoding = typeof options === 'string' ? options : options?.encoding;
     if (typeof data === 'string') return Buffer.from(data, encoding);
@@ -96,6 +100,14 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, rmSync, writeFileSync, openSync
         throw error;
       }
       return rmdirSync(normalizePath(path));
+    },
+    mkdtempSync(prefix) {
+      const normalized = normalizePath(prefix);
+      if (!warnedMkdtempX && typeof normalized === 'string' && normalized.endsWith('X')) {
+        warnedMkdtempX = true;
+        process.emitWarning('mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html');
+      }
+      return mkdtempSync(normalized);
     },
     rmSync(path, options) {
       return rmSync(normalizePath(path), options);
@@ -209,6 +221,7 @@ pub(crate) fn install(
 ) -> Result<(), RootedError> {
     let mkdir = context.host_function(crate::host::shared_vm::operation("fsMkdirSync"))?;
     let rmdir = context.host_function(crate::host::shared_vm::operation("fsRmdirSync"))?;
+    let mkdtemp = context.host_function(crate::host::shared_vm::operation("fsMkdtempSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -224,6 +237,7 @@ pub(crate) fn install(
         &[
             mkdir,
             rmdir,
+            mkdtemp,
             rm,
             write,
             open,
@@ -236,6 +250,7 @@ pub(crate) fn install(
     for (name, method) in [
         ("mkdirSync", "mkdirSync"),
         ("rmdirSync", "rmdirSync"),
+        ("mkdtempSync", "mkdtempSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),
@@ -433,6 +448,51 @@ pub(crate) fn rmdir_sync(
             },
         ),
     }
+}
+
+pub(crate) fn mkdtemp_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let prefix = path_argument(context, args.first().copied())?;
+    for _ in 0..100 {
+        let suffix = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed) & 0x00FF_FFFF;
+        let path = format!("{prefix}{suffix:06x}");
+        match std::fs::create_dir(&path) {
+            Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &path,
+                        std::fs::Permissions::from_mode(0o700),
+                    );
+                }
+                return Ok(context.string_rooted(&path));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return throw_operation_error(
+                    context,
+                    &ops::OperationError::Io {
+                        syscall: "mkdtemp",
+                        path,
+                        error,
+                    },
+                );
+            }
+        }
+    }
+    let path = prefix;
+    throw_operation_error(
+        context,
+        &ops::OperationError::Io {
+            syscall: "mkdtemp",
+            path,
+            error: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
+        },
+    )
 }
 
 pub(crate) fn rm_sync(
