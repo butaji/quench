@@ -2152,6 +2152,19 @@ impl<'a> Compiler<'a> {
                 numeric::apply(function, live.as_deref());
             } else {
                 Self::specialize_plain_local_operations(function, &self.atoms);
+                if function
+                    .code
+                    .iter()
+                    .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+                {
+                    let live = liveness::analyze(
+                        function,
+                        &self.method_sites,
+                        &self.field_sites,
+                        &self.superinstructions,
+                    );
+                    numeric::apply_plain_local_stores(function, live.as_deref());
+                }
             }
         }
         let register_roots = liveness::derive(
