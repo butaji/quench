@@ -38,6 +38,22 @@ impl ProcessCwd {
     }
 }
 
+/// Immutable startup argument vector shared by the legacy and shared Node
+/// adapters. The exposed JavaScript `process.argv` array is materialized from
+/// this host input and remains independently mutable.
+#[derive(Clone)]
+pub struct ProcessArgs(Rc<[String]>);
+
+impl ProcessArgs {
+    pub fn new(args: Vec<String>) -> Self {
+        Self(Rc::from(args))
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnhandledRejectionMode {
     Throw,
@@ -65,7 +81,9 @@ impl UnhandledRejectionMode {
 pub struct ProcessState {
     /// Monotonic origin for this logical Node process, shared by both adapters.
     started: std::time::Instant,
-    pub argv: Vec<String>,
+    /// Immutable host startup arguments; the shared adapter holds another
+    /// handle to this same backing store.
+    pub(crate) argv: ProcessArgs,
     pub exit_handlers: Vec<(Value, bool)>,
     pub before_exit_handlers: Vec<(Value, bool)>,
     /// `(handler, once)` — `once` handlers fire a single time.
@@ -121,10 +139,14 @@ impl Default for ProcessState {
 
 impl ProcessState {
     pub fn new(argv: Vec<String>) -> Self {
+        Self::with_shared_argv(ProcessArgs::new(argv))
+    }
+
+    pub(crate) fn with_shared_argv(argv: ProcessArgs) -> Self {
         // The first argv entry is the process identity exposed by Node.  It
         // must stay the same value as process.argv[0], even when the host is
         // embedded or driven by the compatibility runner.
-        let exec_path = argv.first().cloned().unwrap_or_default();
+        let exec_path = argv.as_slice().first().cloned().unwrap_or_default();
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
             started: std::time::Instant::now(),
@@ -163,6 +185,10 @@ impl ProcessState {
 
     pub fn uptime(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
+    }
+
+    pub fn argv(&self) -> &[String] {
+        self.argv.as_slice()
     }
 
     pub(crate) fn update_umask(&mut self, mask: u32) -> u32 {
