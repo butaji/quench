@@ -59,14 +59,6 @@ impl CaseObservation {
 
 /// Both runner binaries consume this private mode before parsing public options.
 pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
-    worker_entry_with(arguments, crate::runner::run_file)
-}
-
-/// Compiled worker entry for a runner binary with a statically selected engine.
-pub fn worker_entry_with(
-    arguments: &[String],
-    run_file: fn(&Path) -> NodeOutcome,
-) -> Option<ExitCode> {
     if arguments.first().map(String::as_str) != Some(WORKER_OPTION) {
         return None;
     }
@@ -74,7 +66,7 @@ pub fn worker_entry_with(
         eprintln!("invalid Node case-worker invocation");
         return Some(ExitCode::from(2));
     };
-    let outcome = run_file(Path::new(fixture));
+    let outcome = crate::shared_runner::run_file(Path::new(fixture));
     let code = match &outcome {
         NodeOutcome::Pass | NodeOutcome::Skip { .. } | NodeOutcome::GuestExit { .. } => {
             ExitCode::SUCCESS

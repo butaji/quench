@@ -203,12 +203,12 @@ See
 [task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
 
 Run the selected upstream Node `test/parallel` profile against the shared VM
-with the separately compiled `run-parallel-next` worker. Profile membership
+with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
 narrowly selects cases within that profile for affected-case checks.
 
 ```sh
-cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- \
+cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core --filter test-path-join.js
 ```
 
