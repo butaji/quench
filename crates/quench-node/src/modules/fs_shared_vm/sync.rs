@@ -84,7 +84,17 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, rmSync, writeFileSync, openSync
     mkdirSync(path, options) {
       return mkdirSync(normalizePath(path), options);
     },
-    rmdirSync(path) {
+    rmdirSync(path, options) {
+      if (options != null && typeof options !== 'object') {
+        const error = new TypeError('The "options" argument must be of type object.');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+      if (options?.recursive === true) {
+        const error = new TypeError('The recursive option is no longer supported.');
+        error.code = 'ERR_INVALID_ARG_VALUE';
+        throw error;
+      }
       return rmdirSync(normalizePath(path));
     },
     rmSync(path, options) {
