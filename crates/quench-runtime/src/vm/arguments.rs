@@ -98,6 +98,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
+        let Some(slot) = self
+            .object_data(object)
+            .and_then(Object::arguments_map)
+            .and_then(|mapping| mapping.get(index).copied())
+            .filter(|slot| *slot != u16::MAX)
+            .map(usize::from)
+        else {
+            return;
+        };
         let mut updates = Vec::new();
         for (frame_index, frame) in self.frames.iter().enumerate() {
             let has_arguments = if frame.captured {
@@ -105,14 +114,8 @@ impl<H: Host> Vm<H> {
             } else {
                 frame.locals.contains(&object)
             };
-            if has_arguments
-                && let Some(slot) = self
-                    .object_data(object)
-                    .and_then(Object::arguments_map)
-                    .and_then(|mapping| mapping.get(index).copied())
-                    .filter(|slot| *slot != u16::MAX)
-            {
-                updates.push((frame_index, usize::from(slot)));
+            if has_arguments {
+                updates.push((frame_index, slot));
             }
         }
         for (frame_index, slot) in updates {
