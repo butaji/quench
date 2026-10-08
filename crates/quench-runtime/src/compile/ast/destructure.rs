@@ -232,12 +232,7 @@ impl FunctionCompiler<'_, '_> {
                 if require_object {
                     self.emit(Op::RequireObjectCoercible, 0, object, 0, 0);
                 }
-                let converted = self.reg();
-                self.emit(Op::ToPropertyKey, converted, key, 0, 0);
-                AssignmentReference::Index {
-                    object,
-                    key: converted,
-                }
+                AssignmentReference::Index { object, key }
             }
             AssignmentReference::SuperIndex {
                 base,
