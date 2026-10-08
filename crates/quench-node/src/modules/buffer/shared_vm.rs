@@ -242,14 +242,14 @@ pub(crate) fn encode(
         )?);
     };
     let encoding_name = encoding(context, args.get(1).copied())?;
-    let Some(encoding) = crate::modules::buffer_enc::canonical_encoding(&encoding_name) else {
+    let Some(encoding) = crate::modules::buffer_codec::canonical_encoding(&encoding_name) else {
         return Err(type_error(
             context,
             &format!("Unknown encoding: {encoding_name}"),
             "ERR_UNKNOWN_ENCODING",
         )?);
     };
-    let bytes = crate::modules::buffer_enc::encode_str(&input, encoding);
+    let bytes = crate::modules::buffer_codec::encode_str(&input, encoding);
     number_array(context, &bytes)
 }
 
@@ -266,7 +266,7 @@ pub(crate) fn decode(
         )?);
     };
     let encoding = encoding(context, args.get(1).copied())?;
-    let Some(canonical) = crate::modules::buffer_enc::canonical_encoding(&encoding) else {
+    let Some(canonical) = crate::modules::buffer_codec::canonical_encoding(&encoding) else {
         return Err(type_error(
             context,
             &format!("Unknown encoding: {encoding}"),
@@ -289,7 +289,7 @@ pub(crate) fn decode(
                 .unwrap_or_default() as u8,
         );
     }
-    let units = crate::modules::buffer_enc::decode_units(&bytes, canonical);
+    let units = crate::modules::buffer_codec::decode_units(&bytes, canonical);
     Ok(context.string_units_rooted(&units))
 }
 
@@ -305,7 +305,7 @@ pub(crate) fn canonical_encoding(
         return Ok(context.undefined());
     };
     Ok(
-        match crate::modules::buffer_enc::canonical_encoding(&name) {
+        match crate::modules::buffer_codec::canonical_encoding(&name) {
             Some(name) => context.string_rooted(name),
             None => context.undefined(),
         },
