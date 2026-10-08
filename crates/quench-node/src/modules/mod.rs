@@ -28,6 +28,7 @@ pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod net_config;
 pub(crate) mod net_shared_vm;
+pub(crate) mod module_shared_vm;
 pub(crate) mod os_facts;
 pub(crate) mod os_shared_vm;
 pub(crate) mod path_algorithms;
