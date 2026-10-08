@@ -1,0 +1,319 @@
+{
+  "schema": 1,
+  "task": "62",
+  "kind": "pre_gate_v8v7_diagnostic_pilot",
+  "recorded_at": "2026-10-07",
+  "qualification_ready": false,
+  "scope": "One matched round across all eight pinned V8-v7 fixtures. Diagnostic only; not the eleven-round paired qualification.",
+  "command": "cargo run --release -p quench-bench -- --all --runs 1 --timeout-ms 300000 --quench target/production/quench-node --qjs /Users/admin/Code/GitHub/quickjs/qjs --bun /opt/homebrew/bin/bun --node /opt/homebrew/bin/node --out target/iteration/stageb-pilots/all-current-pin-2026-10-07.json",
+  "source": {
+    "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
+    "dirty": true,
+    "quench_binary_sha256": "664b003cc115e0c52d73a5c5f9b91bb67a61007d974c52978cd7233c63c091be",
+    "note": "The measured binary predates the final Node-arbitrated Annex B compiler change. No pinned V8-v7 fixture contains a block function named arguments, so that change does not affect these inputs. The report remains provisional because the source tree is dirty and this is one round."
+  },
+  "benchmark_corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "uname": "Darwin 192.168.1.22 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/Users/admin/Code/GitHub/quench-v2/target/production/quench-node",
+      "executable_sha256": "664b003cc115e0c52d73a5c5f9b91bb67a61007d974c52978cd7233c63c091be",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "jit_mode": "interpreter",
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/Users/admin/Code/GitHub/quickjs/qjs",
+      "executable_sha256": "60baacdd677a07f27b0aa95b9ad640de33c3442cbf65c9fb4d803017ab3c4811",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "jit_mode": "interpreter",
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+      "executable_sha256": "b36d2e9d9bd50e3a3b6a8f2d481839417d6600d4c1753411b094ee0da3222cef",
+      "version": "1.4.2",
+      "argv": [],
+      "jit_mode": "disabled-and-probed",
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+      "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "jit_mode": "disabled-and-probed",
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "raw_report": {
+    "path": "target/iteration/stageb-pilots/all-current-pin-2026-10-07.json",
+    "sha256": "6c359ba181a8e45c9459a0ac971f0e8a1446bf181d9160300d4dbfc66423972b"
+  },
+  "results": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "input_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 4163,
+          "max_rss_bytes": 27230208
+        },
+        "node": {
+          "score": 2366,
+          "max_rss_bytes": 44990464
+        },
+        "quench": {
+          "score": 128,
+          "max_rss_bytes": 33783808
+        },
+        "quickjs": {
+          "score": 2367,
+          "max_rss_bytes": 3244032
+        }
+      },
+      "best_reference_score": "bun",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "input_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 2107,
+          "max_rss_bytes": 29622272
+        },
+        "node": {
+          "score": 2510,
+          "max_rss_bytes": 50282496
+        },
+        "quench": {
+          "score": 60,
+          "max_rss_bytes": 32047104
+        },
+        "quickjs": {
+          "score": 1572,
+          "max_rss_bytes": 3145728
+        }
+      },
+      "best_reference_score": "node",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "input_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 8853,
+          "max_rss_bytes": 36175872
+        },
+        "node": {
+          "score": 11448,
+          "max_rss_bytes": 112476160
+        },
+        "quench": {
+          "score": 188,
+          "max_rss_bytes": 70746112
+        },
+        "quickjs": {
+          "score": 5089,
+          "max_rss_bytes": 17612800
+        }
+      },
+      "best_reference_score": "node",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "input_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 4768,
+          "max_rss_bytes": 18726912
+        },
+        "node": {
+          "score": 3480,
+          "max_rss_bytes": 49905664
+        },
+        "quench": {
+          "score": 52,
+          "max_rss_bytes": 35192832
+        },
+        "quickjs": {
+          "score": 4787,
+          "max_rss_bytes": 5652480
+        }
+      },
+      "best_reference_score": "quickjs",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "input_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 5940,
+          "max_rss_bytes": 26820608
+        },
+        "node": {
+          "score": 8312,
+          "max_rss_bytes": 52232192
+        },
+        "quench": {
+          "score": 192,
+          "max_rss_bytes": 33488896
+        },
+        "quickjs": {
+          "score": 4144,
+          "max_rss_bytes": 2834432
+        }
+      },
+      "best_reference_score": "node",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "input_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 1591,
+          "max_rss_bytes": 31375360
+        },
+        "node": {
+          "score": 5507,
+          "max_rss_bytes": 55148544
+        },
+        "quench": {
+          "score": 19,
+          "max_rss_bytes": 69238784
+        },
+        "quickjs": {
+          "score": 954,
+          "max_rss_bytes": 7946240
+        }
+      },
+      "best_reference_score": "node",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 4
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "input_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 3160,
+          "max_rss_bytes": 19841024
+        },
+        "node": {
+          "score": 2422,
+          "max_rss_bytes": 44777472
+        },
+        "quench": {
+          "score": 59,
+          "max_rss_bytes": 23822336
+        },
+        "quickjs": {
+          "score": 1939,
+          "max_rss_bytes": 2768896
+        }
+      },
+      "best_reference_score": "bun",
+      "lowest_reference_max_rss": "quickjs",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "input_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "output_equal": true,
+      "rounds": 1,
+      "samples": {
+        "bun": {
+          "score": 8915,
+          "max_rss_bytes": 57212928
+        },
+        "node": {
+          "score": 12819,
+          "max_rss_bytes": 400146432
+        },
+        "quench": {
+          "score": 976,
+          "max_rss_bytes": 309166080
+        },
+        "quickjs": {
+          "score": 8866,
+          "max_rss_bytes": 151224320
+        }
+      },
+      "best_reference_score": "node",
+      "lowest_reference_max_rss": "bun",
+      "quench_rank": {
+        "score": 4,
+        "rss": 3
+      }
+    }
+  ],
+  "finding": "All 8 outputs matched across engines. Quench ranked fourth in Score on all 8 and did not lead maximum RSS on any fixture; the largest combined gap is Splay. One round identifies candidate work only and establishes no stable ranking.",
+  "limits": [
+    "One sample per engine/fixture; no confidence intervals.",
+    "Dirty source and a provisional binary; not Stage A or Stage B qualification.",
+    "Reference engine JIT-off probes passed in preflight and were recorded in each engine record."
+  ]
+}

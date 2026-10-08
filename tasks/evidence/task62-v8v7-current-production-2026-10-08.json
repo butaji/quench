@@ -1,0 +1,131 @@
+{
+  "schema": 1,
+  "task": "62",
+  "kind": "pre_gate_production_v8v7_screen",
+  "recorded_at": "2026-10-08",
+  "qualification_ready": false,
+  "scope": "One matched round across all eight pinned V8-v7 fixtures using the rebuilt production shared-VM binary. Diagnostic only.",
+  "command": "target/production/quench-bench --all --runs 1 --timeout-ms 300000 --quench target/production/quench-node --qjs /Users/admin/Code/GitHub/quickjs/qjs --bun /opt/homebrew/bin/bun --node /opt/homebrew/bin/node --out target/iteration/stageb-pilots/v8v7-all-current-production-2026-10-08.json",
+  "source": {
+    "revision": "d9c8e44212a30ae106ad234fa1be30ac08987769",
+    "dirty": true,
+    "quench_binary_sha256": "371c5f6dca4551d9ecf7f5cb480e3e0e4618129c24bc871902b539d6b7864341"
+  },
+  "benchmark_corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "model": "Mac16,10",
+    "architecture": "aarch64-apple-darwin",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "operating_system": "Darwin 25.5.0"
+  },
+  "raw_report": {
+    "path": "target/iteration/stageb-pilots/v8v7-all-current-production-2026-10-08.json",
+    "sha256": "f9cbb1aa08fc7fb4e3a8e531846e940b06f705287fa6dc7ee4a0f2e1563c14a2"
+  },
+  "results": [
+    {
+      "fixture": "crypto.js",
+      "input_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 131, "quickjs": 2348, "bun_no_jit": 3747, "node_jitless": 2419 },
+      "max_rss_bytes": { "quench": 27426816, "quickjs": 3244032, "bun_no_jit": 34521088, "node_jitless": 44924928 }
+    },
+    {
+      "fixture": "deltablue.js",
+      "input_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 59.5, "quickjs": 1648, "bun_no_jit": 1949, "node_jitless": 2744 },
+      "max_rss_bytes": { "quench": 26935296, "quickjs": 3162112, "bun_no_jit": 37044224, "node_jitless": 51003392 }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "input_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 197, "quickjs": 5008, "bun_no_jit": 8225, "node_jitless": 12117 },
+      "max_rss_bytes": { "quench": 72335360, "quickjs": 17530880, "bun_no_jit": 36732928, "node_jitless": 112427008 }
+    },
+    {
+      "fixture": "navier-stokes.js",
+      "input_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 53.4, "quickjs": 4773, "bun_no_jit": 4768, "node_jitless": 3488 },
+      "max_rss_bytes": { "quench": 32456704, "quickjs": 5636096, "bun_no_jit": 19234816, "node_jitless": 49741824 }
+    },
+    {
+      "fixture": "raytrace.js",
+      "input_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 221, "quickjs": 4275, "bun_no_jit": 5958, "node_jitless": 8255 },
+      "max_rss_bytes": { "quench": 27541504, "quickjs": 2834432, "bun_no_jit": 35700736, "node_jitless": 52051968 }
+    },
+    {
+      "fixture": "regexp.js",
+      "input_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 32.5, "quickjs": 1013, "bun_no_jit": 1673, "node_jitless": 5953 },
+      "max_rss_bytes": { "quench": 64700416, "quickjs": 7962624, "bun_no_jit": 36634624, "node_jitless": 55296000 }
+    },
+    {
+      "fixture": "richards.js",
+      "input_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 78.3, "quickjs": 1942, "bun_no_jit": 3043, "node_jitless": 2571 },
+      "max_rss_bytes": { "quench": 22478848, "quickjs": 2736128, "bun_no_jit": 20283392, "node_jitless": 44728320 }
+    },
+    {
+      "fixture": "splay.js",
+      "input_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "output_equal": true,
+      "rounds": 1,
+      "scores": { "quench": 1341, "quickjs": 9323, "bun_no_jit": 9991, "node_jitless": 14907 },
+      "max_rss_bytes": { "quench": 307937280, "quickjs": 151207936, "bun_no_jit": 57425920, "node_jitless": 404996096 }
+    }
+  ],
+  "richards_outlier_check": {
+    "one_round": {
+      "path": "target/iteration/stageb-pilots/richards-current-production-diagnostic.json",
+      "sha256": "07b5e46f9f18f38992cc86726b5c302397ed55ef4441a11903e3dc1c1e903e71",
+      "score": 41.2,
+      "wall_ns": 4192000000,
+      "instructions": 61476490321,
+      "cycles": 10974204054,
+      "involuntary_context_switches": 14680,
+      "max_rss_bytes": 27852800
+    },
+    "same_binary_three_rounds": {
+      "path": "target/iteration/stageb-pilots/richards-production-numeric-enabled-3r.json",
+      "sha256": "54561e277ab0f8ae4551410b0ecb124b377530293fd6f48ea29a8a282779ef4f",
+      "binary_sha256": "371c5f6dca4551d9ecf7f5cb480e3e0e4618129c24bc871902b539d6b7864341",
+      "median_score": 78.6,
+      "median_max_rss_bytes": 22511616,
+      "scores": [78.6, 77.7, 78.9]
+    },
+    "numeric_dispatch_disabled_control": {
+      "path": "target/iteration/stageb-pilots/richards-production-numeric-disabled-3r.json",
+      "sha256": "32f3474cc3e5e981d99fd28deeb0cc3f62fcd940a466ee5c3865c3cf724385a3",
+      "binary_sha256": "c382f6ffe9a6818343914ea8e8151695cb6fbac59f0f973c4d6118dbe19c45c7",
+      "median_score": 78.4,
+      "median_max_rss_bytes": 23052288,
+      "scores": [78.3, 78.4, 78.4]
+    },
+    "interpretation": "The 41.2 sample is valid but is not evidence of a code regression. It has about 25 times the involuntary context switches of the same binary's three-round run and an unusually long wall time while retiring fewer instructions. The numeric-disabled control is separate diagnostic evidence and shows no meaningful change in this short screen."
+  },
+  "finding": "All eight fixtures produced valid matched samples with equal observable output. Quench's score was below the three references on all fixtures and its maximum RSS was not lowest on any. The large measured gaps remain the next Stage B work; this one-round screen establishes no stable ranking.",
+  "limits": [
+    "One sample per engine and fixture; no confidence intervals.",
+    "Source tree was dirty and qualification_ready is false.",
+    "The Richards numeric-disabled control is a temporary one-predicate build, not a retained candidate or paired gate."
+  ]
+}
