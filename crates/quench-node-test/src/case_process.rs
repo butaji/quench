@@ -51,8 +51,15 @@ impl CaseObservation {
         }
         match (&self.worker, self.exit_code == Some(0)) {
             (Some(NodeOutcome::Pass), true) => RunResult::Pass,
+            (Some(NodeOutcome::GuestExit { code: 0 }), true)
+                if self.stdout.starts_with(b"1..0 # Skipped:") =>
+            {
+                RunResult::Skip
+            }
+            (Some(NodeOutcome::GuestExit { code: 0 }), true) => RunResult::Pass,
             (Some(NodeOutcome::Skip { .. }), true) => RunResult::Skip,
             (Some(NodeOutcome::Fail { .. }), false) => RunResult::Fail,
+            (Some(NodeOutcome::GuestExit { .. }), false) => RunResult::Fail,
             _ => RunResult::Unclassified,
         }
     }

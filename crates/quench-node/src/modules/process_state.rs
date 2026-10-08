@@ -248,6 +248,7 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 struct ProcessControlCells {
     started: std::time::Instant,
     exit_code: Cell<Option<i32>>,
+    requested_exit_code: Cell<Option<i32>>,
     umask: Cell<u32>,
 }
 
@@ -256,6 +257,7 @@ impl ProcessControl {
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
             exit_code: Cell::new(None),
+            requested_exit_code: Cell::new(None),
             umask: Cell::new(INITIAL_UMASK),
         }))
     }
@@ -270,6 +272,15 @@ impl ProcessControl {
 
     pub(crate) fn set_exit_code(&self, code: Option<i32>) {
         self.0.exit_code.set(code);
+    }
+
+    pub(crate) fn request_exit(&self, code: i32) {
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit_code.set(Some(code));
+    }
+
+    pub(crate) fn requested_exit_code(&self) -> Option<i32> {
+        self.0.requested_exit_code.get()
     }
 
     pub(crate) fn umask(&self) -> u32 {

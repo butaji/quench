@@ -103,22 +103,40 @@ fn execute_shared_on_worker(
     let completion = match execution {
         Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
         Err(error) => {
-            let message = runtime.format_error(&program, &error);
-            let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
-                &mut runtime,
-                &program,
-                &error,
-            );
-            match exit {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(message),
-                Err(exit_error) => Err(format!("{message}; exit handler failed: {exit_error}")),
+            if shared_state
+                .borrow()
+                .process_control
+                .requested_exit_code()
+                .is_some()
+            {
+                Ok(())
+            } else {
+                let message = runtime.format_error(&program, &error);
+                let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
+                    &mut runtime,
+                    &program,
+                    &error,
+                );
+                match exit {
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(message),
+                    Err(exit_error) => Err(format!("{message}; exit handler failed: {exit_error}")),
+                }
             }
         }
     };
-    let reporting = runtime
-        .finish_deferred_execution(&program)
-        .map_err(|error| error.to_string());
+    let reporting = if shared_state
+        .borrow()
+        .process_control
+        .requested_exit_code()
+        .is_some()
+    {
+        Ok(())
+    } else {
+        runtime
+            .finish_deferred_execution(&program)
+            .map_err(|error| error.to_string())
+    };
     completion?;
     reporting?;
     if let Some(code) = shared_state.borrow().process_control.exit_code() {
