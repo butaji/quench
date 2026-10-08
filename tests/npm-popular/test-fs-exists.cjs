@@ -11,6 +11,10 @@ assert.equal(fs.accessSync(manifest), undefined);
 assert.throws(() => fs.accessSync(`${manifest}.missing`), { code: 'ENOENT' });
 assert.throws(() => fs.accessSync(manifest, {}), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.throws(() => fs.accessSync(manifest, -1), { code: 'ERR_OUT_OF_RANGE' });
+const noExecute = path.join(process.cwd(), `quench-access-${process.pid}`);
+fs.writeFileSync(noExecute, 'x', { mode: 0o600 });
+assert.throws(() => fs.accessSync(noExecute, fs.constants.X_OK), { code: 'EACCES' });
+fs.rmSync(noExecute);
 
 let callbacks = 0;
 fs.exists(manifest, (exists) => {
