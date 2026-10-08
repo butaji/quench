@@ -54,7 +54,32 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
-  return TextDecoder;
+  class TextEncoder {
+    get encoding() { return "utf-8"; }
+    get fatal() { return false; }
+    get ignoreBOM() { return true; }
+    encode(input = "") {
+      return new Uint8Array(globalThis.Buffer.from(String(input), "utf8"));
+    }
+    encodeInto(input, destination) {
+      if (!(destination instanceof Uint8Array)) {
+        throw new TypeError('The "destination" argument must be an instance of Uint8Array');
+      }
+      const text = String(input);
+      let read = 0;
+      let written = 0;
+      for (const character of text) {
+        const bytes = globalThis.Buffer.from(character, "utf8");
+        if (written + bytes.length > destination.length) break;
+        destination.set(bytes, written);
+        written += bytes.length;
+        read += character.length;
+      }
+      return { read, written };
+    }
+  }
+
+  return { TextDecoder, TextEncoder };
 }"#
 );
 
@@ -65,12 +90,16 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
     let decode = context.host_function(crate::host::shared_vm::operation("textDecoderDecode"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:text-decoder/shared-vm.js")?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[canonical, decode])?;
+    let constructors = context.call_rooted(factory, undefined, &[canonical, decode])?;
+    let decoder_key = context.string_rooted("TextDecoder");
+    let constructor = context.get_property_rooted(constructors, decoder_key)?;
+    let encoder_key = context.string_rooted("TextEncoder");
+    let encoder = context.get_property_rooted(constructors, encoder_key)?;
     let install = context.evaluate_script_rooted(
-        "(value) => Object.defineProperty(globalThis, 'TextDecoder', { value, writable: true, configurable: true })",
+        "(decoder, encoder) => { Object.defineProperty(globalThis, 'TextDecoder', { value: decoder, writable: true, configurable: true }); Object.defineProperty(globalThis, 'TextEncoder', { value: encoder, writable: true, configurable: true }); }",
         "node:text-decoder/install-global.js",
     )?;
-    context.call_rooted(install, undefined, &[constructor])?;
+    context.call_rooted(install, undefined, &[constructor, encoder])?;
     Ok(())
 }
 

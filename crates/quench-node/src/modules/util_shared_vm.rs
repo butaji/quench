@@ -267,7 +267,16 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
-  return { inspect, getCallSites, inherits, debuglog, deprecate, promisify };
+  return {
+    inspect,
+    getCallSites,
+    inherits,
+    debuglog,
+    deprecate,
+    promisify,
+    TextEncoder: globalThis.TextEncoder,
+    TextDecoder: globalThis.TextDecoder,
+  };
 })()"#
 );
 

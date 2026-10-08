@@ -2,11 +2,19 @@
 
 const assert = require('node:assert/strict');
 const axios = require('axios');
+const { isAscii, isUtf8 } = require('node:buffer');
 const fs = require('node:fs');
 
 const sourceText = fs.readFileSync(__filename, 'utf8');
 const sourceBase64 = fs.readFileSync(__filename, { encoding: 'base64' });
 assert.strictEqual(Buffer.from(sourceBase64, 'base64').toString('utf8'), sourceText);
+const numericBuffer = Buffer.alloc(8);
+assert.strictEqual(numericBuffer.writeInt32LE(-42, 0), 4);
+assert.strictEqual(numericBuffer.readInt32LE(0), -42);
+assert.strictEqual(Buffer.prototype.readUInt16LE, Buffer.prototype.readUint16LE);
+assert.strictEqual(isAscii(Buffer.from('axios')), true);
+assert.strictEqual(isAscii(Buffer.from('mañana')), false);
+assert.strictEqual(isUtf8(Buffer.from('mañana')), true);
 
 const adapter = async (config) => ({
   data: { method: config.method, url: config.url },
