@@ -87,7 +87,8 @@ for (const [input, code] of [
 if (urlModule.pathToFileURL('C:\\foo bar\\baz.js', { windows: true }).href !==
   'file:///C:/foo%20bar/baz.js' ||
   urlModule.fileURLToPath('file:///C:/foo%20bar', { windows: true }) !== 'C:\\foo bar' ||
-  urlModule.fileURLToPath('file://server/share/a', { windows: true }) !== '\\\\server\\share\\a') {
+  urlModule.fileURLToPath('file://server/share/a', { windows: true }) !== '\\\\server\\share\\a' ||
+  urlModule.fileURLToPath('file:///tmp/a', { windows: false }) !== '/tmp/a') {
   throw new Error('node:url Windows path conversion option');
 }
 for (const [specifier, base, code, type] of [
