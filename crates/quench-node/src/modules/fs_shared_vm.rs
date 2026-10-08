@@ -838,9 +838,9 @@ const ASYNC_MKDTEMP_API: &str = r#"(mkdtempSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof prefix !== 'string' && !Buffer.isBuffer(prefix) &&
+    if (typeof prefix !== 'string' && !Buffer.isBuffer(prefix) && !(prefix instanceof URL) &&
         !(ArrayBuffer.isView(prefix) && !(prefix instanceof DataView))) {
-      const error = new TypeError('The "prefix" argument must be of type string, Buffer, or Uint8Array.');
+      const error = new TypeError('The "prefix" argument must be of type string, Buffer, URL, or Uint8Array.');
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
