@@ -579,9 +579,21 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
 }"#;
 
 const EXISTS_API: &str = r#"(statSync, accessHost) => {
+  const validatePath = (path) => {
+    if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
+    const received = path === null || path === undefined
+      ? ` Received ${path}`
+      : typeof path === 'object'
+        ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof path} (${typeof path === 'string' ? `'${path}'` : String(path)})`;
+    const error = new TypeError(`The "path" argument must be of type string or an instance of Buffer or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  };
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
   function accessSync(path, mode = 0) {
+    validatePath(path);
     if (typeof mode !== 'number') {
       const error = new TypeError('The "mode" argument must be of type number.');
       error.code = 'ERR_INVALID_ARG_TYPE';
@@ -620,6 +632,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    validatePath(path);
     queueMicrotask(() => {
       try {
         accessSync(path, mode);
