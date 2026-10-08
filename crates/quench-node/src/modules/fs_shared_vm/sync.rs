@@ -85,7 +85,21 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
       return rmSync(normalizePath(path), options);
     },
     writeFileSync(path, data, options) {
+      if (typeof path === "number") {
+        writeDescriptor(path, writeBytes(data, options), null);
+        return undefined;
+      }
       return writeFileSync(normalizePath(path), writeBytes(data, options), options);
+    },
+    appendFileSync(path, data, options) {
+      if (typeof path === "number") {
+        writeDescriptor(path, writeBytes(data, options), null);
+        return undefined;
+      }
+      const settings = typeof options === "string"
+        ? { encoding: options, flag: "a" }
+        : { ...(options || {}), flag: options?.flag || "a" };
+      return writeFileSync(normalizePath(path), writeBytes(data, settings), settings);
     },
     openSync(path, flags, mode) {
       return openSync(normalizePath(path), flags, normalizeMode(mode));
@@ -203,6 +217,7 @@ pub(crate) fn install(
         ("mkdirSync", "mkdirSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
+        ("appendFileSync", "appendFileSync"),
         ("openSync", "openSync"),
         ("closeSync", "closeSync"),
         ("fstatSync", "fstatSync"),
