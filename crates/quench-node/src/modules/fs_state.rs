@@ -3,7 +3,7 @@
 
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 
 /// A handle to the one host-owned descriptor table shared by Node adapters.
@@ -66,6 +66,62 @@ impl FsState {
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
         descriptor.file.write_all(bytes)?;
         Ok(bytes.len())
+    }
+
+    pub(crate) fn write_descriptor(
+        &self,
+        fd: i32,
+        bytes: &[u8],
+        position: Option<u64>,
+    ) -> std::io::Result<usize> {
+        let mut state = self.0.borrow_mut();
+        let descriptor = state
+            .descriptors
+            .get_mut(&fd)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+        let original = if position.is_some() {
+            Some(descriptor.file.stream_position()?)
+        } else {
+            None
+        };
+        if let Some(position) = position {
+            descriptor.file.seek(SeekFrom::Start(position))?;
+        }
+        let result = descriptor.file.write_all(bytes).map(|()| bytes.len());
+        if let Some(original) = original {
+            descriptor.file.seek(SeekFrom::Start(original))?;
+        }
+        result
+    }
+
+    pub(crate) fn read_descriptor(
+        &self,
+        fd: i32,
+        size: usize,
+        position: Option<u64>,
+    ) -> std::io::Result<Vec<u8>> {
+        let mut state = self.0.borrow_mut();
+        let descriptor = state
+            .descriptors
+            .get_mut(&fd)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+        let original = if position.is_some() {
+            Some(descriptor.file.stream_position()?)
+        } else {
+            None
+        };
+        if let Some(position) = position {
+            descriptor.file.seek(SeekFrom::Start(position))?;
+        }
+        let mut bytes = vec![0; size];
+        let result = descriptor.file.read(&mut bytes).map(|read| {
+            bytes.truncate(read);
+            bytes
+        });
+        if let Some(original) = original {
+            descriptor.file.seek(SeekFrom::Start(original))?;
+        }
+        result
     }
 
     pub(crate) fn close_stream(&self, fd: i32) -> std::io::Result<String> {

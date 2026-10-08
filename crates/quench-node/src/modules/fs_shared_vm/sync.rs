@@ -2,7 +2,7 @@ use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
-const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync) => {
+const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
   const writeBytes = (data, options) => {
@@ -65,6 +65,39 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
       validateFd(fd);
       return fstatSync(fd);
     },
+    readSync(fd, buffer, offset = 0, length, position = null) {
+      validateFd(fd);
+      if (!ArrayBuffer.isView(buffer)) {
+        const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      length ??= buffer.byteLength - offset;
+      if (buffer.byteLength === 0 && length > 0) {
+        const name = buffer.constructor?.name || "TypedArray";
+        const error = new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${name}(0) []`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      const bytes = readDescriptor(fd, length, position);
+      const target = buffer instanceof DataView
+        ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+        : buffer;
+      target.set(bytes, offset);
+      return bytes.byteLength;
+    },
+    writeSync(fd, data, offset, length, position) {
+      validateFd(fd);
+      if (typeof data === "string") {
+        const encoding = typeof length === "string" ? length : "utf8";
+        const bytes = Buffer.from(data, encoding);
+        return writeDescriptor(fd, bytes, offset == null ? null : offset);
+      }
+      const bytes = writeBytes(data, undefined);
+      offset ??= 0;
+      length ??= bytes.byteLength - offset;
+      return writeDescriptor(fd, bytes.subarray(offset, offset + length), position);
+    },
   };
 }"#;
 
@@ -78,9 +111,24 @@ pub(crate) fn install(
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
+    let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
+    let write_descriptor = context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
     let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &[mkdir, rm, write, open, close, fstat])?;
+    let api = context.call_rooted(
+        factory,
+        undefined,
+        &[
+            mkdir,
+            rm,
+            write,
+            open,
+            close,
+            fstat,
+            read_descriptor,
+            write_descriptor,
+        ],
+    )?;
     for (name, method) in [
         ("mkdirSync", "mkdirSync"),
         ("rmSync", "rmSync"),
@@ -88,6 +136,8 @@ pub(crate) fn install(
         ("openSync", "openSync"),
         ("closeSync", "closeSync"),
         ("fstatSync", "fstatSync"),
+        ("readSync", "readSync"),
+        ("writeSync", "writeSync"),
     ] {
         let key = context.string_rooted(method);
         let function = context.get_property_rooted(api, key)?;
@@ -174,6 +224,73 @@ pub(crate) fn close_sync(
         Ok(_) => Ok(context.undefined()),
         Err(error) => Err(super::stream_io_error(context, error, "close", "")?),
     }
+}
+
+pub(crate) fn read_descriptor(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let size = args
+        .get(1)
+        .and_then(|value| context.rooted_value(*value))
+        .and_then(Value::as_number)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    let position = descriptor_position(context, args.get(2).copied());
+    let (result, path) = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let path = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .map(|descriptor| descriptor.path.clone())
+            .unwrap_or_default();
+        (state.fs.read_descriptor(fd, size, position), path)
+    };
+    match result {
+        Ok(bytes) => super::buffer_from_bytes(context, &bytes),
+        Err(error) => Err(super::stream_io_error(context, error, "read", &path)?),
+    }
+}
+
+pub(crate) fn write_descriptor(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let bytes = byte_view(context, args.get(1).copied())?;
+    let position = descriptor_position(context, args.get(2).copied());
+    let (result, path) = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let path = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .map(|descriptor| descriptor.path.clone())
+            .unwrap_or_default();
+        (state.fs.write_descriptor(fd, &bytes, position), path)
+    };
+    match result {
+        Ok(written) => Ok(context.number(written as f64)),
+        Err(error) => Err(super::stream_io_error(context, error, "write", &path)?),
+    }
+}
+
+fn descriptor_position(
+    context: &NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Option<u64> {
+    value
+        .and_then(|value| context.rooted_value(value))
+        .and_then(Value::as_number)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| value as u64)
 }
 
 pub(crate) fn mkdir_sync(

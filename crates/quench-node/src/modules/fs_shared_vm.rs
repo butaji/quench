@@ -8,7 +8,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
   lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
@@ -31,11 +31,34 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       throw error;
     }
     const fd = openSync(...args);
-    return { fd, close: () => Promise.resolve().then(() => closeSync(fd)) };
+    const handle = {
+      fd,
+      close: () => Promise.resolve().then(() => closeSync(fd)),
+      read: (...readArgs) => Promise.resolve().then(() => {
+        let [buffer, offset = 0, length, position = null] = readArgs;
+        if (!ArrayBuffer.isView(buffer) && buffer && typeof buffer === "object") {
+          const options = buffer;
+          buffer = options.buffer;
+          offset = options.offset ?? 0;
+          length = options.length;
+          position = options.position ?? null;
+        } else if (offset && typeof offset === "object") {
+          const options = offset;
+          offset = options.offset ?? 0;
+          length = options.length;
+          position = options.position ?? null;
+        }
+        const bytesRead = readSync(fd, buffer, offset, length, position);
+        return { bytesRead, buffer };
+      }),
+    };
+    handle[Symbol.asyncDispose] = handle.close;
+    handle[Symbol.dispose] = handle.close;
+    return handle;
   }),
 })"#);
 
-const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync) => {
+const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync) => {
   const validatePath = (path) => {
     if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
       const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
@@ -70,6 +93,22 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   };
+  const readInto = (fd, buffer, offset, length, position) => {
+    if (!ArrayBuffer.isView(buffer)) {
+      const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    length ??= buffer.byteLength - (offset ?? 0);
+    if (buffer.byteLength === 0 && length > 0) {
+      const name = buffer.constructor?.name || "TypedArray";
+      const error = new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${name}(0) []`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    const bytesRead = readSync(fd, buffer, offset ?? 0, length, position ?? null);
+    return { bytesRead, buffer };
+  };
   return {
   open(path, flags, mode, callback) {
     if (typeof flags === "function") {
@@ -103,6 +142,68 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
       try {
         closeSync(fd);
         Reflect.apply(callback, undefined, [null]);
+      } catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  },
+  read(fd, bufferOrOptions, offsetOrOptions, length, position, callback) {
+    validateFd(fd);
+    let buffer = bufferOrOptions;
+    let offset = 0;
+    let readLength;
+    let readPosition = null;
+    if (!ArrayBuffer.isView(bufferOrOptions)) {
+      if (bufferOrOptions && typeof bufferOrOptions === "object" && ArrayBuffer.isView(bufferOrOptions.buffer)) {
+        buffer = bufferOrOptions.buffer;
+        offset = bufferOrOptions.offset ?? 0;
+        readLength = bufferOrOptions.length;
+        readPosition = bufferOrOptions.position ?? null;
+        callback = offsetOrOptions;
+      } else {
+        const options = bufferOrOptions && typeof bufferOrOptions === "object" ? bufferOrOptions : {};
+        buffer = Buffer.alloc(16384);
+        offset = options.offset ?? 0;
+        readLength = options.length;
+        readPosition = options.position ?? null;
+        if (typeof bufferOrOptions === "function") callback = bufferOrOptions;
+        else callback = offsetOrOptions;
+      }
+    } else if (offsetOrOptions && typeof offsetOrOptions === "object") {
+      offset = offsetOrOptions.offset ?? 0;
+      readLength = offsetOrOptions.length;
+      readPosition = offsetOrOptions.position ?? null;
+      callback = length;
+    } else {
+      if (typeof offsetOrOptions === "function") {
+        callback = offsetOrOptions;
+      } else if (typeof length === "function") {
+        offset = offsetOrOptions ?? 0;
+        callback = length;
+      } else if (typeof position === "function") {
+        offset = offsetOrOptions ?? 0;
+        readLength = length;
+        callback = position;
+      } else {
+        offset = offsetOrOptions ?? 0;
+        readLength = length;
+        readPosition = position ?? null;
+      }
+    }
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const empty = readLength !== 0 && buffer?.byteLength === 0;
+    if (empty) {
+      const name = buffer.constructor?.name || "TypedArray";
+      const error = new TypeError(`The argument 'buffer' is empty and cannot be written. Received ${name}(0) []`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        const result = readInto(fd, buffer, offset, readLength, readPosition);
+        Reflect.apply(callback, undefined, [null, result.bytesRead, result.buffer]);
       } catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
   },
@@ -456,19 +557,22 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "realpath", realpath)?;
     let constants = fs_constants(context)?;
     set(context, module, "constants", constants)?;
-    let promises = promises_module(context, constants)?;
-    set(context, module, "promises", promises)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
     let undefined = context.undefined();
-    let open_close = context.call_rooted(factory, undefined, &[open_sync, close_sync])?;
+    let read_sync = get(context, module, "readSync")?;
+    let open_close = context.call_rooted(factory, undefined, &[open_sync, close_sync, read_sync])?;
     let open = get(context, open_close, "open")?;
     let close = get(context, open_close, "close")?;
+    let read = get(context, open_close, "read")?;
     set(context, module, "open", open)?;
     set(context, module, "close", close)?;
+    set(context, module, "read", read)?;
+    let promises = promises_module(context, constants, open_sync, close_sync, read_sync)?;
+    set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
     let readable = get(context, streams, "Readable")?;
@@ -499,6 +603,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 pub(crate) fn promises_module(
     context: &mut NativeContext<'_, NodeHost>,
     constants: RootId,
+    open_sync: RootId,
+    close_sync: RootId,
+    read_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -507,14 +614,20 @@ pub(crate) fn promises_module(
     let readdir = make_readdir_sync(context)?;
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
-    let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
-    let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let undefined = context.undefined();
     let promises = context.call_rooted(
         factory,
         undefined,
         &[
-            read_file, stat, lstat, readdir, readlink, realpath, open, close,
+            read_file,
+            stat,
+            lstat,
+            readdir,
+            readlink,
+            realpath,
+            open_sync,
+            close_sync,
+            read_sync,
         ],
     )?;
     set(context, promises, "constants", constants)?;
