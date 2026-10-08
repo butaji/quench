@@ -995,7 +995,7 @@ fn report(state: &Rc<RefCell<HostState>>, line: &str) {
 }
 
 fn record_failure(state: &Rc<RefCell<HostState>>) {
-    if state.borrow().process.exit_code.is_none() {
-        state.borrow_mut().process.exit_code = Some(1);
+    if state.borrow().process.control.exit_code().is_none() {
+        state.borrow().process.control.set_exit_code(Some(1));
     }
 }
