@@ -45,7 +45,6 @@ mod http2_facts;
 pub mod http2_util;
 pub mod http_client;
 pub mod http_res;
-pub mod inspector;
 pub mod net;
 pub mod npm;
 pub mod os;
