@@ -58,6 +58,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let domain_to_unicode =
         context.host_function(crate::host::shared_vm::operation("domainToUnicode"))?;
     set(context, module, "domainToUnicode", domain_to_unicode)?;
+    let url_to_http_options =
+        context.host_function(crate::host::shared_vm::operation("urlToHttpOptions"))?;
+    set(context, module, "urlToHttpOptions", url_to_http_options)?;
     let path_to_file_url = context.host_function(
         crate::host::shared_vm::operation("pathToFileURL"),
     )?;
@@ -102,6 +105,84 @@ pub(crate) fn domain_to_unicode(
         Err(_) => String::new(),
     };
     Ok(context.string_rooted(&output))
+}
+
+pub(crate) fn url_to_http_options(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(input) = args.first().copied() else {
+        return Err(invalid_url_to_http_options_argument(context));
+    };
+    if !context.is_object_rooted(input)? {
+        return Err(invalid_url_to_http_options_argument(context));
+    }
+    let href = url_argument_text(context, input)?;
+    let is_url = href.is_some();
+    let result = context.null_object_rooted()?;
+    for name in ["protocol", "hostname", "hash", "search", "pathname"] {
+        let value = get(context, input, name)?;
+        set(context, result, name, value)?;
+    }
+    let pathname = get(context, input, "pathname")?;
+    let search = get(context, input, "search")?;
+    let pathname = nullish_string(context, pathname)?;
+    let search = nullish_string(context, search)?;
+    let path = format!("{pathname}{search}");
+    let path = context.string_rooted(&path);
+    set(context, result, "path", path)?;
+    let href = href
+        .map(|href| context.string_rooted(&href))
+        .unwrap_or(context.undefined());
+    set(context, result, "href", href)?;
+
+    let port = get(context, input, "port")?;
+    let port_text = context.string_text(port)?;
+    if let Some(port_text) = port_text.filter(|port| !port.is_empty()) {
+        let number = port_text.parse::<f64>().unwrap_or(f64::NAN);
+        let number = context.number(number);
+        set(context, result, "port", number)?;
+    } else if !is_url {
+        let number = context.number(f64::NAN);
+        set(context, result, "port", number)?;
+    }
+
+    let username_value = get(context, input, "username")?;
+    let password_value = get(context, input, "password")?;
+    let username = nullish_string(context, username_value)?;
+    let password = nullish_string(context, password_value)?;
+    if !username.is_empty() || !password.is_empty() {
+        let username = percent_decode(&username).unwrap_or(username);
+        let password = percent_decode(&password).unwrap_or(password);
+        let auth = context.string_rooted(&format!("{username}:{password}"));
+        set(context, result, "auth", auth)?;
+    }
+    Ok(result)
+}
+
+fn nullish_string(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<String, RootedError> {
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        Ok(String::new())
+    } else {
+        context.to_string(value)
+    }
+}
+
+fn invalid_url_to_http_options_argument(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> RootedError {
+    coded_url_type_error(
+        context,
+        "ERR_INVALID_ARG_TYPE",
+        "The \"url\" argument must be of type object",
+    )
 }
 
 pub(crate) fn path_to_file_url(
