@@ -190,7 +190,7 @@ if (frameworkFixtures.length === 0) {
   errors.push(`empty framework-core profile in ${frameworkManifest}`);
 }
 
-const nodeEvidencePath = "tasks/evidence/task86-stagea-production-2026-10-08.json";
+const nodeEvidencePath = "tasks/evidence/task86-stagea-final-2026-10-08.json";
 const nodeEvidence = JSON.parse(
   fs.readFileSync(path.join(root, nodeEvidencePath), "utf8"),
 );
