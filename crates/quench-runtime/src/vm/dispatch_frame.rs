@@ -560,7 +560,7 @@ impl<H: Host> Vm<H> {
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
             dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
-            with_objects: Vec::new(),
+            with_objects: Box::default(),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -889,7 +889,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(env)
         {
             if !with_objects.is_empty() {
-                layers.push(with_objects.clone());
+                layers.push(with_objects.to_vec());
             }
             env = *parent;
             if env.is_null() {

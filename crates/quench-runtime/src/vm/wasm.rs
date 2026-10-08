@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
             function: 0,
             slots: values.into_boxed_slice().into(),
             dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
-            with_objects: vec![],
+            with_objects: Box::default(),
         });
         let root = self.root(environment);
         let previous = std::mem::replace(&mut self.active_program, id);

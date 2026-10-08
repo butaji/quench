@@ -1286,7 +1286,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
         let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             source,
             flags,
             matcher,

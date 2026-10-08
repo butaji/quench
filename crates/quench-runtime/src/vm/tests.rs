@@ -748,7 +748,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
@@ -758,7 +758,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     vm.method_caches.push([
         MethodCache {
@@ -802,7 +802,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
@@ -1991,7 +1991,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                     .into_boxed_slice()
                     .into(),
                 dynamic_bindings: vec![].into(),
-                with_objects: vec![],
+                with_objects: Box::default(),
             });
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
@@ -3562,7 +3562,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     let held = vm
         .heap
@@ -3681,7 +3681,6 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
     assert!(recycled.with_objects.is_empty());
-    assert_eq!(recycled.with_objects.capacity(), 0);
 }
 
 #[test]
