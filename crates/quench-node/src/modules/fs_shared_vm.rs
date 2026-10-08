@@ -579,6 +579,14 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
 }"#;
 
 const EXISTS_API: &str = r#"(statSync) => {
+  function accessSync(path, mode = 0) {
+    if (typeof mode !== 'number') {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    statSync(path);
+  }
   function existsSync(path) {
     try {
       statSync(path);
@@ -595,7 +603,26 @@ const EXISTS_API: &str = r#"(statSync) => {
     }
     queueMicrotask(() => callback(existsSync(path)));
   }
-  return { exists, existsSync };
+  function access(path, mode, callback) {
+    if (typeof mode === 'function') {
+      callback = mode;
+      mode = 0;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        accessSync(path, mode);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  }
+  return { access, accessSync, exists, existsSync };
 }"#;
 
 const UV_FS_SYMLINK_DIR: i32 = 1;
@@ -755,8 +782,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let exists_api = context.call_rooted(exists_factory, undefined, &[stat_sync])?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
+    let access = get(context, exists_api, "access")?;
+    let access_sync = get(context, exists_api, "accessSync")?;
     set(context, module, "exists", exists)?;
     set(context, module, "existsSync", exists_sync)?;
+    set(context, module, "access", access)?;
+    set(context, module, "accessSync", access_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
     let readdir_sync = make_readdir_sync(context)?;
@@ -814,6 +845,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         write_file_sync,
         append_file_sync,
     )?;
+    let access_promise_factory = context.evaluate_script_rooted(
+        "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
+        "node:fs/shared-access-promise.js",
+    )?;
+    let access_promise = context.call_rooted(access_promise_factory, undefined, &[access_sync])?;
+    set(context, promises, "access", access_promise)?;
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
