@@ -255,12 +255,22 @@ mod tests {
             register_root_offset: u32::MAX,
         };
         let mut dead = make_function();
-        compact_binary_stores(&mut dead, &[0, 0, 0, 0]);
+        compact_binary_stores(
+            &mut dead,
+            &[0, 0, 0, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
         let mut live = make_function();
-        compact_binary_stores(&mut live, &[0, 0, 1 << 2, 0]);
+        compact_binary_stores(
+            &mut live,
+            &[0, 0, 1 << 2, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(live.code.len(), 3);
     }
 
@@ -318,13 +328,23 @@ mod tests {
             register_root_offset: u32::MAX,
         };
         let mut dead = make_function();
-        compact_binary_stores(&mut dead, &[0, 0, 0, 1 << 2, 0]);
+        compact_binary_stores(
+            &mut dead,
+            &[0, 0, 0, 1 << 2, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
 
         let mut live = make_function();
-        compact_binary_stores(&mut live, &[0, 0, 0, (1 << 0) | (1 << 2), 0]);
+        compact_binary_stores(
+            &mut live,
+            &[0, 0, 0, (1 << 0) | (1 << 2), 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(live.code.len(), 4);
     }
 }
