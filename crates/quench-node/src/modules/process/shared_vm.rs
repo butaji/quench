@@ -54,11 +54,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "emit", emit)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
-    let (argv, exec_argv) = {
-        let state = context.host_mut().state();
-        let state = state.borrow();
-        (state.process.argv.clone(), state.exec_argv.clone())
-    };
+    let state = context.host_mut().state();
+    let shared_state = context.host_mut().shared_state();
+    let argv = state.borrow().process.argv.clone();
+    let exec_argv = shared_state.borrow().exec_argv.clone();
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
         let key = context.string_rooted(&name);
@@ -1854,15 +1853,14 @@ pub(crate) fn dispatch_warning(
     let code = string_property(context, warning, "code")?;
     let detail = string_property(context, warning, "detail")?;
 
-    let state = context.host_mut().state();
     let shared_state = context.host_mut().shared_state();
     let (listeners, suppress_stderr) = {
-        let state = state.borrow();
+        let shared = shared_state.borrow();
         (
-            shared_state.borrow().scheduler.shared_listener_roots(
+            shared.scheduler.shared_listener_roots(
                 &crate::modules::shared_event_loop::SharedEventKey::String("warning".to_owned()),
             ),
-            state
+            shared
                 .exec_argv
                 .iter()
                 .any(|argument| argument == "--no-warnings"),
