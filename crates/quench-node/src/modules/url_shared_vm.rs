@@ -52,6 +52,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "Url", legacy_constructor)?;
     let format = context.host_function(crate::host::shared_vm::operation("urlFormat"))?;
     set(context, module, "format", format)?;
+    let domain_to_ascii =
+        context.host_function(crate::host::shared_vm::operation("domainToASCII"))?;
+    set(context, module, "domainToASCII", domain_to_ascii)?;
+    let domain_to_unicode =
+        context.host_function(crate::host::shared_vm::operation("domainToUnicode"))?;
+    set(context, module, "domainToUnicode", domain_to_unicode)?;
     let path_to_file_url = context.host_function(
         crate::host::shared_vm::operation("pathToFileURL"),
     )?;
@@ -61,6 +67,41 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     set(context, module, "fileURLToPath", file_url_to_path)?;
     Ok(module)
+}
+
+pub(crate) fn domain_to_ascii(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = match args.first().copied() {
+        Some(input) => context.to_string(input)?,
+        None => "undefined".to_owned(),
+    };
+    let output = url::Host::parse(&input)
+        .map(|host| host.to_string())
+        .unwrap_or_default();
+    Ok(context.string_rooted(&output))
+}
+
+pub(crate) fn domain_to_unicode(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = match args.first().copied() {
+        Some(input) => context.to_string(input)?,
+        None => "undefined".to_owned(),
+    };
+    let output = match url::Host::parse(&input) {
+        Ok(url::Host::Domain(domain)) => {
+            let (unicode, result) = idna::domain_to_unicode(&domain);
+            if result.is_ok() { unicode } else { String::new() }
+        }
+        Ok(host) => host.to_string(),
+        Err(_) => String::new(),
+    };
+    Ok(context.string_rooted(&output))
 }
 
 pub(crate) fn path_to_file_url(
