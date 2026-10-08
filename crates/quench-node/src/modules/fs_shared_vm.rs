@@ -578,7 +578,9 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   };
 }"#;
 
-const EXISTS_API: &str = r#"(statSync) => {
+const EXISTS_API: &str = r#"(statSync, accessHost) => {
+  const normalizePath = (path) =>
+    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
   function accessSync(path, mode = 0) {
     if (typeof mode !== 'number') {
       const error = new TypeError('The "mode" argument must be of type number.');
@@ -590,7 +592,7 @@ const EXISTS_API: &str = r#"(statSync) => {
       error.code = 'ERR_OUT_OF_RANGE';
       throw error;
     }
-    statSync(path);
+    return accessHost(normalizePath(path), mode);
   }
   function existsSync(path) {
     try {
@@ -784,7 +786,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "statSync", stat_sync)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
-    let exists_api = context.call_rooted(exists_factory, undefined, &[stat_sync])?;
+    let access_host = context.host_function(crate::host::shared_vm::operation("fsAccessSync"))?;
+    let exists_api = context.call_rooted(exists_factory, undefined, &[stat_sync, access_host])?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
     let access = get(context, exists_api, "access")?;
