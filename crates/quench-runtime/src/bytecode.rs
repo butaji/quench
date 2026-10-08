@@ -1,4 +1,6 @@
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
+pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
 pub type Atom = u32;
 pub type Register = u16;
@@ -57,7 +59,6 @@ impl Effect {
     pub(crate) const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
-
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -792,7 +792,7 @@ impl<H: Host> Vm<H> {
         if !self.is_constructable(p, superclass) {
             return Err(self.type_error(p, "superclass is not a constructor".into()));
         }
-        let new_target_atom = self.intern_atom("\0quench:new-target");
+        let new_target_atom = self.runtime_atoms.new_target;
         let new_target = self
             .frames
             .len()

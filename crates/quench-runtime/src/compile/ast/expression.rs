@@ -23,7 +23,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => self.load_name(value.name.as_str()),
             Expression::ThisExpression(_) => self.load_this_value(),
-            Expression::NewTarget(_) => self.load_name("\0quench:new-target"),
+            Expression::NewTarget(_) => self.load_name(crate::bytecode::NEW_TARGET_BINDING),
             Expression::ImportMeta(_) => {
                 if !self.owner.module_goal {
                     self.owner.reject(

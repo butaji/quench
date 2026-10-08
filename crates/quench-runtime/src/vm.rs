@@ -5,8 +5,8 @@ mod wasm_host;
 mod wasm_table;
 use crate::Value;
 use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, Register,
-    ResidualProgram, WideInstruction,
+    Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
+    NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction,
 };
 use crate::heap::{
     CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
@@ -27,6 +27,12 @@ const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
 pub(super) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 pub(super) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(super) const ROOT_FUNCTION_ID: u32 = 0;
+
+#[derive(Clone, Copy, Default)]
+struct RuntimeAtoms {
+    lexical_this: Atom,
+    new_target: Atom,
+}
 pub(crate) mod activation;
 mod activation_lifecycle;
 mod agent;
@@ -547,6 +553,7 @@ pub(crate) struct Vm<H> {
     buffer_atom: Atom,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
+    runtime_atoms: RuntimeAtoms,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
     #[cfg(feature = "profile-aggregate")]
@@ -965,6 +972,12 @@ impl<H: Host> Vm<H> {
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom);
         }
+        let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
+        let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        self.runtime_atoms = RuntimeAtoms {
+            lexical_this,
+            new_target,
+        };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();

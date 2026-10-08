@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) {
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
-            let atom = self.intern_atom("\0quench:new-target");
+            let atom = self.runtime_atoms.new_target;
             frame.dynamic_bindings.push((atom, new_target));
         }
         let inherits_this = arrow
@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
                     .get(frame.program)
                     .is_some_and(|program| program.kind == crate::bytecode::ProgramKind::Eval));
         if !inherits_this {
-            let atom = self.intern_atom("\0quench:lexical-this");
+            let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
     }

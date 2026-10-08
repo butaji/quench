@@ -270,7 +270,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
-        let atom = self.intern_atom("\0quench:lexical-this");
+        let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)
             .unwrap_or(self.frames[frame].this);

@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         value: Value,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("\0quench:lexical-this");
+        let atom = self.runtime_atoms.lexical_this;
         let owner = self.lexical_this_owner(frame, atom);
         if !self.store_own_dynamic_binding(frame, atom, value)
             && !self.store_outer_dynamic_binding(frame, atom, value)
@@ -602,7 +602,7 @@ impl<H: Host> Vm<H> {
             if let Some((_, value)) = dynamic_bindings
                 .iter()
                 .rev()
-                .find(|(atom, _)| self.atom_name(*atom) == "\0quench:lexical-this")
+                .find(|(atom, _)| *atom == self.runtime_atoms.lexical_this)
             {
                 return Some(*value);
             }
@@ -612,7 +612,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn check_super_call(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let atom = self.intern_atom("\0quench:lexical-this");
+        let atom = self.runtime_atoms.lexical_this;
         let frame = self
             .frames
             .len()
@@ -1317,7 +1317,7 @@ impl<H: Host> Vm<H> {
                 && slots.is_empty()
                 && (dynamic_bindings.is_empty()
                     || (dynamic_bindings.len() == 1
-                        && self.atom_name(dynamic_bindings[0].0) == "\0quench:lexical-this"));
+                        && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this));
             if with_objects.is_empty() && !lexical_this_wrapper {
                 break;
             }
