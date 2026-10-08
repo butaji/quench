@@ -7,6 +7,7 @@ pub mod assert;
 pub mod assert_validate;
 pub mod async_hooks;
 pub mod buffer;
+pub(crate) mod buffer_codec;
 pub mod buffer_enc;
 pub mod buffer_from;
 pub mod buffer_methods;
