@@ -48,7 +48,7 @@ TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=10 \
-  cargo run --release -p quench-test262 --bin run-all-next
+  cargo run --release -p quench-test262 --bin run-all
 ```
 
 ```sh
@@ -56,12 +56,12 @@ TEST262_TEST_TIMEOUT_MS=30000 \
   cargo run --release -p quench-test262 --bin run-stages -- 0 0
 ```
 
-The canonical `run-stages` runner uses the shared VM. The `run-all` and
-`run-test` binaries retain legacy execution for now and are not evidence for
-the Stage A gate. Every Test262 execution runner/tool (`run-test`, `run-all`,
-`run-all-next`, `run-stages`, `triage`, and execution modes of `compare-runs`)
+The canonical `run-stages` and `run-all` runners use the shared VM. The
+`run-test` binary retains legacy execution for now and is not evidence for the
+Stage A gate. Every Test262 execution runner/tool (`run-test`, `run-all`,
+`run-stages`, `triage`, and execution modes of `compare-runs`)
 requires a positive `TEST262_TEST_TIMEOUT_MS`; the batch wrapper has the same
-requirement. `run-all-next` and `run-stages` run case processes concurrently
+requirement. `run-all` and `run-stages` run case processes concurrently
 (configurable with
 `TEST262_JOBS`, defaulting to available parallelism), preserve discovery-order
 reports, and keep stage batches capped at 100. The fixture comparison scripts
@@ -92,8 +92,8 @@ It does not define the Stage A Node gate; profile membership comes from
 runners use isolated child deadlines and preserve stdout/stderr separately from
 case results.
 
-`run-all-next` writes its full per-test report to
-`target/test262-next-report.json` and compares a full-inventory run against
+`run-all` writes its full per-test report to
+`target/test262-report.json` and compares a full-inventory run against
 `target/test262-next-ratchet.json`. A first complete all-pass run freezes the
 baseline; a later lost pass is reported as a regression and fails the command.
 Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
@@ -105,7 +105,7 @@ executing any cases:
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 \
-  cargo run --profile iteration -p quench-test262 --bin run-all-next -- \
+  cargo run --profile iteration -p quench-test262 --bin run-all -- \
   --freeze-expected-pass-set
 ```
 
@@ -140,8 +140,7 @@ missing baseline passes as regressions.
 
 For long runs, advance one stage at a time with `run-stages`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
-discovery order. Do not use the legacy `run-all` batch wrapper for the shared
-runtime ratchet.
+discovery order. Reserve `run-all` for explicit whole-inventory qualification.
 
 ## Shared runtime host roots
 
