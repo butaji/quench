@@ -18,6 +18,14 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
 })"#);
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
+  if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = path.pathname;
   const entries = readDir(path);
   if (!options || options.withFileTypes !== true) return entries.map((entry) => entry.name);
   return entries.map((entry) => {
@@ -40,6 +48,14 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   }
+  if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = path.pathname;
   queueMicrotask(() => {
     let entries;
     try {
