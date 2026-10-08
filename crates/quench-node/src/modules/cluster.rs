@@ -616,8 +616,8 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             Value::Boolean(true),
         );
     }
-    let parent_exit_code = state.borrow().process.exit_code;
-    state.borrow_mut().process.exit_code = None;
+    let parent_exit_code = state.borrow().process.control.exit_code();
+    state.borrow().process.control.set_exit_code(None);
     state.borrow_mut().cluster.worker_context = Some(id);
     state.borrow_mut().cluster.worker_listen_slots.insert(id, 0);
     let wrapped = crate::modules::require::wrap_cjs(state, &filename, &source);
@@ -651,7 +651,7 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             Ok(false) | Err(_) => break,
         }
     }
-    let child_exit_code = state.borrow().process.exit_code.or_else(|| {
+    let child_exit_code = state.borrow().process.control.exit_code().or_else(|| {
         let net_work = crate::modules::net::has_work(state);
         let guard = state.borrow();
         let waits_for_ipc = guard
@@ -665,7 +665,11 @@ fn run_worker_script(state: &Rc<RefCell<HostState>>, id: u64, worker: &Value) {
             });
         (!waits_for_ipc && !net_work).then_some(0)
     });
-    state.borrow_mut().process.exit_code = parent_exit_code;
+    state
+        .borrow()
+        .process
+        .control
+        .set_exit_code(parent_exit_code);
     if let (Some(process), Some(previous)) = (&process_value, env_restore) {
         restore_worker_env(process, previous);
     }
@@ -1205,8 +1209,8 @@ pub fn disconnect(
     set_worker_mode(state, id, &obj, true);
     state.borrow_mut().cluster.worker_context = Some(id);
     let child_result = emit(state, Some(&obj), &[Value::String("disconnect".into())]);
-    let child_exit = state.borrow().process.exit_code;
-    state.borrow_mut().process.exit_code = None;
+    let child_exit = state.borrow().process.control.exit_code();
+    state.borrow().process.control.set_exit_code(None);
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
     {
@@ -1448,7 +1452,7 @@ pub fn send(
     let process_result = crate::modules::process::emit(state, &process_args);
     state.borrow_mut().cluster.worker_context = previous_context;
     set_worker_mode(state, id, &obj, false);
-    let child_exit = state.borrow_mut().process.exit_code.take();
+    let child_exit = state.borrow().process.control.take_exit_code();
     if let Some(code) = child_exit {
         close_worker_net(state, id);
         if let Some(worker) = state.borrow_mut().cluster.workers.get_mut(&id) {

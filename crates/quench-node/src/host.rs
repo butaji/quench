@@ -58,6 +58,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime_next::RootId>,
     /// Immutable startup arguments shared with the legacy process adapter.
     pub(crate) process_argv: crate::modules::process::ProcessArgs,
+    pub(crate) process_control: crate::modules::process::ProcessControl,
     pub(crate) process_module: Option<quench_runtime_next::RootId>,
     pub(crate) assert_module: Option<quench_runtime_next::RootId>,
     pub(crate) path_module: Option<quench_runtime_next::RootId>,
@@ -76,6 +77,7 @@ impl SharedNodeState {
         fs: crate::modules::fs::FsState,
         cwd: crate::modules::process::ProcessCwd,
         process_argv: crate::modules::process::ProcessArgs,
+        process_control: crate::modules::process::ProcessControl,
         async_identity: crate::modules::async_hooks::AsyncIdentity,
     ) -> Self {
         Self {
@@ -85,6 +87,7 @@ impl SharedNodeState {
             cwd,
             module_cache: std::collections::HashMap::new(),
             process_argv,
+            process_control,
             process_module: None,
             assert_module: None,
             path_module: None,
@@ -206,7 +209,11 @@ impl NodeHost {
         let fs = crate::modules::fs::FsState::new();
         let argv = crate::modules::process::ProcessArgs::new(argv);
         let async_identity = crate::modules::async_hooks::AsyncIdentity::new();
-        let process = crate::modules::process::ProcessState::with_shared_argv(argv.clone());
+        let process_control = crate::modules::process::ProcessControl::new();
+        let process = crate::modules::process::ProcessState::with_shared_process(
+            argv.clone(),
+            process_control.clone(),
+        );
         let cwd = process.cwd.clone();
         let state = HostState {
             async_hooks: crate::modules::async_hooks::AsyncHooksState::with_identity(
@@ -266,6 +273,7 @@ impl NodeHost {
                 fs,
                 cwd,
                 argv,
+                process_control,
                 async_identity,
             ))),
             commonjs_entry: None,
@@ -319,7 +327,7 @@ impl NodeHost {
 
     /// Exit code recorded by `process.exit`, if any.
     pub fn exit_code(&self) -> Option<i32> {
-        self.state.borrow().process.exit_code
+        self.shared_state.borrow().process_control.exit_code()
     }
 }
 

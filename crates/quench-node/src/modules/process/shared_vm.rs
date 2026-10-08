@@ -273,7 +273,12 @@ pub(crate) fn uptime(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let seconds = context.host_mut().state().borrow().process.uptime();
+    let seconds = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .uptime();
     Ok(context.number(seconds))
 }
 
@@ -282,7 +287,12 @@ pub(crate) fn exit_code_get(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let code = context.host_mut().state().borrow().process.exit_code;
+    let code = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .exit_code();
     let value = match code {
         Some(code) => context.number(code as f64),
         None => context.undefined(),
@@ -296,14 +306,24 @@ pub(crate) fn exit_code_set(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(value_root) = args.first().copied() else {
-        context.host_mut().state().borrow_mut().process.exit_code = None;
+        context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_control
+            .set_exit_code(None);
         return Ok(context.undefined());
     };
     let value = context
         .rooted_value(value_root)
         .ok_or_else(|| RootedError::host("invalid process.exitCode value root"))?;
     if value.is_undefined() || value.is_null() {
-        context.host_mut().state().borrow_mut().process.exit_code = None;
+        context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_control
+            .set_exit_code(None);
         return Ok(context.undefined());
     }
 
@@ -325,7 +345,12 @@ pub(crate) fn exit_code_set(
     if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
         return exit_code_range_error(context, number);
     }
-    context.host_mut().state().borrow_mut().process.exit_code = Some(number as i64 as i32);
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .set_exit_code(Some(number as i64 as i32));
     Ok(context.undefined())
 }
 
@@ -467,7 +492,12 @@ pub(crate) fn umask(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(mask) = args.first().copied() else {
-        let current = context.host_mut().state().borrow().process.umask;
+        let current = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_control
+            .umask();
         return Ok(context.number(current as f64));
     };
     let value = context
@@ -476,7 +506,15 @@ pub(crate) fn umask(
     let parsed = if let Some(number) = value.as_number() {
         (number.is_finite() && number >= 0.0 && number.fract() == 0.0).then_some(number as u32)
     } else if let Some(text) = context.string_text(mask)? {
-        u32::from_str_radix(&text, 8).ok()
+        match u32::from_str_radix(&text, 8) {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                let error = context.type_error_rooted(&format!(
+                    "The \"mask\" argument is invalid. Received {text}"
+                ))?;
+                return Err(throw_with_code(context, error, "ERR_INVALID_ARG_VALUE"));
+            }
+        }
     } else {
         None
     };
@@ -490,11 +528,12 @@ pub(crate) fn umask(
         }
         return Err(context.throw(error));
     };
-    let previous = {
-        let state = context.host_mut().state();
-        let mut state = state.borrow_mut();
-        state.process.update_umask(parsed)
-    };
+    let previous = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .update_umask(parsed);
     Ok(context.number(previous as f64))
 }
 
@@ -505,13 +544,19 @@ pub(crate) fn finish_execution(
     program: &quench_runtime_next::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
+    let process_control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
     let checkpoint = drain_checkpoint(runtime, program, state);
     let shared_state = runtime.host_mut().shared_state();
     crate::modules::http::shared_vm::cleanup(runtime, &shared_state);
     let exit_code = match checkpoint {
-        Ok(()) => state.borrow().process.exit_code.unwrap_or(0),
+        Ok(()) => process_control.exit_code().unwrap_or(0),
         Err(_) => {
-            state.borrow_mut().process.exit_code = Some(1);
+            process_control.set_exit_code(Some(1));
             1
         }
     };
@@ -526,13 +571,19 @@ pub(crate) fn finish_after_uncaught_error(
     state: &Rc<RefCell<crate::host::HostState>>,
     error: &quench_runtime_next::JsError,
 ) -> Result<bool, String> {
+    let process_control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
     let routed = emit_uncaught_exception(runtime, program, error);
     if matches!(&routed, Ok(true)) {
         finish_execution(runtime, program, state)?;
         return Ok(true);
     }
     let handler_error = routed.err();
-    state.borrow_mut().process.exit_code = Some(1);
+    process_control.set_exit_code(Some(1));
     let shared_state = runtime.host_mut().shared_state();
     crate::modules::http::shared_vm::cleanup(runtime, &shared_state);
     emit_exit(runtime, program, state, 1)?;
@@ -1010,7 +1061,7 @@ fn dispatch_unhandled_rejection(
             let handled =
                 emit_process_event(runtime, program, "unhandledRejection", &[reason, promise])?;
             if !handled {
-                route_unhandled_rejection(runtime, program, state, reason)?;
+                route_unhandled_rejection(runtime, program, reason)?;
             }
         }
         crate::modules::process::UnhandledRejectionMode::Strict => {
@@ -1022,7 +1073,7 @@ fn dispatch_unhandled_rejection(
                 runtime.release_root(exception);
             }
             if !handled? {
-                return terminate_unhandled_rejection(state);
+                return terminate_unhandled_rejection(runtime);
             }
             let handled =
                 emit_process_event(runtime, program, "unhandledRejection", &[reason, promise])?;
@@ -1037,7 +1088,6 @@ fn dispatch_unhandled_rejection(
 fn route_unhandled_rejection(
     runtime: &mut quench_runtime_next::Runtime<NodeHost>,
     program: &quench_runtime_next::ResidualProgram,
-    state: &Rc<RefCell<crate::host::HostState>>,
     reason: RootId,
 ) -> Result<(), String> {
     let (exception, owned_exception) = unhandled_rejection_exception(runtime, program, reason)?;
@@ -1046,15 +1096,21 @@ fn route_unhandled_rejection(
         runtime.release_root(exception);
     }
     if !handled? {
-        terminate_unhandled_rejection(state)?;
+        terminate_unhandled_rejection(runtime)?;
     }
     Ok(())
 }
 
 fn terminate_unhandled_rejection(
-    state: &Rc<RefCell<crate::host::HostState>>,
+    runtime: &mut quench_runtime_next::Runtime<NodeHost>,
 ) -> Result<(), String> {
-    state.borrow_mut().process.exit_code = Some(1);
+    let control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    control.set_exit_code(Some(1));
     Err("unhandled Promise rejection was not handled".into())
 }
 

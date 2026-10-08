@@ -17,7 +17,13 @@ pub(crate) fn now(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let elapsed_ms = context.host_mut().state().borrow().process.uptime() * 1_000.0;
+    let elapsed_ms = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .uptime()
+        * 1_000.0;
     Ok(context.number(elapsed_ms))
 }
 
