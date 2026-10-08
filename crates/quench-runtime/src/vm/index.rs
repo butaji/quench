@@ -1,6 +1,10 @@
 use super::*;
 
 const MAX_DENSE_ARRAY_HOLE_GAP: usize = 1024;
+#[cfg(feature = "profile-aggregate")]
+const ARRAY_INDEX_GET_DENSE: usize = 0;
+#[cfg(feature = "profile-aggregate")]
+const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
 #[inline(always)]
 pub(super) fn mutable_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
@@ -77,7 +81,18 @@ impl<H: Host> Vm<H> {
                 .filter(|value| !value.is_deleted())
         {
             #[cfg(feature = "profile-aggregate")]
-            self.profile.index_get(0);
+            self.profile.index_get(ARRAY_INDEX_GET_DENSE);
+            return Ok(value);
+        }
+        if let Some(index) = key.as_int().filter(|index| *index >= 0)
+            && let Some(Cell::Array { .. }) = self.heap.get(object)
+            && let Some(value) = self
+                .heap
+                .sparse_get(object, index as usize)
+                .filter(|value| !value.is_deleted())
+        {
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.index_get(ARRAY_INDEX_GET_SPARSE);
             return Ok(value);
         }
         self.get_index_slow(p, object, key)
