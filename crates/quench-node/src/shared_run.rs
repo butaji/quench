@@ -92,6 +92,7 @@ fn execute_shared_on_worker(
         None => host,
     };
     let host_state = host.state();
+    let shared_state = host.shared_state();
     let mut runtime = Runtime::new(host);
     let program = Engine::compile(ExecutionRequest {
         source: &source,
@@ -126,7 +127,7 @@ fn execute_shared_on_worker(
         .map_err(|error| error.to_string());
     completion?;
     reporting?;
-    if let Some(code) = host_state.borrow().process.exit_code {
+    if let Some(code) = shared_state.borrow().process_control.exit_code() {
         return Ok(SharedCompletion::GuestExit { code });
     }
     match runtime

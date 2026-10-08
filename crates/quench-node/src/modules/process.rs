@@ -1,6 +1,6 @@
 //! `process` module — pure Rust process info.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -54,6 +54,55 @@ impl ProcessArgs {
     }
 }
 
+/// Process-wide scalar state shared by the legacy process adapter and
+/// `SharedNodeState`. The exposed process objects remain adapter-owned.
+#[derive(Clone, Debug)]
+pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
+
+#[derive(Debug)]
+struct ProcessControlCells {
+    started: std::time::Instant,
+    exit_code: Cell<Option<i32>>,
+    umask: Cell<u32>,
+}
+
+impl ProcessControl {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(ProcessControlCells {
+            started: std::time::Instant::now(),
+            exit_code: Cell::new(None),
+            umask: Cell::new(INITIAL_UMASK),
+        }))
+    }
+
+    pub(crate) fn uptime(&self) -> f64 {
+        self.0.started.elapsed().as_secs_f64()
+    }
+
+    pub(crate) fn exit_code(&self) -> Option<i32> {
+        self.0.exit_code.get()
+    }
+
+    pub(crate) fn set_exit_code(&self, code: Option<i32>) {
+        self.0.exit_code.set(code);
+    }
+
+    pub(crate) fn take_exit_code(&self) -> Option<i32> {
+        self.0.exit_code.take()
+    }
+
+    pub(crate) fn umask(&self) -> u32 {
+        self.0.umask.get()
+    }
+
+    pub(crate) fn update_umask(&self, mask: u32) -> u32 {
+        self.0.umask.replace(mask & UMASK_BITS)
+    }
+}
+
+const INITIAL_UMASK: u32 = 0o022;
+const UMASK_BITS: u32 = 0o777;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnhandledRejectionMode {
     Throw,
@@ -79,8 +128,8 @@ impl UnhandledRejectionMode {
 }
 
 pub struct ProcessState {
-    /// Monotonic origin for this logical Node process, shared by both adapters.
-    started: std::time::Instant,
+    /// Process-wide scalar state shared with the canonical host.
+    pub(crate) control: ProcessControl,
     /// Immutable host startup arguments; the shared adapter holds another
     /// handle to this same backing store.
     pub(crate) argv: ProcessArgs,
@@ -103,7 +152,6 @@ pub struct ProcessState {
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
-    pub exit_code: Option<i32>,
     /// `process.exit()` ends guest execution immediately; `process.exitCode`
     /// only selects the eventual status and must not hide an uncaught error.
     pub exit_requested: bool,
@@ -112,7 +160,6 @@ pub struct ProcessState {
     /// process-level flag without inspecting fixture names or source text.
     pub abort_on_uncaught_exception: bool,
     pub cwd: ProcessCwd,
-    pub umask: u32,
     pub title: String,
     /// Host-simulated child identities visible to `process.kill`.
     pub alive_pids: HashSet<i64>,
@@ -139,17 +186,17 @@ impl Default for ProcessState {
 
 impl ProcessState {
     pub fn new(argv: Vec<String>) -> Self {
-        Self::with_shared_argv(ProcessArgs::new(argv))
+        Self::with_shared_process(ProcessArgs::new(argv), ProcessControl::new())
     }
 
-    pub(crate) fn with_shared_argv(argv: ProcessArgs) -> Self {
+    pub(crate) fn with_shared_process(argv: ProcessArgs, control: ProcessControl) -> Self {
         // The first argv entry is the process identity exposed by Node.  It
         // must stay the same value as process.argv[0], even when the host is
         // embedded or driven by the compatibility runner.
         let exec_path = argv.as_slice().first().cloned().unwrap_or_default();
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
-            started: std::time::Instant::now(),
+            control,
             argv,
             exit_handlers: Vec::new(),
             before_exit_handlers: Vec::new(),
@@ -165,11 +212,9 @@ impl ProcessState {
             exit_handlers_ran: false,
             exec_path,
             version: format!("v{NODE_VERSION}"),
-            exit_code: None,
             exit_requested: false,
             abort_on_uncaught_exception: false,
             cwd: ProcessCwd::new(cwd),
-            umask: 0o022,
             title: "quench-node".into(),
             alive_pids: HashSet::from([std::process::id() as i64]),
             trace_categories: HashSet::new(),
@@ -184,17 +229,15 @@ impl ProcessState {
     }
 
     pub fn uptime(&self) -> f64 {
-        self.started.elapsed().as_secs_f64()
+        self.control.uptime()
     }
 
     pub fn argv(&self) -> &[String] {
         self.argv.as_slice()
     }
 
-    pub(crate) fn update_umask(&mut self, mask: u32) -> u32 {
-        let previous = self.umask;
-        self.umask = mask & 0o777;
-        previous
+    pub(crate) fn update_umask(&self, mask: u32) -> u32 {
+        self.control.update_umask(mask)
     }
 }
 
@@ -1144,10 +1187,10 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
     if !args.is_empty() {
         set_exit_code(state, args)?;
     }
-    let code = state.borrow().process.exit_code.unwrap_or(0);
+    let code = state.borrow().process.control.exit_code().unwrap_or(0);
     {
         let mut state = state.borrow_mut();
-        state.process.exit_code = Some(code);
+        state.process.control.set_exit_code(Some(code));
         state.process.exit_requested = true;
     }
     // Node's public `process.exit()` funnels through the internal
@@ -1174,7 +1217,7 @@ pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
 pub fn set_exit_code(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let value = args.first().unwrap_or(&Value::Undefined);
     if matches!(value, Value::Undefined | Value::Null) {
-        state.borrow_mut().process.exit_code = None;
+        state.borrow().process.control.set_exit_code(None);
         return Ok(Value::Undefined);
     }
     let number = match value {
@@ -1211,7 +1254,11 @@ pub fn set_exit_code(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     }
     // Every validated safe integer fits i64; narrowing then reproduces the
     // Int32Array storage in Node's process exit fields without saturation.
-    state.borrow_mut().process.exit_code = Some(number as i64 as i32);
+    state
+        .borrow()
+        .process
+        .control
+        .set_exit_code(Some(number as i64 as i32));
     Ok(Value::Undefined)
 }
 
@@ -1743,7 +1790,7 @@ fn stream_chunk(value: Option<&Value>) -> String {
 /// previous one. The host keeps a single shared mask (0o022 default).
 pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(value) = args.first() else {
-        return Ok(Value::Number(state.borrow().process.umask as f64));
+        return Ok(Value::Number(state.borrow().process.control.umask() as f64));
     };
     let mask = match value {
         Value::Number(number) if number.is_finite() && *number >= 0.0 && number.fract() == 0.0 => {
@@ -1760,8 +1807,7 @@ pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             ));
         }
     };
-    let mut guard = state.borrow_mut();
-    let previous = guard.process.update_umask(mask);
+    let previous = state.borrow().process.update_umask(mask);
     Ok(Value::Number(previous as f64))
 }
 

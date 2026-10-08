@@ -13927,7 +13927,8 @@ pub fn process_exit_code_get(
     Ok(state
         .borrow()
         .process
-        .exit_code
+        .control
+        .exit_code()
         .map_or(Value::Undefined, |code| Value::Number(code as f64)))
 }
 

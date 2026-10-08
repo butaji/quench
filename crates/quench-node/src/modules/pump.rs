@@ -295,7 +295,7 @@ pub fn run_exit_handlers(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> 
         }
         guard.process.exit_handlers_ran = true;
     }
-    let code = state.borrow().process.exit_code.unwrap_or(0);
+    let code = state.borrow().process.control.exit_code().unwrap_or(0);
     let handlers = state.borrow().process.exit_handlers.clone();
     run_lifecycle_handlers(state, &handlers, code)
 }
@@ -395,7 +395,7 @@ fn drain_unhandled_rejections(state: &Rc<RefCell<HostState>>) -> Result<(), VmEr
             // unhandled rejection and reports the rejection reason as the
             // uncaught error. Preserve both edges: the exit status and the
             // thrown value must cross the host boundary independently.
-            state.borrow_mut().process.exit_code = Some(1);
+            state.borrow().process.control.set_exit_code(Some(1));
             return Err(VmError::Thrown(reason.clone()));
         }
     }
