@@ -453,7 +453,10 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
-        BuiltinModule::FsPromises => crate::modules::fs_shared_vm::promises_module(context),
+        BuiltinModule::FsPromises => {
+            let fs = cached_builtin(context, BuiltinModule::Fs)?;
+            get(context, fs, "promises")
+        }
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
