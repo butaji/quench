@@ -348,7 +348,7 @@ fn run_parallel(
             let counter = Arc::clone(&counter);
             let next = Arc::clone(&next);
             thread::Builder::new()
-                .stack_size(rqj::WORKER_STACK_SIZE)
+                .stack_size(quench_runtime::WORKER_STACK_SIZE)
                 .spawn(move || run_worker(files, root, limit, counter, next, emit_outcomes))
                 .expect("spawn triage worker")
         })

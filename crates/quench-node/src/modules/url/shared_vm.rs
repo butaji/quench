@@ -2,7 +2,7 @@
 
 use crate::host::NodeHost;
 use crate::modules::url::{LegacyUrlField, LegacyUrlParseError};
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 

@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     if env::args().nth(1).as_deref() == Some("--test-worker") {
         return match thread::Builder::new()
             .name("next-test262-case".into())
-            .stack_size(rqj::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_test_worker)
         {
             Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),

@@ -5,7 +5,7 @@
 //! shared event-loop checkpoint.
 
 use crate::host::{HostState, NodeHost};
-use rqj::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -303,8 +303,8 @@ pub(crate) fn executor(
 }
 
 pub(crate) fn poll(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &std::rc::Rc<std::cell::RefCell<HostState>>,
 ) -> Result<bool, String> {
     let mut completions = Vec::new();

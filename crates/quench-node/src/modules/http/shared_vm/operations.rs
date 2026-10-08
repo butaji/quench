@@ -1,6 +1,6 @@
 use crate::host::NodeHost;
 use crate::modules::net;
-use rqj::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 type Context<'a> = NativeContext<'a, NodeHost>;

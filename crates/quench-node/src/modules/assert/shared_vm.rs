@@ -1,7 +1,7 @@
 //! Shared-VM operations for the Node `assert` CommonJS builtin.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::HashSet;
 
 const MISSING_ASSERT_ARGS: &str = "The \"actual\" and \"expected\" arguments must be specified";

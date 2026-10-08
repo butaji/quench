@@ -1,7 +1,7 @@
 //! Shared-VM projection of the existing Node EventEmitter bridge.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const EVENTS_API: &str = quench_js_check::checked_js!(
     r#"(() => {

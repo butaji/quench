@@ -4,7 +4,7 @@ use std::{collections::BTreeSet, fs, path::Path};
 pub const RATCHET_SCHEMA_VERSION: u64 = 1;
 pub const RATCHET_ENGINE: &str = "next";
 
-pub const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
+pub const DEFAULT_RATCHET: &str = "target/test262-ratchet.json";
 
 /// Stable test identity used by reports and both ratchet scopes.
 pub fn relative_test_path(path: &Path, test_root: &Path) -> String {

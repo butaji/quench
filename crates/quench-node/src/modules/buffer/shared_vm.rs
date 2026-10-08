@@ -1,8 +1,7 @@
 //! Shared-VM Buffer values are realm-owned Uint8Array views.
 
 use crate::host::NodeHost;
-use quench_runtime::value::Value as LegacyValue;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     r#"(encode, decode, canonicalEncoding) => {
@@ -247,11 +246,7 @@ pub(crate) fn decode(
                 .unwrap_or_default() as u8,
         );
     }
-    let text = match crate::modules::buffer_enc::decode_str(&bytes, canonical) {
-        LegacyValue::String(text) => text,
-        LegacyValue::StringUnits(units) => String::from_utf16_lossy(&units),
-        _ => unreachable!("Buffer decoding always returns a string"),
-    };
+    let text = crate::modules::buffer_enc::decode_str(&bytes, canonical);
     Ok(context.string_rooted(&text))
 }
 

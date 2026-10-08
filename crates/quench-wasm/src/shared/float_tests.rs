@@ -1,5 +1,5 @@
 use super::*;
-use rqj::{Runtime, SystemHost, WasmValue};
+use quench_runtime::{Runtime, SystemHost, WasmValue};
 
 fn lower(wat: &str) -> WasmFunction {
     crate::Engine::new()

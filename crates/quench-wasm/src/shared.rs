@@ -1,8 +1,8 @@
 //! Decode validated modules for the shared VM. There is no executor here.
 
 use crate::{Error, Module};
-use rqj::WasmValue;
-use rqj::{
+use quench_runtime::WasmValue;
+use quench_runtime::{
     Engine, WasmElementSegment, WasmFunction, WasmFunctionBody, WasmFunctionRef, WasmGcDescriptor,
     WasmGcField, WasmGcInitialObject, WasmGcType, WasmI32Function, WasmMemoryId, WasmMemoryInit,
     WasmSignature, WasmTableId, WasmTableInit, WasmType,
@@ -470,7 +470,7 @@ impl Module {
         imported_functions: &[Option<WasmFunctionRef>],
         imported_tables: &[Option<WasmTableId>],
         imported_memories: &[Option<WasmMemoryId>],
-        imported_tags: &[Option<rqj::WasmTagId>],
+        imported_tags: &[Option<quench_runtime::WasmTagId>],
     ) -> Result<
         (
             WasmFunction,
@@ -496,7 +496,7 @@ impl Module {
         imported_function_refs: &[Option<WasmFunctionRef>],
         imported_table_refs: &[Option<WasmTableId>],
         imported_memory_refs: &[Option<WasmMemoryId>],
-        imported_tag_refs: &[Option<rqj::WasmTagId>],
+        imported_tag_refs: &[Option<quench_runtime::WasmTagId>],
     ) -> Result<
         (
             WasmFunction,
@@ -1161,8 +1161,8 @@ fn const_value_assignable(value: WasmValue, destination: WasmType) -> bool {
         || matches!(
             (value, destination),
             (WasmValue::FuncRef(Some(reference)), WasmType::ExternRef)
-                if reference & !rqj::WASM_GC_INITIAL_REFERENCE_ID_MASK
-                    == rqj::WASM_GC_INITIAL_REFERENCE_TAG
+                if reference & !quench_runtime::WASM_GC_INITIAL_REFERENCE_ID_MASK
+                    == quench_runtime::WASM_GC_INITIAL_REFERENCE_TAG
         )
 }
 
@@ -1402,9 +1402,9 @@ fn allocate_gc_constant(
 ) -> Result<WasmValue, Error> {
     let id = u32::try_from(gc_initial_objects.len() + 1)
         .ok()
-        .filter(|id| *id <= rqj::WASM_GC_INITIAL_REFERENCE_ID_MASK)
+        .filter(|id| *id <= quench_runtime::WASM_GC_INITIAL_REFERENCE_ID_MASK)
         .ok_or_else(|| Error::Unsupported("too many constant Wasm GC objects".into()))?;
-    let reference = rqj::WASM_GC_INITIAL_REFERENCE_TAG | id;
+    let reference = quench_runtime::WASM_GC_INITIAL_REFERENCE_TAG | id;
     gc_initial_objects.push(WasmGcInitialObject {
         reference,
         type_index,
@@ -1822,7 +1822,7 @@ fn parse_error(error: wasmparser::BinaryReaderError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rqj::{ExecutionRequest, Host, Runtime};
+    use quench_runtime::{ExecutionRequest, Host, Runtime};
 
     #[derive(Default)]
     struct TestHost;
@@ -1947,7 +1947,7 @@ mod tests {
 
     #[test]
     fn shared_integer_traps_are_typed_and_runtime_recovers() {
-        use rqj::WasmTrap;
+        use quench_runtime::WasmTrap;
 
         let divide = lower(
             "(module (func (export \"f\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s))",
@@ -1975,7 +1975,7 @@ mod tests {
         let error = runtime.execute_wasm_i32(&divide, &[]).unwrap_err();
         assert_eq!(error.wasm_trap(), None);
 
-        let program = rqj::Engine::specialize("throw new Error('guest');", "throw.js").unwrap();
+        let program = quench_runtime::Engine::specialize("throw new Error('guest');", "throw.js").unwrap();
         assert_eq!(runtime.execute(&program).unwrap_err().wasm_trap(), None);
     }
 }

@@ -1,7 +1,7 @@
 use super::state::{Response, ServerConnection};
 use crate::host::{HostState, NodeHost};
 use crate::modules::net;
-use rqj::{RootId, Runtime, Value};
+use quench_runtime::{RootId, Runtime, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -10,7 +10,7 @@ const RESPONSE_HEAD_LIMIT: usize = 64 * 1024;
 
 pub(crate) fn poll(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<HostState>>,
 ) -> Result<bool, String> {
     let events = {
@@ -330,7 +330,7 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>, state: &Rc<RefCell<HostSt
 
 fn emit_listening(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<HostState>>,
 ) -> Result<bool, String> {
     let pending = {
@@ -364,7 +364,7 @@ fn emit_listening(
 
 fn finish_closed_servers(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<HostState>>,
 ) -> Result<bool, String> {
     let closed = {
@@ -403,7 +403,7 @@ fn finish_closed_servers(
 
 fn emit_event(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime::ResidualProgram,
     receiver: RootId,
     name: &str,
     args: &[RootId],
@@ -416,7 +416,7 @@ fn emit_event(
 
 fn emit(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime::ResidualProgram,
     receiver: RootId,
     event: RootId,
     args: &[RootId],

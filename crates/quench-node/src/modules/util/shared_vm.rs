@@ -1,7 +1,7 @@
 //! Shared-VM utilities whose behavior is defined in guest-visible JavaScript.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 const UTIL: &str = quench_js_check::checked_js!(
     r#"(() => {

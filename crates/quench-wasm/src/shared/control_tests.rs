@@ -1,5 +1,5 @@
 use super::*;
-use rqj::{Host, Runtime, WasmTrap};
+use quench_runtime::{Host, Runtime, WasmTrap};
 
 struct TestHost;
 impl Host for TestHost {
