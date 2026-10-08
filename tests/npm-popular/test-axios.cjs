@@ -2,6 +2,11 @@
 
 const assert = require('node:assert/strict');
 const axios = require('axios');
+const fs = require('node:fs');
+
+const sourceText = fs.readFileSync(__filename, 'utf8');
+const sourceBase64 = fs.readFileSync(__filename, { encoding: 'base64' });
+assert.strictEqual(Buffer.from(sourceBase64, 'base64').toString('utf8'), sourceText);
 
 const adapter = async (config) => ({
   data: { method: config.method, url: config.url },
