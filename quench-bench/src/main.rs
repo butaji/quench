@@ -1,3 +1,5 @@
+mod analysis;
+
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -171,6 +173,14 @@ struct Options {
 }
 
 fn main() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg| arg == "--analyze") {
+        if let Err(error) = analysis::run(&args[1..]) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     let options = parse_options();
     if env::var_os("QUENCH_EXEC_TRACE").is_some() {
         fail("scored runs must not inherit QUENCH_EXEC_TRACE");
@@ -929,7 +939,7 @@ fn artifact(path: &Path) -> Artifact {
     }
 }
 
-fn sha256(path: &Path) -> Option<String> {
+pub(crate) fn sha256(path: &Path) -> Option<String> {
     let output = Command::new("shasum")
         .args(["-a", "256"])
         .arg(path)
@@ -954,7 +964,7 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-fn now_ns() -> u128 {
+pub(crate) fn now_ns() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos())
@@ -962,7 +972,7 @@ fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--out PATH]\n       quench-bench --preflight-only [engine options]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
