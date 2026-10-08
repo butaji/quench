@@ -1115,65 +1115,97 @@ impl<H: Host> Vm<H> {
             std::iter::once(callee)
                 .chain(std::iter::once(this))
                 .chain(args.iter().copied()),
-            |vm| {
-                if matches!(vm.heap.get(callee), Some(Cell::Proxy { .. })) {
-                    return vm.proxy_call(p, callee, this, args);
-                }
-                let target = match target {
-                    Some(target) => target,
-                    None => vm
-                        .call_target(callee)
-                        .map_err(|error| vm.type_error(p, error.to_string()))?,
-                };
-                match target {
-                    CallTarget::Native(native) => {
-                        vm.profile.call_target(0, args.len());
-                        vm.call_native_guarded(p, native, this, args, callee)
-                    }
-                    CallTarget::User(program_id, id, env)
-                    | CallTarget::NumericUser(program_id, id, env) => {
-                        let target_kind = if matches!(target, CallTarget::User(..)) {
-                            1
-                        } else {
-                            2
-                        };
-                        vm.profile.call_target(target_kind, args.len());
-                        let program = vm.programs.get(program_id).ok_or_else(|| {
-                            vm.type_error(p, "function belongs to an unavailable program".into())
-                        })?;
-                        let active_program = std::mem::replace(&mut vm.active_program, program_id);
-                        let realm = match vm.heap.get(callee) {
-                            Some(Cell::Function { realm, .. }) => *realm,
-                            _ => vm.realm.globals,
-                        };
-                        let current_global = std::mem::replace(&mut vm.realm.globals, realm);
-                        let result = if program
-                            .functions
-                            .get(id as usize)
-                            .is_some_and(|function| function.is_class_constructor)
-                            && vm.construct_target.is_none()
-                        {
-                            Err(vm.type_error(
-                                p,
-                                "class constructor cannot be called without new".into(),
-                            ))
-                        } else {
-                            vm.call_user_maybe_async(
-                                &program,
-                                id,
-                                env,
-                                this,
-                                args,
-                                CallContext::user_function(id, callee),
-                            )
-                        };
-                        vm.active_program = active_program;
-                        vm.realm.globals = current_global;
-                        result
-                    }
-                }
-            },
+            |vm| vm.call_value_with_target_inner(p, callee, this, args, target),
         )
+    }
+
+    fn call_value_from_frame(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_value_with_target_inner(p, callee, this, args, None)
+    }
+
+    fn call_value_with_target_from_frame(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+        target: Option<CallTarget>,
+    ) -> Result<Value, JsError> {
+        // The receiver and arguments remain in the paused caller frame, whose
+        // root map is published at this call instruction. A method getter can
+        // produce a callee that is not present in that frame, so root it here.
+        self.with_call_roots([callee], |vm| {
+            vm.call_value_with_target_inner(p, callee, this, args, target)
+        })
+    }
+
+    fn call_value_with_target_inner(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+        target: Option<CallTarget>,
+    ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
+            return self.proxy_call(p, callee, this, args);
+        }
+        let target = match target {
+            Some(target) => target,
+            None => self
+                .call_target(callee)
+                .map_err(|error| self.type_error(p, error.to_string()))?,
+        };
+        match target {
+            CallTarget::Native(native) => {
+                self.profile.call_target(0, args.len());
+                self.call_native_guarded(p, native, this, args, callee)
+            }
+            CallTarget::User(program_id, id, env)
+            | CallTarget::NumericUser(program_id, id, env) => {
+                let target_kind = if matches!(target, CallTarget::User(..)) {
+                    1
+                } else {
+                    2
+                };
+                self.profile.call_target(target_kind, args.len());
+                let program = self.programs.get(program_id).ok_or_else(|| {
+                    self.type_error(p, "function belongs to an unavailable program".into())
+                })?;
+                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let realm = match self.heap.get(callee) {
+                    Some(Cell::Function { realm, .. }) => *realm,
+                    _ => self.realm.globals,
+                };
+                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let result = if program
+                    .functions
+                    .get(id as usize)
+                    .is_some_and(|function| function.is_class_constructor)
+                    && self.construct_target.is_none()
+                {
+                    Err(self.type_error(p, "class constructor cannot be called without new".into()))
+                } else {
+                    self.call_user_maybe_async(
+                        &program,
+                        id,
+                        env,
+                        this,
+                        args,
+                        CallContext::user_function(id, callee),
+                    )
+                };
+                self.active_program = active_program;
+                self.realm.globals = current_global;
+                result
+            }
+        }
     }
 
     fn with_call_roots<R>(
