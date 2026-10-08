@@ -42,6 +42,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathNormalize" (1) => crate::modules::path_shared_vm::normalize_operation,
         method "urlParse" (3) => crate::modules::url_shared_vm::parse,
         method "urlFormat" (2) => crate::modules::url_shared_vm::format,
+        method "domainToASCII" (1) => crate::modules::url_shared_vm::domain_to_ascii,
+        method "domainToUnicode" (1) => crate::modules::url_shared_vm::domain_to_unicode,
         method "querystringParse" (4) => crate::modules::querystring_shared_vm::parse,
         method "querystringStringify" (4) => crate::modules::querystring_shared_vm::stringify,
         method "osType" (0) => crate::modules::os_shared_vm::type_operation,

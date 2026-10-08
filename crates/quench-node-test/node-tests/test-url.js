@@ -4,6 +4,14 @@ if (url.parse.name !== 'urlParse' || url.parse.length !== 3 ||
   url.format.name !== 'urlFormat' || url.format.length !== 2) {
   throw new Error('URL function shape');
 }
+if (url.domainToASCII.name !== 'domainToASCII' || url.domainToASCII.length !== 1 ||
+  url.domainToUnicode.name !== 'domainToUnicode' || url.domainToUnicode.length !== 1 ||
+  url.domainToASCII('mañana.com') !== 'xn--maana-pta.com' ||
+  url.domainToUnicode('xn--maana-pta.com') !== 'mañana.com' ||
+  url.domainToUnicode('mañana.com') !== 'mañana.com' || url.domainToASCII(1) !== '0.0.0.1' ||
+  url.domainToASCII('bad domain') !== '' || url.domainToUnicode('bad domain') !== '') {
+  throw new Error('domain IDNA helpers');
+}
 const parsed = url.parse('http://x.example/y?z=1');
 if (!(parsed.query === 'z=1')) throw new Error('query=' + parsed.query);
 const formatted = url.format({ protocol: 'http:', hostname: 'h', pathname: '/p' });
