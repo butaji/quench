@@ -1,9 +1,8 @@
-//! Single canonical dispatch table.
+//! Transitional dispatch table for legacy-value Node handlers.
 //!
-//! Each capability id maps to one Rust handler. The host's
-//! `Host::call`/`construct` routes through this table. Adding a
-//! new Node API is a one-line entry in the appropriate per-domain
-//! table; no plumbing changes.
+//! The production Node host registers shared-runtime operations directly.
+//! This table remains only for API adapters that still use legacy runtime
+//! values while those adapters are migrated.
 
 use crate::dispatch_fs::fs_dispatch;
 use crate::dispatch_handlers as handlers;
@@ -236,10 +235,6 @@ const CAP_TRACE_EVENTS_DISABLE: u16 = crate::registry::SPEC_TRACE_EVENTS_DISABLE
 const CAP_TRACE_EVENTS_GET_ENABLED: u16 = crate::registry::SPEC_TRACE_EVENTS_GET_ENABLED.cap;
 const CAP_COMMON_SKIP_IF_PERFETTO: u16 = crate::registry::SPEC_COMMON_SKIP_IF_PERFETTO.cap;
 const CAP_HTTP_AGENT_DESTROY: u16 = crate::registry::SPEC_HTTP_AGENT_DESTROY.cap;
-const CAP_WASI_CONSTRUCTOR: u16 = crate::registry::SPEC_WASI_CONSTRUCTOR.cap;
-const CAP_WASI_START: u16 = crate::registry::SPEC_WASI_START.cap;
-const CAP_WASI_INITIALIZE: u16 = crate::registry::SPEC_WASI_INITIALIZE.cap;
-const CAP_WASI_IMPORT_OBJECT: u16 = crate::registry::SPEC_WASI_IMPORT_OBJECT.cap;
 const CAP_DIAGNOSTICS_CHANNEL: u16 = crate::registry::SPEC_DIAGNOSTICS_CHANNEL.cap;
 const CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR: u16 =
     crate::registry::SPEC_DIAGNOSTICS_CHANNEL_CONSTRUCTOR.cap;
@@ -1668,9 +1663,6 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TRACE_EVENTS_GET_ENABLED => crate::modules::trace_events::get_enabled,
         CAP_COMMON_SKIP_IF_PERFETTO => crate::modules::process::skip_if_perfetto,
         CAP_HTTP_AGENT_DESTROY => crate::modules::http_client::agent_destroy,
-        CAP_WASI_START => crate::modules::wasi::start,
-        CAP_WASI_INITIALIZE => crate::modules::wasi::initialize,
-        CAP_WASI_IMPORT_OBJECT => crate::modules::wasi::import_object,
         CAP_ZLIB_GZIP => crate::modules::zlib::gzip,
         CAP_ZLIB_GUNZIP => crate::modules::zlib::gunzip,
         CAP_ZLIB_DEFLATE_RAW => crate::modules::zlib::deflate_raw,
@@ -1792,7 +1784,6 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_READLINE => readline_create_interface,
         CAP_ASYNC_RESOURCE => crate::modules::async_hooks::new_resource,
         CAP_ASYNC_LOCAL_STORAGE => crate::modules::async_hooks::new_async_local_storage,
-        CAP_WASI_CONSTRUCTOR => crate::modules::wasi::new_wasi,
         CAP_DIAGNOSTICS_CHANNEL_CONSTRUCTOR => crate::modules::diagnostics_channel::new_channel,
         CAP_DOMAIN_CONSTRUCTOR => crate::modules::domain::new_domain,
         CAP_ABORT_CONTROLLER => abort_controller_new,
