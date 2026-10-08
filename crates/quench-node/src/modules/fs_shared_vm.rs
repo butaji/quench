@@ -297,23 +297,11 @@ pub(crate) fn read_file_sync(
             };
             match encoding.as_deref() {
                 None | Some("buffer") => buffer_from_bytes(context, &bytes),
-                Some("utf8" | "utf-8") => match String::from_utf8(bytes) {
-                    Ok(text) => Ok(context.string_rooted(&text)),
-                    Err(_) => {
-                        let error = context.error_rooted("The input is not valid UTF-8")?;
-                        Err(context.throw(error))
-                    }
-                },
-                _ => {
-                    let error = context.type_error_rooted(
-                        "shared fs.readFileSync currently requires a UTF-8 encoding",
-                    )?;
-                    let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
-                    let property = context.string_rooted("code");
-                    if !context.set_property_rooted(error, property, code, error)? {
-                        return Err(RootedError::host("cannot set fs error code"));
-                    }
-                    Err(context.throw(error))
+                Some(encoding) => {
+                    let buffer = buffer_from_bytes(context, &bytes)?;
+                    let to_string = get(context, buffer, "toString")?;
+                    let encoding = context.string_rooted(encoding);
+                    context.call_rooted(to_string, buffer, &[encoding])
                 }
             }
         }
