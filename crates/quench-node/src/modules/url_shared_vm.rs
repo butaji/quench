@@ -3,6 +3,7 @@
 use crate::host::NodeHost;
 use crate::modules::url_legacy::{self, LegacyUrlField, LegacyUrlParseError};
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
@@ -49,7 +50,149 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "parse", parse)?;
     set(context, module, "URL", constructor)?;
     set(context, module, "Url", legacy_constructor)?;
+    let path_to_file_url = context.host_function(
+        crate::host::shared_vm::operation("pathToFileURL"),
+    )?;
+    set(context, module, "pathToFileURL", path_to_file_url)?;
+    let file_url_to_path = context.host_function(
+        crate::host::shared_vm::operation("fileURLToPath"),
+    )?;
+    set(context, module, "fileURLToPath", file_url_to_path)?;
     Ok(module)
+}
+
+pub(crate) fn path_to_file_url(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|root| context.string_text(root))
+        .transpose()?
+        .flatten()
+        .ok_or_else(|| invalid_argument(context, "path"))?;
+    let path = PathBuf::from(path);
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|error| RootedError::host(error.to_string()))?
+            .join(path)
+    };
+    let absolute = normalize_path(&absolute);
+    let href = url::Url::from_file_path(&absolute)
+        .map_err(|_| invalid_argument(context, "path"))?
+        .to_string();
+    let href = context.string_rooted(&href);
+    let constructor = url_constructor(context)?;
+    context.construct_rooted(constructor, constructor, &[href])
+}
+
+pub(crate) fn file_url_to_path(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(input) = args.first().copied() else {
+        return Err(invalid_argument(context, "url"));
+    };
+    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_argument(context, "url"))?;
+    let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
+    if parsed.scheme() != "file" {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_URL_SCHEME",
+            "The URL must be of scheme file",
+        ));
+    }
+    if parsed
+        .host_str()
+        .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+    {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_FILE_URL_HOST",
+            "File URL host must be \"localhost\" or empty on this platform",
+        ));
+    }
+    if parsed.path().to_ascii_lowercase().contains("%2f")
+        || (cfg!(windows) && parsed.path().to_ascii_lowercase().contains("%5c"))
+    {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_FILE_URL_PATH",
+            "File URL path must not include encoded path separators",
+        ));
+    }
+    let path = parsed
+        .to_file_path()
+        .map_err(|_| invalid_url(context, &input))?;
+    Ok(context.string_rooted(&path.to_string_lossy()))
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn url_argument_text(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<Option<String>, RootedError> {
+    if let Some(text) = context.string_text(value)? {
+        return Ok(Some(text));
+    }
+    if !context.is_object_rooted(value)? {
+        return Ok(None);
+    }
+    let global = context.global_root()?;
+    let constructor = get(context, global, "URL")?;
+    let prototype = get(context, constructor, "prototype")?;
+    let to_string = get(context, prototype, "toString")?;
+    match context.call_rooted(to_string, value, &[]) {
+        Ok(url) => context.string_text(url),
+        Err(error) => {
+            if let Some(exception) = error.exception {
+                context.release_root(exception);
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn invalid_argument(context: &mut NativeContext<'_, NodeHost>, name: &str) -> RootedError {
+    coded_url_type_error(
+        context,
+        "ERR_INVALID_ARG_TYPE",
+        &format!("The \"{name}\" argument must be of type string or an instance of URL"),
+    )
+}
+
+fn coded_url_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    code: &str,
+    message: &str,
+) -> RootedError {
+    let exception = match context.type_error_rooted(message) {
+        Ok(exception) => exception,
+        Err(error) => return error,
+    };
+    let code = context.string_rooted(code);
+    if let Err(error) = set(context, exception, "code", code) {
+        return error;
+    }
+    context.throw(exception)
 }
 
 /// Install the realm's one URL constructor as the global; `node:url` reads the
@@ -254,6 +397,15 @@ fn set(
     let key = context.string_rooted(name);
     context.set_property_rooted(object, key, value, object)?;
     Ok(())
+}
+
+fn get(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    context.get_property_rooted(object, key)
 }
 
 fn set_text(
