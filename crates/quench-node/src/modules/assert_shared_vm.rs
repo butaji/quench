@@ -8,6 +8,7 @@ const MISSING_ASSERT_ARGS: &str = "The \"actual\" and \"expected\" arguments mus
 const ASSERTION_FAILED: &str = "Expected values to be strictly equal";
 const ASSERTION_NOT_OK: &str = "The expression evaluated to a falsy value";
 const ASSERTION_NOT_UNEQUAL: &str = "Expected actual and expected to be strictly unequal";
+const ASSERTION_NOT_DEEP_UNEQUAL: &str = "Expected \"actual\" not to be strictly deep-equal to";
 const ASSERTION_DIFF: &str = "simple";
 
 pub(crate) fn module(
@@ -26,6 +27,8 @@ pub(crate) fn module(
         context.host_function(crate::host::shared_vm::operation("notStrictEqual"))?;
     let deep_strict_equal =
         context.host_function(crate::host::shared_vm::operation("deepStrictEqual"))?;
+    let not_deep_strict_equal =
+        context.host_function(crate::host::shared_vm::operation("notDeepStrictEqual"))?;
     let match_string = context.host_function(crate::host::shared_vm::operation("match"))?;
     let fail = context.host_function(crate::host::shared_vm::operation("fail"))?;
     let throws = context.host_function(crate::host::shared_vm::operation("throws"))?;
@@ -65,6 +68,7 @@ AssertionError"#
     set(context, assert, "strictEqual", strict_equal)?;
     set(context, assert, "notStrictEqual", not_strict_equal)?;
     set(context, assert, "deepStrictEqual", deep_strict_equal)?;
+    set(context, assert, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, assert, "match", match_string)?;
     set(context, assert, "fail", fail)?;
     set(context, assert, "strict", strict)?;
@@ -76,6 +80,7 @@ AssertionError"#
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
+    set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
     set(context, strict, "fail", fail)?;
     set(context, strict, "equal", strict_equal)?;
@@ -176,6 +181,30 @@ pub(crate) fn deep_strict_equal(
         actual,
         expected,
         "deepStrictEqual",
+        &message,
+        generated,
+    )
+}
+
+pub(crate) fn not_deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if args.len() < 2 {
+        return missing_assert_arguments(context);
+    }
+    let (actual, expected) = (args[0], args[1]);
+    if !deep_equal(context, actual, expected, &mut HashSet::new())? {
+        return Ok(context.undefined());
+    }
+    let (message, generated) =
+        assertion_message(context, args.get(2).copied(), ASSERTION_NOT_DEEP_UNEQUAL)?;
+    assertion_error(
+        context,
+        actual,
+        expected,
+        "notDeepStrictEqual",
         &message,
         generated,
     )

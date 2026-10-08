@@ -2,12 +2,23 @@
 
 const assert = require('node:assert/strict');
 const axios = require('axios');
-const { isAscii, isUtf8 } = require('node:buffer');
+const { constants, isAscii, isUtf8, kMaxLength, kStringMaxLength } = require('node:buffer');
 const fs = require('node:fs');
 
+assert.notDeepStrictEqual({ package: 'axios' }, { package: 'other' });
+assert.strictEqual(constants.MAX_LENGTH, kMaxLength);
+assert.strictEqual(constants.MAX_STRING_LENGTH, kStringMaxLength);
 const sourceText = fs.readFileSync(__filename, 'utf8');
 const sourceBase64 = fs.readFileSync(__filename, { encoding: 'base64' });
 assert.strictEqual(Buffer.from(sourceBase64, 'base64').toString('utf8'), sourceText);
+assert.strictEqual(
+  Buffer.concat([Buffer.from('axios '), Buffer.from('compat')]).toString(),
+  'axios compat',
+);
+assert.strictEqual(
+  Buffer.concat([Uint8Array.of(1, 2), Uint8Array.of(3)], 5).toString('hex'),
+  '0102030000',
+);
 const numericBuffer = Buffer.alloc(8);
 assert.strictEqual(numericBuffer.writeInt32LE(-42, 0), 4);
 assert.strictEqual(numericBuffer.readInt32LE(0), -42);
