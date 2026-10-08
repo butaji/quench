@@ -115,6 +115,9 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       if (typeof value === "string") {
         return makeBuffer(encode(value, normalizeEncoding(encoding || "utf8")));
       }
+      if (value?.type === "Buffer" && Array.isArray(value.data)) {
+        return new Buffer(value.data);
+      }
       return new Buffer(value, encoding, length);
     }
 
@@ -245,6 +248,10 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
         if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
       }
       return leftLength === rightLength ? 0 : leftLength < rightLength ? -1 : 1;
+    }
+
+    toJSON() {
+      return { type: "Buffer", data: Array.from(this) };
     }
 
     toString(encoding = "utf8", start = 0, end = this.length) {
