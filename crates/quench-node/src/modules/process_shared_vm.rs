@@ -42,6 +42,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         ("nextTick", "nextTick"),
         ("cwd", "processCwd"),
         ("chdir", "processChdir"),
+        ("getuid", "processGetuid"),
+        ("geteuid", "processGeteuid"),
+        ("getgid", "processGetgid"),
+        ("getegid", "processGetegid"),
         ("umask", "processUmask"),
         ("emitWarning", "processEmitWarning"),
     ] {
@@ -476,6 +480,54 @@ pub(crate) fn cwd(
         .to_string_lossy()
         .into_owned();
     Ok(context.string_rooted(&cwd))
+}
+
+pub(crate) fn getuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn geteuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::geteuid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn getgid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getgid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn getegid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getegid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
 }
 
 pub(crate) fn chdir(
