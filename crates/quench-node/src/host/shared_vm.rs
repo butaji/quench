@@ -89,6 +89,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFileSync" (3) => crate::modules::fs_shared_vm::sync::write_file_sync,
         method "fsStatMetadata" (1) => crate::modules::fs_shared_vm::stat::metadata,
         method "cryptoHashSha1" (1) => crate::modules::crypto_shared_vm::sha1,
+        method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
         method "asyncResourceEmitDestroy" (0) => crate::modules::async_hooks_shared_vm::emit_destroy,
