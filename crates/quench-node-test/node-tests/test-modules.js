@@ -84,6 +84,12 @@ for (const [input, code] of [
     throw new Error('fileURLToPath error for ' + input + ': ' + (error && error.code));
   }
 }
+if (urlModule.pathToFileURL('C:\\foo bar\\baz.js', { windows: true }).href !==
+  'file:///C:/foo%20bar/baz.js' ||
+  urlModule.fileURLToPath('file:///C:/foo%20bar', { windows: true }) !== 'C:\\foo bar' ||
+  urlModule.fileURLToPath('file://server/share/a', { windows: true }) !== '\\\\server\\share\\a') {
+  throw new Error('node:url Windows path conversion option');
+}
 for (const [specifier, base, code, type] of [
   ['node:fs', __filename, 'ERR_INVALID_URL_SCHEME', TypeError],
   ['missing-quench-package', __filename, 'ERR_MODULE_NOT_FOUND', Error],
