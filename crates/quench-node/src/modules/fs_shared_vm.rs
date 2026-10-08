@@ -876,6 +876,78 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
   };
 }"#;
 
+const CP_API: &str = r#"(existsSync, statSync, readdirSync, mkdirSync, copyFileSync) => {
+  const exists = (path) => {
+    try { statSync(path); return true; } catch { return false; }
+  };
+  const fail = (code, message, path) => {
+    const error = new Error(message);
+    error.code = code;
+    if (path !== undefined) error.path = path;
+    throw error;
+  };
+  function cpSync(source, destination, options = {}) {
+    if (options == null || typeof options !== 'object') {
+      const error = new TypeError('The "options" argument must be of type object.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (options.recursive !== undefined && typeof options.recursive !== 'boolean') {
+      const error = new TypeError('The "options.recursive" property must be of type boolean.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const sourceStats = statSync(source);
+    if (sourceStats.isDirectory()) {
+      if (options.recursive !== true) {
+        fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${source}`);
+      }
+      if (exists(destination) && !statSync(destination).isDirectory()) {
+        fail('ERR_FS_CP_EINVAL', `Cannot overwrite non-directory with directory: ${destination}`);
+      }
+      mkdirSync(destination, { recursive: true, mode: options.mode });
+      for (const name of readdirSync(source)) {
+        const src = `${source.replace(/[\\/]$/, '')}/${name}`;
+        const dest = `${destination.replace(/[\\/]$/, '')}/${name}`;
+        if (typeof options.filter === 'function' && options.filter(src, dest) === false) continue;
+        cpSync(src, dest, options);
+      }
+      return undefined;
+    }
+    let dest = destination;
+    if (exists(destination) && statSync(destination).isDirectory()) {
+      const sourceParts = String(source).split(/[\\/]/);
+      dest = `${destination.replace(/[\\/]$/, '')}/${sourceParts[sourceParts.length - 1]}`;
+    }
+    if (exists(dest)) {
+      if (options.errorOnExist && options.force === false) {
+        fail('ERR_FS_CP_EEXIST', `Target already exists: ${dest}`, dest);
+      }
+      if (options.force === false) return undefined;
+    }
+    copyFileSync(source, dest, options.mode || 0);
+    return undefined;
+  }
+  function cp(source, destination, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = {};
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "callback" argument must be of type function.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { cpSync(source, destination, options || {}); Reflect.apply(callback, undefined, [null]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  }
+  const cpPromise = (source, destination, options) =>
+    Promise.resolve().then(() => cpSync(source, destination, options || {}));
+  return { cp, cpSync, cpPromise };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -1105,6 +1177,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let copy_file = context.call_rooted(copy_file_factory, undefined, &[copy_file_sync])?;
     set(context, module, "copyFile", copy_file)?;
+    let cp_factory = context.evaluate_script_rooted(CP_API, "node:fs/shared-cp.js")?;
+    let cp_api = context.call_rooted(
+        cp_factory,
+        undefined,
+        &[exists_sync, stat_sync, readdir_sync, mkdir_sync, copy_file_sync],
+    )?;
+    let cp_sync = get(context, cp_api, "cpSync")?;
+    let cp = get(context, cp_api, "cp")?;
+    let cp_promise = get(context, cp_api, "cpPromise")?;
+    set(context, module, "cpSync", cp_sync)?;
+    set(context, module, "cp", cp)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -1144,6 +1227,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         mkdtemp_sync,
         copy_file_sync,
     )?;
+    set(context, promises, "cp", cp_promise)?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
         "node:fs/shared-access-promise.js",
