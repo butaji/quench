@@ -1523,7 +1523,9 @@ impl<H: Host> Vm<H> {
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
                 }
-                if p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame() {
+                let discarded_wasm_frame =
+                    p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame();
+                if discarded_wasm_frame {
                     // Native/host calls need argument roots, not the discarded guest activation.
                     self.with_stack.truncate(self.frames[f].with_base);
                     let frame = &mut self.frames[f];
@@ -1537,7 +1539,12 @@ impl<H: Host> Vm<H> {
                     frame.this = Value::UNDEFINED;
                     frame.captured = false;
                 }
-                let value = match self.call_value(p, callee, this, args) {
+                let called = if discarded_wasm_frame {
+                    self.call_value(p, callee, this, args)
+                } else {
+                    self.call_value_from_frame(p, callee, this, args)
+                };
+                let value = match called {
                     Ok(value) => value,
                     Err(error) => {
                         if let Some(previous_this) = previous_this {
