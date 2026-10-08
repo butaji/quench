@@ -224,14 +224,27 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
 
     static compare(left, right) {
-      if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
-        throw codedTypeError("The \"buf1\" and \"buf2\" arguments must be an instance of Buffer or Uint8Array", "ERR_INVALID_ARG_TYPE");
+      if (!(left instanceof Uint8Array)) {
+        throw codedTypeError(
+          'The "buf1" argument must be an instance of Buffer or Uint8Array.' +
+            invalidArgumentDescription(left),
+          "ERR_INVALID_ARG_TYPE",
+        );
       }
-      const length = Math.min(left.length, right.length);
+      if (!(right instanceof Uint8Array)) {
+        throw codedTypeError(
+          'The "buf2" argument must be an instance of Buffer or Uint8Array.' +
+            invalidArgumentDescription(right),
+          "ERR_INVALID_ARG_TYPE",
+        );
+      }
+      const leftLength = intrinsicByteLength(left);
+      const rightLength = intrinsicByteLength(right);
+      const length = Math.min(leftLength, rightLength);
       for (let index = 0; index < length; index++) {
         if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
       }
-      return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
+      return leftLength === rightLength ? 0 : leftLength < rightLength ? -1 : 1;
     }
 
     toString(encoding = "utf8", start = 0, end = this.length) {
@@ -305,12 +318,14 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     equals(other) {
       if (!(other instanceof Uint8Array)) {
         throw codedTypeError(
-          'The "otherBuffer" argument must be an instance of Buffer or Uint8Array',
+          'The "otherBuffer" argument must be an instance of Buffer or Uint8Array.' +
+            invalidArgumentDescription(other),
           "ERR_INVALID_ARG_TYPE",
         );
       }
-      if (other.byteLength !== this.byteLength) return false;
-      for (let index = 0; index < this.byteLength; index++) {
+      const length = intrinsicByteLength(this);
+      if (intrinsicByteLength(other) !== length) return false;
+      for (let index = 0; index < length; index++) {
         if (this[index] !== other[index]) return false;
       }
       return true;
@@ -396,11 +411,48 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return length;
     }
 
-    compare(target, targetStart = 0, targetEnd = target?.length ?? 0, thisStart = 0, thisEnd = this.length) {
+    compare(
+      target,
+      targetStart = 0,
+      targetEnd = intrinsicByteLength(target) ?? 0,
+      thisStart = 0,
+      thisEnd = intrinsicByteLength(this) ?? 0,
+    ) {
       if (!(target instanceof Uint8Array)) {
-        throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
+        throw codedTypeError(
+          'The "target" argument must be an instance of Buffer or Uint8Array.' +
+            invalidArgumentDescription(target),
+          "ERR_INVALID_ARG_TYPE",
+        );
       }
-      return Buffer.compare(this.subarray(thisStart, thisEnd), target.subarray(targetStart, targetEnd));
+      const index = (name, value, max = maxBufferLength) => {
+        if (typeof value !== "number") {
+          throw codedTypeError(
+            `The "${name}" argument must be of type number.` + invalidArgumentDescription(value),
+            "ERR_INVALID_ARG_TYPE",
+          );
+        }
+        if (!Number.isFinite(value) || !Number.isInteger(value)) {
+          const error = new RangeError(
+            `The value of "${name}" is out of range. It must be an integer. Received ${value}`,
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (value < 0 || value > max) {
+          const error = new RangeError(
+            `The value of "${name}" is out of range. It must be >= 0 && <= ${max}. Received ${value}`,
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        return value;
+      };
+      const toStart = index("targetStart", targetStart);
+      const toEnd = index("targetEnd", targetEnd, target.length);
+      const fromStart = index("sourceStart", thisStart);
+      const fromEnd = index("sourceEnd", thisEnd, this.length);
+      return Buffer.compare(this.subarray(fromStart, fromEnd), target.subarray(toStart, toEnd));
     }
   }
 
