@@ -740,7 +740,7 @@ impl<H: Host> Vm<H> {
             inherited_count += with_objects.len();
             before_binding &= boundary != Some(environment);
             if before_binding && !with_objects.is_empty() {
-                layers.push(with_objects.as_slice());
+                layers.push(with_objects.as_ref());
             }
             environment = *parent;
         }
