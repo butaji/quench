@@ -1,4 +1,6 @@
-use serde::Serialize;
+mod analysis;
+
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -7,6 +9,8 @@ use std::{
     process::{Command, Output},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
+#[cfg(all(unix, not(target_os = "macos")))]
+use std::{io::Read, process::Stdio};
 
 const FIXTURES: &[&str] = &[
     "crypto.js",
@@ -52,21 +56,21 @@ struct EngineSpec {
     executable_sha256: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct EngineRecord {
-    name: &'static str,
+    name: String,
     executable: String,
     executable_sha256: String,
     version: String,
     argv: Vec<String>,
     environment: BTreeMap<String, String>,
     inherits_environment: bool,
-    jit_mode: &'static str,
+    jit_mode: String,
     jit_proof_command: Vec<String>,
     jit_proof: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Artifact {
     path: String,
     size_bytes: Option<u64>,
@@ -74,14 +78,14 @@ struct Artifact {
     sha256: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct EngineSummary {
     median_score: Option<f64>,
     median_max_rss_bytes: Option<u64>,
     valid_samples: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Sample {
     status: i32,
     timed_out: bool,
@@ -106,14 +110,14 @@ impl Sample {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct RoundRecord {
     round: usize,
     execution_order: Vec<String>,
     samples: BTreeMap<String, Sample>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct FixtureRecord {
     source: Artifact,
     valid: bool,
@@ -122,7 +126,7 @@ struct FixtureRecord {
     rounds: Vec<RoundRecord>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct SuiteRecord {
     schema: u32,
     created_unix_ns: u128,
@@ -139,7 +143,7 @@ struct SuiteRecord {
     qualification_ready: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct CorpusRecord {
     pinned_revision: Option<String>,
     checkout_revision: Option<String>,
@@ -147,12 +151,15 @@ struct CorpusRecord {
     fixture_set_matches: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct HostRecord {
     uname: String,
     rustc: String,
     model: Option<String>,
     memory_bytes: Option<u64>,
+    memory_limit_bytes: Option<u64>,
+    cpu_quota: Option<String>,
+    process_metrics_backend: String,
 }
 
 struct Options {
@@ -166,9 +173,19 @@ struct Options {
     rounds: usize,
     timeout_ms: u64,
     output: Option<PathBuf>,
+    checkpoint: Option<PathBuf>,
+    resume: Option<PathBuf>,
 }
 
 fn main() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|arg| arg == "--analyze") {
+        if let Err(error) = analysis::run(&args[1..]) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     let options = parse_options();
     if env::var_os("QUENCH_EXEC_TRACE").is_some() {
         fail("scored runs must not inherit QUENCH_EXEC_TRACE");
@@ -181,10 +198,53 @@ fn main() {
     }
 
     let files = selected_fixtures(&options);
-    let inputs = corpus_inputs();
-    let pinned = corpus_record(&files);
-    let mut fixture_records = BTreeMap::new();
+    let (source_revision, source_dirty) = source_identity();
+    let mut report = SuiteRecord {
+        schema: 5,
+        created_unix_ns: now_ns(),
+        rounds_requested: options.rounds,
+        timeout_ms: options.timeout_ms,
+        source_revision,
+        source_dirty,
+        corpus: corpus_record(&files),
+        host: host_identity(),
+        engines: engine_records,
+        suite_inputs: corpus_inputs(),
+        fixtures: BTreeMap::new(),
+        complete: false,
+        qualification_ready: false,
+    };
+    if let Some(path) = &options.resume {
+        let saved = read_checkpoint(path);
+        validate_resume(&saved, &report, &files);
+        report = saved;
+        eprintln!(
+            "resuming {} completed fixture records from {}",
+            report.fixtures.len(),
+            path.display()
+        );
+    } else if let Some(path) = &options.checkpoint {
+        if path.exists() {
+            fail(&format!(
+                "checkpoint already exists: {} (use --resume)",
+                path.display()
+            ));
+        }
+        write_checkpoint(path, &report);
+    }
+    let checkpoint_path = options.resume.as_ref().or(options.checkpoint.as_ref());
     for file in files {
+        let key = file.display().to_string();
+        if report.fixtures.get(&key).is_some_and(|fixture| {
+            fixture.valid && fixture.output_equal && fixture.rounds.len() == options.rounds
+        }) {
+            eprintln!(
+                "{}: resumed valid fixture ({} rounds)",
+                file.display(),
+                options.rounds
+            );
+            continue;
+        }
         let fixture = run_fixture(&file, &engines, options.rounds, options.timeout_ms);
         eprintln!(
             "{}: {} ({}/{} rounds)",
@@ -197,34 +257,29 @@ fn main() {
                 .count(),
             options.rounds
         );
-        fixture_records.insert(file.display().to_string(), fixture);
+        report.fixtures.insert(key, fixture);
+        if let Some(path) = checkpoint_path {
+            write_checkpoint(path, &report);
+            eprintln!(
+                "checkpointed {} fixtures to {}",
+                report.fixtures.len(),
+                path.display()
+            );
+        }
     }
 
     let complete =
-        !fixture_records.is_empty() && fixture_records.values().all(|fixture| fixture.valid);
-    let (revision, source_dirty) = source_identity();
-    let host = host_identity();
-    let qualification_ready = complete
+        !report.fixtures.is_empty() && report.fixtures.values().all(|fixture| fixture.valid);
+    report.complete = complete;
+    report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
-        && pinned.fixture_set_matches
-        && pinned.checkout_clean
-        && pinned.pinned_revision == pinned.checkout_revision
-        && !source_dirty;
-    let report = SuiteRecord {
-        schema: 3,
-        created_unix_ns: now_ns(),
-        rounds_requested: options.rounds,
-        timeout_ms: options.timeout_ms,
-        source_revision: revision,
-        source_dirty,
-        corpus: pinned,
-        host,
-        engines: engine_records,
-        suite_inputs: inputs,
-        fixtures: fixture_records,
-        complete,
-        qualification_ready,
-    };
+        && report.corpus.fixture_set_matches
+        && report.corpus.checkout_clean
+        && report.corpus.pinned_revision == report.corpus.checkout_revision
+        && !report.source_dirty;
+    if let Some(path) = checkpoint_path {
+        write_checkpoint(path, &report);
+    }
     let bytes = serde_json::to_vec_pretty(&report).unwrap();
     if let Some(path) = options.output {
         let mut file = fs::OpenOptions::new()
@@ -245,18 +300,119 @@ fn main() {
 impl EngineSpec {
     fn record(&self) -> EngineRecord {
         EngineRecord {
-            name: self.name,
+            name: self.name.to_string(),
             executable: self.executable.display().to_string(),
             executable_sha256: self.executable_sha256.clone(),
             version: self.version.clone(),
             argv: self.argv.clone(),
             environment: self.env.clone(),
             inherits_environment: false,
-            jit_mode: self.jit_mode,
+            jit_mode: self.jit_mode.to_string(),
             jit_proof_command: self.jit_proof_command.clone(),
             jit_proof: self.jit_proof.clone(),
         }
     }
+}
+
+fn read_checkpoint(path: &Path) -> SuiteRecord {
+    let bytes = fs::read(path).unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot read checkpoint {}: {error}",
+            path.display()
+        ))
+    });
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| fail(&format!("invalid checkpoint {}: {error}", path.display())))
+}
+
+fn write_checkpoint(path: &Path, report: &SuiteRecord) {
+    let bytes = serde_json::to_vec_pretty(report).expect("serialize benchmark checkpoint");
+    let mut temporary_name = path.as_os_str().to_os_string();
+    temporary_name.push(format!(".tmp-{}-{}", std::process::id(), now_ns()));
+    let temporary = PathBuf::from(temporary_name);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        fail(&format!(
+            "cannot write checkpoint {}: {error}",
+            path.display()
+        ));
+    }
+}
+
+fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
+    let metadata_matches = saved.schema == expected.schema
+        && saved.rounds_requested == expected.rounds_requested
+        && saved.timeout_ms == expected.timeout_ms
+        && saved.source_revision == expected.source_revision
+        && saved.source_dirty == expected.source_dirty
+        && same_json(&saved.corpus, &expected.corpus)
+        && same_json(&saved.host, &expected.host)
+        && same_json(&saved.engines, &expected.engines)
+        && same_json(&saved.suite_inputs, &expected.suite_inputs);
+    if !metadata_matches {
+        fail("checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout");
+    }
+    if saved.source_dirty {
+        fail("cannot resume a checkpoint recorded from a dirty source tree");
+    }
+    let allowed = files
+        .iter()
+        .map(|file| file.display().to_string())
+        .collect::<BTreeSet<_>>();
+    if saved.fixtures.keys().any(|key| !allowed.contains(key)) {
+        fail("checkpoint contains fixtures outside the selected fixture set");
+    }
+    for (key, fixture) in &saved.fixtures {
+        let file = files
+            .iter()
+            .find(|file| file.display().to_string() == *key)
+            .expect("fixture key validated above");
+        if !same_json(&fixture.source, &artifact(file)) {
+            fail(&format!("checkpoint fixture input changed: {key}"));
+        }
+        if fixture.valid && fixture.output_equal {
+            let engine_names = saved
+                .engines
+                .iter()
+                .map(|engine| engine.name.as_str())
+                .collect::<Vec<_>>();
+            let invalid_completed_round = fixture.rounds.len() != saved.rounds_requested
+                || fixture.rounds.iter().enumerate().any(|(index, round)| {
+                    let expected_order = (0..engine_names.len())
+                        .map(|offset| engine_names[(offset + index) % engine_names.len()])
+                        .collect::<Vec<_>>();
+                    round.round != index
+                        || round
+                            .execution_order
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            != expected_order
+                        || round.samples.len() != engine_names.len()
+                        || engine_names
+                            .iter()
+                            .any(|name| !round.samples.get(*name).is_some_and(Sample::valid))
+                });
+            if invalid_completed_round {
+                fail(&format!(
+                    "checkpoint claims invalid completed rounds for {key}"
+                ));
+            }
+        }
+    }
+}
+
+fn same_json<T: Serialize>(left: &T, right: &T) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
 fn parse_options() -> Options {
@@ -275,6 +431,8 @@ fn parse_options() -> Options {
         rounds: MIN_QUALIFYING_ROUNDS,
         timeout_ms: DEFAULT_TIMEOUT_MS,
         output: None,
+        checkpoint: None,
+        resume: None,
     };
     if !options.all && !options.preflight_only {
         options.fixture = Some(PathBuf::from(first));
@@ -299,12 +457,31 @@ fn parse_options() -> Options {
                 }
             }
             "--out" => options.output = Some(required_path(&mut args, "--out")),
+            "--checkpoint" => options.checkpoint = Some(required_path(&mut args, "--checkpoint")),
+            "--resume" => options.resume = Some(required_path(&mut args, "--resume")),
             "--help" | "-h" => usage(""),
             _ => usage(&format!("unknown argument: {arg}")),
         }
     }
     if options.preflight_only && options.fixture.is_some() {
         usage("--preflight-only does not take a fixture");
+    }
+    if options.checkpoint.is_some() && options.resume.is_some() {
+        usage("--checkpoint and --resume are mutually exclusive");
+    }
+    if (options.checkpoint.is_some() || options.resume.is_some()) && !options.all {
+        usage("--checkpoint and --resume require --all");
+    }
+    if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
+        usage("--preflight-only cannot use checkpoints");
+    }
+    if let (Some(checkpoint), Some(output)) = (
+        options.checkpoint.as_ref().or(options.resume.as_ref()),
+        &options.output,
+    ) {
+        if checkpoint == output {
+            usage("checkpoint and final --out must use different paths");
+        }
     }
     options
 }
@@ -571,6 +748,7 @@ fn outputs_equal(rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
     let started = Instant::now();
     let timeout_seconds = format!("{:.3}", timeout_ms as f64 / 1000.0);
@@ -615,6 +793,201 @@ fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         stdout,
         stderr,
     }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+    run_wait4(engine, source, timeout_ms)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn run_wait4(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+    let started = Instant::now();
+    let mut command = Command::new(&engine.executable);
+    command
+        .args(&engine.argv)
+        .arg(source)
+        .env_clear()
+        .envs(&engine.env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return invalid_sample(started, error.to_string()),
+    };
+    let stdout_reader = child.stdout.take().expect("piped stdout");
+    let stderr_reader = child.stderr.take().expect("piped stderr");
+    let stdout_thread = std::thread::spawn(move || read_pipe(stdout_reader));
+    let stderr_thread = std::thread::spawn(move || read_pipe(stderr_reader));
+    let waited = wait_child(child.id(), timeout_ms);
+    // `wait4` reaps the process directly to return its resource counters.
+    // Child has no Drop behavior that waits or kills a reaped process.
+    drop(child);
+    let stdout_result = stdout_thread.join();
+    let stderr_result = stderr_thread.join();
+    let (status, timed_out, usage) = match waited {
+        Ok(result) => result,
+        Err(error) => {
+            return invalid_sample(started, format!("waiting for engine failed: {error}"));
+        }
+    };
+    let (stdout, stdout_error) = match stdout_result {
+        Ok(result) => result,
+        Err(_) => return invalid_sample(started, "stdout reader panicked".into()),
+    };
+    let (stderr, stderr_error) = match stderr_result {
+        Ok(result) => result,
+        Err(_) => return invalid_sample(started, "stderr reader panicked".into()),
+    };
+    let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
+    if let Some(error) = stdout_error {
+        stderr.push_str(&format!("\nstdout read failed: {error}"));
+    }
+    if let Some(error) = stderr_error {
+        stderr.push_str(&format!("\nstderr read failed: {error}"));
+    }
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
+    let score = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Score: "))
+        .and_then(|value| value.parse().ok());
+    Sample {
+        status,
+        timed_out,
+        wall_ns: started.elapsed().as_nanos(),
+        peak_rss_bytes: usage.peak_rss_bytes,
+        score,
+        instructions: None,
+        cycles: None,
+        page_faults: Some(usage.page_faults),
+        page_reclaims: Some(usage.page_reclaims),
+        involuntary_context_switches: Some(usage.involuntary_context_switches),
+        stdout,
+        stderr,
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn read_pipe(mut reader: impl Read) -> (Vec<u8>, Option<String>) {
+    let mut output = Vec::new();
+    let error = reader
+        .read_to_end(&mut output)
+        .err()
+        .map(|error| error.to_string());
+    (output, error)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct ProcessUsage {
+    peak_rss_bytes: Option<u64>,
+    page_faults: u64,
+    page_reclaims: u64,
+    involuntary_context_switches: u64,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn wait_child(child_id: u32, timeout_ms: u64) -> std::io::Result<(i32, bool, ProcessUsage)> {
+    use std::{os::unix::process::ExitStatusExt, time::Duration};
+
+    let pid = libc::pid_t::try_from(child_id).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "child process id is out of range",
+        )
+    })?;
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+    let mut timed_out = false;
+    let mut sent_term_at = None;
+    loop {
+        let mut status = 0;
+        // SAFETY: wait4 writes its status and usage outputs to these live values.
+        let mut raw_usage: libc::rusage = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::wait4(pid, &mut status, libc::WNOHANG, &mut raw_usage) };
+        if result == pid {
+            if timed_out {
+                // The leader may exit on SIGTERM while descendants still hold the
+                // captured pipes. Finish the group timeout before the caller joins.
+                // SAFETY: `pid` is the process-group ID established before spawn.
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+            }
+            let peak_rss_bytes = peak_rss_bytes(raw_usage.ru_maxrss);
+            let usage = ProcessUsage {
+                peak_rss_bytes,
+                page_faults: nonnegative(raw_usage.ru_majflt)
+                    .saturating_add(nonnegative(raw_usage.ru_minflt)),
+                page_reclaims: nonnegative(raw_usage.ru_minflt),
+                involuntary_context_switches: nonnegative(raw_usage.ru_nivcsw),
+            };
+            let exit_status = std::process::ExitStatus::from_raw(status);
+            return Ok((exit_status.code().unwrap_or(-1), timed_out, usage));
+        }
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+
+        if !timed_out && started.elapsed() >= timeout {
+            timed_out = true;
+            sent_term_at = Some(Instant::now());
+            // SAFETY: `pid` is the process-group ID established before spawn.
+            unsafe { libc::kill(-pid, libc::SIGTERM) };
+        } else if let Some(term_at) = sent_term_at {
+            if term_at.elapsed() >= Duration::from_secs(1) {
+                // SAFETY: terminate any process in this benchmark's process group.
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+                sent_term_at = None;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn nonnegative(value: libc::c_long) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn peak_rss_bytes(raw_rss: libc::c_long) -> Option<u64> {
+    let rss = u64::try_from(raw_rss).ok()?;
+    if cfg!(target_os = "linux") {
+        rss.checked_mul(1024)
+    } else {
+        Some(rss)
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn invalid_sample(started: Instant, error: String) -> Sample {
+    Sample {
+        status: -1,
+        timed_out: false,
+        wall_ns: started.elapsed().as_nanos(),
+        peak_rss_bytes: None,
+        score: None,
+        instructions: None,
+        cycles: None,
+        page_faults: None,
+        page_reclaims: None,
+        involuntary_context_switches: None,
+        stdout: String::new(),
+        stderr: error,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn time_metric(stderr: &str, suffix: &str) -> Option<u64> {
+    stderr.lines().find_map(|line| {
+        line.trim()
+            .strip_suffix(suffix)
+            .and_then(|value| value.trim().parse().ok())
+    })
 }
 
 fn summary(rounds: &[RoundRecord], engine: &str) -> EngineSummary {
@@ -666,14 +1039,6 @@ fn materialize(file: &Path) -> PathBuf {
     source.extend_from_slice(RUNNER.as_bytes());
     fs::write(&path, source).unwrap_or_else(|error| fail(&error.to_string()));
     path
-}
-
-fn time_metric(stderr: &str, suffix: &str) -> Option<u64> {
-    stderr.lines().find_map(|line| {
-        line.trim()
-            .strip_suffix(suffix)
-            .and_then(|value| value.trim().parse().ok())
-    })
 }
 
 fn semantic_output(stdout: &str) -> String {
@@ -759,16 +1124,50 @@ fn host_identity() -> HostRecord {
                 .next()
                 .map(str::to_string)
         });
-    let memory_bytes = command_output("sysctl", &["-n", "hw.memsize"])
-        .trim()
-        .parse()
-        .ok();
+    let memory_bytes = host_memory_bytes();
     HostRecord {
         uname: command_output("uname", &["-a"]).trim().to_string(),
         rustc: command_output("rustc", &["-Vv"]).trim().to_string(),
         model,
         memory_bytes,
+        memory_limit_bytes: cgroup_memory_limit_bytes(),
+        cpu_quota: fs::read_to_string("/sys/fs/cgroup/cpu.max")
+            .ok()
+            .map(|value| value.trim().to_string()),
+        process_metrics_backend: if cfg!(target_os = "macos") {
+            "macOS /usr/bin/time -l".into()
+        } else if cfg!(target_os = "linux") {
+            "Linux wait4 rusage".into()
+        } else {
+            "Unix wait4 rusage".into()
+        },
     }
+}
+
+fn host_memory_bytes() -> Option<u64> {
+    if cfg!(target_os = "linux") {
+        return fs::read_to_string("/proc/meminfo")
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix("MemTotal:"))?
+            .split_whitespace()
+            .next()?
+            .parse::<u64>()
+            .ok()?
+            .checked_mul(1024);
+    }
+    command_output("sysctl", &["-n", "hw.memsize"])
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn cgroup_memory_limit_bytes() -> Option<u64> {
+    fs::read_to_string("/sys/fs/cgroup/memory.max")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn artifact(path: &Path) -> Artifact {
@@ -786,15 +1185,20 @@ fn artifact(path: &Path) -> Artifact {
     }
 }
 
-fn sha256(path: &Path) -> Option<String> {
+pub(crate) fn sha256(path: &Path) -> Option<String> {
     let output = Command::new("shasum")
         .args(["-a", "256"])
         .arg(path)
         .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
+        .ok()
+        .filter(|output| output.status.success())
+        .or_else(|| {
+            Command::new("sha256sum")
+                .arg(path)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+        })?;
     String::from_utf8_lossy(&output.stdout)
         .split_whitespace()
         .next()
@@ -811,7 +1215,7 @@ fn command_output(program: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-fn now_ns() -> u128 {
+pub(crate) fn now_ns() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos())
@@ -819,7 +1223,7 @@ fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--out PATH]\n       quench-bench --preflight-only [engine options]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -827,4 +1231,108 @@ fn usage(message: &str) -> ! {
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2)
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod tests {
+    use super::{
+        artifact, now_ns, peak_rss_bytes, read_checkpoint, validate_resume, wait_child,
+        write_checkpoint, CorpusRecord, FixtureRecord, HostRecord, SuiteRecord,
+    };
+    use std::process::Command;
+    use std::{collections::BTreeMap, fs, path::PathBuf};
+
+    #[test]
+    fn converts_wait4_peak_rss_to_bytes() {
+        let raw_rss = 1234;
+        let expected: u64 = if cfg!(target_os = "linux") {
+            1_263_616
+        } else {
+            raw_rss as u64
+        };
+        assert_eq!(peak_rss_bytes(raw_rss), Some(expected));
+    }
+
+    #[test]
+    fn wait4_reports_exit_status_and_resource_usage() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("exit 7");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command.spawn().expect("spawn shell");
+        let (status, timed_out, usage) = wait_child(child.id(), 5000).expect("wait4 child");
+        assert_eq!(status, 7);
+        assert!(!timed_out);
+        assert!(usage.peak_rss_bytes.is_some_and(|rss| rss > 0));
+    }
+
+    #[test]
+    fn timeout_terminates_the_process_group() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("sleep 5");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command.spawn().expect("spawn shell");
+        let (status, timed_out, _) = wait_child(child.id(), 5).expect("wait4 child");
+        assert_eq!(status, -1);
+        assert!(timed_out);
+    }
+
+    #[test]
+    fn checkpoint_round_trips_and_validates_fixture_inputs() {
+        let directory = std::env::temp_dir().join(format!(
+            "quench-bench-checkpoint-{}-{}",
+            std::process::id(),
+            now_ns()
+        ));
+        fs::create_dir(&directory).expect("create checkpoint test directory");
+        let fixture_path = directory.join("fixture.js");
+        fs::write(&fixture_path, "// pinned fixture\n").expect("write fixture");
+        let report_path = directory.join("report.json");
+        let expected = SuiteRecord {
+            schema: 5,
+            created_unix_ns: now_ns(),
+            rounds_requested: 11,
+            timeout_ms: 300_000,
+            source_revision: "a".repeat(40),
+            source_dirty: false,
+            corpus: CorpusRecord {
+                pinned_revision: Some("b".repeat(40)),
+                checkout_revision: Some("b".repeat(40)),
+                checkout_clean: true,
+                fixture_set_matches: true,
+            },
+            host: HostRecord {
+                uname: "test host".into(),
+                rustc: "rustc test".into(),
+                model: Some("test model".into()),
+                memory_bytes: Some(1),
+                memory_limit_bytes: Some(1),
+                cpu_quota: Some("400000 100000".into()),
+                process_metrics_backend: "wait4 test".into(),
+            },
+            engines: Vec::new(),
+            suite_inputs: Vec::new(),
+            fixtures: BTreeMap::new(),
+            complete: false,
+            qualification_ready: false,
+        };
+        let mut saved = expected.clone();
+        saved.fixtures.insert(
+            fixture_path.display().to_string(),
+            FixtureRecord {
+                source: artifact(&fixture_path),
+                valid: false,
+                output_equal: false,
+                summaries: BTreeMap::new(),
+                rounds: Vec::new(),
+            },
+        );
+
+        write_checkpoint(&report_path, &saved);
+        let loaded = read_checkpoint(&report_path);
+        validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
+        assert_eq!(loaded.fixtures.len(), 1);
+        fs::remove_dir_all(directory).expect("remove checkpoint test directory");
+    }
 }
