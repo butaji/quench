@@ -90,6 +90,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteFileSync" (3) => crate::modules::fs_shared_vm::sync::write_file_sync,
         method "fsOpenSync" (3) => crate::modules::fs_shared_vm::sync::open_sync,
         method "fsCloseSync" (1) => crate::modules::fs_shared_vm::sync::close_sync,
+        method "fsFstatSync" (1) => crate::modules::fs_shared_vm::stat::fstat_sync,
         method "fsStatMetadata" (1) => crate::modules::fs_shared_vm::stat::metadata,
         method "fsStatSync" (1) => crate::modules::fs_shared_vm::stat::stat_sync,
         method "fsLstatSync" (1) => crate::modules::fs_shared_vm::stat::lstat_sync,
