@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_async_hooks_and_scheduler_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "97dc815a6ccba7380553c20fbbe0f74f8cc6d788",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "binary_sha256": {
+        "target/iteration/quench-node": "62785c24f075b711e73509ecca3bb5605b50da41450dd8769fbebcc0fb7b7f15"
+    },
+    "files_sha256": {
+      "crates/quench-node/src/modules/async_hooks.rs": "461d32fa1df03cbe3397583647dc96dc707935dfb2a11a3fde0167fb301590ad",
+      "crates/quench-node/src/modules/async_hooks/shared_vm.rs": "89e3ab33947fe3b71182c36bfcfa048386cda24a5bfb158eb61e19f74fbc07e1",
+      "crates/quench-node/src/host.rs": "089682130ac167d9a1bcbb043af0b215f4da44aaf26b3ad3fd2c45387e0bbf3b",
+      "crates/quench-node/src/host/shared_vm.rs": "5eb76f9ce04dac2b54491b4d48cd26551c8ad30f9c770368b44728d7c0034c5e",
+      "crates/quench-node/src/modules/http/shared_vm.rs": "90109c4dddac5ac94860d020a36fa2444b75f744edf032893877850ea76dd666",
+      "crates/quench-node/src/modules/http/shared_vm/poll.rs": "89b933210b2cc72f2adb1f8e01f5dca0ed95e81512635ed66a65db8e52ab2c8b",
+      "crates/quench-node/src/modules/http/shared_vm/operations.rs": "33bbbcd7ee8e1b97d4721104a4d12dc1993bcd9b04616d7bc108001eb06eece0",
+      "crates/quench-node/src/modules/process/shared_vm.rs": "9396ee886530c44295bbfe9d441a4d8005467a99da7c42adab1d35d7b7be36b7",
+      "crates/quench-node/src/modules/event_loop.rs": "8e0572dcdbe05eae5eff9cfb4ba26e89ec9b8d35ae2986b7557301f560bef4f6",
+      "crates/quench-node/src/modules/shared_event_loop.rs": "360b8a23023df377b710963abbb01cefad542b741efe0cef8d5245251cf5525c",
+      "crates/quench-node/src/modules/mod.rs": "582c6ec12ae4907d3300bb2e47c35b7e4ace9aa3d31c8da6f9ff4dae6057cea2",
+      "crates/quench-node/src/modules/timers/shared_vm.rs": "eaded0a38c5d7cf69765e144c4ca11e8938942b9f9c4816b133ecb954495c25c",
+      "crates/quench-node/src/modules/dns/shared_vm.rs": "70f2c463d812517f041ff0b7f7b9a0d56ec22a7cdba2d4f7cd93545708705a04",
+      "crates/quench-node/src/modules/stream.rs": "6d59b5592c1f5c7be14daafd2d77146fa89f03574adcb96270f931db3cfc6be5",
+      "crates/quench-node/src/modules/stream/shared_vm.rs": "7cc4a100a58bbe28ce4578ab70bd61dffae826921473cb4c4ad2d3899b2ae28a",
+      "crates/quench-node/src/modules/stream_source.rs": "5b0c2ed621fcc266b89d30cd1b448253912bfad670eb77b83101300f0e4d1cc0",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca"
+    }
+  },
+  "change": {
+    "shared_owner": "NodeHost::SharedNodeState.async_hooks and scheduler",
+    "moved": [
+      "shared async_hooks module RootId",
+      "shared AsyncLocalStorage (async resource ID, local-store ID) to RootId map",
+      "shared store RootId reference counts",
+      "shared nextTick, immediate, timer and process-listener scheduler queues and RootId callbacks",
+      "the stream JavaScript prelude source used by both adapters, removing the shared-to-legacy module edge"
+    ],
+    "retained_in_host_state": [
+      "async resource ID sequence and current ID",
+      "AsyncLocalStorage ID sequence",
+      "legacy Value-based hook/resource state",
+      "legacy Value microtask/immediate queues and process scope"
+    ],
+    "lifecycle": "Shared maps and scheduler queues are mutated under SharedNodeState borrows; Runtime::release_root runs after those borrows end. Both VM adapters still use the one HostState async identity authority."
+  },
+  "verification": {
+    "commands": [
+      {
+        "command": "rustfmt --edition 2021 crates/quench-node/src/modules/async_hooks.rs crates/quench-node/src/modules/async_hooks/shared_vm.rs crates/quench-node/src/host.rs crates/quench-node/src/host/shared_vm.rs crates/quench-node/src/modules/http/shared_vm.rs crates/quench-node/src/modules/http/shared_vm/poll.rs crates/quench-node/src/modules/http/shared_vm/operations.rs crates/quench-node/src/modules/process/shared_vm.rs",
+        "exit_code": 0
+      },
+      {
+        "command": "cargo check --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "passed; only pre-existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node",
+        "exit_code": 0,
+        "result": "passed; only pre-existing deprecated Atomic::fetch_update warnings in quench-runtime"
+      },
+      {
+        "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+        "exit_code": 0,
+        "result": {
+          "pass": 43,
+          "skip": 0,
+          "fail": 0,
+          "timeout": 0,
+          "crash": 0,
+          "unclassified": 0,
+          "total": 43
+        }
+      },
+      {
+        "command": "From tests/frameworks, compare `node driver.cjs scenarios/{express,koa,fastify}.cjs` with `../../target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs` by raw status/stdout/stderr",
+        "exit_code": 0,
+        "result": "Express, Koa and Fastify all match status, stdout and stderr byte-for-byte; stdout SHA-256 6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d, stderr empty"
+      },
+      {
+        "command": "node tools/check-task-coherence.mjs",
+        "exit_code": 0,
+        "result": "80 tasks, 1 active, next=27, framework-core fixtures=43, package scenarios=3"
+      },
+      {
+        "command": "cargo tree -p quench-node -i quench-runtime --depth 1",
+        "exit_code": 0,
+        "result": "quench-node still directly depends on quench-runtime and quench-runtime-next; Stage A cutover remains open"
+      }
+    ],
+    "framework_scenarios": {
+      "comparison": "local Node vs target/iteration/quench-node, raw exit status/stdout/stderr",
+      "commands": "From tests/frameworks, run node driver.cjs scenarios/<name>.cjs and ../../target/iteration/quench-node driver.cjs scenarios/<name>.cjs for express, koa, and fastify",
+      "cases": {
+        "express": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "statuses 200,200,200,200,404\n"
+        },
+        "koa": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "statuses 200,200,200,200,404\n"
+        },
+        "fastify": {
+          "result": "MATCH",
+          "status": [0, 0],
+          "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout": "statuses 200,200,200,200,404\n"
+        }
+      }
+    },
+    "unit_tests": "not run"
+  }
+}

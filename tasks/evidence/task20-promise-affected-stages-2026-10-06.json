@@ -1,0 +1,142 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "promise_owner_affected_test262_stage_requalification",
+  "captured_date": "2026-10-06",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_dirty": true,
+  "corpus_revision": "f2d14356",
+  "runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages-next",
+    "sha256": "79d437d8c93444b80636234f67638128fd688b3b30492c8f9926b844c4769ac3",
+    "jobs": 4,
+    "timeout_ms": 900000,
+    "host": "macos-aarch64",
+    "compare_runs_sha256": "943d5d94796b842f599a30f39e9f04d3f1bb40d1cd3d8e47620a02dc059d4aa7"
+  },
+  "affected_owners": {
+    "crates/quench-runtime-next/src/host.rs": "34291fa91903f861d330e9e4435bf25a3d9da4bd0b985c61fac9597d4a0fcb77",
+    "crates/quench-runtime-next/src/vm/promise.rs": "16a594399cb4375bb25581a721bc358d584bed213f13368d8d851b2bb8ddd743",
+    "crates/quench-runtime-next/src/vm/promise_jobs.rs": "9cb3c6e7ebd3c1e78292d560c6988b97e10e2d102b706911bd1099ebfcaf3a54",
+    "crates/quench-runtime-next/src/vm/gc.rs": "4167f2bf7424437c7806e35ff5e5d9f8dc9c28813274f6c33ad43494686fe1f4",
+    "crates/quench-runtime-next/src/api_native.rs": "de92aba7a5aebe88617a71640a0bc8d067f70ccf179cff638baf33b8d052bb31",
+    "crates/quench-runtime-next/src/vm/embedding.rs": "8e9db9d9e4541f4138e0931ce778818f875c6927aca1faf3896008f09b4f7fdf"
+  },
+  "selection": "Affected Promise and async-job stages only: 34\u201339, 49, 50, and 61; no full Test262 run.",
+  "result": {
+    "passed": 1057,
+    "failed": 0,
+    "total": 1057,
+    "baseline_regressions": 0
+  },
+  "stages": [
+    {
+      "stage": 34,
+      "passed": 104,
+      "failed": 0,
+      "total": 104,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-34.json",
+      "baseline_sha256": "0bed9ae6c0f934e27569d2432d78c3fb9f97f3adc4ab72909d5c43fc19780399",
+      "current_report": "target/iteration/task20-async-context-stage-34.json",
+      "current_sha256": "134c273abeaf242ec53035c9ce8f572247d334ca676d649550aa46447174162e",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-34.json target/iteration/task20-async-context-stage-34.json",
+      "regressions": 0
+    },
+    {
+      "stage": 35,
+      "passed": 38,
+      "failed": 0,
+      "total": 38,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-35.json",
+      "baseline_sha256": "9d69d2c266d2940d3f084d05f6e061ed27bcb419fff21f9d5128230463f49208",
+      "current_report": "target/iteration/task20-async-context-stage-35.json",
+      "current_sha256": "92594094c766c18462156cd789c0a3e3017837ec716b6a849eda88e8a36c3fd7",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-35.json target/iteration/task20-async-context-stage-35.json",
+      "regressions": 0
+    },
+    {
+      "stage": 36,
+      "passed": 18,
+      "failed": 0,
+      "total": 18,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-36.json",
+      "baseline_sha256": "3f63c79744dfb3c9042d18e06f64a1f34a8a817a0430a82b6a8a49f81b5d91f9",
+      "current_report": "target/iteration/task20-async-context-stage-36.json",
+      "current_sha256": "9ef09a02944c19c1a3030925dfed0eb30f0f537e8aba135d958bb22120bad370",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-36.json target/iteration/task20-async-context-stage-36.json",
+      "regressions": 0
+    },
+    {
+      "stage": 37,
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-37.json",
+      "baseline_sha256": "2c1c5d7f026cbc620744e4cd3064b89c8b9901b20b8658715757105325ba4102",
+      "current_report": "target/iteration/task20-async-context-stage-37.json",
+      "current_sha256": "ab21ac0cfaf80439e51d4367803e3e853d5aad798571f2b8bbb831a54a043976",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-37.json target/iteration/task20-async-context-stage-37.json",
+      "regressions": 0
+    },
+    {
+      "stage": 38,
+      "passed": 48,
+      "failed": 0,
+      "total": 48,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-38.json",
+      "baseline_sha256": "a654e160c1660bde23542e6b64fc005de1633e633a4e24c5186f25a1a4bf4b49",
+      "current_report": "target/iteration/task20-async-context-stage-38.json",
+      "current_sha256": "07bc16687bc3754b46f3d31f288b102b82f2febddd93b0c09e3e14d5508f0e82",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-38.json target/iteration/task20-async-context-stage-38.json",
+      "regressions": 0
+    },
+    {
+      "stage": 39,
+      "passed": 13,
+      "failed": 0,
+      "total": 13,
+      "baseline_report": "target/iteration/test262-pin-f2d-stage-39.json",
+      "baseline_sha256": "32568d12ec676fa032fdb2887b10f5ddf56cb68e8cfa99c0c5888f426cc26a0e",
+      "current_report": "target/iteration/task20-async-context-stage-39.json",
+      "current_sha256": "80304409f78a74f0f08765ccb8ef5f921772fa2da92b134eb0041905d976548f",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/test262-pin-f2d-stage-39.json target/iteration/task20-async-context-stage-39.json",
+      "regressions": 0
+    },
+    {
+      "stage": 49,
+      "passed": 23,
+      "failed": 0,
+      "total": 23,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-49.json",
+      "baseline_sha256": "6a2f6af667be1025d785b54668713f5488f1ab2bb6ce79045ee5bbef263c7841",
+      "current_report": "target/iteration/task20-async-context-stage-49.json",
+      "current_sha256": "78e54f64e609a431549c103f68196bd3e8479b1fb6f9fdbb2123fe17f5c3de90",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-49.json target/iteration/task20-async-context-stage-49.json",
+      "regressions": 0
+    },
+    {
+      "stage": 50,
+      "passed": 61,
+      "failed": 0,
+      "total": 61,
+      "baseline_report": "target/iteration/task20-current-baseline-stage-50.json",
+      "baseline_sha256": "2147fe8251b8b44a0a192d13216967414043fa0b877bb9cd6b6e155d6feae43f",
+      "current_report": "target/iteration/task20-async-context-stage-50.json",
+      "current_sha256": "17cf7d201c8ba964e206aedf661beadb88106c4cb448f1c426263fcf955283a8",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/task20-current-baseline-stage-50.json target/iteration/task20-async-context-stage-50.json",
+      "regressions": 0
+    },
+    {
+      "stage": 61,
+      "passed": 729,
+      "failed": 0,
+      "total": 729,
+      "baseline_report": "target/iteration/test262-pin-f2d-stage-61.json",
+      "baseline_sha256": "500bd15240061ba2e72a268b49bd1593aeca31976220ee58892f31a3efbfc05d",
+      "current_report": "target/iteration/task20-async-context-stage-61.json",
+      "current_sha256": "aac8c7bc4b9dd0de99caaea3731afe517725c769dfcb81e189d7d3e5032f1c25",
+      "comparison": "target/iteration/compare-runs --reports target/iteration/test262-pin-f2d-stage-61.json target/iteration/task20-async-context-stage-61.json",
+      "regressions": 0
+    }
+  ]
+}

@@ -8,9 +8,8 @@ pub use embedding::RootedError;
 mod native;
 pub use native::{HostFunction, HostFunctionId, NativeContext};
 
-/// The syntax context used when compiling source.  The v2 compiler currently
-/// accepts the Script subset; the other contexts are explicit so callers do
-/// not accidentally treat module/eval source as an ordinary script.
+/// The syntax context used when compiling source. Script and Module use
+/// their OXC parse goals; contextual Eval requires an active guest activation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceKind {
     Script,
@@ -24,6 +23,21 @@ pub struct ExecutionRequest<'a> {
     pub source: &'a str,
     pub name: &'a str,
     pub kind: SourceKind,
+}
+
+/// A host-visible Promise rejection notification produced at an execution
+/// checkpoint. Release every root in the event after dispatching it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PromiseRejectionEvent {
+    Unhandled {
+        id: u64,
+        promise: RootId,
+        reason: RootId,
+    },
+    Handled {
+        id: u64,
+        promise: RootId,
+    },
 }
 
 impl<'a> ExecutionRequest<'a> {
@@ -93,11 +107,32 @@ impl<H: Host> Runtime<H> {
         self.vm.drain_host_jobs(program).map(drop)
     }
 
+    /// Take already-reported Promises that became handled after the previous
+    /// checkpoint. Dispatch these before snapshotting newly unhandled Promises.
+    pub fn take_promise_rejection_handled_events(&mut self) -> Vec<PromiseRejectionEvent> {
+        self.vm.take_promise_rejection_handled_events()
+    }
+
+    /// Snapshot still-unhandled Promise rejections after handled notifications
+    /// have been dispatched. Returned roots remain valid until released.
+    pub fn take_promise_rejection_unhandled_events(&mut self) -> Vec<PromiseRejectionEvent> {
+        self.vm.take_promise_rejection_unhandled_events()
+    }
+
+    /// Mark one snapshotted rejection reported immediately before host dispatch.
+    pub fn mark_promise_rejection_reported(&mut self, promise: RootId) -> Result<(), RootedError> {
+        let promise = match self.vm.embedding_value(promise) {
+            Ok(promise) => promise,
+            Err(error) => return Err(self.retain_error(error)),
+        };
+        match self.vm.mark_promise_rejection_reported(promise) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(self.retain_error(error)),
+        }
+    }
+
     /// Finish profiling and execution reporting after deferred host work.
-    pub fn finish_deferred_execution(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
+    pub fn finish_deferred_execution(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.finish_deferred_execution(program);
         Ok(())
@@ -115,8 +150,8 @@ impl<H: Host> Runtime<H> {
         Ok(self.root(value))
     }
 
-    /// Execute a lowered i32 Wasm function on the same VM as JavaScript.
-    /// Like `execute`, this starts a fresh execution and invalidates old roots.
+    /// Invoke a typed Wasm entry in the existing VM, preserving host roots.
+    /// The first invocation initializes the VM; `execute` still starts a fresh execution.
     pub fn execute_wasm(
         &mut self,
         function: &crate::WasmFunction,
@@ -125,12 +160,173 @@ impl<H: Host> Runtime<H> {
         self.vm.execute_wasm(function, args)
     }
 
+    /// Invoke a typed Wasm function with its complete result vector.
+    pub fn execute_wasm_values(
+        &mut self,
+        function: &crate::WasmFunction,
+        args: &[crate::WasmValue],
+    ) -> Result<Vec<crate::WasmValue>, JsError> {
+        self.vm.execute_wasm_values(function, args)
+    }
+
+    /// Check a live value against an ownerless embedding type without coercion.
+    /// Concrete declaration types require their module owner and return false here.
+    /// Reference handles follow the usual Runtime rooting contract.
+    pub fn wasm_value_matches_type(&self, value: crate::WasmValue, ty: crate::WasmType) -> bool {
+        self.vm.wasm_value_matches_type(value, ty)
+    }
+
+    /// Allocate a rooted opaque host identity without starting a new guest execution.
+    pub fn create_wasm_host_reference(&mut self) -> RootId {
+        self.vm.create_wasm_host_reference()
+    }
+
+    /// Convert a live host value to the internal anyref hierarchy.
+    pub fn internalize_wasm_reference(
+        &mut self,
+        value: Value,
+    ) -> Result<crate::WasmValue, JsError> {
+        self.vm
+            .decode_wasm_value(value, crate::WasmType::EXTERNREF)?;
+        Ok(crate::WasmValue::GcRef(self.vm.wasm_external_conversion(
+            crate::wasm::reference::ExternalConversion::Internalize,
+            value,
+        )))
+    }
+
+    /// Recover the original external payload without allocation or identity changes.
+    pub fn externalize_wasm_reference(&self, value: crate::WasmValue) -> Result<Value, JsError> {
+        let crate::WasmValue::GcRef(value) = value else {
+            return Err(JsError::validation(
+                "expected internal Wasm reference".into(),
+            ));
+        };
+        self.vm.decode_wasm_value(
+            value,
+            crate::wasm::reference::ExternalConversion::Externalize.input_type(),
+        )?;
+        Ok(self.vm.wasm_external_value(value))
+    }
+
     pub fn execute_wasm_i32(
         &mut self,
         function: &crate::WasmI32Function,
         args: &[i32],
     ) -> Result<Option<i32>, JsError> {
         self.vm.execute_wasm_i32(function, args)
+    }
+
+    /// Instantiate independent scalar bindings in this runtime's shared heap.
+    pub fn instantiate_wasm(
+        &mut self,
+        function: &crate::WasmFunction,
+    ) -> Result<crate::WasmInstance, JsError> {
+        self.vm.instantiate_wasm(function)
+    }
+
+    /// Instantiate a validated module, including modules with only globals.
+    pub fn instantiate_wasm_module(
+        &mut self,
+        module: &crate::WasmModule,
+    ) -> Result<crate::WasmInstance, JsError> {
+        self.vm.instantiate_wasm_module(module)
+    }
+
+    /// Imports are rooted handles in `module.imports()` declaration order.
+    /// The instance retains each original resource; release import roots afterward.
+    pub fn instantiate_wasm_module_with_imports(
+        &mut self,
+        module: &crate::WasmModule,
+        imports: &[RootId],
+    ) -> Result<crate::WasmInstance, JsError> {
+        self.vm
+            .instantiate_wasm_module_with_imports(module, imports)
+    }
+
+    /// Project a memory's ordinary heap identity. Root it before subsequent VM work.
+    pub fn wasm_memory(
+        &self,
+        instance: &crate::WasmInstance,
+        index: u32,
+    ) -> Result<Value, JsError> {
+        self.vm.wasm_memory(instance, index)
+    }
+
+    /// Project the original tag identity. Root it before subsequent VM work.
+    pub fn wasm_tag(&self, instance: &crate::WasmInstance, index: u32) -> Result<Value, JsError> {
+        self.vm.wasm_tag(instance, index)
+    }
+
+    /// Project a table's ordinary heap identity. Root it before subsequent VM work.
+    pub fn wasm_table(&self, instance: &crate::WasmInstance, index: u32) -> Result<Value, JsError> {
+        self.vm.wasm_table(instance, index)
+    }
+
+    /// Project the original function identity. Root it before subsequent VM work.
+    /// Create a typed native callable owned by this runtime and embedding.
+    pub fn wasm_host_function(
+        &mut self,
+        name: &str,
+        id: crate::WasmHostFunctionId,
+        signature: crate::WasmSignature,
+    ) -> Result<RootId, JsError> {
+        let function = self.vm.create_wasm_host_function(name, id, signature)?;
+        Ok(self.root(function))
+    }
+
+    pub fn invoke_wasm_host_function(
+        &mut self,
+        root: RootId,
+        args: &[crate::WasmValue],
+    ) -> Result<Vec<crate::WasmValue>, JsError> {
+        self.vm.invoke_wasm_host_function(root, args)
+    }
+
+    pub fn wasm_function(
+        &mut self,
+        instance: &crate::WasmInstance,
+        index: u32,
+    ) -> Result<Value, JsError> {
+        self.vm.wasm_function(instance, index)
+    }
+
+    pub fn invoke_wasm(
+        &mut self,
+        instance: &crate::WasmInstance,
+        index: u32,
+        args: &[crate::WasmValue],
+    ) -> Result<Option<crate::WasmValue>, JsError> {
+        self.vm.invoke_wasm(instance, index, args)
+    }
+
+    pub fn invoke_wasm_values(
+        &mut self,
+        instance: &crate::WasmInstance,
+        index: u32,
+        args: &[crate::WasmValue],
+    ) -> Result<Vec<crate::WasmValue>, JsError> {
+        self.vm.invoke_wasm_values(instance, index, args)
+    }
+
+    pub fn wasm_global(
+        &self,
+        instance: &crate::WasmInstance,
+        index: u32,
+    ) -> Result<crate::WasmValue, JsError> {
+        self.vm.wasm_global(instance, index)
+    }
+
+    /// Project the global identity for rooted imports and re-exports.
+    pub fn wasm_global_binding(
+        &self,
+        instance: &crate::WasmInstance,
+        index: u32,
+    ) -> Result<Value, JsError> {
+        self.vm.wasm_global_binding(instance, index)
+    }
+
+    pub fn release_wasm(&mut self, instance: crate::WasmInstance) -> bool {
+        self.release_root(instance.environment)
     }
 
     pub fn root(&mut self, value: Value) -> RootId {
@@ -150,9 +346,14 @@ impl<H: Host> Runtime<H> {
         self.vm.root_value(root)
     }
 
+    /// Apply JavaScript truthiness to a live host root without coercion.
+    pub fn truthy_rooted(&self, root: RootId) -> Result<bool, JsError> {
+        self.vm.embedding_truthy(root)
+    }
+
     /// Check whether a persistent handle still belongs to this runtime.
     pub fn root_is_live(&self, root: RootId) -> bool {
-        self.vm.root_value(root).is_some()
+        self.rooted_value(root).is_some()
     }
 
     /// Queue a callback using only generation-checked persistent roots. The
@@ -269,6 +470,715 @@ mod tests {
             }
             assert_eq!(view.0.borrow().as_slice(), expected, "{mode}");
         }
+    }
+
+    #[test]
+    fn regression_dynamic_name_lookup_retains_lexical_fallbacks() {
+        assert_output_in_execution_modes(
+            r#"
+                function factory() {
+                    var reads = [];
+                    for (let i = 0; i < 2; i++) {
+                        reads.push(function reader() {
+                            eval('0');
+                            print(typeof i); print(i); i += 3; print(i);
+                            print(delete i); print(reader === eval('reader'));
+                            eval('var i = 9'); print(i); i = 10; print(i);
+                            print(delete i); print(i);
+                        });
+                    }
+                    return reads;
+                }
+                var reads = factory(); $262.gc(); reads[0](); reads[1]();
+                function immutableFactory() {
+                    const fixed = 7;
+                    return function () {
+                        eval('0'); print(fixed);
+                        try { fixed = 8; } catch (error) { print(error.name); }
+                        eval('var fixed = 9'); fixed = 10; print(fixed);
+                        print(delete fixed); print(fixed);
+                    };
+                }
+                immutableFactory()();
+                var self = function self() {
+                    eval('0'); print(typeof self);
+                    eval('var self = 4'); print(self); self = 5; print(self);
+                    print(delete self); print(typeof self);
+                };
+                self();
+                function parameterFactory(value) {
+                    return function () {
+                        eval('var value = true');
+                        print(typeof value); print(value); print(delete value);
+                        print(typeof value); print(value);
+                    };
+                }
+                parameterFactory(1)();
+            "#,
+            &[
+                "number",
+                "0",
+                "3",
+                "false",
+                "true",
+                "9",
+                "10",
+                "true",
+                "3",
+                "number",
+                "1",
+                "4",
+                "false",
+                "true",
+                "9",
+                "10",
+                "true",
+                "4",
+                "7",
+                "TypeError",
+                "10",
+                "true",
+                "7",
+                "function",
+                "4",
+                "5",
+                "true",
+                "function",
+                "boolean",
+                "true",
+                "true",
+                "number",
+                "1",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_nested_eval_lookup_retains_outer_lexical_bindings() {
+        assert_output_in_execution_modes(
+            r#"
+                var reads = [];
+                for (let i = 0; i < 2; i++) {
+                    const fixed = i + 7;
+                    function middle() {
+                        eval('0');
+                        return () => {
+                            eval('0');
+                            print(i); print(fixed);
+                            try { fixed = 10; } catch (error) { print(error.name); }
+                            i += 2; print(i);
+                        };
+                    }
+                    reads.push(middle());
+                }
+                $262.gc(); reads[0](); reads[1]();
+            "#,
+            &["0", "7", "TypeError", "2", "1", "8", "TypeError", "3"],
+        );
+    }
+
+    #[test]
+    fn regression_repeated_class_and_object_evaluations_own_their_home_bindings() {
+        assert_output_in_execution_modes(
+            r#"
+                class Base { constructor() { this.base = 4; } }
+                var chain = class extends Base { constructor() { super(); } };
+                for (let i = 0; i < 4; i++) {
+                    chain = class extends chain { constructor() { super(); } };
+                }
+                print(new chain().base);
+                function factory() {
+                    var classes = [], objects = [];
+                    let enclosing = 0;
+                    for (let i = 0; i < 2; i++) {
+                        classes.push(class Named extends Base {
+                            #value = i;
+                            self() { return Named; }
+                            value() { return this.#value + enclosing; }
+                        });
+                        objects.push({__proto__: {value: i}, read() { return super.value; }});
+                        enclosing++;
+                    }
+                    return [classes, objects];
+                }
+                var result = factory(), classes = result[0], objects = result[1];
+                $262.gc();
+                print(new classes[0]().value()); print(new classes[1]().value());
+                print(new classes[0]().self() === classes[0]);
+                print(new classes[1]().self() === classes[1]);
+                print(objects[0].read()); print(objects[1].read());
+            "#,
+            &["4", "2", "3", "true", "true", "0", "1"],
+        );
+    }
+
+    #[test]
+    fn regression_scope_clones_preserve_catch_bindings_and_residual_plans() {
+        let source = r#"
+            function captures() {
+                var reads = [];
+                for (let i = 0; i < 2; i++) {
+                    try { throw i; } catch (error) { reads.push(() => [i, error]); }
+                }
+                return reads;
+            }
+            var reads = captures();
+            $262.gc();
+            print(reads[0]().join(',')); print(reads[1]().join(','));
+            var call = 0, same;
+            for (const binding = {}; call < 2; call++) {
+                if (call === 0) same = () => binding;
+                else print(same() === binding);
+            }
+        "#;
+        assert_output_in_execution_modes(source, &["0,0", "1,1", "true"]);
+        let program = Engine::specialize(source, "scope-clone-binary.js").unwrap();
+        assert!(
+            program
+                .functions
+                .iter()
+                .any(|function| !function.environment_clones.is_empty())
+        );
+        let path = std::env::temp_dir().join(format!("quench-scope-clone-{}", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let host = Capture::default();
+        let view = host.clone();
+        Runtime::new(host).execute(&decoded).unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["0,0", "1,1", "true"]);
+    }
+
+    #[test]
+    fn regression_iteration_slots_preserve_enclosing_binding_identity() {
+        assert_output_in_execution_modes(
+            r#"
+                function counter(value) {
+                    var readers = [];
+                    for (let i = 0; i < 2; i++) {
+                        readers.push(() => [i, value, arguments[0]]);
+                        value++;
+                    }
+                    return readers;
+                }
+                var readers = counter(0);
+                $262.gc();
+                print(readers[0]().join(',')); print(readers[1]().join(','));
+                function nested() {
+                    var readers = [], increment;
+                    for (let outer = 0; outer < 1; outer++) {
+                        increment = () => ++outer;
+                        for (let inner = 0; inner < 2; inner++) {
+                            readers.push(() => [outer, inner]);
+                        }
+                        increment();
+                        print(readers[0]().join(',')); print(readers[1]().join(','));
+                    }
+                    return readers;
+                }
+                readers = nested();
+                $262.gc();
+                print(readers[0]().join(',')); print(readers[1]().join(','));
+                function blocks() {
+                    var readers = [], i = 0, increment;
+                    let enclosing = 0;
+                    while (i < 2) {
+                        let local = i++;
+                        readers.push(() => [local, enclosing]);
+                        enclosing++;
+                        increment = () => ++local;
+                    }
+                    print(increment());
+                    return readers;
+                }
+                readers = blocks();
+                $262.gc();
+                print(readers[0]().join(',')); print(readers[1]().join(','));
+            "#,
+            &[
+                "0,2,2", "1,2,2", "1,0", "1,1", "1,0", "1,1", "2", "0,2", "2,2",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_iteration_eval_preserves_lexical_precedence() {
+        assert_output_in_execution_modes(
+            r#"
+                function collision() {
+                    var readers = [];
+                    for (let i = 0; i < 2; i++) readers.push(() => eval('i'));
+                    eval('var i = 9');
+                    return readers;
+                }
+                var readers = collision();
+                print(readers[0]()); print(readers[1]());
+            "#,
+            &["0", "1"],
+        );
+    }
+
+    #[test]
+    fn regression_iteration_views_share_function_dynamic_bindings() {
+        assert_output_in_execution_modes(
+            r#"
+                var readers = [], initialize, instance = {}, calls = 0;
+                class Base {
+                    constructor() { calls++; $262.gc(); return instance; }
+                }
+                class Derived extends Base {
+                    constructor() {
+                        for (let i = 0; i < 2; i++) {
+                            readers.push(() => [i, this, new.target]);
+                        }
+                        initialize = () => super();
+                    }
+                }
+                try { new Derived(); } catch (error) { print(error.name); }
+                for (var read of readers) {
+                    try { read(); } catch (error) { print(error.name); }
+                }
+                print(initialize() === instance);
+                $262.gc();
+                for (var read of readers) {
+                    var result = read();
+                    print(result[0]); print(result[1] === instance); print(result[2] === Derived);
+                }
+                try { initialize(); } catch (error) { print(error.name); }
+                print(calls);
+                var erase;
+                function factory() {
+                    var readers = [];
+                    eval('var dynamic = 0');
+                    for (let i = 0; i < 2; i++) {
+                        readers.push(() => [i, dynamic]);
+                        eval('dynamic += 1');
+                    }
+                    erase = () => eval('delete dynamic');
+                    return readers;
+                }
+                var dynamicReaders = factory();
+                $262.gc();
+                print(dynamicReaders[0]().join(',')); print(dynamicReaders[1]().join(','));
+                print(erase());
+                for (var read of dynamicReaders) {
+                    try { read(); } catch (error) { print(error.name); }
+                }
+                "#,
+            &[
+                "ReferenceError",
+                "ReferenceError",
+                "ReferenceError",
+                "true",
+                "0",
+                "true",
+                "true",
+                "1",
+                "true",
+                "true",
+                "ReferenceError",
+                "2",
+                "0,2",
+                "1,2",
+                "true",
+                "ReferenceError",
+                "ReferenceError",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_escaped_arrows_share_constructor_this_initialization() {
+        assert_output_in_execution_modes(
+            r#"
+                var initialize, read, nestedRead, calls = 0, seenTarget;
+                var instance = {value: 45};
+                class Base {
+                    constructor() { calls++; seenTarget = new.target; return instance; }
+                }
+                class Escaping extends Base {
+                    constructor() {
+                        initialize = () => super();
+                        read = () => this;
+                        nestedRead = (() => () => this)();
+                    }
+                }
+                try { new Escaping(); } catch (error) { print(error.name); }
+                for (var arrow of [read, nestedRead]) {
+                    try { arrow(); } catch (error) { print(error.name); }
+                }
+                $262.gc();
+                print(initialize() === instance);
+                print(seenTarget === Escaping);
+                print(read() === instance); print(nestedRead() === instance);
+                try { initialize(); } catch (error) { print(error.name); }
+                print(calls); print(read() === instance);
+                class Active extends Base {
+                    constructor() {
+                        var initialize = () => super(), read = () => this;
+                        var enclosing = () => {
+                            initialize();
+                            print(this === read());
+                            print(eval('this') === read());
+                        };
+                        enclosing();
+                        print(this === instance);
+                    }
+                }
+                print(new Active() === instance);
+                var ordinaryRead;
+                class Independent extends Base {
+                    constructor() {
+                        function ordinary() { return () => this; }
+                        ordinaryRead = ordinary();
+                        super();
+                    }
+                }
+                new Independent(); print(ordinaryRead() === undefined);
+                $262.gc(); print(read() === instance);
+                "#,
+            &[
+                "ReferenceError",
+                "ReferenceError",
+                "ReferenceError",
+                "true",
+                "true",
+                "true",
+                "true",
+                "ReferenceError",
+                "2",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_super_constructor_resolution_precedes_argument_evaluation() {
+        assert_output_in_execution_modes(
+            r#"
+                var events = [];
+                function Base(value) { events.push('base'); this.value = value; this.target = new.target; }
+                class Direct extends Base {
+                    constructor() { super((events.push('argument'), Object.setPrototypeOf(Direct, null), 7)); }
+                }
+                try { print(new Direct().value); } catch (error) { print(error.name); }
+                print(events.join(','));
+                events = [];
+                class Spread extends Base {
+                    constructor() {
+                        super(...{ [Symbol.iterator]() {
+                            events.push('iterator'); Object.setPrototypeOf(Spread, null);
+                            var done = false;
+                            return { next() {
+                                events.push('next');
+                                if (done) return {done: true};
+                                done = true; return {value: 9, done: false};
+                            }};
+                        }});
+                    }
+                }
+                try { print(new Spread().value); } catch (error) { print(error.name); }
+                print(events.join(','));
+                var marker = {}, argumentCalls = 0;
+                class Invalid extends Base {
+                    constructor() { super((argumentCalls++, (() => { throw marker; })())); }
+                }
+                Object.setPrototypeOf(Invalid, Math.sin);
+                try { new Invalid(); } catch (error) { print(error === marker); }
+                print(argumentCalls);
+                class InvalidSpread extends Base {
+                    constructor() { super(...{[Symbol.iterator]() { throw marker; }}); }
+                }
+                Object.setPrototypeOf(InvalidSpread, null);
+                try { new InvalidSpread(); } catch (error) { print(error === marker); }
+                class Checked extends Base {
+                    constructor() { super((argumentCalls++, 1)); }
+                }
+                Object.setPrototypeOf(Checked, Math.sin);
+                try { new Checked(); } catch (error) { print(error.name); }
+                print(argumentCalls);
+                var retained = Base;
+                class Replaced extends Base {
+                    constructor() { super((Base = function () { throw marker; }, 11)); }
+                }
+                print(new Replaced().value);
+                Base = retained;
+                class Implicit extends Base {}
+                print(new Implicit(13).value);
+                var prototypeReads = 0;
+                var target = new Proxy(function Target() {}, {
+                    get(target, key, receiver) {
+                        if (key === 'prototype') { prototypeReads++; $262.gc(); }
+                        return Reflect.get(target, key, receiver);
+                    }
+                });
+                var constructed = Reflect.construct(Implicit, [17], target);
+                print(constructed.value); print(prototypeReads); print(constructed.target === target);
+                "#,
+            &[
+                "7",
+                "argument,base",
+                "9",
+                "iterator,next,next,base",
+                "true",
+                "1",
+                "true",
+                "TypeError",
+                "2",
+                "11",
+                "13",
+                "17",
+                "1",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_super_constructor_resolution_survives_residual_round_trip() {
+        let source = r#"
+            function Base(value) { this.value = value; }
+            class Direct extends Base {
+                constructor() { super((Object.setPrototypeOf(Direct, null), 5)); }
+            }
+            class Implicit extends Base {}
+            print(new Direct().value); print(new Implicit(9).value);
+        "#;
+        let program = Engine::specialize(source, "super-order-binary.js").unwrap();
+        let path = std::env::temp_dir().join(format!("quench-super-order-{}", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let decoded = ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let host = Capture::default();
+        let view = host.clone();
+        let mut runtime = Runtime::new(host);
+        runtime.execute(&decoded).unwrap();
+        assert_eq!(view.0.borrow().as_slice(), ["5", "9"]);
+    }
+
+    #[test]
+    fn regression_captured_values_and_calls_preserve_runtime_binding_state() {
+        assert_output_in_execution_modes(
+            r#"
+            var captured = 1;
+            function read() { return captured; }
+            Object.defineProperty(globalThis, 'captured', {
+                value: 2
+            });
+            print(read());
+            var target = function () { return 4; };
+            function invoke() { return target(); }
+            globalThis.target = function () { return 5; };
+            print(invoke());
+            function lateRead() { return late; }
+            try { lateRead(); } catch (error) { print(error.name); }
+            const late = 8;
+            print(lateRead());
+            "#,
+            &["2", "5", "ReferenceError", "8"],
+        );
+    }
+
+    #[test]
+    fn regression_instance_initializers_precede_defaults_in_the_class_scope() {
+        assert_output_in_execution_modes(
+            r#"
+            var scope = 'outer', body = 'outer-body', events = [];
+            class Base {
+                #private = (events.push('private'), 'hello');
+                public = (events.push('public'), scope);
+                evalRead = (events.push('eval'), eval('scope'));
+                bodyRead = body;
+                target = new.target;
+                evalTarget = eval('new.target');
+                read = () => [scope, this, eval('new.target')];
+                function = function () {};
+                #method() { return 'method'; }
+                constructor(scope = (events.push('default'), this.#private),
+                            method = (events.push('method-default'), this.#method())) {
+                    var body = 'constructor-body';
+                    events.push('body');
+                    this.value = scope;
+                    print(scope); print(method);
+                }
+            }
+            var first = new Base();
+            print(events.join(',')); events = [];
+            print(first.public); print(first.evalRead); print(first.bodyRead);
+            print(first.target === undefined); print(first.evalTarget === undefined);
+            print(first.function.name);
+            var read = first.read;
+            $262.gc(); print(read()[0]); print(read()[1] === first);
+            print(read()[2] === undefined);
+            class Derived extends Base {
+                own = (events.push('derived-field'), this.value);
+                constructor(value = (events.push('derived-default'), 'provided')) {
+                    events.push('before-super'); super(value);
+                    events.push('after-super');
+                }
+            }
+            var second = new Derived();
+            print(second.own); print(second.public);
+            print(events.join(','));
+            var marker = {}, defaultCalls = 0;
+            class Abrupt {
+                value = (() => { throw marker; })();
+                constructor(value = defaultCalls++) {}
+            }
+            try { new Abrupt(); } catch (error) { print(error === marker); }
+            print(defaultCalls);
+            class Early extends Base {
+                constructor(value = this.public) { super(value); }
+            }
+            try { new Early(); } catch (error) { print(error.name); }
+            "#,
+            &[
+                "hello",
+                "method",
+                "private,public,eval,default,method-default,body",
+                "outer",
+                "outer",
+                "outer-body",
+                "true",
+                "true",
+                "function",
+                "outer",
+                "true",
+                "true",
+                "provided",
+                "method",
+                "provided",
+                "outer",
+                "derived-default,before-super,private,public,eval,method-default,body,derived-field,after-super",
+                "true",
+                "0",
+                "ReferenceError",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_private_updates_share_numeric_and_reference_semantics() {
+        assert_output_in_execution_modes(
+            r#"
+            var receiverReads = 0;
+            class Counter {
+                #value = '4';
+                #big = 3n;
+                #method() {}
+                static #static = 10;
+                read() { return this.#value; }
+                post(object = this) { return object.#value++; }
+                pre() { return ++this.#value; }
+                down() { return this.#value--; }
+                big() { print(this.#big++ === 3n); print(--this.#big === 3n); }
+                method() { return this.#method++; }
+                static down() { return --this.#static; }
+                static take(value) {
+                    return (() => { receiverReads++; return value; })().#value++;
+                }
+            }
+            var counter = new Counter();
+            print(counter.post()); print(counter.read());
+            print(counter.pre()); print(counter.down()); print(counter.read());
+            counter.big();
+            try { counter.method(); } catch (error) { print(error.name); }
+            try { counter.post(new Proxy(counter, {})); } catch (error) { print(error.name); }
+            Object.freeze(counter);
+            print(counter.post()); print(counter.read());
+            print(Counter.down());
+            print(Counter.take(counter)); print(receiverReads); print(counter.read());
+            var events = [], stored = 9n;
+            class Accessor {
+                get #value() {
+                    events.push('get');
+                    return {[Symbol.toPrimitive]() { events.push('convert'); $262.gc(); return stored; }};
+                }
+                set #value(value) { events.push('set'); $262.gc(); stored = value; }
+                post() { return this.#value++; }
+                pre() { return ++this.#value; }
+            }
+            var accessor = Object.freeze(new Accessor());
+            print(accessor.post() === 9n); print(stored === 10n);
+            print(accessor.pre() === 11n); print(stored === 11n);
+            print(events.join(','));
+            "#,
+            &[
+                "4",
+                "5",
+                "6",
+                "6",
+                "5",
+                "true",
+                "true",
+                "TypeError",
+                "TypeError",
+                "5",
+                "6",
+                "9",
+                "6",
+                "1",
+                "7",
+                "true",
+                "true",
+                "true",
+                "true",
+                "get,convert,set,get,convert,set",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_generator_activation_binds_this_and_new_target() {
+        assert_output_in_execution_modes(
+            r#"
+            function Owner() {
+                print((() => eval('new.target'))() === Owner);
+                this.sync = function* (read = () => new.target) {
+                    print(read() === undefined);
+                    yield () => [this, new.target, eval('new.target')];
+                };
+                this.async = async function* (read = () => new.target) {
+                    print(read() === undefined);
+                    yield () => [this, new.target, eval('new.target')];
+                };
+            }
+            var owner = new Owner();
+            var iterator = owner.sync();
+            var read = iterator.next().value;
+            $262.gc();
+            var values = read();
+            print(values[0] === owner);
+            print(values[1] === undefined);
+            print(values[2] === undefined);
+            iterator.next();
+            print(read()[0] === owner);
+            var strict = function* () { 'use strict'; yield () => this; };
+            print(strict.call(7).next().value() === 7);
+            var asyncIterator = owner.async();
+            asyncIterator.next().then(function (result) {
+                $262.gc();
+                var read = result.value;
+                var values = read();
+                print(values[0] === owner);
+                print(values[1] === undefined);
+                print(values[2] === undefined);
+                return asyncIterator.next().then(function () {
+                    print(read()[0] === owner);
+                });
+            });
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true",
+            ],
+        );
     }
 
     #[test]
@@ -424,8 +1334,17 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getPrototypeOf(Derived) === Base);
             print(Object.getPrototypeOf(Derived.prototype) === Base.prototype);
             print(new Derived().answer);
+            class Explicit extends Base {
+                constructor() {
+                    super();
+                    print(this === (() => this)());
+                    print(this === eval('this'));
+                    print((() => { eval(''); return () => super.answer; })()());
+                }
+            }
+            new Explicit();
             "#,
-            &["true", "true", "42"],
+            &["true", "true", "42", "true", "true", "42"],
         );
     }
 
@@ -571,8 +1490,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "function", "true", "true", "1", "function", "true", "true", "1", "function", "true",
-                "true", "1", "function", "true", "true", "1",
+                "function", "true", "true", "1", "function", "true", "true", "1", "function",
+                "true", "true", "1", "function", "true", "true", "1",
             ],
         );
     }
@@ -611,7 +1530,1662 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "1", "true", "1", "true", "1", "true", "1", "0", "true", "true", "true", "true",
+                "true", "1", "true", "1", "true", "1", "true", "1", "0", "true", "true", "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_eval_created_bindings_shadow_hoisted_captures() {
+        assert_output_in_execution_modes(
+            r#"
+            var reference = 99;
+            function owner() {
+                function write() { 'use strict'; reference = 13; }
+                function strictWrite() { 'use strict'; reference += 1; }
+                function sloppyWrite() { with ({}) { reference = 15; } }
+                eval('var reference = 1');
+                write(); print(reference);
+                strictWrite(); print(reference);
+                sloppyWrite(); print(reference);
+            }
+            owner(); print(reference);
+            "#,
+            &["13", "14", "15", "99"],
+        );
+    }
+
+    #[test]
+    fn regression_eval_created_bindings_share_captured_storage() {
+        assert_output_in_execution_modes(
+            r#"
+            var value = 42;
+            function owner() {
+                eval('var value = 5');
+                var access = eval('(function(action) { if (action === "set") value = 9; return value; })');
+                print(access()); print(value);
+                value = 8;
+                print(access()); print(value);
+                access('set');
+                print(access()); print(value);
+                eval('var another = 1');
+                print(access()); print(value);
+                function shadow() {var value = 41; return eval('value');}
+                print(shadow());
+                print(access('delete'));
+                return [access, () => value, () => eval('delete value')];
+            }
+            var escaped = owner();
+            $262.gc();
+            print(escaped[0]('set')); print(escaped[1]());
+            print(escaped[2]()); print(escaped[1]());
+            print(value);
+            function* generator() {
+                eval('var retained = 11');
+                var read = () => retained;
+                yield read;
+                retained = 12;
+                yield read;
+            }
+            var iterator = generator();
+            var read = iterator.next().value;
+            print(read()); iterator.next(); print(read());
+            "#,
+            &[
+                "5", "5", "8", "8", "9", "9", "9", "9", "41", "9", "9", "9", "true", "42", "42",
+                "11", "12",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_eval_var_reuses_existing_activation_binding() {
+        assert_output_in_execution_modes(
+            r#"
+            var globalValue = 17;
+            function existing(value) {
+                var read = eval('var value = 4; (function() {return value;})');
+                print(read()); print(value);
+                value = 7;
+                print(read()); print(value);
+                eval('value = 9');
+                print(read()); print(value);
+                print(eval('delete value'));
+                return read;
+            }
+            var escaped = existing(2);
+            print(escaped()); print(globalValue);
+            function initialized() {
+                var value;
+                eval('var value');
+                value = 11;
+                print(eval('value'));
+            }
+            initialized();
+            function nested() {
+                var value = 'outer';
+                print(eval('var value = "inner"; eval("value")'));
+                print(value);
+            }
+            nested();
+            var arrow = (p = eval('var arguments = "param"'), q = () => arguments) => {
+                var arguments = 'local';
+                print(q()); print(arguments);
+            };
+            arrow();
+            "#,
+            &[
+                "4", "4", "7", "7", "9", "9", "false", "9", "17", "11", "inner", "inner", "param",
+                "local",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_replacement_length_errors_preserve_effects_and_utf16() {
+        let source = r#"var large='x'.repeat(1<<20), template='$1'.repeat(1<<15);
+function throwsRange(action){try{action();return false;}catch(error){return error instanceof RangeError;}}
+print(throwsRange(()=>large.replace(/(.+)/g,template)));
+print(throwsRange(()=>large.replaceAll(/(.+)/g,template)));
+print(throwsRange(()=>large.replace(large,'$&'.repeat(1<<15))));
+print(throwsRange(()=>large.replaceAll(large,'$&'.repeat(1<<15))));
+var events=[],reason={},groups={get end(){events.push('get');$262.gc();throw reason;}}, rx={flags:'',exec(){return {0:large,1:large,length:2,index:0,groups};}};
+try{RegExp.prototype[Symbol.replace].call(rx,large,template+'$<end>');print(false);}catch(error){print(error===reason && events.join()==='get');}
+var count=0;
+print(throwsRange(()=>'x'.repeat(600).replace(/x/g,()=>{count++;return large;})));
+print(count===600);
+print('abc'.replace(/(b)/,'$1|$01|$10|$2|$&|$`|$\'|$$')==='ab|b|b0|$2|b|a|c|$c');
+print('abc'.replace(/(?<letter>b)/,'$<letter>|$<missing>|$<unterminated')==='ab||$<unterminatedc');
+print('ab'.replaceAll('','$&|')==='|a|b|');
+print('abc'.replace('b','$`-$&-$\'')==='aa-b-cc');
+print('abc'.replaceAll('b',()=>({toString(){$262.gc();return '\ud800';}}))==='a\ud800c');
+print('\ud800|\udc00'.replace(/\|/,'$`$$$\'')==='\ud800\ud800$\udc00\udc00');
+var calls=0;
+print('abc'.replace(/b/g,(value,index,input)=>{calls++;$262.gc();return value+index+input;})==='ab1abcc' && calls===1);
+var namedGets=0,ng={get z(){namedGets++;$262.gc();return '\ud800';}}, custom={flags:'',exec(){return {0:'b',length:1,index:1,groups:ng};}};
+print(RegExp.prototype[Symbol.replace].call(custom,'abc','$<z>$<z>')==='a\ud800\ud800c' && namedGets===2);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "string-growth.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-string-growth-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 15]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_numeric_date_parsing_preserves_iso_and_legacy_boundaries() {
+        let source = r#"var cases=[["1997-03-08 1:1:1.01", [1997, 2, 8, 1, 1, 1, 10]], ["1997-03-08 11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["1997-3-08 11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["1997-3-8 11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["+001997-3-8 11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["+001997-03-8 11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["1997-03-08 11:19", [1997, 2, 8, 11, 19, 0, 0]], ["1997-03-08 1:19", [1997, 2, 8, 1, 19, 0, 0]], ["1997-03-08 1:1", [1997, 2, 8, 1, 1, 0, 0]], ["1997-03-08 1:1:01", [1997, 2, 8, 1, 1, 1, 0]], ["1997-03-08 1:1:1", [1997, 2, 8, 1, 1, 1, 0]], ["1997-03-08 11", "NaN"], ["1997-03-08 11:19:10-07", 857845150000], ["1997-03-08 11:19:10-0700", 857845150000], ["1997-03-08T11:19:10-07", "NaN"], ["1997-03-08T", "NaN"], ["1997-3-8T11:19:20", "NaN"], ["1997-03-8T11:19:20", "NaN"], ["+001997-3-8T11:19:20", "NaN"], ["1997-03-08T1:19", "NaN"], ["1997-03-08T1:1", "NaN"], ["1997-03-08T1:1:01", "NaN"], ["1997-03-08T1:1:1", "NaN"], ["1997-03-08T11:19:10-0700", 857845150000], ["1997-03-08 11:19:10-7", 857845150000], ["1997-03-08 11:19:10-7:0", 857845150000], ["1997-03-08 11:19:10-0799", 857851090000], ["1997-03-08 11:19:10-007", 857820370000], ["1997-03-08T11:19:10+24:00", "NaN"], ["1997-03-08T24:00:00.001", "NaN"], ["1997-03-08 24:00", [1997, 2, 9, 0, 0, 0, 0]], ["1997-03-08 24:00:00.0001", [1997, 2, 9, 0, 0, 0, 0]], ["1997-03-08T24:00:00.0001", "NaN"], ["1997-03-08 1:1:1.", "NaN"], ["1997-03-08T01:01:01.", "NaN"], ["1997-03-08T01:01:01.0001", [1997, 2, 8, 1, 1, 1, 0]], ["1997-13-08", "NaN"], ["1997-02-30", 857260800000], ["1997-03-08t11:19:20z", 857819960000], ["1997-03-08T11:19:20Z", 857819960000], ["1997-3-8", [1997, 2, 8, 0, 0, 0, 0]], ["1997-03-08", 857779200000], ["1997-00-08T11:00", "NaN"], ["1997-03-32T11:00", "NaN"], ["1997-03-08T11:60", "NaN"], ["1997-03-08T11:19:60", "NaN"], ["1997-03-08T11:19:00+00:60", "NaN"], ["1997-03-08T11:19:00+1\u00e92", "NaN"], ["1997-03-08T11:19:00.1x", "NaN"], ["1997-03-08T11:19:00+04:30", 857803740000], ["1997-03-08T11:19:00-04:30", 857836140000], ["+001997-03-08T11:19:20", [1997, 2, 8, 11, 19, 20, 0]], ["-000000-03-08T11:19:20", "NaN"]];
+for(var pair of cases){var expected=Array.isArray(pair[1])?new Date(...pair[1]).getTime():pair[1]==="NaN"?NaN:pair[1];print(Object.is(Date.parse(pair[0]),expected));print(Object.is(new Date(pair[0]).getTime(),expected));}
+var calls=0,hint,source={ [Symbol.toPrimitive](h){calls++;hint=h;$262.gc();return "1997-03-08 1:1:1.01";}};print(Date.parse(source)===Date.parse(cases[0][0]) && calls===1 && hint==="string");print(new Date(source).getTime()===Date.parse(cases[0][0]) && calls===2 && hint==="default");
+var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e){print(e===reason);}
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "date-parse.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-date-parse-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 109]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_source_text_modules_reject_source_imports_before_execution() {
+        let source = r#"async function checkSources(){
+  globalThis.qq_source_runs=0;globalThis.qq_bad_runs=0;globalThis.qq_effect_runs=0;
+  var leaf='./task20-module-source-fixtures/leaf.mjs', reasons=[];
+  for(var i=0;i<2;i++){var promise=import.source(leaf);print(promise instanceof Promise);try{await promise;print(false);}catch(e){$262.gc();print(e instanceof SyntaxError);reasons.push(e);}}
+  print(reasons[0]!==reasons[1]);print(qq_source_runs===0);
+  for(var file of ['bad','mixed','parent','reexport']){
+    var path='./task20-module-source-fixtures/'+file+'.mjs', first;
+    try{await import(path);print(false);}catch(e){$262.gc();print(e instanceof SyntaxError);first=e;}
+    try{await import(path);print(false);}catch(e){print(e===first);}
+    print(qq_source_runs===0 && qq_bad_runs===0 && qq_effect_runs===0);
+  }
+  var ns=await import(leaf);print(ns.answer===42 && qq_source_runs===1);ns.bump();print(ns.answer===43);print(await import(leaf)===ns);
+  try{await import.source(leaf);print(false);}catch(e){print(e instanceof SyntaxError);}print(qq_source_runs===1);
+  var events=[], specifier={toString(){events.push('specifier');$262.gc();return leaf;}};
+  try{await import.source(specifier);print(false);}catch(e){print(e instanceof SyntaxError);}print(events.join('|')==='specifier');
+  var reason={};try{await import.source({toString(){throw reason;}});print(false);}catch(e){print(e===reason);}
+  var proto=$262.AbstractModuleSource.prototype, getter=Object.getOwnPropertyDescriptor(proto,Symbol.toStringTag).get;
+  for(var value of [undefined,null,1,{},Object.create(proto)])print(getter.call(value)===undefined);
+}
+checkSources().then(()=>print('done'),e=>{print('unexpected');print(e);});
+"#;
+        const MODULES: &[(&str, &str)] = &[
+            (
+                "bad.mjs",
+                "import source x from './leaf.mjs';globalThis.qq_bad_runs++;\n",
+            ),
+            (
+                "effect.mjs",
+                "globalThis.qq_effect_runs++;export const value=43;\n",
+            ),
+            (
+                "leaf.mjs",
+                "globalThis.qq_source_runs++;export let answer=42;export function bump(){answer++;}\n",
+            ),
+            (
+                "mixed.mjs",
+                "import './effect.mjs';import source x from './leaf.mjs';globalThis.qq_bad_runs++;\n",
+            ),
+            (
+                "parent.mjs",
+                "import './bad.mjs';globalThis.qq_bad_runs++;\n",
+            ),
+            (
+                "reexport.mjs",
+                "import source x from './leaf.mjs';export {x};\n",
+            ),
+        ];
+        struct ModuleCapture(Capture);
+        impl Host for ModuleCapture {
+            fn write_line(&mut self, text: &str) {
+                self.0.write_line(text);
+            }
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn globals(&self) -> &'static [crate::HostGlobal] {
+                self.0.globals()
+            }
+            fn resolve_dynamic_import(
+                &mut self,
+                _: &str,
+                specifier: &str,
+            ) -> Result<Option<crate::host::ModuleSource>, String> {
+                let file = specifier.rsplit('/').next().unwrap();
+                Ok(MODULES
+                    .iter()
+                    .find(|(name, _)| *name == file)
+                    .map(|(_, source)| crate::host::ModuleSource {
+                        name: format!("task20-module-source-fixtures/{file}"),
+                        source: (*source).into(),
+                        bytes: source.as_bytes().to_vec(),
+                    }))
+            }
+        }
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "module-source-probe.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-module-source-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(ModuleCapture(host));
+                runtime.execute(&program).unwrap();
+                let mut expected = vec!["true"; 31];
+                expected.push("done");
+                assert_eq!(output.0.borrow().as_slice(), expected.as_slice());
+            }
+        }
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
+            let program = compile(
+                "import source x from './task20-module-source-fixtures/leaf.mjs';print('unexpected root execution');",
+                "module-source-root.mjs",
+            ).unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-module-source-root-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(ModuleCapture(host));
+                let error = runtime.execute(&program).unwrap_err();
+                assert!(
+                    runtime
+                        .format_error(&program, &error)
+                        .starts_with("SyntaxError:")
+                );
+                assert!(output.0.borrow().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn regression_let_labels_share_identifier_syntax_and_strictness() {
+        let source = r#"for(var label of ['let','l\\u0065t','l\\u{65}t']){
+  var block=label+':{marker=43;break '+label+';marker=99;}';
+  print(Function('var marker=0;'+block+'return marker;')()===43);
+  print((function(){var marker=0;eval(block);return marker;})()===43);
+  print((0,eval)('var marker=0;'+block+'marker;')===43);delete globalThis.marker;
+  var loop=label+':for(var i=0;i<3;i++){marker++;continue '+label+';marker=99;}';
+  print(Function('var marker=0;'+loop+'return marker;')()===3);
+  for(var prefix of ['"use strict";','"use strict"\n']){
+    var source=prefix+label+':42;';
+    try{Function(source);print(false);}catch(e){print(e instanceof SyntaxError);}
+    try{eval(source);print(false);}catch(e){print(e instanceof SyntaxError);}
+    try{(0,eval)(source);print(false);}catch(e){print(e instanceof SyntaxError);}
+  }
+  print(Function('if(true) '+label+': {return 47;}')()===47);
+  try{Function(label+':'+label+':;');print(false);}catch(e){print(e instanceof SyntaxError);}
+}
+print(Function('let /* comment */ : {return 53;}')()===53);
+print(Function('let\n: {return 59;}')()===59);
+print(Function('let x=61; return x;')()===61);
+print(Function('var let=2; let+=3; return let;')()===5);
+print(Function('let x=2; {let x=3;} return x;')()===2);
+print((function(){'use strict';try{eval('let:42');return false;}catch(e){return e instanceof SyntaxError;}})());
+try{Function('let: let x=3;');print(false);}catch(e){print(e instanceof SyntaxError);}
+print(Function('var let=2; let.foo=3; let( );') instanceof Function);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "let-label.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-let-label-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 44]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_async_disposal_sync_fallback_discards_return_and_rejects_throw() {
+        let source = r#"async function checkDisposal(){
+  var reads=0, calls=0, receiver, reason={}, poison={get then(){reads++;throw reason;}};
+  for(var absent of [undefined,null]){
+    var stack=new AsyncDisposableStack(), resource={[Symbol.asyncDispose]:absent,[Symbol.dispose](){calls++;receiver=this;$262.gc();return poison;}};
+    print(stack.use(resource)===resource);print(calls===0);resource[Symbol.dispose]=function(){throw reason;};
+    var result=stack.disposeAsync();print(result instanceof Promise);print(stack.disposed);print(receiver===resource);await result;print(reads===0);print(calls===1);
+    await stack.disposeAsync();print(calls===1);calls=0;
+  }
+  var stack=new AsyncDisposableStack(), pending=Promise.withResolvers().promise;
+  stack.use({[Symbol.dispose](){return pending;}});await stack.disposeAsync();print(true);
+  var syntaxCalls=0;async function syntax(){await using resource={[Symbol.dispose](){syntaxCalls++;$262.gc();return poison;}};print(syntaxCalls===0);}
+  await syntax();print(syntaxCalls===1 && reads===0);
+  async function syntaxPending(){await using resource={[Symbol.dispose](){return pending;}};}
+  await syntaxPending();print(true);
+  var events=[], stack=new AsyncDisposableStack();
+  stack.use({[Symbol.dispose](){events.push('first');}});stack.use({[Symbol.dispose](){events.push('last');throw reason;}});
+  var result=stack.disposeAsync();print(events.join('|')==='last');Promise.resolve().then(()=>events.push('tick'));
+  try{await result;print(false);}catch(e){print(e===reason);}print(events.join('|')==='last|first|tick');
+  var stack=new AsyncDisposableStack(), first={}, last={};
+  stack.use({[Symbol.dispose](){throw first;}});stack.use({[Symbol.dispose](){throw last;}});
+  try{await stack.disposeAsync();print(false);}catch(e){print(e instanceof SuppressedError && e.error===first && e.suppressed===last);}
+  var stack=new AsyncDisposableStack();stack.use({[Symbol.dispose](){ $262.gc();throw {fresh:43};}});
+  try{await stack.disposeAsync();print(false);}catch(e){print(e.fresh===43);}
+  var stack=new AsyncDisposableStack();stack.use({[Symbol.asyncDispose](){return poison;},[Symbol.dispose](){print(false);}});
+  try{await stack.disposeAsync();print(false);}catch(e){print(e===reason && reads===1);}
+  var stack=new AsyncDisposableStack(), gate=Promise.withResolvers(), complete=false;
+  stack.use({[Symbol.asyncDispose](){return gate.promise;}});var result=stack.disposeAsync().then(()=>{complete=true;});await Promise.resolve();print(!complete);gate.resolve();await result;print(complete);
+  for(var operation of ['adopt','defer']){var stack=new AsyncDisposableStack();if(operation==='adopt')stack.adopt(41,()=>poison);else stack.defer(()=>poison);try{await stack.disposeAsync();print(false);}catch(e){print(e===reason);}}
+  var stack=new AsyncDisposableStack(), used={get [Symbol.asyncDispose](){events.push('async');return null;},get [Symbol.dispose](){events.push('sync');return function(){print(this===used);return poison;};}};
+  events=[];stack.use(used);print(events.join('|')==='async|sync');var moved=stack.move();print(stack.disposed && !moved.disposed);await moved.disposeAsync();print(reads===3);
+  var sync=new DisposableStack();sync.use({[Symbol.dispose](){return poison;}});sync.dispose();print(reads===3);
+}
+checkDisposal().then(()=>print('done'), e=>{print('unexpected');print(e);});
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "disposal-fallback.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-disposal-fallback-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                let mut expected = vec!["true"; 35];
+                expected.push("done");
+                assert_eq!(output.0.borrow().as_slice(), expected.as_slice());
+            }
+        }
+    }
+
+    #[test]
+    fn regression_eval_string_literals_and_directives_share_cooked_constants() {
+        let source = r#"var cases=[["\"\\u{00000000000001234}\"", "\u1234"], ["\"\\u{D800}\"", "\ud800"], ["\"\\u{10ffff}\"", "\udbff\udfff"], ["\"\\x41\\u0042\"", "AB"], ["'\\n\\t\\0'", "\n\t\u0000"], ["\"a\\\rb\"", "ab"], ["\"a\\\nb\"", "ab"], ["\"a\\\r\nb\"", "ab"], ["\"a\\\u2028b\"", "ab"], ["\"a\\\u2029b\"", "ab"], ["'a\"b'", "a\"b"], ["\"a\\\\b\"", "a\\b"]];
+for(var pair of cases){print(eval(pair[0])===pair[1]);print((0,eval)(pair[0])===pair[1]);print(Function("return "+pair[0])()===pair[1]);}
+print(eval('"one";"\\u1234";')==='\u1234');print(eval('"\\u1234";"use strict"')==='use strict');print(eval('"use strict";"\\u1234"')==='\u1234');
+print(eval('"use\\x20strict"; with({}){}')===undefined);
+print(eval('"use strict"; ; ;')==='use strict');print(eval('; ;')===undefined);
+print(eval('"a"+"b"')==='ab');print((0,eval)('"a"+"b"')==='ab');
+var padded='"\\u{'+'0'.repeat(65536)+'1234}"';print(eval(padded)==='\u1234');print((0,eval)(padded)==='\u1234');
+for(var source of ['"\\u{}"','"\\u{110000}"','"\\xG0"']){try{eval(source);print(false);}catch(e){print(e instanceof SyntaxError);}}
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "eval-literals.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-eval-literals-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 49]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_atanh_preserves_special_values_and_accurate_sign_symmetry() {
+        let source = r#"for(var value of [NaN,Infinity,-Infinity,2,-2,1+Number.EPSILON,-1-Number.EPSILON,undefined])print(Number.isNaN(Math.atanh(value)));
+print(Object.is(Math.atanh(0),0));print(Object.is(Math.atanh(-0),-0));print(Math.atanh(1)===Infinity);print(Math.atanh(-1)===-Infinity);
+for(var value of [Number.MIN_VALUE,-Number.MIN_VALUE,1e-300,-1e-300,1e-30,-1e-30])print(Object.is(Math.atanh(value),value));
+var references=[[-0.9999983310699463,-6.998237084679027],[-0.9999978542327881,-6.87257975132917],[-0.3000025749206543,-0.3095224337886503],[0.00001,0.000010000000000333334],[0.3,0.3095196042031117],[0.9928233623504639,2.8132383539094192]];
+for(var pair of references){var actual=Math.atanh(pair[0]);print(Math.abs(actual-pair[1])<=Number.EPSILON*Math.abs(pair[1]));print(Object.is(Math.atanh(-pair[0]),-actual));}
+var calls=0,hint;var value={[Symbol.toPrimitive](h){calls++;hint=h;$262.gc();return 0.3;}};var result=Math.atanh(value);print(calls===1 && hint==='number' && Math.abs(result-references[4][1])<=Number.EPSILON);
+var reason={};try{Math.atanh({valueOf(){throw reason;}});print(false);}catch(e){print(e===reason);}
+for(var value of [1n,Symbol('value')]){try{Math.atanh(value);print(false);}catch(e){print(e instanceof TypeError);}}
+var d=Object.getOwnPropertyDescriptor(Math,'atanh');print(Math.atanh.length===1 && Math.atanh.name==='atanh' && d.writable && !d.enumerable && d.configurable);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "atanh.js").unwrap();
+            let path = std::env::temp_dir().join(format!("quench-atanh-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 35]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_global_object_bindings_use_inherited_presence_and_receiver() {
+        let source = r#"var old=Object.getPrototypeOf(globalThis), target=Object.create(old), events=[], receivers=[], gets=0, sets=0, reason={}, throwing=false;
+Object.defineProperty(target,'qq_plain',{configurable:true,value:undefined});Object.setPrototypeOf(globalThis,target);
+print(qq_plain===undefined);print(typeof qq_plain==='undefined');
+var proxy=new Proxy(target,{has(t,k){if(k==='qq_virtual'){events.push('has');$262.gc();return true;}if(k==='qq_absent'){events.push('absent-has');return false;}if(k==='qq_throw' && throwing)throw reason;return Reflect.has(t,k);},get(t,k,r){if(k==='qq_virtual'){events.push('get');receivers.push(r);$262.gc();return undefined;}if(k==='qq_absent'){gets++;return 41;}if(k==='qq_throw')throw reason;return Reflect.get(t,k,r);},set(t,k,v,r){if(k==='qq_virtual'){sets++;receivers.push(r);$262.gc();}return Reflect.set(t,k,v,r);}});
+Object.setPrototypeOf(globalThis,proxy);
+print(qq_virtual===undefined);print(events.join('|')==='has|get');print(receivers[0]===globalThis);events=[];
+print(typeof qq_virtual==='undefined');print(events.join('|')==='has|get');events=[];
+for(var i=0;i<2;i++){print(qq_virtual===undefined);}print(events.join('|')==='has|get|has|get');events=[];
+try{qq_absent;print(false);}catch(e){print(e instanceof ReferenceError);}print(gets===0);print(typeof qq_absent==='undefined');print(gets===0);
+throwing=true;try{qq_throw;print(false);}catch(e){print(e===reason);}try{typeof qq_throw;print(false);}catch(e){print(e===reason);}throwing=false;
+Object.defineProperty(target,'qq_throw',{value:17,configurable:true});try{qq_throw;print(false);}catch(e){print(e===reason);}delete target.qq_throw;
+(function(){'use strict';qq_virtual=23;})();print(sets===1);print(globalThis.qq_virtual===23);print(receivers[receivers.length-1]===globalThis);delete globalThis.qq_virtual;
+(function(){'use strict';qq_virtual={value:43};})();print(sets===2 && globalThis.qq_virtual.value===43);delete globalThis.qq_virtual;
+Object.defineProperty(globalThis,'qq_own',{value:undefined,configurable:true});print(qq_own===undefined);print(typeof qq_own==='undefined');delete globalThis.qq_own;
+var receiver;target.qq_callable=function(){receiver=this;return 29;};print(qq_callable()===29 && receiver===globalThis);target.qq_callable=function(){'use strict';return this;};print(qq_callable()===undefined);
+var count=0, shadowProxy=new Proxy(target,{has(t,k){if(k==='qq_shadow')count++;return Reflect.has(t,k);},get(t,k,r){if(k==='qq_shadow')count++;return Reflect.get(t,k,r);}});Object.setPrototypeOf(globalThis,shadowProxy);
+(function(){let qq_shadow=31;print(qq_shadow===31);print(typeof qq_shadow==='number');qq_shadow=37;print(qq_shadow===37);})();print(count===0);
+Object.setPrototypeOf(globalThis,target);print(eval('qq_plain')===undefined);print((0,eval)('qq_plain')===undefined);print(Function('return qq_plain')()===undefined);
+Object.setPrototypeOf(globalThis,old);try{qq_plain;print(false);}catch(e){print(e instanceof ReferenceError);}print(typeof qq_plain==='undefined');
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "global-proxy.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-global-proxy-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 34]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_symbol_constructor_prototype_is_constant_in_each_realm() {
+        let source = r#"var foreign=$262.createRealm().global;
+for(var global of [globalThis,foreign]){
+ var C=global.Symbol,proto=C.prototype,d=Object.getOwnPropertyDescriptor(C,'prototype');
+ print(d.value===proto && !d.writable && !d.enumerable && !d.configurable);
+ var g=Object.getOwnPropertyDescriptor(global,'Symbol');print(g.value===C && g.writable && !g.enumerable && g.configurable);
+ var d=Object.getOwnPropertyDescriptor(proto,'constructor');print(d.value===C && d.writable && !d.enumerable && d.configurable);
+ var replacement={};C.prototype=replacement;print(C.prototype===proto);
+ try{(function(){'use strict';C.prototype=replacement;})();print(false);}catch(e){print(e instanceof TypeError);}
+ print(Reflect.set(C,'prototype',replacement)===false && C.prototype===proto);
+ print(Reflect.deleteProperty(C,'prototype')===false && C.prototype===proto);
+ print(Reflect.defineProperty(C,'prototype',{value:proto})===true);
+ for(var desc of [{value:replacement},{writable:true},{configurable:true},{enumerable:true},{get(){return proto;}}]){
+  print(Reflect.defineProperty(C,'prototype',desc)===false);
+  try{Object.defineProperty(C,'prototype',desc);print(false);}catch(e){print(e instanceof TypeError);}
+ }
+ var proxy=new Proxy(C,{get(){return replacement;}});try{proxy.prototype;print(false);}catch(e){print(e instanceof TypeError);}
+ var proxy=new Proxy(C,{defineProperty(){return true;}});try{Reflect.defineProperty(proxy,'prototype',{value:replacement});print(false);}catch(e){print(e instanceof TypeError);}
+ var sym=C('value'),wrapped=Object(sym);$262.gc();print(proto.valueOf.call(wrapped)===sym);
+ proto.extra=17;print(proto.extra===17 && Object.isExtensible(proto));delete proto.extra;
+ print(C.iterator===Symbol.iterator && C.toPrimitive===Symbol.toPrimitive);
+}
+print(Symbol.prototype!==foreign.Symbol.prototype && Symbol!==foreign.Symbol);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "symbol-descriptor.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-symbol-descriptor-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 47]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_object_literal_prototype_mutation_follows_oxc_property_kind() {
+        let source = r#"var __proto__='shorthand';
+var values=[{__proto__(){}},{'__proto__'(){}},{*__proto__(){}},{async __proto__(){}},{async *__proto__(){}},{['__proto__'](){}},{*['__proto__'](){}},{__proto__},{['__proto__']:null},{__proto__:null},{'__proto__':null},{__proto__:17}];
+for(var i=0;i<values.length;i++){var o=values[i],own=i<9;print(Object.getPrototypeOf(o)===(i===9 || i===10?null:Object.prototype) && Object.hasOwn(o,'__proto__')===own);}
+for(var i=0;i<7;i++){var f=values[i].__proto__,d=Object.getOwnPropertyDescriptor(values[i],'__proto__');print(f.name==='__proto__' && d.writable && d.enumerable && d.configurable);try{new f;print(false);}catch(e){print(e instanceof TypeError);}}
+var o={__proto__:null,__proto__(){return 13;},extra:17};print(Object.getPrototypeOf(o)===null && o.__proto__()===13 && o.extra===17);
+var o={__proto__(){return 19;},__proto__:null};print(Object.getPrototypeOf(o)===null && o.__proto__()===19);
+var o={get __proto__(){return 23;},set __proto__(v){this.value=v;},__proto__:null};var d=Object.getOwnPropertyDescriptor(o,'__proto__');o.__proto__=29;print(Object.getPrototypeOf(o)===null && o.__proto__===23 && o.value===29 && typeof d.get==='function' && typeof d.set==='function');
+var o={['__proto__']:null,extra:17};print(Object.getPrototypeOf(o)===Object.prototype && Object.hasOwn(o,'__proto__') && o.__proto__===null && o.extra===17);
+var o={__proto__,extra:19};print(Object.getPrototypeOf(o)===Object.prototype && o.__proto__==='shorthand' && o.extra===19);
+var prototype={value:31}, o={__proto__:prototype,__proto__(){return super.value;}};print(o.__proto__()===31 && Object.getPrototypeOf(o)===prototype);Object.setPrototypeOf(o,{value:37});print(o.__proto__()===37);
+var log=[],key={toString(){log.push('key');$262.gc();return '__proto__';}};var o={[key]:(log.push('value'),$262.gc(),41),__proto__:(log.push('prototype'),null)};print(log.join('|')==='key|value|prototype' && o.__proto__===41 && Object.getPrototypeOf(o)===null);
+var o={...{['__proto__']:43}};print(Object.getPrototypeOf(o)===Object.prototype && o.__proto__===43 && Object.hasOwn(o,'__proto__'));
+var o=JSON.parse('{"__proto__":47}');print(Object.getPrototypeOf(o)===Object.prototype && o.__proto__===47);
+for(var source of ['({__proto__(){return 53;},__proto__:null})','({__proto__:null,*__proto__(){yield 59;}})']){var o=eval(source),f=Function('return '+source)();print(Object.getPrototypeOf(o)===null && Object.getPrototypeOf(f)===null && Object.hasOwn(o,'__proto__') && Object.hasOwn(f,'__proto__'));}
+try{Function('return {__proto__:null,"__proto__":null}');print(false);}catch(e){print(e instanceof SyntaxError);}
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "object-proto.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-object-proto-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 39]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_date_primitive_conversion_uses_method_hint_and_ordinary_fallback() {
+        let source = r#"var hook=Date.prototype[Symbol.toPrimitive], d=new Date(123), seen=[];
+Object.defineProperty(d,Symbol.toPrimitive,{configurable:true,value:function(h){seen.push(h);$262.gc();return h==='default'?7:h==='number'?11:'text';}});
+print(0+d===7);print(d==7);print(Number(d)===11);print(String(d)==='text');print(seen.join('|')==='default|default|number|string');
+delete d[Symbol.toPrimitive];print(0+d==='0'+d.toString());print(Number(d)===123);
+for(var absent of [undefined,null]){
+ Object.defineProperty(d,Symbol.toPrimitive,{configurable:true,value:absent});
+ var log=[];d.valueOf=function(){log.push('valueOf');$262.gc();return 17;};d.toString=function(){log.push('toString');$262.gc();return 'text';};
+ print(0+d===17 && log.join('|')==='valueOf');log=[];print(String(d)==='text' && log.join('|')==='toString');
+ d.valueOf=function(){log.push('valueOf');$262.gc();return {};};log=[];print(0+d==='0text' && log.join('|')==='valueOf|toString');
+}
+delete d[Symbol.toPrimitive];delete d.valueOf;delete d.toString;delete Date.prototype[Symbol.toPrimitive];
+print(0+d===123);print(d==123);print(String(d)===d.toString());print(0+new Date(NaN)!==0+new Date(NaN));
+var log=[], object={valueOf(){log.push('valueOf');$262.gc();return 19;},toString(){log.push('toString');$262.gc();return 'text';}};
+print(hook.call(object,'default')==='text' && log.join('|')==='toString');log=[];print(hook.call(object,'number')===19 && log.join('|')==='valueOf');
+object[Symbol.toPrimitive]=function(){throw 'must not be used';};log=[];print(hook.call(object,'string')==='text' && log.join('|')==='toString');
+for(var hint of [undefined,null,1,{},'invalid']){try{hook.call(object,hint);print(false);}catch(e){print(e instanceof TypeError);}}
+for(var receiver of [undefined,null,1,'text',true]){try{hook.call(receiver,'default');print(false);}catch(e){print(e instanceof TypeError);}}
+var log=[], proxy=new Proxy(Object.create(null),{get(t,k,r){log.push(k);$262.gc();return undefined;}});
+try{0+proxy;print(false);}catch(e){print(e instanceof TypeError && log.length===3 && log[0]===Symbol.toPrimitive && log[1]==='valueOf' && log[2]==='toString');}
+var log=[], reason={}, date=new Date(0);Object.defineProperty(date,Symbol.toPrimitive,{get(){log.push('hook');$262.gc();throw reason;}});
+try{0+date;print(false);}catch(e){print(e===reason && log.join('|')==='hook');}
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "date-primitive.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-date-primitive-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(output.0.borrow().as_slice(), &["true"; 32]);
+            }
+        }
+    }
+
+    #[test]
+    fn regression_error_constructors_resolve_prototype_before_message_and_cause() {
+        let source = r#"var constructors=[Error,EvalError,RangeError,ReferenceError,SyntaxError,TypeError,URIError,SuppressedError,AggregateError];
+function argumentsFor(C, message, options, errors){return C===AggregateError?[errors,message,options]:C===SuppressedError?[17,19,message,options]:[message,options];}
+for(var C of constructors){
+ var log=[], marker={}, options=new Proxy({cause:marker},{has(t,k){log.push('has:'+k);return Reflect.has(t,k);},get(t,k,r){log.push('cause');$262.gc();return Reflect.get(t,k,r);}});
+ var message={toString(){log.push('message');$262.gc();return 'value';}};
+ var errors={[Symbol.iterator](){log.push('iterator');var i=0;return {next(){log.push('next');return {done:i++>0,value:23};}};}};
+ var target=new Proxy(C,{get(t,k,r){if(k==='prototype'){log.push('prototype');$262.gc();}return Reflect.get(t,k,r);}});
+ var value=new target(...argumentsFor(C,message,options,errors));
+ var expected=C===SuppressedError?'prototype|message':C===AggregateError?'prototype|message|has:cause|cause|iterator|next|next':'prototype|message|has:cause|cause';
+ print(log.join('|')===expected);print(Object.getPrototypeOf(value)===C.prototype);print(value.message==='value');print(Error.isError(value));
+ var descriptor=Object.getOwnPropertyDescriptor(value,'message');print(descriptor.writable && descriptor.configurable && !descriptor.enumerable);
+ if(C===SuppressedError){print(value.error===17 && value.suppressed===19 && !Object.hasOwn(value,'cause'));}else{print(value.cause===marker);}
+ var reason={}, calls=0, message={toString(){calls++;return 'unused';}}, target=new Proxy(function NewTarget(){},{get(t,k,r){if(k==='prototype')throw reason;return Reflect.get(t,k,r);}});
+ try{Reflect.construct(C,argumentsFor(C,message,options,[]),target);print(false);}catch(e){print(e===reason && calls===0);}
+ var log=[], reason={}, target=new Proxy(function NewTarget(){},{get(t,k,r){if(k==='prototype')log.push('prototype');return Reflect.get(t,k,r);}}), message={toString(){log.push('message');throw reason;}};
+ try{Reflect.construct(C,argumentsFor(C,message,options,[]),target);print(false);}catch(e){print(e===reason && log.join('|')==='prototype|message');}
+ class Derived extends C {};var value=Reflect.construct(C,argumentsFor(C,'derived',{},[]),Derived);print(value instanceof Derived && Error.isError(value));
+}
+var custom={}, reentrant=0, target=new Proxy(function Target(){},{get(t,k,r){if(k==='prototype'){reentrant++;new Error('inner');$262.gc();return custom;}return Reflect.get(t,k,r);}});
+var value=Reflect.construct(Error,['outer'],target);print(Object.getPrototypeOf(value)===custom && reentrant===1 && Error.isError(value));
+var realm=$262.createRealm(), foreign=realm.global, intrinsic=foreign.Error.prototype, foreignType=foreign.TypeError.prototype;
+var Target=foreign.Function('');Target.prototype=1;foreign.Error=function Replaced(){throw 'wrong';};
+var value=Reflect.construct(Error,['foreign'],Target);print(Object.getPrototypeOf(value)===intrinsic && value.message==='foreign');
+var value=Reflect.construct(TypeError,['foreign'],Target.bind(null));print(Object.getPrototypeOf(value)===foreignType);
+var cause={}, E=Error;Error=function(){throw 'replaced';};try{null.x;}catch(e){print(e instanceof TypeError);}Error=E;
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "error-construction-order.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-error-construction-order-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_destructuring_iterator_steps_validate_results_and_mark_abrupt_completion() {
+        let source = r#"var cases=[['array-spread',v=>[...v]],['call-spread',v=>(()=>{})(...v)],['for-of',v=>{for(var x of v){}}],['destructure',v=>{var [a]=v;}],['rest',v=>{var [...a]=v;}],['array-from',v=>Array.from(v)],['map',v=>new Map(v)],['set',v=>new Set(v)],['weak-map',v=>new WeakMap(v)],['weak-set',v=>new WeakSet(v)],['typed-array',v=>new Int8Array(v)],['typed-from',v=>Int8Array.from(v)],['yield-star',v=>{var g=(function*(){yield* v;})();g.next();}]];
+for(var entry of cases){var iterable={[Symbol.iterator](){return {next(){return 1;}};}};try {entry[1](iterable);print(entry[0]+':no-error');}catch(e){print(entry[0]+':'+(e instanceof TypeError));}}
+var patterns=[
+ value=>{var [x]=value;},value=>{let [x]=value;},value=>{const [x]=value;},
+ value=>{var x;[x]=value;},value=>(function([x]){})(value),value=>{try{throw value;}catch([x]){}},
+ value=>{for(var [x] of [value]){}},value=>(([x])=>{})(value),value=>(function*([x]){})(value)
+];
+for(var bad of [null,undefined,1,true,'a',Symbol.iterator]){
+ for(var apply of patterns.slice(0,9)){var closed=0;var iterable={[Symbol.iterator](){return {next(){return bad;},return(){closed++;return {};}};}};try {apply(iterable);print(false);}catch(e){print(e instanceof TypeError && closed===0);}}
+}
+var variants=[value=>{var [x]=value;},value=>{var [...x]=value;},value=>{var x;[x]=value;},value=>{var x;[...x]=value;}];
+for(var apply of variants){for(var phase of ['next','done','value']){var closed=0, reason={};var iterable={[Symbol.iterator](){return {next(){if(phase==='next')throw reason;return {get done(){if(phase==='done')throw reason;return false;},get value(){if(phase==='value')throw reason;$262.gc();return 1;}};},return(){closed++;throw 'close';}};}};try{apply(iterable);print(false);}catch(e){print(e===reason && closed===0);}}}
+var closed=0, reason={}, iterator={[Symbol.iterator](){return this;},next(){return {done:false,value:undefined};},return(){closed++;return {};}};
+try {var [x=(()=>{throw reason;})()]=iterator;}catch(e){print(e===reason && closed===1);}
+var log=[], count=0, iterable={[Symbol.iterator](){return this;},get next(){log.push('next');return function(){count++;return {done:count>2,value:count};};},return(){log.push('return');return {};}};
+var [a,b]=iterable; print(a===1 && b===2 && log.join('|')==='next|return');
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "destructuring-completion.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-destructuring-completion-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "array-spread:true",
+                        "call-spread:true",
+                        "for-of:true",
+                        "destructure:true",
+                        "rest:true",
+                        "array-from:true",
+                        "map:true",
+                        "set:true",
+                        "weak-map:true",
+                        "weak-set:true",
+                        "typed-array:true",
+                        "typed-from:true",
+                        "yield-star:true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_generator_start_abrupt_completion_skips_body_handlers() {
+        let source = r#"var log=[], reason={token:7};
+function* source(){try {log.push('body');yield 11;}catch(e){log.push('catch');return e;}finally{log.push('finally');}}
+var g=source();$262.gc();try {g.throw(reason);print(false);}catch(e){print(e===reason);}print(log.length===0);print(g.next().done===true);
+var g=source(), result=g.return(19);print(result.done===true && result.value===19);print(log.length===0);print(g.next().value===undefined);
+var g=source();print(g.next().value===11);print(g.throw(reason).value===reason);print(log.join('|')==='body|catch|finally');
+var params=0;function* defaults(x=(params++,23)){try{yield x;}finally{log.push('unexpected');}}
+var g=defaults();print(params===1);try{g.throw(reason);}catch(e){print(e===reason);}print(log.includes('unexpected')===false);
+var delegated=(function*(){yield* source();})();try{delegated.throw(reason);print(false);}catch(e){print(e===reason);}print(delegated.next().done===true);
+async function check(){
+ var effects=[];async function* asyncSource(){try{effects.push('body');yield 31;}catch(e){effects.push('catch');return e;}finally{effects.push('finally');}}
+ var g=asyncSource();$262.gc();try{await g.throw(reason);print(false);}catch(e){print(e===reason);}print(effects.length===0);print((await g.next()).done===true);
+ var g=asyncSource();var result=await g.return(Promise.resolve(37));print(result.done===true && result.value===37);print(effects.length===0);
+ var g=asyncSource();print((await g.next()).value===31);print((await g.throw(reason)).value===reason);print(effects.join('|')==='body|catch|finally');
+}
+check();
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "generator-completion.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-generator-completion-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_static_field_initializers_keep_eval_context_and_caller_boundary() {
+        let source = r#"var outside=41, log=[];
+class Base {static value=7;}
+class Fields extends Base {
+ static first=(log.push('first'),11);
+ static result=eval('super.value + this.first');
+ static target=eval('new.target');
+ static identity=eval('this');
+ static binding=eval('Fields');
+ static local=eval('var outside=13; outside');
+ static captured=eval('() => super.value + this.first');
+ static rejected=(() => {try {eval('arguments');return false;}catch(e){return e instanceof SyntaxError;}})();
+ static last=(log.push('last'),19);
+}
+print(log.join('|')); print(Fields.result===18); print(Fields.target===undefined); print(Fields.identity===Fields); print(Fields.binding===Fields); print(Fields.local===13); print(outside===41); print(Fields.rejected===true);
+$262.gc(); print(Fields.captured()===18);
+Fields.first=23; print(Fields.captured()===30);
+var events=[];
+try {class Abrupt { static before=events.push('before'); static error=(() => {throw 37;})(); static after=events.push('after'); }} catch(e){print(e===37);}
+print(events.join('|')==='before');
+var retained=[];
+for(var i=0;i<2;i++){let value=i; class Scoped {static field=eval('() => value');} retained.push(Scoped);}
+$262.gc(); print(retained[0].field()===0); print(retained[1].field()===1);
+function sloppy(){return sloppy.caller;}
+function outer(){class Caller {static value=sloppy();} return Caller.value;}
+print(outer()===null);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "static-field-context.js").unwrap();
+            let path = std::env::temp_dir().join(format!(
+                "quench-static-field-context-{}",
+                std::process::id()
+            ));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "first|last",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_auto_accessor_backing_fields_preserve_static_order_and_private_identity() {
+        let source = r#"var log=[], symbol=Symbol('slot'), key={ [Symbol.toPrimitive]() {log.push('key');return 'computed';} }; class Base {static base=7;}
+class C extends Base {
+ static before=log.push('before');
+ static accessor x=(log.push('x'),11);
+ static accessor empty;
+ static accessor [key]=(log.push('computed'),super.base);
+ static accessor [symbol]=19;
+ static accessor #private=23;
+ static accessor evaluated=eval('super.base + this.x');
+ static read(){return this.#private;} static write(v){this.#private=v;}
+ static {log.push(this.x+this.computed+this.read());}
+ static after=log.push('after');
+}
+
+print(log.join('|'));
+print(C.x === 11); print(C.empty === undefined); print(C.computed === 7); print(C[symbol] === 19); print(C.read() === 23); print(C.evaluated === 18);
+C.x=31; C.write(37); print(C.x===31); print(C.read()===37);
+var descriptor=Object.getOwnPropertyDescriptor(C,'x');
+print(descriptor.enumerable===false); print(descriptor.configurable===true); print(descriptor.get.name==='get x'); print(descriptor.set.name==='set x'); print(descriptor.get.length===0); print(descriptor.set.length===1);
+try {descriptor.get.call({});print(false);}catch(e){print(e instanceof TypeError);}
+try {descriptor.set.call({},1);print(false);}catch(e){print(e instanceof TypeError);}
+class D extends C {};
+try {D.x;print(false);}catch(e){print(e instanceof TypeError);}
+print(Object.getOwnPropertyNames(C).includes('private')===false);
+var classes=[];
+for(var i=0;i<2;i++) { class Local { static accessor value=i; } classes.push(Local); }
+$262.gc(); print(classes[0].value===0); print(classes[1].value===1); classes[0].value=41; print(classes[1].value===1);
+class Names {
+ static accessor plain=function(){};
+ static accessor [symbol]=()=>{};
+ static accessor #secret=function(){};
+ static read(){return this.#secret.name;}
+ accessor [symbol]=function(){};
+}
+print(Names.plain.name==='plain'); print(Names[symbol].name==='[slot]'); print(Names.read()==='#secret'); print(new Names()[symbol].name==='[slot]');
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "auto-accessors.js").unwrap();
+            let path =
+                std::env::temp_dir().join(format!("quench-auto-accessors-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "key|before|x|computed|41|after",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true",
+                        "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_function_arguments_retain_original_values_after_residual_round_trip() {
+        let source = r#"function plain(a,b) {
+  var first=plain.arguments, second=plain.arguments;
+  print(first !== second); print(first.length === 4); print(first[0] === 7); print(first[1] === undefined); print(first[2] === 9); print(first[3] === 11);
+  print(first.callee === plain); print(Object.prototype.toString.call(first) === '[object Arguments]'); print(Object.getPrototypeOf(first) === Object.prototype);
+  first[0]=17; delete first[2]; first.length=0;
+  print(second[0] === 7); print(second[2] === 9); print(plain.arguments[0] === 7); print(a === 7);
+  a=19; arguments[1]=23; arguments=null; $262.gc();
+  print(plain.arguments[0] === 7); print(plain.arguments[1] === undefined); print(plain.arguments.length === 4);
+}
+print(plain.arguments === null); plain(7,undefined,9,11); print(plain.arguments === null);
+function defaults(a=7) { var snapshot=defaults.arguments; print(snapshot.length === 2); print(snapshot[0] === undefined); print(snapshot[1] === 19); try {snapshot.callee;print(false);}catch(e){print(e instanceof TypeError);} }
+defaults(undefined,19);
+function rest(...values) { var snapshot=rest.arguments; print(snapshot[0] === 1); print(snapshot.length === 3); try {snapshot.callee;print(false);}catch(e){print(e instanceof TypeError);} }
+rest(1,2,3);
+function pattern({value}) { var snapshot=pattern.arguments; print(snapshot[0].value === 31); try {snapshot.callee;print(false);}catch(e){print(e instanceof TypeError);} }
+pattern({value:31});
+function recursive(n) { if(n) { recursive(n-1); print(recursive.arguments[0] === n); } else print(recursive.arguments[0] === 0); }
+recursive(2);
+function collecting(a) { a=null; arguments=null; $262.gc(); print(collecting.arguments[0].token === 37); }
+collecting({token:37});
+function constructor(a) { a=null; arguments=null; $262.gc(); print(constructor.arguments[0].token === 41); }
+new constructor({token:41});
+function arithmetic(a) { return a + 1; }
+print(arithmetic({valueOf(){print(arithmetic.arguments[0] === this);return 43;}}) === 44);
+var functions=[];
+for(var index=0;index<2;index++) functions.push(function self(expected){print(self.arguments.callee === expected);});
+for(var f of functions) f(f);
+function shadow(arguments) { print(shadow.arguments[0] === 47); }
+shadow(47);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "function-arguments.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-function-arguments-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                let mut runtime = Runtime::new(host);
+                runtime.execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                        "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn regression_caller_uses_execution_context_boundaries() {
+        assert_output_in_execution_modes(
+            r#"function inner() { return inner.caller; }
+function outer() { return inner(); }
+print(inner() === null); print(outer() === outer);
+function throughCall() { return inner.call(null); }
+function throughApply() { return inner.apply(null, []); }
+function throughReflect() { return Reflect.apply(inner, null, []); }
+var bound = inner.bind(null);
+function throughBound() { return bound(); }
+print(throughCall() === throughCall); print(throughApply() === throughApply);
+print(throughReflect() === throughReflect); print(throughBound() === throughBound);
+print([0].map(inner)[0] === null);
+print(Array.from([0], inner)[0] === null);
+function strictOuter() { 'use strict'; var answer=inner(); return answer; }
+print(strictOuter() === null);
+function direct() { return eval('inner()'); }
+function nestedEval() { return eval('eval("inner()")'); }
+print(direct() === direct); print(nestedEval() === nestedEval);
+function recursive(n) { if(n) return recursive(n-1); return recursive.caller; }
+print(recursive(2) === recursive);
+var functions=[];
+for(var i=0;i<2;i++) functions.push(function same() { return inner(); });
+for(var f of functions) { $262.gc(); print(f() === f); }
+print(inner.caller === null);
+function getterOuter() { return {get value() { return inner(); }}.value; }
+print(typeof getterOuter() === 'function');
+function nestedNative() { return [0].map(function callback() { return inner(); })[0]; }
+print(nestedNative().name === 'callback');
+function throwsThenCalls() { try {[0].map(function(){throw 7;});}catch(e){} return inner(); }
+print(throwsThenCalls() === throwsThenCalls);
+"#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_caller_censors_script_and_async_contexts() {
+        assert_output_in_execution_modes(
+            r#"function leaf() { return leaf.caller; }
+function indirectCaller() { return (0,eval)('leaf()'); }
+print(indirectCaller() === null);
+(async function asyncCaller() { print(leaf() === null); })();
+print((function* generatorCaller() { yield leaf(); })().next().value === null);
+"#,
+            &["true", "true", "true"],
+        );
+    }
+
+    #[test]
+    fn regression_activation_retains_exact_callable_identity() {
+        assert_output_in_execution_modes(
+            r#"
+            var functions = [];
+            for (var index = 0; index < 2; index++) {
+              functions.push(function self() { return [self, arguments.callee]; });
+            }
+            for (var f of functions) { var result = f(); print(result[0] === f); print(result[1] === f); }
+            $262.gc();
+            for (var f of functions) { var result = f(); print(result[0] === f); print(result[1] === f); }
+            var generators = [];
+            for (var index = 0; index < 2; index++) { generators.push(function* self() { yield self; yield arguments.callee; }); }
+            for (var f of generators) { var iterator = f(); $262.gc(); print(iterator.next().value === f); $262.gc(); print(iterator.next().value === f); }
+            var asynchronous = [];
+            for (var index = 0; index < 2; index++) { asynchronous.push(async function self() { print(self === asynchronous[index]); }); }
+            for (var index = 0; index < 2; index++) { asynchronous[index](); }
+            var firstPrototype = {label: 17}, secondPrototype = {label: 19};
+            generators[0].prototype = firstPrototype; generators[1].prototype = secondPrototype;
+            print(Object.getPrototypeOf(generators[0]()) === firstPrototype);
+            print(Object.getPrototypeOf(generators[1]()) === secondPrototype);
+            var simple = [], recursive = [];
+            for (var index = 0; index < 2; index++) {
+              simple.push(function self() { return self; });
+              recursive.push(function self(n) { if (n) return self(n - 1); return [self, arguments.callee]; });
+            }
+            for (var f of simple) print(f() === f);
+            for (var f of recursive) { var result = f(3); print(result[0] === f); print(result[1] === f); }
+            var awaited = [], asyncGenerators = [];
+            for (var index = 0; index < 2; index++) {
+              awaited.push(async function self(expected) { await 0; $262.gc(); print(self === expected); print(arguments.callee === expected); });
+              asyncGenerators.push(async function* self() { yield self; yield arguments.callee; });
+            }
+            for (var f of awaited) f(f);
+            (async function() {
+              for (var f of asyncGenerators) {
+                var iterator = f(); $262.gc(); print((await iterator.next()).value === f);
+                $262.gc(); print((await iterator.next()).value === f);
+              }
+            })();
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_restricted_function_caller_uses_property_authority() {
+        assert_output_in_execution_modes(
+            r#"
+            function throws(read) { try { read(); print(false); } catch(e) { print(e instanceof TypeError); } }
+            var object = {method() {}, get value() {}, set value(x) {}, async asyncMethod() {}, *generatorMethod() {}};
+            var descriptor = Object.getOwnPropertyDescriptor(object, 'value');
+            var functions = [object.method, descriptor.get, descriptor.set, object.asyncMethod, object.generatorMethod,
+              () => {}, async function() {}, function*() {}, class {}, function() {}.bind(),
+              Function, Array, Function.prototype.bind, Object.getOwnPropertyDescriptor];
+            for (var f of functions) { throws(() => f.caller); throws(() => f.arguments); }
+            var home = object.method;
+            Object.setPrototypeOf(home, {get caller() { print(this === home); return 7; }});
+            print(home.caller);
+            var native = Object.getOwnPropertyDescriptor;
+            Object.setPrototypeOf(native, {caller: 11}); print(native.caller);
+            Object.defineProperty(object.generatorMethod, 'caller', {value: 13}); print(object.generatorMethod.caller);
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "7", "11",
+                "13",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_object_home_does_not_shadow_constructor_super() {
+        assert_output_in_execution_modes(
+            r#"
+            class Base { constructor() { this.value = 7; } method() { return this.value; } }
+            class Plain extends Base { constructor() { var plain = {}; super(); print(this.value); } }
+            try { new Plain(); } catch (e) { print(e.name); }
+            class WithMethod extends Base { constructor() { var key = {toString() { return ''; }}; super(); print(this.value); print(key.toString() === ''); } }
+            try { new WithMethod(); } catch (e) { print(e.name); }
+            class Deletes extends Base {
+              constructor() {
+                var coercions = 0, reads = 0;
+                var key = {toString() { coercions++; return ''; }};
+                var check = () => { try { delete super[(reads++, key)]; } catch (e) { print(e instanceof ReferenceError); } print(reads); print(coercions); };
+                check(); super(); check();
+                Object.setPrototypeOf(Deletes.prototype, null); check();
+                print(this.value);
+              }
+            }
+            try { new Deletes(); } catch (e) { print(e.name); }
+            class Nested extends Base {
+              constructor() {
+                var first = {__proto__: {value: 11}, method() { return super.value; }};
+                var second = {__proto__: {value: 13}, get method() { return super.value; }};
+                $262.gc(); print(first.method()); print(second.method);
+                var arrow = () => super(); arrow();
+                print(this.value); print(super.method());
+                print(first.method()); print(second.method);
+              }
+            }
+            try { new Nested(); } catch (e) { print(e.name); }
+            "#,
+            // GetThisBinding precedes key evaluation; local Node differs before super().
+            &[
+                "7", "7", "true", "true", "0", "0", "true", "1", "0", "true", "2", "0", "7", "11",
+                "13", "7", "7", "11", "13",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_object_method_homes_remain_distinct_from_constructor_home() {
+        assert_output_in_execution_modes(
+            r#"
+            class Base { constructor() { this.value = 7; } method() { return this.value; } }
+            class Plain extends Base { constructor() { var plain = {}; super(); print(this.value); } }
+            try { new Plain(); } catch (e) { print(e.name); }
+            class WithMethod extends Base { constructor() { var key = {toString() { return ''; }}; super(); print(this.value); print(key.toString() === ''); } }
+            try { new WithMethod(); } catch (e) { print(e.name); }
+            class Deletes extends Base {
+              constructor() {
+                var coercions = 0, reads = 0;
+                var key = {toString() { coercions++; return ''; }};
+                var check = () => { try { delete super[key]; } catch (e) { print(e instanceof ReferenceError); } print(reads); print(coercions); };
+                check(); super(); check();
+                Object.setPrototypeOf(Deletes.prototype, null); check();
+                print(this.value);
+              }
+            }
+            try { new Deletes(); } catch (e) { print(e.name); }
+            class Nested extends Base {
+              constructor() {
+                var first = {__proto__: {value: 11}, method() { return super.value; }};
+                var second = {__proto__: {value: 13}, get method() { return super.value; }};
+                $262.gc(); print(first.method()); print(second.method);
+                var arrow = () => super(); arrow();
+                print(this.value); print(super.method());
+                print(first.method()); print(second.method);
+              }
+            }
+            try { new Nested(); } catch (e) { print(e.name); }
+            "#,
+            &[
+                "7", "7", "true", "true", "0", "0", "true", "0", "0", "true", "0", "0", "7", "11",
+                "13", "7", "7", "11", "13",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_assignment_retains_reference_before_rhs_eval() {
+        assert_output_in_execution_modes(
+            r#"
+            function simple(declaration) {
+              var x = 0;
+              var inner = (function() { x = (eval(declaration), 1); return x; })();
+              print(inner); print(x);
+            }
+            simple('var x;'); simple('var x = 2;');
+            function compound() {
+              var x = 4;
+              var inner = (function() { x += (eval('var x = 9;'), 3); return x; })();
+              print(inner); print(x);
+            }
+            compound();
+            function logical() {
+              var x = 0;
+              var inner = (function() { x ||= (eval('var x = 9;'), 3); return x; })();
+              print(inner); print(x);
+            }
+            logical();
+            var referenceGlobal = 4;
+            function globalReference() { referenceGlobal = (eval('var referenceGlobal = 9;'), 7); print(referenceGlobal); }
+            globalReference(); print(referenceGlobal);
+            function ownLocal() { var x = 1; x = (eval('var x = 2;'), 3); print(x); }
+            ownLocal();
+            function lexical() { let x = 4; function inner() { x = (eval('var x = 9;'), $262.gc(), 7); print(x); } inner(); print(x); }
+            lexical();
+            function immutable() { const x = 4; function inner() { try { x = (eval('var x = 9;'), 7); } catch(e) { print(e instanceof TypeError); } print(x); } inner(); print(x); }
+            immutable();
+            function mapped(x) { function inner() { x = (eval('var x = 9;'), $262.gc(), 7); print(x); } inner(); print(x); print(arguments[0]); }
+            mapped(4);
+            function block() { let x = 4; { let x = 5; x = (eval(''), 7); print(x); } print(x); }
+            block();
+            "#,
+            // Pinned Test262 retains lref; local Node re-resolves after eval.
+            &[
+                "undefined",
+                "1",
+                "2",
+                "1",
+                "9",
+                "7",
+                "9",
+                "3",
+                "9",
+                "7",
+                "3",
+                "9",
+                "7",
+                "true",
+                "9",
+                "4",
+                "9",
+                "7",
+                "7",
+                "7",
+                "4",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_captured_parameter_stores_preserve_argument_mapping() {
+        assert_output_in_execution_modes(
+            r#"
+            function escaped(x) {
+              var args = arguments;
+              return {args: args, set() { eval(''); x = 7; return x; }};
+            }
+            var retained = escaped(4); $262.gc(); print(retained.set()); print(retained.args[0]);
+            function disconnected(x) {
+              delete arguments[0];
+              function inner() { eval(''); x = 7; }
+              inner(); print(x); print(arguments[0]);
+            }
+            disconnected(4);
+            function unmapped(x) {
+              'use strict';
+              function inner() { eval(''); x = 7; }
+              inner(); print(x); print(arguments[0]);
+            }
+            unmapped(4);
+            "#,
+            &["7", "7", "7", "undefined", "7", "4"],
+        );
+    }
+
+    #[test]
+    fn regression_direct_eval_writes_captured_bindings() {
+        assert_output_in_execution_modes(
+            r#"
+            function strict(p) {
+                'use strict';
+                function inner() {eval('p = 17');}
+                inner(); print(p); print(arguments[0]);
+            }
+            strict(); strict(1);
+            function onlyEval(a) {eval('arguments[0] = 28'); return a;}
+            print(onlyEval(1));
+            function strictOnly(a) {'use strict'; return eval('arguments[0]');}
+            print(strictOnly(29));
+            function nestedArguments(a) {
+                'use strict';
+                function inner() {eval('arguments[0] = 30'); return eval('arguments.length');}
+                print(inner()); print(arguments[0]);
+            }
+            nestedArguments(31);
+            function escaped(p) {
+                return function() {eval('p = 18'); return p;};
+            }
+            print(escaped(1)());
+            function shadow(p) {
+                return function() {var p = 2; eval('p = 19'); return p;};
+            }
+            print(shadow(1)());
+            function declare(p) {
+                function inner() {eval('var p = 20'); return p;}
+                print(inner()); print(p);
+            }
+            declare(1);
+            function lexical() {
+                const fixed = 21;
+                let mutable = 1;
+                function inner() {
+                    let local = 1;
+                    eval('mutable = 22');
+                    try {eval('fixed = 0');} catch (error) {print(error instanceof TypeError);}
+                    try {eval('var local');} catch (error) {print(error instanceof SyntaxError);}
+                    eval('var fixed = 26'); print(eval('fixed'));
+                }
+                inner(); print(mutable); print(fixed);
+                function tdz() {eval('pending = 0');}
+                try {tdz();} catch (error) {print(error instanceof ReferenceError);}
+                let pending;
+            }
+            lexical();
+            var named = function self() {
+                function inner() {eval('self = 0'); return eval('self');}
+                return inner();
+            };
+            print(named() === named);
+            var strictNamed = function self() {
+                'use strict';
+                function inner() {eval('self = 0');}
+                try {inner();} catch (error) {print(error instanceof TypeError);}
+            };
+            strictNamed();
+            var globalValue = 23;
+            function globalWrite() {eval('globalValue = 24'); print(eval('globalValue'));}
+            globalWrite(); print(globalValue);
+            var gets = 0, stored = 23;
+            Object.defineProperty(globalThis, 'guestValue', {
+                configurable: true, get() {gets++; return stored;}, set(value) {stored = value;}
+            });
+            function propertyWrite() {eval('guestValue = 25'); print(eval('guestValue'));}
+            propertyWrite(); print(gets); print(stored);
+            "#,
+            &[
+                "17",
+                "undefined",
+                "17",
+                "1",
+                "28",
+                "29",
+                "0",
+                "31",
+                "18",
+                "19",
+                "20",
+                "1",
+                "true",
+                "true",
+                "26",
+                "22",
+                "21",
+                "true",
+                "true",
+                "true",
+                "24",
+                "24",
+                "25",
+                "1",
+                "25",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_parameter_arguments_bindings_survive_body_shadowing() {
+        assert_output_in_execution_modes(
+            r#"
+            function replace(h = () => arguments) {
+                var arguments = 0;
+                print(h().length); print(arguments); print(arguments === h());
+            }
+            replace();
+            function copy(h = () => arguments) {
+                var arguments;
+                print(h() === arguments);
+                arguments = 42;
+                print(h() === arguments); print(h().length);
+            }
+            copy();
+            function parameter(arguments = 41, h = () => arguments) {
+                print(arguments); print(h());
+            }
+            parameter();
+            function write(a = (arguments = 43), h = () => arguments) {
+                var arguments;
+                print(a); print(arguments); arguments = 44; print(h());
+            }
+            write();
+            function lexical(h = () => arguments) {
+                try { print(arguments); } catch (error) {print(error instanceof ReferenceError);}
+                let arguments = 44;
+                print(arguments); print(h().length);
+            }
+            lexical();
+            function nested(h = () => () => arguments) {
+                var arguments = 0;
+                print(h()().length);
+            }
+            nested();
+            function mutate(h = () => {arguments = 45; return arguments;}) {
+                var arguments;
+                print(arguments.length); print(h()); print(arguments.length);
+            }
+            mutate();
+            "#,
+            &[
+                "0", "0", "false", "true", "false", "0", "41", "41", "43", "43", "43", "true",
+                "44", "0", "0", "0", "45", "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_native_function_source_uses_installed_names_without_guest_reads() {
+        assert_output_in_execution_modes(
+            r#"
+            var functions = [Array, Object.prototype.toString, decodeURI, Math.asin,
+                String.prototype.blink, RegExp.prototype[Symbol.split],
+                Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get,
+                Object.getOwnPropertyDescriptor(Object.prototype, '__proto__').get,
+                Object.getOwnPropertyDescriptor(Object.prototype, '__proto__').set];
+            var stringify = Function.prototype.toString;
+            for (var fn of functions) print(stringify.call(fn));
+            var original = stringify.call(Array);
+            var bound = Array.bind();
+            Object.defineProperty(Array, 'name', {get() {
+                $262.gc(); throw new Error('name must not be read');
+            }});
+            $262.gc();
+            print(stringify.call(Array) === original);
+            print(stringify.call(new Proxy(Array, {get() {
+                throw new Error('proxy trap must not run');
+            }})));
+            print(stringify.call(bound));
+            print(stringify.call(function actual() { return 42; }));
+            print(stringify.call(async function /* async */ () { return 42; }));
+            print(stringify.call(function* /* generator */ () { yield 42; }));
+            Object.freeze(Array);
+            print(Object.isFrozen(Array));
+            print(Object.isFrozen(new Proxy(Array, {})));
+            var thrower = (function() {
+                'use strict';
+                return Object.getOwnPropertyDescriptor(arguments, 'callee').get;
+            })();
+            print(Object.isFrozen(thrower));
+            print(Reflect.ownKeys(thrower).sort().join(','));
+            "#,
+            &[
+                "function Array() { [native code] }",
+                "function toString() { [native code] }",
+                "function decodeURI() { [native code] }",
+                "function asin() { [native code] }",
+                "function blink() { [native code] }",
+                "function [Symbol.split]() { [native code] }",
+                "function get flags() { [native code] }",
+                "function get __proto__() { [native code] }",
+                "function set __proto__() { [native code] }",
+                "true",
+                "function () { [native code] }",
+                "function () { [native code] }",
+                "function actual() { return 42; }",
+                "async function /* async */ () { return 42; }",
+                "function* /* generator */ () { yield 42; }",
+                "true",
+                "true",
+                "true",
+                "length,name",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_dynamic_function_display_name_is_not_a_lexical_binding() {
+        assert_output_in_execution_modes(
+            r#"
+            var created = Function('return typeof anonymous');
+            print(created.name);
+            print(created.length);
+            print(created());
+            print(created.toString().startsWith('function anonymous('));
+            print(Function('return function() {return typeof anonymous;}')()());
+            print(Function("return function() {eval(''); return typeof anonymous;}")()());
+            print(Function("return eval('(typeof anonymous)')")());
+            print(Function("'use strict'; return typeof anonymous")());
+            try {Function('return anonymous')(); print(false);}
+            catch (error) {print(error instanceof ReferenceError);}
+            globalThis.anonymous = 42;
+            print(Function('return anonymous')());
+            print(Function('return function() {return anonymous;}')()());
+            delete globalThis.anonymous;
+            print(Function('anonymous', 'return anonymous')(43));
+            print(Function('var anonymous = 44; return anonymous')());
+            print((function anonymous() {return typeof anonymous;})());
+            var Generator = (function*() {}).constructor;
+            var Async = (async function() {}).constructor;
+            var AsyncGenerator = (async function*() {}).constructor;
+            for (var Constructor of [Generator, Async, AsyncGenerator]) {
+                print(Constructor('return typeof anonymous').name);
+            }
+            print(Generator('return typeof anonymous')().next().value);
+            Async('return typeof anonymous')().then(print);
+            AsyncGenerator('return typeof anonymous')().next().then(function(step) {
+                print(step.value);
+            });
+            "#,
+            &[
+                "anonymous",
+                "0",
+                "undefined",
+                "true",
+                "undefined",
+                "undefined",
+                "undefined",
+                "undefined",
+                "true",
+                "42",
+                "42",
+                "43",
+                "44",
+                "function",
+                "anonymous",
+                "anonymous",
+                "anonymous",
+                "undefined",
+                "undefined",
+                "undefined",
             ],
         );
     }
@@ -898,8 +3472,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "0", "true", "0", "true", "0", "true", "0", "true", "1", "true", "1", "true",
-                "1", "true", "1",
+                "true", "0", "true", "0", "true", "0", "true", "0", "true", "1", "true", "1",
+                "true", "1", "true", "1",
             ],
         );
     }
@@ -1038,8 +3612,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             Engine::specialize_unspecialized,
         ] {
             let program = compile(source, "definition-modes.js").unwrap();
-            let path =
-                std::env::temp_dir().join(format!("quench-definition-modes-{}", std::process::id()));
+            let path = std::env::temp_dir()
+                .join(format!("quench-definition-modes-{}", std::process::id()));
             program.write_binary(&path).unwrap();
             let decoded = ResidualProgram::read_binary(&path);
             std::fs::remove_file(path).unwrap();
@@ -1051,8 +3625,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             assert_eq!(
                 output.0.borrow().as_slice(),
                 &[
-                    "0", "42", "43", "44", "true", "false", "true", "function", "function", "false",
-                    "function", "function", "true"
+                    "0", "42", "43", "44", "true", "false", "true", "function", "function",
+                    "false", "function", "function", "true"
                 ]
             );
         }
@@ -1615,7 +4189,7 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     fn regression_error_brand_is_not_a_guest_property() {
         assert_output_in_execution_modes(
             r#"
-            var marker = '\0rqj:error-brand';
+            var marker = '\0quench:error-brand';
             var forged = {[marker]: true};
             print(Error.isError(forged));
             print(Object.prototype.toString.call(forged));
@@ -1683,12 +4257,12 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Error.isError(error)); print(foreign.Error.isError(new Error('local')));
             print(Error.isError(new Proxy(error, {})));
             var stack = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').get;
-            print(stack.call({'\0rqj:error-brand':true}) === undefined);
-            error['\0rqj:error-brand'] = false;
+            print(stack.call({'\0quench:error-brand':true}) === undefined);
+            error['\0quench:error-brand'] = false;
             $262.gc(); print(stack.call(error));
             Promise.any([]).catch(function(error) {
-                print(Error.isError(error)); print(Object.hasOwn(error, '\0rqj:error-brand'));
-                error['\0rqj:error-brand'] = false;
+                print(Error.isError(error)); print(Object.hasOwn(error, '\0quench:error-brand'));
+                error['\0quench:error-brand'] = false;
                 $262.gc(); print(Error.isError(error)); print(Object.prototype.toString.call(error));
             });
             for (var value of [Object('s'), Object(1), Object(true), Object(1n), Object(Symbol()), [], function() {}])
@@ -2057,10 +4631,394 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
+    fn regression_with_unscopables_retains_block_lexical_fallbacks() {
+        assert_output_in_execution_modes(
+            r#"
+                var object = {value: 90, [Symbol.unscopables]: {value: true}};
+                {let value = 11; with (object) {
+                    print(value); value = 12; print(value); print(typeof value); print(delete value);
+                } print(value);}
+                {let value = 21; with (object) {print(value);}}
+                {let value = 31; with (object) {
+                    {let value = 32; print(value);}
+                    print(value);
+                }}
+                {const value = 41; with (object) {
+                    print(value); try {value = 42;} catch (error) {print(error instanceof TypeError);}
+                }}
+                object[Symbol.unscopables].value = false;
+                {const value = 51; with (object) {value = 52; print(value); print(delete value);} print(value);}
+                {with (object) {try {print(later);} catch (error) {print(error instanceof ReferenceError);}}
+                    let later = 61;}
+                object.value = 71; object[Symbol.unscopables].value = true;
+                {let value = 72; with (object) {print(eval('value')); eval('value = 73'); print(value);} print(value);}
+                {let value = 81; with (object) {
+                    function read() {return value;} print(read()); $262.gc(); print(read());
+                }}
+                {let fill = 33; with (Array.prototype) {print(fill);}}
+                var collecting = {callable() {return 0;},
+                    get [Symbol.unscopables]() {$262.gc(); return {callable: true};}};
+                {let callable = function () {'use strict'; print(this === undefined); return {rank: 91};};
+                    with (collecting) {print(callable().rank);}}
+            "#,
+            &[
+                "11", "12", "number", "false", "12", "21", "32", "31", "41", "true", "52", "true",
+                "51", "true", "72", "73", "73", "81", "81", "33", "true", "91",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_array_length_remains_own_after_prevent_extensions() {
+        assert_output_in_execution_modes(
+            r#"
+                function setLength(array, value) {'use strict'; array.length = value;}
+                for (var initial of [0, 3]) {
+                    var array = Object.preventExtensions(Array(initial));
+                    setLength(array, initial); print(array.length);
+                    setLength(array, 0); print(array.length);
+                    setLength(array, 5); print(array.length);
+                    print(Object.hasOwn(array, 'length'));
+                    print(Object.getOwnPropertyDescriptor(array, 'length').configurable);
+                }
+                var array = Object.freeze([]), conversions = 0;
+                try {setLength(array, 0);} catch (error) {print(error instanceof TypeError);}
+                try {setLength(array, {valueOf() {conversions++; return 0;}});}
+                catch (error) {print(error instanceof TypeError);}
+                print(conversions); print(Reflect.set(array, 'length', 0));
+                print(Reflect.defineProperty(array, 'length', {value: 0}));
+                var prototype = Object.freeze([]), child = [];
+                Object.setPrototypeOf(child, prototype);
+                setLength(child, 2); print(child.length); print(Reflect.set(child, 'length', 3));
+                print(child.length);
+                var sealed = Object.seal([1, 2, 3]);
+                setLength(sealed, 5); print(sealed.length);
+                try {setLength(sealed, 0);} catch (error) {print(error instanceof TypeError);}
+                print(sealed.length); print(sealed[2]);
+                function args() {var value = arguments; Object.preventExtensions(value); setLength(value, 0); print(value.length);}
+                args(1, 2);
+            "#,
+            &[
+                "0", "0", "5", "true", "false", "3", "0", "5", "true", "false", "true", "true",
+                "0", "false", "true", "2", "true", "3", "5", "true", "3", "3", "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_array_species_receives_large_lengths_before_array_limits() {
+        assert_output_in_execution_modes(
+            r#"
+                var sentinel = {}, events = [];
+                function source(length, species) {
+                    return new Proxy([], {
+                        get(target, key) {
+                            if (key === 'length') {events.push('length'); return length;}
+                            if (key === 'constructor') {
+                                events.push('constructor');
+                                return {get [Symbol.species]() {events.push('species'); return species;}};
+                            }
+                            return target[key];
+                        },
+                        has() {throw sentinel;}
+                    });
+                }
+                function Stop(length) {events.push('construct:' + length); throw sentinel;}
+                for (var method of ['map', 'slice']) {
+                    events = [];
+                    var input = source({valueOf() {events.push('convert'); return Infinity;}}, Stop);
+                    try {Array.prototype[method].call(input, method === 'map' ? x => x : undefined);}
+                    catch (error) {print(error === sentinel);}
+                    print(events.join(','));
+                    events = [];
+                    try {Array.prototype[method].call(source(2 ** 32, Stop), method === 'map' ? x => x : undefined);}
+                    catch (error) {print(error === sentinel);}
+                    print(events.join(','));
+                    function ObjectResult(length) {print(length); return {};}
+                    try {Array.prototype[method].call(source(Infinity, ObjectResult), method === 'map' ? x => x : undefined);}
+                    catch (error) {print(error === sentinel);}
+                }
+                events = [];
+                try {Array.prototype.map.call(source(Infinity, Stop), null);}
+                catch (error) {print(error instanceof TypeError);}
+                print(events.join(','));
+                for (var method of ['map', 'slice']) {
+                    try {Array.prototype[method].call({length: Infinity}, method === 'map' ? x => x : undefined);}
+                    catch (error) {print(error instanceof RangeError);}
+                }
+                events = [];
+                try {Array.prototype.slice.call(source(Infinity, Stop), Number.MAX_SAFE_INTEGER - 3);}
+                catch (error) {print(error === sentinel);}
+                print(events.join(','));
+            "#,
+            &[
+                "true",
+                "length,convert,constructor,species,construct:9007199254740991",
+                "true",
+                "length,constructor,species,construct:4294967296",
+                "9007199254740991",
+                "true",
+                "true",
+                "length,convert,constructor,species,construct:9007199254740991",
+                "true",
+                "length,constructor,species,construct:4294967296",
+                "9007199254740991",
+                "true",
+                "true",
+                "length",
+                "true",
+                "true",
+                "true",
+                "length,constructor,species,construct:3",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_array_from_array_like_length_conversion_and_final_set() {
+        assert_output_in_execution_modes(
+            r#"
+                var events = [];
+                var source = {
+                    get [Symbol.iterator]() {events.push('iterator'); return undefined;},
+                    get length() {events.push('length'); return {valueOf() {events.push('convert'); return 2.9;}};},
+                    get 0() {events.push('get:0'); return 4;},
+                    get 1() {events.push('get:1'); return 5;}
+                };
+                function Target(length) {
+                    events.push('construct:' + arguments.length + ':' + length);
+                    return new Proxy({}, {
+                        defineProperty(target, key, descriptor) {
+                            events.push('define:' + key + ':' + descriptor.value);
+                            return Reflect.defineProperty(target, key, descriptor);
+                        },
+                        set(target, key, value) {
+                            events.push('set:' + key + ':' + value);
+                            target[key] = value; return true;
+                        }
+                    });
+                }
+                var result = Array.from.call(Target, source, (value, index) => {
+                    events.push('map:' + index); return value * 2;
+                });
+                print(events.join(',')); print(result.length); print(result[0] + result[1]);
+                events = []; Array.from.call(Target, {length: -Infinity}); print(events.join(','));
+                var sentinel = {};
+                function Stop(length) {print(length); throw sentinel;}
+                for (var length of [Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+                    try {Array.from.call(Stop, {length});} catch (error) {print(error === sentinel);}
+                }
+                try {Array.from({length: Infinity});} catch (error) {print(error instanceof RangeError);}
+                function Reject() {return new Proxy({}, {set() {return false;}});}
+                try {Array.from.call(Reject, {length: 0});} catch (error) {print(error instanceof TypeError);}
+                function Throw() {return new Proxy({}, {set() {throw sentinel;}});}
+                try {Array.from.call(Throw, {length: 1, 0: 9});} catch (error) {print(error === sentinel);}
+                function Fixed() {return Object.defineProperty({}, 'length', {value: 1, writable: false});}
+                try {Array.from.call(Fixed, {length: 1, 0: 9});} catch (error) {print(error instanceof TypeError);}
+                function Typed(length) {
+                    var result = new Uint8Array(length);
+                    Object.defineProperty(result, 'length', {set() {throw sentinel;}});
+                    return result;
+                }
+                var typed = Uint8Array.from.call(Typed, {length: 1.9, 0: 260}); print(typed[0]);
+            "#,
+            &[
+                "iterator,length,convert,construct:1:2,get:0,map:0,define:0:8,get:1,map:1,define:1:10,set:length:2",
+                "2",
+                "18",
+                "construct:1:0,set:length:0",
+                "9007199254740991",
+                "true",
+                "9007199254740991",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "4",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_array_slice_sets_species_result_length_after_copying() {
+        assert_output_in_execution_modes(
+            r#"
+                var events = [], retained;
+                function Species(length) {
+                    events.push('construct:' + length);
+                    retained = new Proxy({}, {
+                        defineProperty(target, key, descriptor) {
+                            events.push('define:' + key + ':' + descriptor.value);
+                            return Reflect.defineProperty(target, key, descriptor);
+                        },
+                        set(target, key, value) {
+                            events.push('set:' + key + ':' + value);
+                            target[key] = value;
+                            return true;
+                        }
+                    });
+                    return retained;
+                }
+                var source = [4, , 6];
+                source.constructor = {[Symbol.species]: Species};
+                var result = source.slice();
+                print(events.join(','));
+                print(result === retained); print(result.length); print(1 in result);
+                events = []; source.slice(2, 1); print(events.join(','));
+                var sentinel = {};
+                source.constructor = {[Symbol.species]: function () {
+                    return new Proxy({}, {set() {throw sentinel;}});
+                }};
+                try {source.slice();} catch (error) {print(error === sentinel);}
+                source.constructor = {[Symbol.species]: function () {
+                    return new Proxy({}, {set() {return false;}});
+                }};
+                try {source.slice();} catch (error) {print(error instanceof TypeError);}
+                source.constructor = {[Symbol.species]: function () {
+                    return Object.defineProperty({}, 'length', {value: 3, writable: false});
+                }};
+                try {source.slice();} catch (error) {print(error instanceof TypeError);}
+            "#,
+            &[
+                "construct:3,define:0:4,define:2:6,set:length:3",
+                "true",
+                "3",
+                "false",
+                "construct:0,set:length:0",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_array_results_use_the_method_realm_intrinsics() {
+        assert_output_in_execution_modes(
+            r#"
+                var other = $262.createRealm().global;
+                var Original = Array, Foreign = other.Array;
+                print(Array.isArray(Foreign.prototype));
+                print(Object.getOwnPropertyDescriptor(Foreign.prototype, 'length').configurable);
+                for (var name of ['with', 'toReversed', 'toSorted', 'toSpliced']) {
+                    var result = name === 'with' ? Foreign.prototype[name].call([3, 1, 2], 1, 9) :
+                        name === 'toSpliced' ? Foreign.prototype[name].call([3, 1, 2], 0, 1, 7) :
+                        Foreign.prototype[name].call([3, 1, 2]);
+                    print(Object.getPrototypeOf(result) === Foreign.prototype);
+                    print(result instanceof Original); print(result.join(','));
+                }
+                var foreign = Foreign(1, 2, 3);
+                print(Object.getPrototypeOf(Original.prototype.map.call(foreign, x => x)) === Original.prototype);
+                print(Object.getPrototypeOf(Foreign.prototype.map.call([1, 2], x => x)) === Foreign.prototype);
+                foreign.constructor = undefined;
+                print(Object.getPrototypeOf(Foreign.prototype.slice.call(foreign)) === Foreign.prototype);
+                var species = {}; species[Symbol.species] = Foreign;
+                var input = [1, 2]; input.constructor = species;
+                print(Object.getPrototypeOf(input.map(x => x)) === Foreign.prototype);
+                other.eval('function arrays(...args) { return [[1, 2], args]; }');
+                var views = other.arrays(3);
+                print(Object.getPrototypeOf(views) === Foreign.prototype);
+                print(Object.getPrototypeOf(views[0]) === Foreign.prototype);
+                print(Object.getPrototypeOf(views[1]) === Foreign.prototype);
+                other.Array = {get prototype() {throw new Error('mutable global Array consulted');}};
+                print(Object.getPrototypeOf(Foreign.prototype.with.call([1], 0, 2)) === Foreign.prototype);
+                print(Object.getPrototypeOf(Foreign.prototype.slice.call({0: 1, length: 1})) === Foreign.prototype);
+                $262.gc(); print(foreign.length);
+            "#,
+            &[
+                "true", "false", "true", "false", "3,9,2", "true", "false", "2,1,3", "true",
+                "false", "1,2,3", "true", "false", "7,1,2", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "3",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_json_intrinsics_and_results_belong_to_their_realm() {
+        assert_output_in_execution_modes(
+            r#"
+                var other = $262.createRealm().global;
+                print(other.JSON !== JSON);
+                for (var name of ['parse', 'stringify', 'rawJSON', 'isRawJSON']) {
+                    print(other.JSON[name] !== JSON[name]);
+                    print(Object.getPrototypeOf(other.JSON[name]) === other.Function.prototype);
+                    var descriptor = Object.getOwnPropertyDescriptor(other.JSON, name);
+                    print(descriptor.writable && !descriptor.enumerable && descriptor.configurable);
+                }
+                print(Object.getPrototypeOf(other.JSON) === other.Object.prototype);
+                print(Object.getPrototypeOf(other.JSON.parse('{}')) === other.Object.prototype);
+                other.JSON.parse('1', function (key, value, context) {
+                    print(Object.getPrototypeOf(context) === other.Object.prototype);
+                    print(Object.getPrototypeOf(this) === other.Object.prototype);
+                    return value;
+                });
+                try { other.JSON.rawJSON(Symbol('x')); }
+                catch (error) { print(error instanceof other.TypeError); print(error instanceof TypeError); }
+                try { other.JSON.rawJSON(undefined); }
+                catch (error) { print(error instanceof other.SyntaxError); print(error instanceof SyntaxError); }
+                try { other.JSON.parse('invalid'); }
+                catch (error) { print(error instanceof other.SyntaxError); }
+                try { other.JSON.stringify(1n); }
+                catch (error) { print(error instanceof other.TypeError); }
+                try { other.JSON.rawJSON({toString() { throw new SyntaxError('guest'); }}); }
+                catch (error) { print(error instanceof SyntaxError); print(error instanceof other.SyntaxError); }
+                JSON.parse = 0; other.JSON.rawJSON = 0;
+                var fresh = $262.createRealm().global;
+                print(typeof fresh.JSON.parse); print(typeof fresh.JSON.rawJSON);
+                print(fresh.JSON !== JSON && fresh.JSON !== other.JSON);
+                $262.gc(); print(fresh.JSON.stringify([1]));
+            "#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "false", "true",
+                "false", "true", "true", "true", "false", "function", "function", "true", "[1]",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_json_numbers_share_javascript_number_representation() {
+        assert_output_in_execution_modes(
+            r#"
+                print(JSON.stringify([1e20, 2**63, 123456789012345680000]));
+                print(JSON.stringify([1e-6, 1e-7, 1e21, 1e300, 1.5e-7, 0.1]));
+                print(JSON.stringify([-0, 0, NaN, Infinity, -Infinity]));
+                print(JSON.parse('1e400')); print(JSON.parse('-1e400'));
+                print(Object.is(JSON.parse('-0'), -0));
+                print(Object.is(JSON.parse('-1e-400'), -0));
+                JSON.parse('1e400', function (key, value, context) { print(context.source); return value; });
+                print(JSON.stringify({n: new Number(2**63)}));
+                print(JSON.stringify([0], function (key, value) { return key === '0' ? 1e20 : value; }));
+                print(JSON.stringify(JSON.rawJSON('1e400')));
+                JSON.parse('{"first":0,"target":-0}', function (key, value, context) {
+                    if (key === 'first') this.target = 0;
+                    if (key === 'target') print(context.source);
+                    return value;
+                });
+            "#,
+            &[
+                "[100000000000000000000,9223372036854776000,123456789012345680000]",
+                "[0.000001,1e-7,1e+21,1e+300,1.5e-7,0.1]",
+                "[0,0,null,null,null]",
+                "Infinity",
+                "-Infinity",
+                "true",
+                "true",
+                "1e400",
+                "{\"n\":9223372036854776000}",
+                "[100000000000000000000]",
+                "1e400",
+                "undefined",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_raw_json_brand_is_not_a_guest_property() {
         assert_output_in_execution_modes(
             r#"
-            var forged = {rawJSON:'not-json', ['\0rqj:raw-json']:true};
+            var forged = {rawJSON:'not-json', ['\0quench:raw-json']:true};
             print(JSON.isRawJSON(forged)); print(JSON.stringify(forged).startsWith('{'));
             var raw = JSON.rawJSON('42'); $262.gc();
             print(JSON.isRawJSON(raw)); print(JSON.isRawJSON(Object.create(raw)));
@@ -2255,8 +5213,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true",
             ],
         );
     }
@@ -2326,10 +5284,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Array.from(new Intl.Segmenter().segment('')).length===0);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true",
             ],
         );
     }
@@ -2426,9 +5384,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getPrototypeOf(parts)===Array.prototype && parts.every(part=>Object.getPrototypeOf(part)===Object.prototype));
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
                 "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true",
             ],
         );
     }
@@ -2471,16 +5430,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getPrototypeOf(foreign.Intl.getCanonicalLocales(['en']))===foreign.Array.prototype);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
             ],
         );
     }
@@ -2602,10 +5561,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getOwnPropertyDescriptor(Intl.DurationFormat.prototype,'format').value===first.format);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "false", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "false", "true",
             ],
         );
     }
@@ -2634,10 +5593,11 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Intl.NumberFormat([,'EN','en']).resolvedOptions().locale);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "0",
-                "true", "true", "true", "true", "true", "true", "true", "true", "en", "en",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "0", "true", "true", "true", "true", "true", "true", "true",
+                "true", "en", "en",
             ],
         );
     }
@@ -3051,10 +6011,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
         "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "0", "true", "0", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "0", "true", "0",
-                "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "0", "true", "0", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "0",
+                "true", "0", "true",
             ],
         );
     }
@@ -3321,7 +6281,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "1", "true", "2", "true", "true", "0", "true", "0,1:1", "0,2:1", "0,2:1", "0:0",
+                "true", "1", "true", "2", "true", "true", "0", "true", "0,1:1", "0,2:1", "0,2:1",
+                "0:0",
             ],
         );
     }
@@ -3524,7 +6485,7 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
         assert_output_in_execution_modes(
             r#"
             var r=Proxy.revocable({},{}),revoke=r.revoke,proxy=r.proxy;
-            print(Reflect.ownKeys(r).join(','));print(Reflect.getOwnPropertyDescriptor(r,'\0rqj:proxy-revoke-target')===undefined);
+            print(Reflect.ownKeys(r).join(','));print(Reflect.getOwnPropertyDescriptor(r,'\0quench:proxy-revoke-target')===undefined);
             for (var key of ['proxy','revoke']) {var d=Object.getOwnPropertyDescriptor(r,key);print(d.writable&&d.enumerable&&d.configurable);}
             print(revoke.name);print(revoke.length);
             var poison=new Proxy({}, {get() {throw new Error('receiver read');}});
@@ -3959,8 +6920,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(({...{first:46}}).first);print(Object.keys({...null,...undefined}).length);
             "#,
             &[
-                "1", "42", "43", "44", "42", "43", "44", "42", "false", "43", "44", "42", "true", "0",
-                "45", "1", "46", "0",
+                "1", "42", "43", "44", "42", "43", "44", "42", "false", "43", "44", "42", "true",
+                "0", "45", "1", "46", "0",
             ],
         );
     }
@@ -4432,13 +7393,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             &[
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
             ],
         );
     }
@@ -4555,7 +7519,9 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 }
             }
             "#,
-            &["1,2,3", "true", "1,2,3", "true", "1,2,3", "false", "1,2,3", "false"],
+            &[
+                "1,2,3", "true", "1,2,3", "true", "1,2,3", "false", "1,2,3", "false",
+            ],
         );
     }
 
@@ -4584,9 +7550,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Array.prototype.toSpliced.call('abc', {valueOf() {$262.gc(); return 1;}}, 1, 'z').join(','));
             "#,
             &[
-                "40,99,42", "0,2", "true",
-                "42,41,40", "2,1,0", "true",
-                "40,99,42", "0,2", "true", "a,z,c", "a,z,c",
+                "40,99,42", "0,2", "true", "42,41,40", "2,1,0", "true", "40,99,42", "0,2", "true",
+                "a,z,c", "a,z,c",
             ],
         );
     }
@@ -4664,7 +7629,12 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 print(result[0] + ',' + result[1]);
             }
             "#,
-            &["get0,write0,get1,write1", "1,2", "get0,map1,write0,get1,map2,write1", "1,2"],
+            &[
+                "get0,write0,get1,write1",
+                "1,2",
+                "get0,map1,write0,get1,map2,write1",
+                "1,2",
+            ],
         );
     }
 
@@ -4719,8 +7689,15 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "length", "name", "bound target", "1", "42",
-                "false,false,true", "false,false,true", "true", "true",
+                "length",
+                "name",
+                "bound target",
+                "1",
+                "42",
+                "false,false,true",
+                "false,false,true",
+                "true",
+                "true",
             ],
         );
     }
@@ -4946,8 +7923,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
         drop(guards);
         for (runtime, error) in runtimes.iter_mut().zip(errors) {
             assert!(error.thrown_value().is_some());
-            assert_eq!(runtime.format_error(&program, &error),
-                format!("RangeError: {}", quench_stack::STACK_EXHAUSTED_MESSAGE));
+            assert_eq!(
+                runtime.format_error(&program, &error),
+                format!("RangeError: {}", quench_stack::STACK_EXHAUSTED_MESSAGE)
+            );
             runtime.execute(&program).unwrap();
         }
     }
@@ -4996,13 +7975,27 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                     });
                     "#,
                     &[
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
                     ],
                 );
             })
@@ -5059,6 +8052,976 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
+    fn regression_class_and_eval_retain_original_source() {
+        assert_output_in_execution_modes(
+            r#"
+print((class {}).toString());print(((class {})).toString());
+var Named=class /* before name */ Named /* before body */ { /* inside */ };
+print(Named.toString());
+var Derived=class /* derived */ extends /* base */ Named { /* empty */ };
+print(Function.prototype.toString.call(Derived));
+class Declared { /* no constructor */ method(){return 1;} }
+print(Declared.toString());print(Declared.prototype.method.toString());
+print(eval('(class /* eval */ {})').toString());
+print((class { constructor /* explicit */ () {} }).toString());
+var Holder=class {static text=this.toString();};print(Holder.text);
+var First=(class {});var text=First.toString();var Second=(class {x=1;});print(First.toString()===text);print(Second.toString());
+var ctor=(class {});ctor.name='changed';print(ctor.toString());
+"#,
+            &[
+                "class {}",
+                "class {}",
+                "class /* before name */ Named /* before body */ { /* inside */ }",
+                "class /* derived */ extends /* base */ Named { /* empty */ }",
+                "class Declared { /* no constructor */ method(){return 1;} }",
+                "method(){return 1;}",
+                "class /* eval */ {}",
+                "class { constructor /* explicit */ () {} }",
+                "class {static text=this.toString();}",
+                "true",
+                "class {x=1;}",
+                "class {}",
+            ],
+        );
+        assert_output_in_execution_modes(
+            r#"
+print(eval('1 /* between */ + 2'));
+print((0,eval)('1 /* between */ + 2'));
+print(eval('/* leading */ (function f(){ /* body */ return 1;})').toString());
+print(eval('(() => /* arrow */ 2)').toString());
+function local(){let x=9;return eval('/* scope */ x');} print(local());
+try{eval("/* directive */ 'use strict'; with({}){}");}catch(e){print(e instanceof SyntaxError);}
+print(eval("'/* text */'"));print(eval("/[/][*]/.test('/*')"));
+print(eval('/* super( # arguments */ 1'));
+print(eval('/* line\n++ comment */ 1'));
+class C {x=eval('/* arguments super(\n++ */ 1');} print(new C().x);
+try{eval('return 1;');}catch(e){print(e instanceof SyntaxError);}
+try{eval('/* comment */ return 1;');}catch(e){print(e instanceof SyntaxError);}
+"#,
+            &[
+                "3",
+                "3",
+                "function f(){ /* body */ return 1;}",
+                "() => /* arrow */ 2",
+                "9",
+                "true",
+                "/* text */",
+                "true",
+                "1",
+                "1",
+                "1",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_call_target_ast_preserves_source_and_abrupt_reference_order() {
+        assert_output_in_execution_modes(
+            r#"var index=0;var method={["m"+ ++index](){return 1;}};print(method.m1());print(index);
+var effects=[];function target(){effects.push('call');return {valueOf(){effects.push('numeric');return 1;}};}
+function rhs(){effects.push('rhs');return 1;}
+function rejected(code){effects=[];try{eval(code);print('accepted');}catch(e){print(e instanceof ReferenceError);}print(effects.join(','));}
+for(var code of ['target() = rhs()','target() += rhs()','++target()','--target()','target()++','target()--','(target()) = rhs()','target(target() = rhs()) = rhs()','`${target() = rhs()}`','for(target() in {a:1}){}','[method.result = (target() = rhs())] = [undefined]','({[target() = rhs()]: method.result} = {})']){rejected(code);}
+var iterable={[Symbol.iterator](){effects.push('iterator');return {next(){$262.gc();effects.push('next');return {value:1,done:false};},return(){effects.push('close');return {done:true};}};}};
+rejected('for(target() of iterable){}');
+var getter={get fn(){effects.push('get');return function(){effects.push('call');return 1;};}};
+rejected('++getter.fn()');
+for(var code of ['target() ||= rhs()','target?.() = rhs()','[target()] = [1]','[target() = 1] = [undefined]','[...target()] = []','({a:target()} = {a:1})','({...target()} = {})']){
+ try{Function(code);print('accepted');}catch(e){print(e instanceof SyntaxError);}
+}
+function original(){target()=rhs();}print(original.toString());
+var key='\0oxc:call-assignment-target';var ordinary={};ordinary[key]=17;print(ordinary[key]);
+try{new (class C{field=eval('target(arguments)=rhs()');})();}catch(e){print(e instanceof SyntaxError);}
+"#,
+            &[
+                "1",
+                "1",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "call",
+                "true",
+                "iterator,next,call,close",
+                "true",
+                "get,call",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "function original(){target()=rhs();}",
+                "17",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_loop_targets_share_super_and_dynamic_name_references() {
+        assert_output_in_execution_modes(
+            r#"var seen=[];class Base{set field(value){seen.push(value);this.saved=value;}}
+class Derived extends Base{run(){for(super.field of [11,13]){};for(super.field in {a:0}){};}}
+var instance=new Derived();instance.run();print(seen.join(','));print(instance.saved==='a');print(Base.prototype.saved===undefined);
+var outer='outer';var holder={outer:'holder'};with(holder){for(outer of ['changed']){}}print(outer);print(holder.outer);
+var effects=[];var destination={};var key={toString(){effects.push('key');return 'saved';}};
+var values={[Symbol.iterator](){effects.push('iterator');var done=false;return {next(){effects.push('next');if(done)return {done:true};done=true;return {done:false,value:17};}};}};
+for(destination[key] of values){}print(effects.join(','));print(destination.saved);
+"#,
+            &[
+                "11,13,a",
+                "true",
+                "true",
+                "outer",
+                "changed",
+                "iterator,next,key,next",
+                "17",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_computed_method_updates_preserve_syntax_and_annex_b_targets() {
+        assert_output_in_execution_modes(
+            r#"var i=0;var first={["m"+ ++i](){return 1;}};print(first.m1());print(i);
+var j=0;var second={["m"+j++](){return 2;}};print(second.m0());print(j);
+var k=0;var third={[++k](){return 3;}};print(third[1]());
+var n=0;class C{["m"+ ++n](){return 4;}}print(new C().m1());
+var g=0;var getter={get ["m"+ ++g](){return 5;}};print(getter.m1);
+var p=0;var setter={set ["m"+ ++p](value){this.saved=value;}};setter.m1=6;print(setter.saved);
+var c=0;var closure={[++c](value=7){return ()=>value;}};print(closure[1]()());
+print(first.m1.toString());
+var calls=0;function target(){calls++;return 7;}
+for(var code of ['target()=3','target()+=3','++target()','target()++']){
+ try{eval(code);print('accepted');}catch(e){print(e instanceof ReferenceError);}
+ print(calls);
+}
+for(var code of ['target() ||= 3','target?.()=3']){
+ try{Function(code);print('accepted');}catch(e){print(e instanceof SyntaxError);}
+}
+"#,
+            &[
+                "1",
+                "1",
+                "2",
+                "1",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "[\"m\"+ ++i](){return 1;}",
+                "true",
+                "1",
+                "true",
+                "2",
+                "true",
+                "3",
+                "true",
+                "4",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_compiled_field_eval_retains_binding_site_scope() {
+        assert_output_in_execution_modes(
+            r#"{
+ class C {
+  static field=eval("C");
+  static read=eval("()=>C");
+  static write=eval("()=>{try{C=1;}catch(e){return e instanceof TypeError;}}");
+ }
+ print(C.field===C);var Saved=C;C=null;$262.gc();print(Saved.read()===Saved);print(Saved.write());
+}
+{
+ let C=class Inner {
+  static field=eval("Inner");
+  static read=eval("()=>Inner");
+ };
+ print(C.field===C);var Named=C;C=null;$262.gc();print(Named.read()===Named);
+}
+try{let C=class {static field=eval("C");};}catch(e){print(e instanceof ReferenceError);}
+function make(value){let outer=value;class C {static read=eval("()=>[C,outer]");}return C;}
+var first=make(7),second=make(9);$262.gc();print(first.read()[0]===first);print(first.read()[1]);print(second.read()[0]===second);print(second.read()[1]);
+{
+ class C {field=eval("C");read=eval("()=>C");}
+ var instance=new C();var InstanceClass=C;C=null;$262.gc();print(instance.field===InstanceClass);print(instance.read()===InstanceClass);
+}
+"#,
+            &[
+                "true", "true", "true", "true", "true", "true", "true", "7", "true", "9", "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_field_context_survives_eval_arrows_and_stops_at_ordinary_functions() {
+        assert_output_in_execution_modes(
+            r#"class Base {get value(){return 5;}}
+class Static {
+ static direct=eval('()=>eval("arguments")');
+ static nested=eval('()=>eval(`eval("arguments")`)');
+ static normal=eval('(function(){return eval("arguments.length");})');
+ static fromNormal=eval('(function(v){return ()=>eval("arguments[0]");})(13)');
+ static receiver=eval('()=>eval("this")');
+ static target=eval('()=>eval("new.target")');
+}
+class Instance extends Base {
+ #hidden=21;
+ direct=eval('()=>eval("arguments")');
+ nested=eval('()=>eval(`eval("arguments")`)');
+ normal=eval('(function(){return eval("arguments.length");})');
+ fromNormal=eval('(function(v){return ()=>eval("arguments[0]");})(17)');
+ privateRead=eval('()=>eval("this.#hidden")');
+ superRead=eval('()=>eval("super.value")');
+ receiver=eval('()=>eval("this")');
+ target=eval('()=>eval("new.target")');
+ invalidSuper=eval('()=>eval("super()")');
+}
+var instance=new Instance();$262.gc();
+for(var read of [Static.direct,Static.nested,instance.direct,instance.nested]){
+ try{read();print('accepted');}catch(e){print(e instanceof SyntaxError);}
+}
+print(Static.normal(1,2));print(Static.fromNormal());print(Static.receiver()===Static);print(Static.target()===undefined);
+print(instance.normal(1,2,3));print(instance.fromNormal());print(instance.privateRead());print(instance.superRead());print(instance.receiver()===instance);print(instance.target()===undefined);
+try{instance.invalidSuper();}catch(e){print(e instanceof SyntaxError);}
+"#,
+            &[
+                "true", "true", "true", "true", "2", "13", "true", "true", "3", "17", "21", "5",
+                "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_field_eval_retains_its_receiver_without_constructor_permissions() {
+        assert_output_in_execution_modes(
+            r#"class Holder {
+ static f='test';static g=this.f+'262';static h=eval('this.g')+'test';
+ static read=eval('()=>this.h');static target=eval('new.target');
+ static property=eval('({arguments:1}).arguments');
+ static ownArguments=eval('(function(){return arguments.length;})(1,2)');
+ static comment=eval('/* arguments */ this.f');
+ static strictThis=eval('(function(){return this===undefined;})()');
+ field=eval('this');
+}
+print(Holder.property);print(Holder.ownArguments);print(Holder.comment);print(Holder.strictThis);
+print(Holder.h);print(Holder.target===undefined);var item=new Holder();print(item.field===item);
+$262.gc();Holder.h='changed';print(Holder.read());
+var outer={label:9};function factory(){class Inner {static value=eval('this');}print(Inner.value===Inner);print(this===outer);}factory.call(outer);
+class Base {} class Derived extends Base {constructor(){
+ try{class Invalid {static value=eval('super()');}}catch(e){print(e instanceof SyntaxError);}
+ try{class Escaped {static value=eval("\\u0061rguments");}}catch(e){print(e instanceof SyntaxError);}
+ super();
+}}new Derived();
+"#,
+            &[
+                "1",
+                "2",
+                "test",
+                "true",
+                "test262test",
+                "true",
+                "true",
+                "changed",
+                "true",
+                "true",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_constructor_eval_uses_the_callers_super_and_this_binding() {
+        assert_output_in_execution_modes(
+            r#"var fields=0,bases=0;
+class Base {constructor(v){bases++;this.v=v;}}
+class Derived extends Base {
+ field=++fields; #private=7;
+ constructor(mode,v){
+  print(eval('new.target')===Derived);
+  try{eval('this');}catch(e){print(e instanceof ReferenceError);}
+  if(mode===0){print(eval('super(v); this')===this);}
+  else if(mode===1){(()=>eval('super(v)'))();}
+  else if(mode===2){eval("eval('super(v)')");}
+  else if(mode===3){eval('(()=>super(v))()');}
+  else{return {init:eval('()=> {super(v); return this;}')};}
+  print(eval('this.v'));print(eval('this.#private'));print(this.field);
+ }
+ test(){try{eval('super()');}catch(e){print(e instanceof SyntaxError);}}
+}
+var a=new Derived(0,4);new Derived(1,5);new Derived(2,6);new Derived(3,7);
+var deferred=new Derived(4,8);$262.gc();var late=deferred.init();print(late.v);print(late.field);
+try{deferred.init();}catch(e){print(e instanceof ReferenceError);}print(fields);print(bases);
+a.test();
+class Plain {constructor(){try{eval('super()');}catch(e){print(e instanceof SyntaxError);}}}new Plain();
+class Invalid extends Base {constructor(){
+ try{eval('function nested(){super();}');}catch(e){print(e instanceof SyntaxError);}
+ try{(0,eval)('super()');}catch(e){print(e instanceof SyntaxError);}
+ try{eval('return 1;');}catch(e){print(e instanceof SyntaxError);}
+ super(9);
+}}new Invalid();
+"#,
+            &[
+                "true", "true", "true", "4", "7", "1", "true", "true", "5", "7", "2", "true",
+                "true", "6", "7", "3", "true", "true", "7", "7", "4", "true", "true", "8", "5",
+                "true", "5", "6", "true", "true", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_super_initializes_instance_elements_from_lexical_this_owner() {
+        assert_output_in_execution_modes(
+            r#"var count=0,events=[];
+class Base {constructor(v){events.push('base');this.base=v;}}
+class Derived extends Base {
+ field=(events.push('field'),++count); #private=(events.push('private'),7);
+ read=()=>this.#private;
+ constructor(path){if(path===0){super(4);}else if(path===1){(()=>super(4))();}else{(()=>()=>super(4))()();}
+ print(this.base);print(this.field);print(this.#private);print(events.join(','));events=[];}
+}
+var first=new Derived(0),second=new Derived(1),third=new Derived(2);
+$262.gc();print(first.read());print(second.read());print(third.read());
+class Deferred extends Base {field=++count; constructor(){var init=()=>super(5);return {init};}}
+var deferred=new Deferred();$262.gc();var value=deferred.init();print(value.base);print(value.field);
+try{deferred.init();}catch(e){print(e instanceof ReferenceError);}print(count);
+var attempts=0;
+class Throwing extends Base {field=(()=>{attempts++;throw 9;})();constructor(){
+ try{(()=>super(8))();}catch(e){print(e);}print(this.base);
+ try{super(9);}catch(e){print(e instanceof ReferenceError);}print(this.base);print(attempts);}}
+new Throwing();
+"#,
+            &[
+                "4",
+                "1",
+                "7",
+                "base,field,private",
+                "4",
+                "2",
+                "7",
+                "base,field,private",
+                "4",
+                "3",
+                "7",
+                "base,field,private",
+                "7",
+                "7",
+                "7",
+                "5",
+                "4",
+                "true",
+                "4",
+                "9",
+                "8",
+                "true",
+                "8",
+                "1",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_compiled_eval_retains_caller_method_context() {
+        assert_output_in_execution_modes(
+            r#"var events=[];
+    class Base {
+     method(v){events.push('method:'+this.tag);return this.count+v;}
+     get value(){events.push('get:'+this.tag);return this.count;}
+     set value(v){events.push('set:'+this.tag);this.count=v;}
+    }
+    class Derived extends Base {
+     #hidden=11;
+     constructor(){super();this.count=3;this.tag='D';}
+     original(){return this.#hidden;}
+     test(v){let local=2;
+      print(eval('super.method(v+local)'));
+      print(eval('super.value++; super.value'));
+      print(eval('var retained=7; super.value + retained'));
+      try{eval('retained');}catch(e){print(e instanceof ReferenceError);}
+      print(eval('var n=this.#hidden; super.value+n'));
+      print(eval('eval("super.value")'));
+      print(eval('eval("this.#hidden")'));
+      var Inner=eval('(class extends Derived {#hidden=22;read(){return this.#hidden;} })');
+      var inner=new Inner();print(inner.read());print(inner.original());
+      print(eval('(function f(){ /* exact */ return 1; })').toString());
+      try{eval('return 1;');}catch(e){print(e instanceof SyntaxError);}
+      return eval('(()=> /* retained */ super.value)');
+     }
+    }
+    var instance=new Derived();var read=instance.test(4);print(read());print(read.toString());
+    Object.setPrototypeOf(Derived.prototype,{get value(){return this.count+20;}});print(read());
+    var home={get value(){return this.count;}};
+    var object={count:2,__proto__:home,test(){
+     print(eval('var leaked=5; super.value+leaked'));print(eval('leaked'));
+     print(eval('with({x:3}){super.value+x}'));
+     return eval('() => super.value');
+    }};
+    var objectRead=object.test();object.count=9;print(objectRead());
+    try{(0,eval)('super.value');}catch(e){print(e instanceof SyntaxError);}
+    "#,
+            &[
+                "9",
+                "4",
+                "11",
+                "true",
+                "15",
+                "4",
+                "11",
+                "22",
+                "11",
+                "function f(){ /* exact */ return 1; }",
+                "true",
+                "4",
+                "()=> /* retained */ super.value",
+                "24",
+                "7",
+                "5",
+                "5",
+                "9",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_global_property_updates_preserve_binding_identity() {
+        assert_output_in_execution_modes(
+            r#"var visible=3;var alias=globalThis;alias.visible++;print(visible);globalThis.visible--;print(visible);
+    let shadow=7;Object.defineProperty(globalThis,'shadow',{value:2,writable:true,configurable:true});print(globalThis.shadow++);print(shadow);print(globalThis.shadow);
+    globalThis.shadow=6;print(shadow);print(globalThis.shadow);
+    const fixed=9;Object.defineProperty(globalThis,'fixed',{value:4,writable:true,configurable:true});print(globalThis.fixed++);print(fixed);print(globalThis.fixed);
+    function local(){let globalThis={field:1};let field=8;print(globalThis.field++);print(globalThis.field);print(field);}local();
+    "#,
+            &[
+                "4", "3", "2", "7", "3", "7", "6", "4", "9", "5", "1", "2", "8",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_super_calls_and_updates_share_receiver_references() {
+        assert_output_in_execution_modes(
+            r#"var events=[];
+    class Base {
+     get value(){events.push('get:'+this.tag);return this.count;}
+     set value(v){events.push('set:'+this.tag);this.count=v;}
+     get method(){events.push('method:'+this.tag);return function(v){events.push('call:'+this.tag);return this.count+v;};}
+    }
+    class Derived extends Base {
+     constructor(){super();this.tag='D';this.count=3;}
+     test(){
+      print(super.value);print(super.method(4));print(super['method'](5));
+      print(super.value++);print(++super['value']);print(this.count);
+      print(events.join('|'));
+     }
+    }
+    new Derived().test();
+    var key=Symbol('key');
+    class SymbolBase {get [key](){return this.count;}set [key](v){this.count=v;}}
+    class SymbolDerived extends SymbolBase {constructor(){super();this.count=8n;}test(){print(super[key]++ === 8n);print(++super[key] === 10n);print(this.count === 10n);}}
+    new SymbolDerived().test();
+    class StaticBase {static get value(){return this.count;}}
+    class StaticDerived extends StaticBase {static count=12;static test(){print(super.value);}}
+    StaticDerived.test();
+    var home={get value(){return this.count;},set value(v){this.count=v;}};
+    var object={count:20,__proto__:home,test(){print(super.value++);print(this.count);}};object.test();
+    "#,
+            &[
+                "3",
+                "7",
+                "8",
+                "3",
+                "5",
+                "5",
+                "get:D|method:D|call:D|method:D|call:D|get:D|set:D|get:D|set:D",
+                "true",
+                "true",
+                "true",
+                "12",
+                "20",
+                "21",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_commented_eval_retains_super_home_and_arrow_source() {
+        assert_output_in_execution_modes(
+            r#"
+    class B {get value(){return this.marker;}}
+    class D extends B {
+     constructor(){super();this.marker=42;}
+     method(){
+      print(eval('/* retained */ super.value'));
+      print(eval('super /* between */ .value'));
+      print(eval('/* binary */ super.value /* between */ + 1'));
+      print(eval('super.value + 2'));
+      print(eval('super[/* key */ "v\\u0061lue"]'));
+      var arrow=eval('/* leading */ (() => /* retained */ super.value)');
+      print(arrow());print(arrow.toString());return arrow;
+     }
+    }
+    class Field extends B {
+     x=(() => {try{return eval('/* context */ super.value + arguments');}catch(e){return e instanceof SyntaxError;}})();
+    }
+    print(new Field().x);
+    var arrow=new D().method();
+    Object.setPrototypeOf(D.prototype,{get value(){return this.marker+1;}});
+    print(arrow());
+    try{(0,eval)('/* context */ super.value');}catch(e){print(e instanceof SyntaxError);}
+    try{eval('/* context */ super.value');}catch(e){print(e instanceof SyntaxError);}
+    "#,
+            &[
+                "true",
+                "42",
+                "42",
+                "43",
+                "44",
+                "42",
+                "42",
+                "() => /* retained */ super.value",
+                "43",
+                "true",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_typed_source_copies_preserve_bits_and_content_type() {
+        assert_output_in_execution_modes(
+            r#"
+var g=$262.createRealm().global;
+for (var C of [Float32Array,g.Float32Array]) {
+ var bits=new Uint32Array([0x7f800001,0x7fffffff,0xff800001,0xffffffff]);
+ var src=new Float32Array(bits.buffer);var dst=new C(src);
+ print(new Uint32Array(dst.buffer).join(','));print(dst.buffer !== src.buffer);
+ var out=new C(4);out.set(src);print(new Uint32Array(out.buffer).join(','));
+}
+var bits=new Uint32Array([1,0x7ff00000,0xffffffff,0xfff7ffff]);var src=new Float64Array(bits.buffer);
+print(new Uint32Array(new Float64Array(src).buffer).join(','));
+var dst=new Float64Array(2);dst.set(src);print(new Uint32Array(dst.buffer).join(','));
+var words=new Uint16Array([0x7c01,0x7fff,0xfc01,0xffff]);var src=new Float16Array(words.buffer);
+print(new Uint16Array(new Float16Array(src).buffer).join(','));
+var dst=new Float16Array(4);dst.set(src);print(new Uint16Array(dst.buffer).join(','));
+var bits=new Uint32Array([0x7f800001,0x7fffffff,0xff800001,0xffffffff]);
+var view=new Float32Array(bits.buffer);view.set(view.subarray(0,3),1);print(bits.join(','));
+var src=new Uint8Array([1,2,3,4]);src.set(src.subarray(1));print(src.join(','));
+var buf=new ArrayBuffer(16);new Uint8Array(buf).set([1,2,3,4]);var src=new Uint8Array(buf,0,4);
+var dst=new Uint16Array(buf,0,4);dst.set(src);print(dst.join(','));
+var src=new Uint16Array([17,18,19,20]);var dst=new Uint8Array(src.buffer,3,4);dst.set(src);print(dst.join(','));
+var src=new BigInt64Array([-1n,2n]);print(new BigUint64Array(src).join(','));
+var dst=new BigUint64Array(2);dst.set(src);print(dst.join(','));
+for(var length of [0,1]){
+ try{new Uint8Array(new BigInt64Array(length));}catch(e){print(e instanceof TypeError);}
+ try{new BigInt64Array(new Uint8Array(length));}catch(e){print(e instanceof TypeError);}
+ try{new Uint8Array(length).set(new BigInt64Array(length));}catch(e){print(e instanceof TypeError);}
+ try{new BigInt64Array(length).set(new Uint8Array(length));}catch(e){print(e instanceof TypeError);}
+}
+try{new Uint8Array(0).set(new BigInt64Array(1));}catch(e){print(e instanceof RangeError);}
+var shared=new SharedArrayBuffer(16);new Uint32Array(shared).set([0x7f800001,0x7fffffff,0xff800001,0xffffffff]);
+var src=new Float32Array(shared);print(new Uint32Array(new Float32Array(src).buffer).join(','));
+var dst=new Float32Array(4);dst.set(src);print(new Uint32Array(dst.buffer).join(','));
+var src=new Float32Array(new Uint32Array([0x7f800001,0x7fffffff]).buffer), dst=new Float32Array(2);
+dst.set(src,{valueOf(){$262.gc();new Uint32Array(src.buffer)[0]=0xff800001;return 0;}});print(new Uint32Array(dst.buffer).join(','));
+"#,
+            &[
+                "2139095041,2147483647,4286578689,4294967295",
+                "true",
+                "2139095041,2147483647,4286578689,4294967295",
+                "2139095041,2147483647,4286578689,4294967295",
+                "true",
+                "2139095041,2147483647,4286578689,4294967295",
+                "1,2146435072,4294967295,4294443007",
+                "1,2146435072,4294967295,4294443007",
+                "31745,32767,64513,65535",
+                "31745,32767,64513,65535",
+                "2139095041,2139095041,2147483647,4286578689",
+                "2,3,4,4",
+                "1,2,3,4",
+                "17,18,19,20",
+                "18446744073709551615,2",
+                "18446744073709551615,2",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "2139095041,2147483647,4286578689,4294967295",
+                "2139095041,2147483647,4286578689,4294967295",
+                "4286578689,2147483647",
+            ],
+        );
+        assert_output_in_execution_modes(
+            r#"
+var src=new Float32Array(new Uint32Array([0x7f800001,0x7fffffff]).buffer.transferToImmutable());
+print(new Uint32Array(new Float32Array(src).buffer).join(','));
+var dst=new Float32Array(2);dst.set(src);print(new Uint32Array(dst.buffer).join(','));
+"#,
+            &["2139095041,2147483647", "2139095041,2147483647"],
+        );
+    }
+
+    #[test]
+    fn regression_typed_integrity_uses_indexed_and_named_descriptors() {
+        assert_output_in_execution_modes(
+            r#"
+for(var op of ['seal','freeze']) for(var length of [0,1]) {
+ var t=new Int32Array(length), symbol=Symbol();t.extra=1;t[symbol]=2;
+ var result='ok';try{Object[op](t);}catch(e){result=e.name;}
+ var d=Object.getOwnPropertyDescriptor(t,'extra'), s=Object.getOwnPropertyDescriptor(t,symbol);
+ print([op,length,result,Object.isExtensible(t),Object.isSealed(t),Object.isFrozen(t),d.configurable,d.writable,s.configurable].join(','));
+ if(length) print(Object.getOwnPropertyDescriptor(t,'0').configurable);
+}
+for(var op of ['seal','freeze']){
+ var t=new Int32Array(new ArrayBuffer(0,{maxByteLength:8}));
+ try{Object[op](t);}catch(e){print(e instanceof TypeError);}
+ print(Object.isExtensible(t));print(Reflect.preventExtensions(t));
+}
+var t=new Int32Array(1);t.extra=3;$262.detachArrayBuffer(t.buffer);Object.freeze(t);
+print(Object.isFrozen(t));print(Object.isSealed(t));print(Object.getOwnPropertyDescriptor(t,'extra').writable);
+var t=new Int32Array(0), symbol=Symbol(); t[symbol]=4;Object.seal(t);
+print(Object.getOwnPropertyDescriptor(t,symbol).configurable);print(Object.isFrozen(t));
+Object.freeze(t);print(Object.getOwnPropertyDescriptor(t,symbol).writable);print(Object.isFrozen(t));
+"#,
+            &[
+                "seal,0,ok,false,true,false,false,true,false",
+                "seal,1,TypeError,false,false,false,true,true,true",
+                "true",
+                "freeze,0,ok,false,true,true,false,false,false",
+                "freeze,1,TypeError,false,false,false,true,true,true",
+                "true",
+                "true",
+                "true",
+                "false",
+                "true",
+                "true",
+                "false",
+                "true",
+                "true",
+                "false",
+                "false",
+                "false",
+                "false",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_typed_set_validates_after_offset_and_roots_sources() {
+        assert_output_in_execution_modes(
+            r#"
+var target = new Int32Array(1); $262.detachArrayBuffer(target.buffer);
+try { target.set(null, {valueOf(){throw 'offset';}}); } catch(e){print(e);}
+try { target.set([], -1); } catch(e){print(e instanceof RangeError);}
+try { target.set([], Infinity); } catch(e){print(e instanceof TypeError);}
+var target = new Int32Array(1), order=[];
+try { target.set({get length(){order.push('length');throw 'source';}}, Infinity); } catch(e){print(e);}
+print(order.join(','));
+var source = new Int32Array(0); $262.detachArrayBuffer(source.buffer);
+try { new Int32Array(1).set(source, Infinity); } catch(e){print(e instanceof TypeError);}
+var target = new Int32Array(2), order=[];
+target.set({get length(){$262.detachArrayBuffer(target.buffer);return 2;}, get 0(){order.push('get0');return {valueOf(){order.push('convert0');return 1;}};}, get 1(){order.push('get1');return {valueOf(){order.push('convert1');return 2;}};}});
+print(order.join(','));
+var target = new Int32Array(1);
+try {target.set(null, {valueOf(){$262.gc();return 0;}});} catch(e){print(e instanceof TypeError);}
+var target = new Uint8Array(3);
+target.set(Object.create({get length(){$262.gc();return 2;}, get 0(){$262.gc();return 7;}, get 1(){$262.gc();return 8;}}), {valueOf(){$262.gc();return 1;}});
+print(target.join(','));
+try {Uint8Array.prototype.set.call({}, [], {valueOf(){throw 'offset';}});} catch(e){print(e instanceof TypeError);}
+var source = new Int32Array(1), target=new Int32Array(1);
+try {target.set(source, {valueOf(){$262.detachArrayBuffer(source.buffer);return -1;}});} catch(e){print(e instanceof RangeError);}
+var target = new Int32Array(1);
+try {target.set({get length(){throw 'length';}}, {valueOf(){$262.detachArrayBuffer(target.buffer);return 0;}});} catch(e){print(e instanceof TypeError);}
+var target = new Uint8Array(new ArrayBuffer(2).transferToImmutable()), order=[];
+try {target.set({get length(){order.push('length');return 0;}}, {valueOf(){order.push('offset');return 0;}});} catch(e){print(e instanceof TypeError);}
+print(order.length);
+"#,
+            &[
+                "offset",
+                "true",
+                "true",
+                "source",
+                "length",
+                "true",
+                "get0,convert0,get1,convert1",
+                "true",
+                "0,7,8",
+                "true",
+                "true",
+                "true",
+                "true",
+                "0",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_typed_constructor_resolves_prototype_before_object_effects() {
+        assert_output_in_execution_modes(
+            r#"
+for (var C of [Uint8Array, Int32Array, Float32Array, BigInt64Array]) {
+    var order=[];
+    var Target=(function(){}).bind(null);
+    Object.defineProperty(Target,'prototype',{get(){order.push('prototype'); $262.gc(); return {tag:C.name};}});
+    var arraylike={get length(){order.push('length'); $262.gc(); return 0;}};
+    var view=Reflect.construct(C,[arraylike],Target);
+    print(order.join(',')); print(Object.getPrototypeOf(view).tag === C.name);
+}
+var order=[];
+var Target=(function(){}).bind(null);
+Object.defineProperty(Target,'prototype',{get(){order.push('prototype'); throw 'prototype error';}});
+var offset={valueOf(){order.push('offset');throw 'offset error';}};
+try {Reflect.construct(Int32Array,[new ArrayBuffer(8),offset],Target);} catch(e) {print(e);}
+print(order.join(','));
+order=[];
+try {Reflect.construct(Int32Array,[-1],Target);} catch(e) {print(e instanceof RangeError);}
+print(order.join(','));
+var buffer=new ArrayBuffer(8);
+$262.detachArrayBuffer(buffer);
+var length={valueOf(){throw 'length error';}};
+try {new Int32Array(buffer,1,length);} catch(e) {print(e instanceof RangeError);}
+try {new Int32Array(buffer,0,length);} catch(e) {print(e);}
+try {new Int32Array(buffer,0,0);} catch(e) {print(e instanceof TypeError);}
+var order=[];
+var buffer=new ArrayBuffer(8);
+var Target=(function(){}).bind(null);
+Object.defineProperty(Target,'prototype',{get(){order.push('prototype');$262.detachArrayBuffer(buffer);return {};}});
+var offset={valueOf(){order.push('offset');return 1;}};
+var length={valueOf(){order.push('length');return 0;}};
+try {Reflect.construct(Int32Array,[buffer,offset,length],Target);} catch(e) {print(e instanceof RangeError);}
+print(order.join(','));
+var g=$262.createRealm().global;
+print(g.$262.global === g);
+var detached = new g.ArrayBuffer(8); g.$262.detachArrayBuffer(detached); print(detached.byteLength);
+g.eval('var Target = function Target() {}; Target.prototype=null;');
+var home = g.Int32Array.prototype;
+g.Int32Array = function(){throw 'mutable intrinsic';};
+var result=Reflect.construct(Int32Array,[2],g.Target);
+print(Object.getPrototypeOf(result) === home);
+print(Object.getPrototypeOf(result.buffer) === ArrayBuffer.prototype);
+class Derived extends Uint16Array {}
+var derived=new Derived([1,2]);print(derived instanceof Derived);print(derived.join(','));
+"#,
+            &[
+                "prototype,length",
+                "true",
+                "prototype,length",
+                "true",
+                "prototype,length",
+                "true",
+                "prototype,length",
+                "true",
+                "prototype error",
+                "prototype",
+                "true",
+                "",
+                "true",
+                "length error",
+                "true",
+                "true",
+                "prototype,offset",
+                "true",
+                "0",
+                "true",
+                "true",
+                "true",
+                "1,2",
+            ],
+        );
+    }
+
+    #[test]
+    fn regression_typed_slice_preserves_bytes_and_live_overlap_order() {
+        assert_output_in_execution_modes(
+            r#"
+var g = $262.createRealm().global;
+for (var ctor of [Float32Array, g.Float32Array]) {
+    var bits = new Uint32Array([0x7f800001, 0x7fffffff, 0xff800001, 0xffffffff]);
+    var source = new ctor(bits.buffer);
+    source.constructor = {[Symbol.species]: g.Float32Array};
+    print(new Uint32Array(source.slice().buffer).join(','));
+}
+var bits = new Uint32Array([0x00000001, 0x7ff00000, 0xffffffff, 0xfff7ffff]);
+var source = new Float64Array(bits.buffer);
+print(new Uint32Array(source.slice().buffer).join(','));
+var source = new Uint8Array([1,2,3,4]);
+source.constructor = {[Symbol.species]: function(n) {return new Uint8Array(source.buffer, 1, n);}};
+print(source.slice(0,3).join(',')); print(source.join(','));
+var source = new Uint8Array([1,2,3,4]);
+source.constructor = {[Symbol.species]: function(n) {return new Uint8Array(source.buffer, 0, n);}};
+print(source.slice(1).join(',')); print(source.join(','));
+var source = new Uint16Array([0,10,20,30]);
+var destination = new Uint16Array([91,92,93,94,95]);
+source = source.subarray(1);
+source.constructor = {[Symbol.species]: function() {return new Uint16Array(destination.buffer,2,4);}};
+print(source.slice(1).join(',')); print(destination.join(','));
+var source = new Float32Array([NaN,1.5]);
+source.constructor = {[Symbol.species]: Float64Array};
+var result = source.slice(); print(result instanceof Float64Array); print(Number.isNaN(result[0])); print(result[1]);
+var source = new Uint8Array([1,2,3,4]);
+source.constructor = {[Symbol.species]: function(n) {$262.gc(); source[1]=9; return new Uint8Array(n);}};
+print(source.slice(1).join(','));
+var buffer = new ArrayBuffer(8, {maxByteLength:16});
+var source = new Uint16Array(buffer); source.set([1,2,3,4]);
+source.constructor = {[Symbol.species]: function(n) {buffer.resize(4); return new Uint16Array(n);}};
+print(source.slice(1).join(','));
+var shared = new SharedArrayBuffer(16); new Uint32Array(shared).set([0x7f800001,0x7fffffff,0xff800001,0xffffffff]);
+print(new Uint32Array(new Float32Array(shared).slice().buffer).join(','));
+"#,
+            &[
+                "2139095041,2147483647,4286578689,4294967295",
+                "2139095041,2147483647,4286578689,4294967295",
+                "1,2146435072,4294967295,4294443007",
+                "1,1,1",
+                "1,1,1,1",
+                "2,3,4",
+                "2,3,4,4",
+                "20,30,94,95",
+                "91,20,30,94,95",
+                "true",
+                "true",
+                "1.5",
+                "9,3,4",
+                "2,0,0",
+                "2139095041,2147483647,4286578689,4294967295",
+            ],
+        );
+        assert_output_in_execution_modes(
+            r#"
+            var buffer = new Uint8Array([1, 2]).buffer.transferToImmutable();
+            var source = new Uint8Array(buffer);
+            source.constructor = {[Symbol.species]: function () {return source;}};
+            for (var end of [0, 1]) {
+                try {source.slice(0, end); print('returned');}
+                catch (error) {print(error instanceof TypeError);}
+            }
+            print(source.join(','));
+            "#,
+            &["true", "true", "1,2"],
+        );
+    }
+
+    #[test]
+    fn regression_array_buffer_intrinsics_and_backing_stores_are_realm_owned() {
+        assert_output_in_execution_modes(
+            r#"
+var g = $262.createRealm().global;
+var A = g.ArrayBuffer;
+var P = A.prototype;
+print(P !== ArrayBuffer.prototype);
+print(Object.getPrototypeOf(P) === g.Object.prototype);
+print(Object.prototype.hasOwnProperty.call(P, 'slice'));
+print(P.slice !== ArrayBuffer.prototype.slice);
+print(Object.getPrototypeOf(P.slice) === g.Function.prototype);
+print(A[Symbol.species] === A);
+print(Object.getOwnPropertyDescriptor(A, 'prototype').writable);
+print(Object.getOwnPropertyDescriptor(A, Symbol.species).get.name);
+print(Object.getOwnPropertyDescriptor(P, 'byteLength').get !== Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get);
+var a = new A(4);
+new Uint8Array(a).set([1,2,3,4]);
+print(a.slice(1).constructor === A);
+print(new Uint8Array(a.slice(1)).join(','));
+class ForeignSubclass extends A {}
+print(new ForeignSubclass(3).slice().constructor === ForeignSubclass);
+print(g.eval('new Uint8Array([5,6]).buffer.constructor === ArrayBuffer'));
+print(new g.Uint8Array([5,6]).buffer.constructor === A);
+print(new Uint8Array(new g.Uint8Array([5,6])).buffer.constructor === ArrayBuffer);
+a.constructor = undefined;
+print(Object.getPrototypeOf(ArrayBuffer.prototype.slice.call(a)) === ArrayBuffer.prototype);
+print(Object.getPrototypeOf(P.slice.call(new ArrayBuffer(2))) === ArrayBuffer.prototype);
+var local = new ArrayBuffer(2); local.constructor = undefined;
+print(Object.getPrototypeOf(P.slice.call(local)) === P);
+var home = ArrayBuffer.prototype;
+var saved = ArrayBuffer;
+g.ArrayBuffer = function () {throw new Error('mutable global observed');};
+P.constructor = function () {throw new Error('mutable prototype constructor observed');};
+print(Object.getPrototypeOf(P.slice.call(a)) === P);
+a.constructor = {[Symbol.species]: null};
+print(Object.getPrototypeOf(P.slice.call(a)) === P);
+print(Object.getPrototypeOf(new g.Uint8Array(1).buffer) === P);
+var speciesCalls=0;
+a.constructor = {[Symbol.species]: function(n) {speciesCalls++; $262.gc(); return new A(n);}};
+print(new Uint8Array(a.slice(1)).join(','));
+print(speciesCalls);
+
+print(Object.getPrototypeOf(new A(2).transfer()) === P);
+print(Object.getPrototypeOf(ArrayBuffer.prototype.transfer.call(new A(2))) === ArrayBuffer.prototype);
+var resizable = new A(2, {maxByteLength: 4}).transfer(3);
+print(Object.getPrototypeOf(resizable) === P);
+print(resizable.resizable);
+print(resizable.maxByteLength);
+print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
+"#,
+            &[
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "false",
+                "get [Symbol.species]",
+                "true",
+                "true",
+                "2,3,4",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "2,3,4",
+                "1",
+                "true",
+                "true",
+                "true",
+                "true",
+                "4",
+                "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_array_buffer_slice_rechecks_source_after_guest_effects() {
         assert_output_in_execution_modes(
             r#"
@@ -5096,7 +9059,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             var start = { valueOf: function () { buffer.resize(2); return 0; } };
             print(new Uint8Array(buffer.slice(start)).join(','));
             "#,
-            &["true", "start,end,species", "0", "true", "start,end,species", "0", "9,8,3", "1,2,0,0"],
+            &[
+                "true",
+                "start,end,species",
+                "0",
+                "true",
+                "start,end,species",
+                "0",
+                "9,8,3",
+                "1,2,0,0",
+            ],
         );
     }
 
@@ -5112,32 +9084,26 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
-    fn module_requests_use_module_compilation() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest {
-                source: "print('module'); export default 1;",
-                name: "module.mjs",
-                kind: SourceKind::Module,
-            })
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["module"]);
-    }
+    fn module_evaluation_query_follows_execution_gc_and_reinitialization() {
+        let mut runtime = Runtime::new(Capture::default());
+        let pending =
+            Engine::specialize_module("await new Promise(() => {});", "pending.mjs").unwrap();
+        assert!(runtime.module_evaluation_pending(&pending).is_err());
+        runtime.execute(&pending).unwrap();
+        assert!(runtime.module_evaluation_pending(&pending).unwrap());
+        runtime.collect(&pending).unwrap();
+        runtime.run_jobs(&pending).unwrap();
+        assert!(runtime.module_evaluation_pending(&pending).unwrap());
 
-    #[test]
-    fn arrow_functions_compile_as_residual_closures() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var add = (x) => x + 1; print(add(41));",
-                "arrow.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["42"]);
+        let settled = Engine::specialize_module("await Promise.resolve();", "settled.mjs").unwrap();
+        runtime.execute(&settled).unwrap();
+        assert!(!runtime.module_evaluation_pending(&settled).unwrap());
+        assert!(runtime.module_evaluation_pending(&pending).is_err());
+
+        let script = Engine::specialize("0;", "script.js").unwrap();
+        runtime.execute(&script).unwrap();
+        assert!(!runtime.module_evaluation_pending(&script).unwrap());
+        assert!(runtime.module_evaluation_pending(&settled).is_err());
     }
 
     #[test]
@@ -5146,16 +9112,23 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
         let optimized_host = Capture::default();
         let optimized_view = optimized_host.clone();
         let mut optimized = Runtime::new(optimized_host);
-        optimized
-            .execute(&Engine::specialize(source, "optimized.js").unwrap())
-            .unwrap();
+        let optimized_program = Engine::specialize(source, "optimized.js").unwrap();
+        assert!(optimized_program.specialized);
+        assert!(optimized_program.cache_sites > 0);
+        assert!(optimized_program.functions.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|instruction| instruction.op() == crate::bytecode::Op::GetField)
+        }));
+        optimized.execute(&optimized_program).unwrap();
 
         let generic_host = Capture::default();
         let generic_view = generic_host.clone();
         let mut generic = Runtime::new(generic_host);
-        generic
-            .execute(&Engine::specialize_unspecialized(source, "generic.js").unwrap())
-            .unwrap();
+        let generic_program = Engine::specialize_unspecialized(source, "generic.js").unwrap();
+        assert!(!generic_program.specialized);
+        generic.execute(&generic_program).unwrap();
 
         assert_eq!(
             optimized_view.0.borrow().as_slice(),
@@ -5176,7 +9149,7 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 .iter()
                 .any(|function| !function.wide.is_empty())
         );
-        let path = std::env::temp_dir().join(format!("rqj-wide-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("quench-wide-{}", std::process::id()));
         program.write_binary(&path).unwrap();
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
@@ -5200,68 +9173,12 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             "surrogate.js",
         ))
         .unwrap();
-        let path = std::env::temp_dir().join(format!("rqj-surrogate-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("quench-surrogate-{}", std::process::id()));
         program.write_binary(&path).unwrap();
         let decoded = ResidualProgram::read_binary(&path).unwrap();
         std::fs::remove_file(path).unwrap();
         runtime.execute(&decoded).unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["1", "55296"]);
-    }
-
-    #[test]
-    fn oxc_surrogate_property_keys_use_exact_index_semantics() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                r#"var object = {"\uD800": 1}; print(Object.keys(object)[0].charCodeAt(0)); print(object["\uD800"]);"#,
-                "surrogate-key.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["55296", "1"]);
-    }
-
-    #[test]
-    fn oxc_surrogate_keys_cover_class_fields_and_destructuring() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                r#"class Box { "\uD801" = 7; } print(new Box()["\uD801"]); var {"\uD800": value} = {"\uD800": 3}; print(value);"#,
-                "surrogate-class-destructure.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["7", "3"]);
-    }
-
-    #[test]
-    fn finalization_registry_registers_and_unregisters_generation_checked_tokens() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var registry = new FinalizationRegistry(function() {}); var target = {}; var token = {}; registry.register(target, 1, token); print(registry.unregister(token)); print(registry.unregister(token));",
-                "finalization.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["true", "false"]);
-    }
-
-    #[test]
-    fn finalization_registry_uses_generic_property_traversal() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        let program = Engine::specialize_unspecialized(
-            "var registry = new FinalizationRegistry(function() {}); var token = {}; registry.register({}, 1, token); print(typeof registry.unregister); print(registry.unregister(token));",
-            "finalization-generic.js",
-        )
-        .unwrap();
-        runtime.execute(&program).unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["function", "true"]);
     }
 
     #[test]
@@ -5276,20 +9193,6 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             ))
             .unwrap();
         assert_eq!(view.0.borrow().as_slice(), ["done", "7"]);
-    }
-
-    #[test]
-    fn prototype_mutation_rejects_cycles_and_invalidates_property_caches() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var first = { value: 1 }; var second = Object.create(first); print(second.value); var third = { value: 3 }; Object.setPrototypeOf(second, third); print(second.value); try { Object.setPrototypeOf(third, second); print(\"not-rejected\"); } catch (error) { print(\"cycle\"); }",
-                "prototype-cycle.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["1", "3", "cycle"]);
     }
 
     #[test]
@@ -5315,34 +9218,6 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
     }
 
     #[test]
-    fn descriptor_transitions_reject_mixed_fields_and_allow_configurable_kind_changes() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var object = {}; try { Object.defineProperty(object, 'mixed', { value: 1, get: function() { return 2; } }); print('bad'); } catch (error) { print('mixed'); } Object.defineProperty(object, 'value', { get: function() { return 3; }, configurable: true }); Object.defineProperty(object, 'value', { value: 4 }); print(object.value); var array = []; Object.defineProperty(array, '0', { get: function() { return 5; }, configurable: true }); Object.defineProperty(array, '0', { value: 6 }); print(array[0]);",
-                "descriptor-transition.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["mixed", "4", "6"]);
-    }
-
-    #[test]
-    fn define_properties_uses_one_snapshot_of_descriptor_keys() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var target = {}; var descriptors = { a: { value: 1 }, b: { value: 2, enumerable: true } }; Object.defineProperties(target, descriptors); print(target.a); print(target.b); print(Object.keys(target).join(',')); var created = Object.create(null, { x: { value: 9, enumerable: true } }); print(created.x); print(Object.keys(created).join(','));",
-                "define-properties.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["1", "2", "b", "9", "x"]);
-    }
-
-    #[test]
     fn explicit_collection_preserves_runtime_roots() {
         let mut runtime = Runtime::new(Capture::default());
         let program = Engine::specialize("print(0);", "collect.js").unwrap();
@@ -5351,37 +9226,6 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
         runtime.collect(&program).unwrap();
         assert!(runtime.root_is_live(root));
         assert!(runtime.release_root(root));
-    }
-
-    #[test]
-    fn array_length_descriptor_is_an_own_non_enumerable_property() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var descriptor = Object.getOwnPropertyDescriptor([1, 2], 'length'); print(descriptor.value); print(descriptor.enumerable); print(descriptor.configurable);",
-                "array-length-descriptor.js",
-            ))
-            .unwrap();
-        assert_eq!(view.0.borrow().as_slice(), ["2", "false", "false"]);
-    }
-
-    #[test]
-    fn array_length_is_visible_only_to_non_enumerable_own_key_views() {
-        let host = Capture::default();
-        let view = host.clone();
-        let mut runtime = Runtime::new(host);
-        runtime
-            .compile_and_execute(ExecutionRequest::script(
-                "var array = [1, 2]; print(Object.keys(array).join(',')); print(Object.getOwnPropertyNames(array).join(',')); print(Reflect.ownKeys(array).join(','));",
-                "array-own-keys.js",
-            ))
-            .unwrap();
-        assert_eq!(
-            view.0.borrow().as_slice(),
-            ["0,1", "0,1,length", "0,1,length"]
-        );
     }
 
     #[test]
@@ -5689,14 +9533,7 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
+                "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true",
             ],
         );
     }
@@ -5720,13 +9557,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             &["0", "3", "4", "42"],
         );
     }
-
 }
 
 #[cfg(test)]
 #[path = "api_promise_tests.rs"]
 mod promise_tests;
-
-#[cfg(test)]
-#[path = "api_iterator_tests.rs"]
-mod iterator_tests;

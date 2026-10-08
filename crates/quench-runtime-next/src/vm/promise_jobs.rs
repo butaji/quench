@@ -1,8 +1,6 @@
-use super::promise::{
-    AggregateMode, AggregateRecord, FinallyContinuationJob, FinallyJob, FinallyReaction,
-    PromiseJob, PromiseReaction, PromiseState,
-};
+use super::promise::{AggregateMode, AggregateRecord, PromiseJob, PromiseReaction, PromiseState};
 use super::*;
+use crate::HostExecutionContext;
 
 // The initial remaining element represents iteration still in progress.
 const AGGREGATE_ITERATION_SENTINEL: usize = 1;
@@ -20,55 +18,6 @@ enum AggregateInput {
 }
 
 impl<H: Host> Vm<H> {
-    fn enqueue_finally_continuation(
-        &mut self,
-        p: &ResidualProgram,
-        next: Value,
-        rejected: bool,
-        value: Value,
-        cleanup: Value,
-    ) {
-        let fulfilled = self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
-        let rejected_cleanup =
-            self.native_with_env(Native::PromiseFinallyContinuationJob, Value::NULL);
-        self.realm.promise.finally_continuation_jobs.insert(
-            fulfilled,
-            FinallyContinuationJob {
-                next,
-                original_rejected: rejected,
-                cleanup_rejected: false,
-                value,
-            },
-        );
-        self.realm.promise.finally_continuation_jobs.insert(
-            rejected_cleanup,
-            FinallyContinuationJob {
-                next,
-                original_rejected: rejected,
-                cleanup_rejected: true,
-                value,
-            },
-        );
-        let reaction = PromiseReaction {
-            on_fulfilled: fulfilled,
-            on_rejected: rejected_cleanup,
-            next: self.promise_object(),
-        };
-        let Some(record) = self.realm.promise.records.get(&cleanup).cloned() else {
-            return;
-        };
-        if record.state == PromiseState::Pending {
-            self.realm.promise
-                .records
-                .get_mut(&cleanup)
-                .expect("cleanup Promise record exists")
-                .reactions
-                .push(reaction);
-        } else {
-            self.enqueue_promise_reaction(p, reaction, record.state, record.result);
-        }
-    }
-
     pub(super) fn promise_aggregate(
         &mut self,
         p: &ResidualProgram,
@@ -98,7 +47,9 @@ impl<H: Host> Vm<H> {
                 completion => {
                     let error = match completion {
                         Err(error) => error,
-                        Ok(_) => self.type_error(p, "Promise resolve method is not callable".into()),
+                        Ok(_) => {
+                            self.type_error(p, "Promise resolve method is not callable".into())
+                        }
                     };
                     let reject = self.heap.root_value(capability.reject).unwrap();
                     self.reject_aggregate_completion(p, reject, error)?;
@@ -181,7 +132,8 @@ impl<H: Host> Vm<H> {
                     let object = self.heap.root_value(source).unwrap();
                     let name = self.heap.root_value(key).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, name])?;
-                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable")
+                    {
                         continue;
                     }
                     let object = self.heap.root_value(source).unwrap();
@@ -265,7 +217,12 @@ impl<H: Host> Vm<H> {
                 ) {
                     Ok(value) => value,
                     Err(error) => {
-                        self.reject_aggregate_input_completion(p, &input, capability.reject, error)?;
+                        self.reject_aggregate_input_completion(
+                            p,
+                            &input,
+                            capability.reject,
+                            error,
+                        )?;
                         return Ok(self.heap.root_value(capability.output).unwrap());
                     }
                 };
@@ -279,7 +236,7 @@ impl<H: Host> Vm<H> {
                     return Ok(self.heap.root_value(capability.output).unwrap());
                 }
             }
-            let (remaining, values) = {
+            let completion = {
                 let record = self
                     .realm
                     .promise
@@ -287,14 +244,11 @@ impl<H: Host> Vm<H> {
                     .get_mut(&self.heap.root_value(capability.output).unwrap())
                     .unwrap();
                 record.remaining = record.remaining.saturating_sub(1);
-                (record.remaining, record.values.clone())
+                (record.remaining == 0).then(|| (record.values.clone(), record.keys.clone()))
             };
-            if remaining == 0 {
+            if let Some((values, keys)) = completion {
                 if mode.is_all() || mode.is_all_settled() {
-                    let record = self.realm.promise.aggregates
-                        [&self.heap.root_value(capability.output).unwrap()]
-                        .clone();
-                    let values = self.aggregate_result(&record, values)?;
+                    let values = self.aggregate_result(keys, values)?;
                     if let Err(error) = self.call_value(
                         p,
                         self.heap.root_value(capability.resolve).unwrap(),
@@ -341,7 +295,11 @@ impl<H: Host> Vm<H> {
         mut error: JsError,
     ) -> Result<(), JsError> {
         let AggregateInput::Iterable { iterator, .. } = input else {
-            return self.reject_aggregate_completion(p, self.heap.root_value(reject).unwrap(), error);
+            return self.reject_aggregate_completion(
+                p,
+                self.heap.root_value(reject).unwrap(),
+                error,
+            );
         };
         let thrown = error.thrown_value().map(|value| self.heap.root(value));
         let iterator = self.heap.root_value(*iterator).unwrap();
@@ -375,35 +333,39 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise aggregate job without callback".into()))?;
-        let aggregate_job = self.realm.promise
+        let aggregate_job = self
+            .realm
+            .promise
             .aggregate_jobs
             .get(&job)
             .copied()
             .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
-        let Some(mode) = self.realm.promise
+        let Some((mode, resolve, reject)) = self
+            .realm
+            .promise
             .aggregates
             .get(&aggregate_job.aggregate)
-            .map(|record| record.mode)
+            .map(|record| (record.mode, record.resolve, record.reject))
         else {
             return Ok(Value::UNDEFINED);
         };
-        let record = self.realm.promise.aggregates[&aggregate_job.aggregate].clone();
         match mode {
             AggregateMode::Race => {
                 let settler = if aggregate_job.rejected {
-                    record.reject
+                    reject
                 } else {
-                    record.resolve
+                    resolve
                 };
                 self.call_value(p, settler, Value::UNDEFINED, &[value])?;
             }
             AggregateMode::All | AggregateMode::AllKeyed if aggregate_job.rejected => {
-                self.call_value(p, record.reject, Value::UNDEFINED, &[value])?;
+                self.call_value(p, reject, Value::UNDEFINED, &[value])?;
             }
             AggregateMode::Any if !aggregate_job.rejected => {
-                self.call_value(p, record.resolve, Value::UNDEFINED, &[value])?;
+                self.call_value(p, resolve, Value::UNDEFINED, &[value])?;
             }
             AggregateMode::All
             | AggregateMode::AllKeyed
@@ -411,14 +373,24 @@ impl<H: Host> Vm<H> {
             | AggregateMode::AllSettledKeyed
             | AggregateMode::Any => {
                 let index = aggregate_job.index;
-                if record.called.get(index).copied().unwrap_or(true) {
+                let first_call = {
+                    let record = self
+                        .realm
+                        .promise
+                        .aggregates
+                        .get_mut(&aggregate_job.aggregate)
+                        .unwrap();
+                    match record.called.get_mut(index) {
+                        Some(called) if !*called => {
+                            *called = true;
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if !first_call {
                     return Ok(Value::UNDEFINED);
                 }
-                self.realm.promise
-                    .aggregates
-                    .get_mut(&aggregate_job.aggregate)
-                    .unwrap()
-                    .called[index] = true;
                 let result = if mode.is_all_settled() {
                     let result = self
                         .heap
@@ -441,24 +413,24 @@ impl<H: Host> Vm<H> {
                 } else {
                     value
                 };
-                let (remaining, values) = {
-                    let record = self.realm.promise
+                let completion = {
+                    let record = self
+                        .realm
+                        .promise
                         .aggregates
                         .get_mut(&aggregate_job.aggregate)
                         .unwrap();
                     record.values[index] = result;
                     record.remaining = record.remaining.saturating_sub(1);
-                    (record.remaining, record.values.clone())
+                    (record.remaining == 0).then(|| (record.values.clone(), record.keys.clone()))
                 };
-                if remaining == 0 {
+                if let Some((values, keys)) = completion {
                     if mode == AggregateMode::Any {
                         let error = self.aggregate_error(values)?;
-                        self.call_value(p, record.reject, Value::UNDEFINED, &[error])?;
+                        self.call_value(p, reject, Value::UNDEFINED, &[error])?;
                     } else {
-                        let values = self.aggregate_result(&record, values)?;
-                        let completion =
-                            self.call_value(p, record.resolve, Value::UNDEFINED, &[values]);
-                        completion?;
+                        let values = self.aggregate_result(keys, values)?;
+                        self.call_value(p, resolve, Value::UNDEFINED, &[values])?;
                     }
                 }
             }
@@ -486,28 +458,10 @@ impl<H: Host> Vm<H> {
                 next: reaction.next,
                 rejected: state == PromiseState::Rejected,
                 value,
+                execution_context: reaction.execution_context,
             },
         );
         self.enqueue_job(job, vec![value]);
-    }
-
-    pub(super) fn enqueue_promise_finally(
-        &mut self,
-        reaction: FinallyReaction,
-        state: PromiseState,
-        value: Value,
-    ) {
-        let job = self.native_with_env(Native::PromiseFinallyJob, Value::NULL);
-        self.realm.promise.finally_jobs.insert(
-            job,
-            FinallyJob {
-                handler: reaction.handler,
-                next: reaction.next,
-                rejected: state == PromiseState::Rejected,
-                value,
-            },
-        );
-        self.enqueue_job(job, vec![]);
     }
 
     pub(super) fn promise_reaction_job(
@@ -515,35 +469,57 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise job without callback".into()))?;
-        let reaction = self.realm.promise
+        let reaction = self
+            .realm
+            .promise
             .jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise job".into()))?;
-        if !self.is_function(reaction.handler) {
-            self.settle_reaction(
-                p,
-                reaction.next,
-                if reaction.rejected {
-                    PromiseState::Rejected
-                } else {
-                    PromiseState::Fulfilled
-                },
-                value,
-            )?;
-            return Ok(Value::UNDEFINED);
+        let previous_context = reaction
+            .execution_context
+            .map(|context| self.host.enter_job_context(context))
+            .flatten();
+        let outcome = self.with_call_roots([reaction.handler, reaction.next, value], |vm| {
+            if !vm.is_function(reaction.handler) {
+                vm.settle_reaction(
+                    p,
+                    reaction.next,
+                    if reaction.rejected {
+                        PromiseState::Rejected
+                    } else {
+                        PromiseState::Fulfilled
+                    },
+                    value,
+                )?;
+                return Ok(Value::UNDEFINED);
+            }
+            let (state, result) =
+                match vm.call_value(p, reaction.handler, Value::UNDEFINED, &[value]) {
+                    Ok(result) => (PromiseState::Fulfilled, result),
+                    Err(error) => (
+                        PromiseState::Rejected,
+                        error.thrown_value().unwrap_or(Value::UNDEFINED),
+                    ),
+                };
+            vm.settle_reaction(p, reaction.next, state, result)?;
+            Ok(Value::UNDEFINED)
+        });
+        if reaction.execution_context.is_some() {
+            self.host.restore_job_context(previous_context);
         }
-        let (state, result) = match self.call_value(p, reaction.handler, Value::UNDEFINED, &[value])
-        {
-            Ok(result) => (PromiseState::Fulfilled, result),
-            Err(error) => (
-                PromiseState::Rejected,
-                error.thrown_value().unwrap_or(Value::UNDEFINED),
-            ),
-        };
-        self.settle_reaction(p, reaction.next, state, result)?;
-        Ok(Value::UNDEFINED)
+        if let Some(context) = reaction.execution_context {
+            self.release_job_context(context);
+        }
+        outcome
+    }
+
+    pub(super) fn release_job_context(&mut self, context: HostExecutionContext) {
+        for root in self.host.release_job_context(context) {
+            self.heap.release_root(root);
+        }
     }
 
     fn settle_reaction(
@@ -571,82 +547,34 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
-        let thenable = self.realm.promise
+        let thenable = self
+            .realm
+            .promise
             .thenable_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
-        let (resolve, reject) = self.promise_resolving_functions(thenable.promise);
-        if let Err(error) = self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
-        {
-            let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
-            self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
-        }
-        Ok(Value::UNDEFINED)
-    }
-
-    pub(super) fn promise_finally_job(
-        &mut self,
-        p: &ResidualProgram,
-        args: &[Value],
-    ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
-            .ok_or_else(|| JsError("Promise finally job without callback".into()))?;
-        let reaction = self.realm.promise
-            .finally_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise finally job".into()))?;
-        let original = args.first().copied().unwrap_or(reaction.value);
-        match self.call_value(p, reaction.handler, Value::UNDEFINED, &[]) {
-            Ok(cleanup) => {
-                let cleanup = self.promise_for_value(p, cleanup)?;
-                self.enqueue_finally_continuation(
-                    p,
-                    reaction.next,
-                    reaction.rejected,
-                    original,
-                    cleanup,
-                );
+        let previous_context = thenable
+            .execution_context
+            .and_then(|context| self.host.enter_job_context(context));
+        let outcome = (|| {
+            let (resolve, reject) = self.promise_resolving_functions(thenable.promise);
+            if let Err(error) =
+                self.call_value(p, thenable.then, thenable.thenable, &[resolve, reject])
+            {
+                let reason = error.thrown_value().unwrap_or(Value::UNDEFINED);
+                self.call_value(p, reject, Value::UNDEFINED, &[reason])?;
             }
-            Err(error) => {
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.settle_reaction(p, reaction.next, PromiseState::Rejected, reason)?;
-            }
+            Ok(Value::UNDEFINED)
+        })();
+        if thenable.execution_context.is_some() {
+            self.host.restore_job_context(previous_context);
         }
-        Ok(Value::UNDEFINED)
-    }
-
-    pub(super) fn promise_finally_continuation_job(
-        &mut self,
-        p: &ResidualProgram,
-        cleanup_value: Value,
-    ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
-            .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
-        let continuation = self.realm.promise
-            .finally_continuation_jobs
-            .remove(&job)
-            .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;
-        if continuation.cleanup_rejected {
-            self.settle_reaction(p, continuation.next, PromiseState::Rejected, cleanup_value)?;
-        } else if continuation.original_rejected {
-            self.settle_reaction(
-                p,
-                continuation.next,
-                PromiseState::Rejected,
-                continuation.value,
-            )?;
-        } else {
-            self.settle_reaction(
-                p,
-                continuation.next,
-                PromiseState::Fulfilled,
-                continuation.value,
-            )?;
+        if let Some(context) = thenable.execution_context {
+            self.release_job_context(context);
         }
-        Ok(Value::UNDEFINED)
+        outcome
     }
 }

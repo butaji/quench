@@ -1,12 +1,10 @@
 //! Rust-owned diagnostics channel state and mechanical API surface.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-
-use quench_runtime::execute::{self, VmError};
-use quench_runtime::host_api;
-use quench_runtime::value::{PromiseState, Value};
 
 use crate::host::HostState;
 use crate::registry::{
@@ -21,6 +19,9 @@ use crate::registry::{
     SPEC_DIAGNOSTICS_TRACING_SUBSCRIBE, SPEC_DIAGNOSTICS_TRACING_TRACE_SYNC,
     SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
 };
+use quench_runtime::execute::{self, VmError};
+use quench_runtime::host_api;
+use quench_runtime::value::{PromiseState, Value};
 
 const ID: &str = "\0quench:diagnostics_channel:id";
 const NAME: &str = "\0quench:diagnostics_channel:name";
@@ -60,6 +61,12 @@ pub struct DiagnosticsState {
     next_id: u64,
     channels: HashMap<String, (u64, Rc<RefCell<ChannelData>>, Value)>,
     by_id: HashMap<u64, Rc<RefCell<ChannelData>>>,
+}
+
+#[derive(Default)]
+pub(crate) struct SharedDiagnosticsState {
+    pub(crate) channels: HashMap<String, Vec<quench_runtime_next::RootId>>,
+    pub(crate) module: Option<quench_runtime_next::RootId>,
 }
 
 impl DiagnosticsState {

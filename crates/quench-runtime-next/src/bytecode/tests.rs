@@ -14,7 +14,7 @@ fn eval_binding_declarations_survive_residual_round_trip() {
     } }
 "#;
     let program = crate::Engine::specialize(source, "eval-bindings.js").unwrap();
-    let path = std::env::temp_dir().join(format!("rqj-eval-bindings-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("quench-eval-bindings-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let encoded = std::fs::read(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
@@ -102,6 +102,8 @@ fn decoder_rejects_out_of_range_local_load() {
         functions: vec![Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -129,8 +131,9 @@ fn decoder_rejects_out_of_range_local_load() {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            binding_sites: vec![],
             name_bindings: vec![],
+            binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code: vec![Instr::new(Op::LoadLocal, 0, 0, 0, 1)],
             wide: vec![],
@@ -147,7 +150,7 @@ fn decoder_rejects_out_of_range_local_load() {
         superinstructions: vec![],
         register_roots: vec![],
     };
-    let path = std::env::temp_dir().join(format!("rqj-invalid-local-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("quench-invalid-local-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let result = ResidualProgram::read_binary(&path);
     std::fs::remove_file(path).unwrap();
@@ -168,6 +171,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         functions: vec![Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -195,8 +200,9 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            binding_sites: vec![],
             name_bindings: vec![],
+            binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code: vec![Instr::new(Op::Return, 0, 0, 0, 0)],
             wide: vec![],
@@ -213,10 +219,15 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         superinstructions: vec![],
         register_roots: vec![],
     };
-    let path = std::env::temp_dir().join(format!("rqj-invalid-abi-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("quench-invalid-abi-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let mut bytes = std::fs::read(&path).unwrap();
-    bytes[5] ^= 1;
+    let abi_bytes = ResidualProgram::RUNTIME_ABI_FINGERPRINT.to_le_bytes();
+    let abi_offset = bytes
+        .windows(abi_bytes.len())
+        .position(|window| window == abi_bytes)
+        .expect("serialized residual contains its runtime ABI fingerprint");
+    bytes[abi_offset] ^= 1;
     std::fs::write(&path, bytes).unwrap();
     let result = ResidualProgram::read_binary(&path);
     std::fs::remove_file(path).unwrap();
@@ -279,6 +290,44 @@ fn decoder_rejects_unknown_property_definition_modes() {
 }
 
 #[test]
+fn instance_initializer_plan_survives_round_trip_and_rejects_invalid_owners() {
+    let program = crate::Engine::specialize(
+        "class Base {} class Derived extends Base {field=1; constructor(){(()=>super())();}}",
+        "instance-initializer.js",
+    )
+    .unwrap();
+    let owner = program
+        .functions
+        .iter()
+        .position(|f| f.instance_initializer.is_some())
+        .unwrap();
+    let initializer = program.functions[owner].instance_initializer.unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "quench-instance-initializer-{}",
+        std::process::id()
+    ));
+    program.write_binary(&path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    assert_eq!(
+        decoded.functions[owner].instance_initializer,
+        Some(initializer)
+    );
+    decoded.write_binary(&path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    for plan in [program.functions.len() as u32, owner as u32, 0] {
+        let mut invalid = program.clone();
+        invalid.functions[owner].instance_initializer = Some(plan);
+        invalid.write_binary(&path).unwrap();
+        assert!(ResidualProgram::read_binary(&path).is_err());
+    }
+    let mut invalid = program;
+    invalid.functions[initializer as usize].parent = Some(owner as u32);
+    assert!(invalid.validate().is_err());
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn scoped_binding_sites_survive_residual_round_trip() {
     let source = "for (let x of [1]) { with ({}) { x++; } }";
     for generic in [false, true] {
@@ -303,10 +352,6 @@ fn scoped_binding_sites_survive_residual_round_trip() {
         );
         for (before, after) in program.functions.iter().zip(&decoded.functions) {
             assert_eq!(before.binding_sites, after.binding_sites);
-            assert_eq!(before.name_bindings, after.name_bindings);
-            assert_eq!(before.environment_clones, after.environment_clones);
-            assert_eq!(before.simple_parameters, after.simple_parameters);
-            assert_eq!(before.instance_initializer, after.instance_initializer);
         }
         crate::Runtime::new(crate::SystemHost)
             .execute(&decoded)

@@ -1,6 +1,6 @@
 # Offline profile-guided re-specialization
 
-rqj can iterate Futamura P1 only when the second specialization preserves the
+Quench can iterate Futamura P1 only when the second specialization preserves the
 semantics of the first residual program. A profile is evidence about one run;
 it is not a proof about every future execution. This distinction determines
 which facts may be consumed without adding runtime guards.
@@ -60,7 +60,7 @@ regressions.
 
 ## Decision
 
-rqj retains the profile data and offline candidate miner as inputs for future
+Quench retains the profile data and offline candidate miner as inputs for future
 recipes, but does not add a production two-run pipeline now. Observed values
 are never promoted as unconditional facts, and the sound layout-only spike
 fails the current Score/RSS ratchet. A future recipe can reopen this decision

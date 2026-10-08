@@ -17,6 +17,41 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
     return normalized;
   };
+  const invalidByteLengthArgument = (value) => {
+    let received;
+    if (value === null || value === undefined) {
+      received = ` Received ${value}`;
+    } else if (typeof value === "function") {
+      received = ` Received function ${value.name}`;
+    } else if (typeof value === "object") {
+      received = ` Received an instance of ${value.constructor?.name || "Object"}`;
+    } else {
+      received = ` Received type ${typeof value} (${String(value)})`;
+    }
+    return codedTypeError(
+      'The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.' + received,
+      "ERR_INVALID_ARG_TYPE",
+    );
+  };
+  const byteLengthGetters = [
+    Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength").get,
+    ...(typeof SharedArrayBuffer === "undefined"
+      ? []
+      : [Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength").get]),
+    Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
+    Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(Uint8Array.prototype),
+      "byteLength",
+    ).get,
+  ];
+  const intrinsicByteLength = (value) => {
+    for (const getter of byteLengthGetters) {
+      try {
+        return getter.call(value);
+      } catch {}
+    }
+    return undefined;
+  };
   const makeBuffer = (bytes) => new Buffer(bytes);
 
   class Buffer extends Uint8Array {
@@ -81,12 +116,12 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
 
     static byteLength(value, encoding = "utf8") {
       if (typeof value === "string") {
-        return encode(value, normalizeEncoding(encoding)).length;
+        const normalized = canonicalEncoding(String(encoding || "utf8")) || "utf8";
+        return encode(value, normalized).length;
       }
-      if (value === null || value === undefined) {
-        throw codedTypeError('The "string" argument must be of type string or an instance of Buffer or ArrayBuffer', "ERR_INVALID_ARG_TYPE");
-      }
-      return value.byteLength;
+      const byteLength = intrinsicByteLength(value);
+      if (byteLength !== undefined) return byteLength;
+      throw invalidByteLengthArgument(value);
     }
 
     static isBuffer(value) {
@@ -129,6 +164,13 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
+  // Node exposes Buffer's static API as enumerable own properties. Packages
+  // such as safer-buffer derive their constructor view with `for...in`.
+  for (const name of Object.getOwnPropertyNames(Buffer)) {
+    if (name === "length" || name === "name" || name === "prototype") continue;
+    Object.defineProperty(Buffer, name, { enumerable: true });
+  }
+
   return { Buffer, SlowBuffer: Buffer };
 }"#
 );
@@ -169,6 +211,15 @@ pub(crate) fn install_global(
     let undefined = context.undefined();
     context.call_rooted(installer, undefined, &[constructor])?;
     Ok(())
+}
+
+pub(crate) fn install_blob_export(
+    context: &mut NativeContext<'_, NodeHost>,
+    module: RootId,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let blob = get(context, global, "Blob")?;
+    set(context, module, "Blob", blob)
 }
 
 pub(crate) fn encode(

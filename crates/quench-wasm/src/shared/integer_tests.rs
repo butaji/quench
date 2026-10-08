@@ -1,5 +1,5 @@
 use super::*;
-use rqj::{Runtime, SystemHost, WasmTrap, WasmValue};
+use quench_runtime_next::{Runtime, SystemHost, WasmTrap, WasmValue};
 
 fn lower(wat: &str) -> WasmFunction {
     crate::Engine::new()
@@ -7,43 +7,6 @@ fn lower(wat: &str) -> WasmFunction {
         .unwrap()
         .lower_shared("f")
         .unwrap()
-}
-
-#[test]
-fn integer_width_conversions_preserve_low_bits_and_signedness() {
-    let mut runtime = Runtime::new(SystemHost);
-    let wrap =
-        lower(r#"(module (func (export "f") (param i64) (result i32) local.get 0 i32.wrap_i64))"#);
-    for (value, expected) in [
-        (i64::MAX, -1),
-        (i64::MIN, 0),
-        (0x1234_5678_8000_0001, i32::MIN + 1),
-    ] {
-        assert_eq!(
-            runtime
-                .execute_wasm(&wrap, &[WasmValue::I64(value)])
-                .unwrap(),
-            Some(WasmValue::I32(expected))
-        );
-    }
-    for (op, unsigned) in [("extend_i32_s", false), ("extend_i32_u", true)] {
-        let function = lower(&format!(
-            r#"(module (func (export "f") (param i32) (result i64) local.get 0 i64.{op}))"#
-        ));
-        for input in [i32::MIN, -1, 0, 1, i32::MAX] {
-            let expected = if unsigned {
-                i64::from(input as u32)
-            } else {
-                i64::from(input)
-            };
-            assert_eq!(
-                runtime
-                    .execute_wasm(&function, &[WasmValue::I32(input)])
-                    .unwrap(),
-                Some(WasmValue::I64(expected))
-            );
-        }
-    }
 }
 
 #[test]

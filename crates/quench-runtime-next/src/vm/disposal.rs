@@ -1,9 +1,9 @@
 use super::promise::PromiseState;
 use super::property_key::PropertyKey;
 
-const ENTRIES: &str = "\0rqj:disposable-stack:entries";
-const DISPOSED: &str = "\0rqj:disposable-stack:disposed";
-const ASYNC_STACK: &str = "\0rqj:disposable-stack:async";
+const ENTRIES: &str = "\0quench:disposable-stack:entries";
+const DISPOSED: &str = "\0quench:disposable-stack:disposed";
+const ASYNC_STACK: &str = "\0quench:disposable-stack:async";
 const ASYNC_DISPOSAL_ENTRIES_SLOT: usize = 0;
 const ASYNC_DISPOSAL_CURSOR_SLOT: usize = 1;
 const ASYNC_DISPOSAL_COMPLETION_SLOT: usize = 2;
@@ -163,12 +163,12 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_value_named(
             prototype,
-            "\0rqj:disposeWithCompletion",
+            "\0quench:disposeWithCompletion",
             self.native_value(Native::DisposableStackDisposeWithCompletion),
         )?;
         self.set_builtin_value_named(
             prototype,
-            "\0rqj:disposeAsyncWithCompletion",
+            "\0quench:disposeAsyncWithCompletion",
             self.native_value(Native::DisposableStackDisposeAsyncWithCompletion),
         )?;
         self.install_builtin_to_string_tag(prototype, "DisposableStack")?;

@@ -1,12 +1,16 @@
 mod wasm;
+mod wasm_exception;
+mod wasm_gc;
+mod wasm_host;
+mod wasm_table;
 use crate::Value;
 use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, Op, Operand, Register,
     ResidualProgram, WideInstruction,
 };
 use crate::heap::{
-    Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind, Native, Object,
-    ProxyKind, RootId, TypedArrayKind, WeakHandle,
+    CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
+    Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -46,7 +50,6 @@ mod collections;
 mod construction;
 mod data_view;
 mod date;
-mod local_time;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
@@ -77,6 +80,7 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
+mod local_time;
 mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
@@ -158,6 +162,8 @@ pub(super) struct Frame {
     program: ProgramId,
     function: u32,
     pc: usize,
+    // The current operation's lexical projection, independent of the PC
+    // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
     env: Value,
     this: Value,
@@ -233,19 +239,11 @@ struct GlobalLexicalState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
-    atom: Atom,
-    owner: Value,
-    owner_shape: u32,
     slot: u16,
-    depth: u16,
 }
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: u32::MAX,
-    atom: u32::MAX,
-    owner: Value::NULL,
-    owner_shape: u32::MAX,
     slot: 0,
-    depth: 0,
 };
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
@@ -261,14 +259,28 @@ struct MethodCache {
     shape: u32,
     atom: Atom,
     proto: Value,
-    guard: FieldCache,
+    callee: Value,
+    guard: MethodGuard,
     target: Option<CallTarget>,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MethodGuard {
+    owner: Value,
+    owner_shape: u32,
+    slot: u16,
+    depth: u16,
 }
 const METHOD_MEGAMORPHIC_LIMIT: usize = 8;
 struct MethodCacheSet {
-    site: u16,
+    site: usize,
     len: u8,
     entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
+}
+#[derive(Clone, Copy, Default)]
+struct ProgramCacheLayout {
+    field_base: usize,
+    method_base: usize,
+    object_base: usize,
 }
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 #[derive(Clone, Copy)]
@@ -413,11 +425,18 @@ struct InvalidatedMethod {
     target: CallTarget,
     reason: u8,
 }
+const EMPTY_METHOD_GUARD: MethodGuard = MethodGuard {
+    owner: Value::NULL,
+    owner_shape: u32::MAX,
+    slot: 0,
+    depth: 0,
+};
 const EMPTY_METHOD_CACHE: MethodCache = MethodCache {
     shape: u32::MAX,
     atom: u32::MAX,
     proto: Value::UNDEFINED,
-    guard: EMPTY_CACHE,
+    callee: Value::NULL,
+    guard: EMPTY_METHOD_GUARD,
     target: None,
 };
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -425,7 +444,6 @@ pub(super) struct PropertyAttributes {
     pub writable: bool,
     pub enumerable: bool,
     pub configurable: bool,
-
     pub accessor: bool,
     pub getter: Option<Value>,
     pub setter: Option<Value>,
@@ -505,6 +523,7 @@ pub(crate) struct Vm<H> {
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
     programs: ProgramStore,
+    program_cache_layouts: Vec<ProgramCacheLayout>,
     active_program: ProgramId,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
@@ -817,7 +836,7 @@ impl<H: Host> Vm<H> {
         }
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             self.report_memory("initialized");
         }
         let root = self.closure(program, 0, Value::NULL)?;
@@ -844,7 +863,7 @@ impl<H: Host> Vm<H> {
     fn report_execution(&mut self, program: &ResidualProgram) {
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             self.report_memory("complete");
         }
     }
@@ -894,7 +913,7 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         eprintln!(
-            "{{\"kind\":\"rqj-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
+            "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
@@ -911,6 +930,9 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+        self.initialize_shared(&Rc::new(program.clone()))
+    }
+    fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.heap.reset();
         self.natives.clear();
@@ -958,7 +980,10 @@ impl<H: Host> Vm<H> {
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
         self.function_values.clear();
-        self.programs.reset(program);
+        self.programs.reset(program.clone());
+        self.program_cache_layouts.clear();
+        self.program_cache_layouts
+            .push(ProgramCacheLayout::default());
         self.active_program = ProgramId::MAIN;
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
@@ -978,6 +1003,7 @@ impl<H: Host> Vm<H> {
         match constant {
             Constant::Number(v) => Value::number(*v),
             Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
             Constant::BigInt(v) => self.heap.alloc(Cell::BigInt(v.clone())),
@@ -999,6 +1025,7 @@ impl<H: Host> Vm<H> {
         self.intern_program_atoms(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
+        self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
@@ -1006,8 +1033,45 @@ impl<H: Host> Vm<H> {
         self.intern_program_atoms(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
+        self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
+    }
+    fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
+        debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        self.program_cache_layouts.push(ProgramCacheLayout {
+            field_base: self.field_caches.len(),
+            method_base: self.method_caches.len(),
+            object_base: self.object_shapes.len(),
+        });
+        self.field_caches.resize(
+            self.field_caches.len() + usize::from(program.cache_sites),
+            EMPTY_CACHE,
+        );
+        self.megamorphic_field_indices.resize(
+            self.megamorphic_field_indices.len() + usize::from(program.cache_sites),
+            NO_MEGAMORPHIC_FIELD,
+        );
+        self.method_caches.resize(
+            self.method_caches.len() + program.method_sites.len(),
+            [EMPTY_METHOD_CACHE; 2],
+        );
+        self.object_shapes.resize(
+            self.object_shapes.len() + program.object_sites.len(),
+            u32::MAX,
+        );
+    }
+    fn active_cache_layout(&self) -> ProgramCacheLayout {
+        self.program_cache_layouts[self.active_program.raw() as usize]
+    }
+    pub(super) fn field_cache_index(&self, site: u16) -> usize {
+        self.active_cache_layout().field_base + usize::from(site)
+    }
+    pub(super) fn method_cache_index(&self, site: usize) -> usize {
+        self.active_cache_layout().method_base + site
+    }
+    pub(super) fn object_cache_index(&self, site: usize) -> usize {
+        self.active_cache_layout().object_base + site
     }
     fn intern_program_atoms(&mut self, program: &ResidualProgram) {
         let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
@@ -1053,8 +1117,14 @@ impl<H: Host> Vm<H> {
                         vm.profile.call_target(0, args.len());
                         vm.call_native_guarded(p, native, this, args, callee)
                     }
-                    CallTarget::User(program_id, id, env) => {
-                        vm.profile.call_target(1, args.len());
+                    CallTarget::User(program_id, id, env)
+                    | CallTarget::NumericUser(program_id, id, env) => {
+                        let target_kind = if matches!(target, CallTarget::User(..)) {
+                            1
+                        } else {
+                            2
+                        };
+                        vm.profile.call_target(target_kind, args.len());
                         let program = vm.programs.get(program_id).ok_or_else(|| {
                             vm.type_error(p, "function belongs to an unavailable program".into())
                         })?;
@@ -1084,29 +1154,6 @@ impl<H: Host> Vm<H> {
                                 CallContext::user_function(id, callee),
                             )
                         };
-                        vm.active_program = active_program;
-                        vm.realm.globals = current_global;
-                        result
-                    }
-                    CallTarget::NumericUser(program_id, id, env) => {
-                        vm.profile.call_target(2, args.len());
-                        let program = vm.programs.get(program_id).ok_or_else(|| {
-                            vm.type_error(p, "function belongs to an unavailable program".into())
-                        })?;
-                        let active_program = std::mem::replace(&mut vm.active_program, program_id);
-                        let realm = match vm.heap.get(callee) {
-                            Some(Cell::Function { realm, .. }) => *realm,
-                            _ => vm.realm.globals,
-                        };
-                        let current_global = std::mem::replace(&mut vm.realm.globals, realm);
-                        let result = vm.call_user_numeric(
-                            &program,
-                            id,
-                            env,
-                            this,
-                            args,
-                            CallContext::user_function(id, callee),
-                        );
                         vm.active_program = active_program;
                         vm.realm.globals = current_global;
                         result

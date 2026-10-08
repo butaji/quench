@@ -59,7 +59,7 @@ fn collect(
 fn emit(census: &Census, functions: usize) {
     let bytes = census.total_registers * size_of::<crate::value::Value>();
     eprint!(
-        "{{\"kind\":\"rqj-register-census\",\"bucket_max\":[8,16,32,64,null],\"function_buckets\":{:?},\"functions\":{functions},\"analyzed_functions\":{},\"excluded_functions\":{},\"total_registers\":{},\"total_register_bytes\":{bytes},\"max_registers\":{},\"sum_max_live\":{},\"move_sites\":{},\"excluded\":[",
+        "{{\"kind\":\"quench-register-census\",\"bucket_max\":[8,16,32,64,null],\"function_buckets\":{:?},\"functions\":{functions},\"analyzed_functions\":{},\"excluded_functions\":{},\"total_registers\":{},\"total_register_bytes\":{bytes},\"max_registers\":{},\"sum_max_live\":{},\"move_sites\":{},\"excluded\":[",
         census.buckets,
         census.analyzed,
         census.excluded.len(),

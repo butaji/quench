@@ -2,7 +2,7 @@
   "schema": 2,
   "state": "input_sources_classified_capability_audit_pending",
   "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the curated upstream manifest. The framework-core profile is tagged in that manifest and remains a derived test selection, not a second inventory or proof of implementation. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
-  "source_head": "62109e265221b718a2b0c4680e057453d0f3941a",
+  "source_head": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
   "entries": [
     {
       "path": "tests/node-compat/stage-1005/readable-state.js",
@@ -8883,7 +8883,7 @@
     },
     {
       "path": "tests/node-compat/stage-2650/buffer-tostring-range.js",
-      "sha256": "9bd18b7ead2bf340b2cb56224aafc7295c1954fcc996f55fbd5c4e46d8b10329",
+      "sha256": "0a43b42919936854901671b82b7828cb933db218db59e521b4697b912ef656e3",
       "role": "assertion_case",
       "static_module_specifiers": [
         "assert"
@@ -14082,7 +14082,7 @@
     },
     {
       "path": "crates/quench-node-test/node-tests/parallel.txt",
-      "sha256": "d47175407ceaa053849a37287625808115efa03efa5c1e7a05672b579b25ce7e",
+      "sha256": "8280bae92b417f20d4abc7de45be676c44d54522ded86211c7d0a768295d8edf",
       "role": "inventory_manifest"
     },
     {
@@ -15897,7 +15897,19 @@
         "node:test",
         "node:timers",
         "node:timers/promises"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/test.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "require('node:timers/promises') is identical to require('node:timers').promises."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-timers-promises-scheduler.js",
@@ -15908,7 +15920,22 @@
         "assert",
         "timers",
         "timers/promises"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs",
+          "crates/quench-node/src/modules/event_loop.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/modules/process.rs",
+          "crates/quench-node/src/modules/assert.rs"
+        ],
+        "obligations": [
+          "scheduler.wait/yield ordering, pending and pre-aborted signal rejection, nonconstructible Scheduler, and invalid receiver errors."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-timers-api-refs.js",
@@ -23755,6 +23782,204 @@
       }
     },
     {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise.js",
+      "sha256": "e3695a1a51a7ef40ba41c25430877a2682e2059cf566d6641d05ba2795262a69",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "tracePromise start/end and asyncStart/asyncEnd ordering, callback receiver/arguments, fulfilled result payload and native Promise reaction behavior."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-error.js",
+      "sha256": "02b97c3c1d645bbddba39b041a0fcf08cd1d1b5ceedc1d3c95841bd7edc79ca9",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "tracePromise publishes the rejected Promise error, preserves the rejection, and orders the async lifecycle events."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-early-exit.js",
+      "sha256": "9a543a53172539c815f7efb7b952dfa3091bd41c3208c501770ef652ac862d7f",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "Subscribing after tracePromise starts does not publish any tracing events for that Promise."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-non-thenable.js",
+      "sha256": "f9c35fd66cff5fd5604d36b5deab6ecbbc45f85932b9464eaca3902cf4f4ba10",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs",
+          "crates/quench-node/src/modules/process/shared_vm.rs"
+        ],
+        "obligations": [
+          "tracePromise warns for a non-thenable, publishes only synchronous start/end, preserves callback receiver/arguments, and returns the original value."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-thenable.js",
+      "sha256": "902fb41b5c5c3b7ab30a5bc13cfbf4a01013b67e5e275c594e565b33ed7c33a3",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "tracePromise follows a generic thenable for tracing while returning the original thenable identity and retaining its custom method."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-promise-spoofed-constructor.js",
+      "sha256": "8a055ceb9edd800300c8c55d55e52f681ba9c0eaf80ba634691dd37e32bb65f8",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "diagnostics_channel",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/diagnostics_channel.rs",
+          "crates/quench-node/src/modules/diagnostics_channel/shared_vm.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "tracePromise preserves subclass Promise identity and custom methods when the instance constructor is spoofed to Promise."
+        ]
+      }
+    },
+    {
       "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-callback-run-stores.js",
       "sha256": "5e3fe6cd5b4054e9d997b4c5800cc4c8920a1a3ac4c18fa3b4121f4d2224cef2",
       "role": "assertion_case",
@@ -23830,6 +24055,35 @@
         ],
         "obligations": [
           "tracePromise preserves the first store across await and clears it after Promise settlement."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-async-local-storage-enter-with.js",
+      "sha256": "270f18f158138a227baa0c2e5e6a52b7c77be6d640fe493765992206b15b1a24",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "async_hooks"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/async_hooks.rs",
+          "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
+          "crates/quench-runtime/src/promise.rs",
+          "crates/quench-runtime-next/src/host.rs",
+          "crates/quench-runtime-next/src/vm/promise.rs",
+          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+        ],
+        "obligations": [
+          "AsyncLocalStorage.enterWith around await and Promise.then isolates callback stores and preserves the documented pre-await propagation behavior."
         ]
       }
     },
@@ -26991,6 +27245,107 @@
       }
     },
     {
+      "path": "tests/node/test/parallel/test-http-response-close.js",
+      "sha256": "f5c45788e577562b30eb4902dbe9e14b03d562b80c7a439a438d2bac0a6f059d",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "http",
+        "assert"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/http/shared_vm/client.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/net/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "HTTP response destroy emits close once and updates destroyed state; normal response remains open through end and closes afterward; server-side premature destroy reaches the client error path."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-head-response-has-no-body.js",
+      "sha256": "50c6dfeb5d150533e8e3225993de46b7aa1248414fbc0b85524d5745a1af5acb",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/http/shared_vm/client.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/net/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "A HEAD response using implicit chunked framing reaches the asserted response completion callback."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-head-response-has-no-body-end.js",
+      "sha256": "84d5d079a397e68882872c28fba802696e6ed848fe6b6c9d4dc706918b891c5e",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/http/shared_vm/client.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/net/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "A HEAD response whose server end() receives body bytes reaches the asserted response and end callbacks."
+        ]
+      }
+    },
+    {
+      "path": "tests/node/test/parallel/test-http-head-response-has-no-body-end-implicit-headers.js",
+      "sha256": "5a70cee3b33e47834c2092bb575cae8992d98412b87d370b0747c2f9db2c07a6",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/http/shared_vm/client.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/net/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js"
+        ],
+        "obligations": [
+          "A HEAD response with implicit headers and end() body bytes reaches the asserted response and end callbacks."
+        ]
+      }
+    },
+    {
       "path": "tests/node/test/parallel/test-stream-pipeline-async-iterator.js",
       "sha256": "1327f0087c9ed6b9640f66708ab2ba72305e94b8ac7c29ba7500654d3e59a4b4",
       "role": "assertion_case",
@@ -27082,6 +27437,38 @@
       }
     },
     {
+      "path": "tests/node/test/parallel/test-webstreams-pipeline.js",
+      "sha256": "42dad02dddd5acacf58f5bc00070661e4b579cf226b91bf9a32aaa1959063e24",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert",
+        "stream",
+        "stream/promises",
+        "stream/web",
+        "http"
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/host/shared_vm.rs",
+          "crates/quench-node/src/host/shared_vm/commonjs.rs",
+          "crates/quench-node/src/modules/stream/shared_vm.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/modules/http/shared_vm/client.rs",
+          "crates/quench-node/src/modules/http/shared_vm/operations.rs",
+          "crates/quench-node/src/modules/http/shared_vm/poll.rs",
+          "crates/quench-node/src/modules/http/shared_vm/protocol.rs",
+          "crates/quench-node/src/modules/http/shared_vm/state.rs",
+          "crates/quench-node/src/modules/net/shared_vm.rs"
+        ],
+        "obligations": [
+          "pipeline transfers values through Node and Web Readable, Writable and Transform stages, including async function and generator stages; completion and source errors reach the callback/promise. The HTTP cases pipe a Web ReadableStream to a ServerResponse and a Web ReadableStream through a TransformStream into a ClientRequest. Assertion groups at L23-L27, L36-L46, L64-L76, L87-L97, L124-L133, L146-L154, L172-L181, L193-L217, L222-L260, L270-L288, L298-L313, L322-L359, L366-L392, and L394-L421."
+        ]
+      }
+    },
+    {
       "path": "tests/node/test/parallel/test-queue-microtask.js",
       "sha256": "f7964c48b8e9e0bba7c51be3500355871219e2e4321c401e1cb523efc7888ac8",
       "role": "assertion_case",
@@ -27099,7 +27486,24 @@
         "assert",
         "stream",
         "stream/web"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Duplex callability/default modes and Node-to-Web conversion for byte/object streams, including the tested type alias warning."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-readable-to-web-byob.js",
@@ -27109,7 +27513,23 @@
         "../common",
         "assert",
         "stream"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs"
+        ],
+        "obligations": [
+          "Readable.toWeb rejects an invalid byte type and the byte reader fills successive 16-byte views in order."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-readable-strategy-option.js",
@@ -27119,7 +27539,24 @@
         "../common",
         "assert",
         "stream"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/modules/process.rs"
+        ],
+        "obligations": [
+          "Readable.toWeb carries ByteLengthQueuingStrategy/CountQueuingStrategy through pull demand and completion."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-readable-to-web-termination.js",
@@ -27130,7 +27567,25 @@
         "assert",
         "stream",
         "timers/promises"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/modules/timers.rs",
+          "crates/quench-node/src/modules/timers_promises.rs"
+        ],
+        "obligations": [
+          "Readable/Duplex Web conversion closes and cancels without throwing or hanging; timers/promises.setTimeout is only the timeout sentinel."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-readable-to-web-termination-byob.js",
@@ -27140,7 +27595,23 @@
         "../common",
         "assert",
         "stream"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs"
+        ],
+        "obligations": [
+          "Byte-mode Readable.toWeb closes/cancels, resolves a BYOB read as done, and invokes close/cancel once."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-readable-from-web-enqueue-then-close.js",
@@ -27150,7 +27621,23 @@
         "../common",
         "assert",
         "stream"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs"
+        ],
+        "obligations": [
+          "Readable.fromWeb and Duplex.fromWeb deliver the queued byte chunk before Node data/end."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-stream-toWeb-allows-server-response.js",
@@ -27193,7 +27680,26 @@
         "assert",
         "stream",
         "stream/web"
-      ]
+      ],
+      "implementation": {
+        "status": "included",
+        "owners": [
+          "crates/quench-node/src/modules/require.rs",
+          "crates/quench-node/src/registry.rs",
+          "crates/quench-node/src/dispatch.rs",
+          "crates/quench-node/src/dispatch_handlers.rs",
+          "crates/quench-node/src/modules/stream.rs",
+          "crates/quench-node/src/modules/stream_prelude.js",
+          "crates/quench-node/src/polyfills/bootstrap/dispatch.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams.rs",
+          "crates/quench-node/src/modules/event_target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/target.rs",
+          "crates/quench-node/src/polyfills/bootstrap/web_streams_require.rs"
+        ],
+        "obligations": [
+          "stream.addAbortSignal/finished propagate abort through Web readable/writable streams, readers, writers, tees and async iteration."
+        ]
+      }
     },
     {
       "path": "tests/node/test/parallel/test-webstreams-finished.js",
@@ -27237,6 +27743,95 @@
           "WritableStream delivers 2,000 asynchronous sink writes in FIFO order; readable queue ordering, custom size accounting and BYOB partial reads retain their public behavior."
         ]
       }
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-silent.js",
+      "sha256": "2230cd0175b548512f69b35d53ee3f4c0cc0db2cf3e6a02d71f0fd64eb537351",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-silent-no-hook.js",
+      "sha256": "83e0a95b89c4c95a68ababc6fdaed67463069dbe938902427c44d9d07451d1aa",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-default.js",
+      "sha256": "14f58a8f39c34e7cc86fe36fc811f8409725667a0ff3001a162e4482e20822c4",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "../common/countdown",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-throw-handler.js",
+      "sha256": "0097fead088d551eb758ecf06c5567ce97d3e7acec2475b441632b4a49371d9f",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "../common/countdown",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-error.js",
+      "sha256": "03ecef3790c2ccf3a9dc7a6c66d7c025832c0f23c3f523703a4e772006098910",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "../common/countdown",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-warn-no-hook.js",
+      "sha256": "a0276f994206d3a807c427f0acde4c7f67f35ee0e3c18131b30dbf2ca8d9a833",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promise-unhandled-warn.js",
+      "sha256": "f7eee847135c4788e459312b85446b76523d4c78c819db8cb3047b080e68e3f4",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promises-warning-on-unhandled-rejection.js",
+      "sha256": "c7813e8d7b7ac148a72f323907ecd8d4e3d557c39611e26b4f11890a33316647",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common",
+        "assert"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promises-unhandled-symbol-rejections.js",
+      "sha256": "c92bae53025d3f7d1a740ea9bf060d252599f0e39bb58eee66cacd783de995e4",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common"
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-promises-unhandled-proxy-rejections.js",
+      "sha256": "4dd5753f5166da68b21670e444ca42a8d3231da77916205f187e6393adae4c89",
+      "role": "assertion_case",
+      "static_module_specifiers": [
+        "../common"
+      ]
     }
   ],
   "sources": [

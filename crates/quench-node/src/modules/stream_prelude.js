@@ -7,6 +7,8 @@
   const EventEmitter = deps.events.EventEmitter;
   const StringDecoder = deps.string_decoder.StringDecoder;
   const nextTick = process.nextTick;
+  const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
+  const autoDestroyErrorListeners = new WeakMap();
 
   // Stream internals must not call the public `listenerCount` method: Node
   // permits user code to replace that method, while pipe/flow bookkeeping
@@ -28,6 +30,23 @@
     }
     stream._events = events;
     stream._eventsCount = Object.keys(events).length;
+  }
+
+  function attachStreamEmitterOwner(stream) {
+    Object.defineProperty(stream._emitter, STREAM_OWNER, {
+      configurable: true,
+      value: stream,
+    });
+  }
+
+  function installAutoDestroyErrorListener(stream, enabled) {
+    if (!enabled || autoDestroyErrorListeners.has(stream)) return;
+    const onError = () => {
+      if (!stream.destroyed) stream.destroy();
+    };
+    onError.__quenchInternal = true;
+    autoDestroyErrorListeners.set(stream, onError);
+    stream._emitter.on("error", onError);
   }
 
   function preserveListenerArity(wrapper, listener) {
@@ -328,6 +347,18 @@
 
   // ---- Readable ----
 
+  function codedTypeError(message, code) {
+    const error = new TypeError(message);
+    error.code = code;
+    Object.defineProperty(error, "toString", {
+      configurable: true,
+      value() {
+        return `${this.name} [${this.code}]: ${this.message}`;
+      },
+    });
+    return error;
+  }
+
   function invalidIterableError(iterable) {
     const received = iterable === null || iterable === undefined
       ? `Received ${iterable}`
@@ -340,15 +371,7 @@
       : `Received type ${typeof iterable} (${String(iterable)})`;
     const message =
       `The "iterable" argument must be an instance of Iterable. ${received}`;
-    const error = new TypeError(message);
-    error.code = "ERR_INVALID_ARG_TYPE";
-    Object.defineProperty(error, "toString", {
-      configurable: true,
-      value() {
-        return `${this.name} [${this.code}]: ${this.message}`;
-      },
-    });
-    return error;
+    return codedTypeError(message, "ERR_INVALID_ARG_TYPE");
   }
 
   const READABLE_BUFFER_COMPACT_THRESHOLD = 1024;
@@ -423,6 +446,7 @@
 
   function initReadable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    attachStreamEmitterOwner(stream);
     stream._listenerWrappers ||= [];
     syncEventsView(stream);
     stream._readableState = {
@@ -459,6 +483,7 @@
       autoDestroy: options.autoDestroy !== false,
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
     };
+    installAutoDestroyErrorListener(stream, stream._readableState.autoDestroy);
     stream.readable = options.readable !== false;
     stream.readableDidRead = false;
     stream.destroyed = false;
@@ -475,13 +500,6 @@
       };
       if (options.signal.aborted) abort();
       else options.signal.addEventListener("abort", abort, { once: true });
-    }
-    if (options.autoDestroy !== false) {
-      const autoDestroy = () => {
-        if (!stream.destroyed) stream.destroy();
-      };
-      autoDestroy.__quenchInternal = true;
-      stream._emitter.on("error", autoDestroy);
     }
   }
 
@@ -2420,6 +2438,7 @@
 
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
+    attachStreamEmitterOwner(stream);
     stream._listenerWrappers ||= [];
     syncEventsView(stream);
     stream._writableState = {
@@ -2447,6 +2466,7 @@
       autoDestroy: options.autoDestroy !== false,
       destroyed: false,
     };
+    installAutoDestroyErrorListener(stream, stream._writableState.autoDestroy);
     stream._writableState.getBuffer = function () {
       return this.pending.slice();
     };
@@ -2465,11 +2485,6 @@
       };
       if (options.signal.aborted) abort();
       else options.signal.addEventListener("abort", abort, { once: true });
-    }
-    if (options.autoDestroy !== false) {
-      stream._emitter.on("error", () => {
-        if (!stream.destroyed) stream.destroy();
-      });
     }
   }
 
@@ -3318,8 +3333,7 @@
       if (done) return;
       if (error) {
         const notify = callback;
-        done = true;
-        removeAbort();
+        cleanup();
         notify.call(stream, error);
         return;
       }
@@ -3327,8 +3341,7 @@
       if (side === "writable") writableDone = true;
       if (readableDone && writableDone) {
         const notify = callback;
-        done = true;
-        removeAbort();
+        cleanup();
         notify.call(stream);
       }
     };
@@ -3355,109 +3368,354 @@
     return cleanup;
   }
 
+  const pipelineWebReadableOptions = { objectMode: true };
+  const pipelineWebWritableOptions = {
+    writableObjectMode: true,
+    decodeStrings: false,
+  };
+  const pipelineWebTransformOptions = {
+    ...pipelineWebWritableOptions,
+    readableObjectMode: true,
+  };
+  function pipelineWebStage(stage) {
+    if (
+      !stage || isReadableNodeStream(stage) || isWritableNodeStream(stage)
+    ) return stage;
+    if (
+      typeof stage.pipeThrough === "function" &&
+      typeof stage.getReader === "function" &&
+      typeof stage.cancel === "function"
+    ) return Readable.fromWeb(stage, pipelineWebReadableOptions);
+    if (typeof stage.getWriter === "function") {
+      return DuplexCompat.fromWeb(stage, pipelineWebWritableOptions);
+    }
+    if (
+      typeof stage.readable === "object" &&
+      typeof stage.writable === "object"
+    ) return DuplexCompat.fromWeb(stage, pipelineWebTransformOptions);
+    return stage;
+  }
+
+  function pipelineFunctionInput(stream) {
+    if (
+      typeof stream?.[Symbol.asyncIterator] === "function" ||
+      typeof stream?.[Symbol.iterator] === "function"
+    ) return stream;
+    const iterator = Readable.prototype[Symbol.asyncIterator];
+    if (typeof iterator === "function" && stream?.readable !== false) {
+      return iterator.call(stream);
+    }
+    throw new TypeError("The pipeline function input must be iterable");
+  }
+
+  function writeTerminalPipelineChunk(stream, chunk) {
+    if (stream.write(chunk)) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        stream.removeListener("drain", onDrain);
+        stream.removeListener("error", onError);
+        stream.removeListener("close", onClose);
+      };
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = (error) => {
+        cleanup();
+        reject(error);
+      };
+      const onClose = () => {
+        cleanup();
+        reject(prematureCloseError());
+      };
+      stream.once("drain", onDrain);
+      stream.once("error", onError);
+      stream.once("close", onClose);
+    });
+  }
+
   function pipeline(...args) {
-    const suppliedArgs = args.length;
     const callback = typeof args[args.length - 1] === "function"
       ? args.pop()
       : null;
-    const streams = args.map((stage, index) => {
-      if (
-        typeof stage === "function" &&
-        stage.constructor?.name === "GeneratorFunction"
-      ) {
-        const error = new TypeError(
-          "The pipeline function must return an AsyncIterable",
+    if (callback === null) {
+      throw codedTypeError(
+        'The "callback" argument must be of type function',
+        "ERR_INVALID_ARG_TYPE",
+      );
+    }
+    if (args.length === 1 && Array.isArray(args[0])) {
+      args = [...args[0]];
+    }
+    const terminalFunction = typeof args[args.length - 1] === "function"
+      ? args.pop()
+      : null;
+    if (args.length + (terminalFunction ? 1 : 0) < 2) {
+      throw codedTypeError(
+        "The pipeline requires at least two streams",
+        "ERR_MISSING_ARGS",
+      );
+    }
+    const terminalController = new AbortController();
+    const streamUses = [];
+    const pipeEdges = [];
+    const useStream = (stream) => {
+      const use = { stream, readable: false, writable: false };
+      streamUses.push(use);
+      return use;
+    };
+    const markReadable = (use) => {
+      const stream = use.stream;
+      if (!isReadableNodeStream(stream)) {
+        throw codedTypeError(
+          'The "streams" argument must contain readable stream instances',
+          "ERR_INVALID_ARG_TYPE",
         );
-        error.code = "ERR_INVALID_RETURN_VALUE";
-        throw error;
       }
-      if (
-        index === 0 && stage && typeof stage.pipe !== "function" &&
-        (typeof stage[Symbol.iterator] === "function" ||
-          typeof stage[Symbol.asyncIterator] === "function")
-      ) {
-        return Readable.from(stage);
-      }
-      return typeof stage === "function" ? compose(stage) : stage;
-    });
-    if (streams.length === 0) {
-      const error = new TypeError(
-        suppliedArgs === 0
-          ? "The streams argument must be an array or at least two streams"
-          : "The pipeline requires at least two streams",
-      );
-      error.code = suppliedArgs === 0
-        ? "ERR_INVALID_ARG_TYPE"
-        : "ERR_MISSING_ARGS";
-      throw error;
-    }
-    if (streams.length < 2) {
-      const error = new TypeError("The pipeline requires at least two streams");
-      error.code = "ERR_MISSING_ARGS";
-      throw error;
-    }
-    if (
-      !streams[0] || typeof streams[0].pipe !== "function" ||
-      typeof streams[0].on !== "function"
-    ) {
-      throw new TypeError(
-        'The "streams" argument must contain stream instances',
-      );
-    }
-    for (const stream of streams.slice(1)) {
+      use.readable = true;
+      return use;
+    };
+    const markWritable = (stream) => {
       if (
         !stream || typeof stream.on !== "function" ||
         typeof stream.write !== "function" || typeof stream.end !== "function"
       ) {
-        throw new TypeError(
-          'The "streams" argument must contain stream instances',
+        throw codedTypeError(
+          'The "streams" argument must contain writable stream instances',
+          "ERR_INVALID_ARG_TYPE",
+        );
+      }
+      if (stream.closed || stream.destroyed) {
+        const error = new Error("Cannot pipe to a closed or destroyed stream");
+        error.code = "ERR_STREAM_UNABLE_TO_PIPE";
+        throw error;
+      }
+      const use = useStream(stream);
+      use.writable = true;
+      return use;
+    };
+    let current;
+    for (const [index, original] of args.entries()) {
+      let stage = original;
+      if (index === 0) {
+        if (typeof stage === "function") {
+          stage = stage({ signal: terminalController.signal });
+        }
+        stage = pipelineWebStage(stage);
+        if (
+          !isReadableNodeStream(stage) && stage &&
+          (typeof stage[Symbol.asyncIterator] === "function" ||
+            typeof stage[Symbol.iterator] === "function")
+        ) {
+          stage = Readable.from(stage);
+        }
+        if (!isReadableNodeStream(stage)) {
+          throw codedTypeError(
+            "The pipeline function must return an Iterable, AsyncIterable or Stream",
+            "ERR_INVALID_RETURN_VALUE",
+          );
+        }
+        current = markReadable(useStream(stage));
+        continue;
+      }
+      if (typeof stage === "function") {
+        markReadable(current);
+        const input = pipelineFunctionInput(current.stream);
+        stage = stage(input, { signal: terminalController.signal });
+        stage = pipelineWebStage(stage);
+        if (!stage || typeof stage[Symbol.asyncIterator] !== "function") {
+          throw codedTypeError(
+            "The pipeline function must return an AsyncIterable",
+            "ERR_INVALID_RETURN_VALUE",
+          );
+        }
+        stage = isReadableNodeStream(stage) ? stage : Readable.from(stage);
+        current = markReadable(useStream(stage));
+        continue;
+      }
+
+      stage = pipelineWebStage(stage);
+      markReadable(current);
+      const destination = markWritable(stage);
+      pipeEdges.push([current, destination]);
+      current = destination;
+    }
+    const streams = streamUses.map((use) => use.stream);
+    const completionCount = streams.length + (terminalFunction ? 1 : 0);
+    if (completionCount < 2) {
+      throw codedTypeError(
+        "The pipeline requires at least two streams",
+        "ERR_MISSING_ARGS",
+      );
+    }
+    let terminalResult;
+    let terminalThen;
+    if (terminalFunction) {
+      markReadable(current);
+      const input = pipelineFunctionInput(current.stream);
+      terminalResult = pipelineWebStage(terminalFunction(input, {
+        signal: terminalController.signal,
+      }));
+      terminalThen = terminalResult?.then;
+      if (
+        typeof terminalThen !== "function" &&
+        (!terminalResult ||
+          typeof terminalResult[Symbol.asyncIterator] !== "function")
+      ) {
+        throw codedTypeError(
+          "The pipeline function must return an AsyncIterable or Promise",
+          "ERR_INVALID_RETURN_VALUE",
         );
       }
     }
-    let remaining = streams.length;
+    let remaining = completionCount;
     let pipelineError;
     let hasPipelineError = false;
-    const completed = streams.map(() => false);
+    let terminalValue;
+    let terminalSettled = false;
+    const terminalOutput = terminalFunction
+      ? new PassThrough({ objectMode: true })
+      : null;
+    const onTerminalOutputError = () => {};
+    terminalOutput?.on("error", onTerminalOutputError);
+    const completed = Array(completionCount).fill(false);
     const cleanups = [];
-    const lastReadable = streams[streams.length - 1].readable === true;
+    const edgeCleanups = [];
+    const lastReadable = !terminalFunction &&
+      isReadable(streams[streams.length - 1]);
+    const handlePipelineError = (error) => {
+      if (
+        !hasPipelineError ||
+        pipelineError?.code === "ERR_STREAM_PREMATURE_CLOSE" ||
+        pipelineError?.name === "AbortError"
+      ) {
+        pipelineError = error;
+      }
+      hasPipelineError = true;
+      terminalController?.abort();
+      if (terminalOutput && !terminalOutput.destroyed) {
+        terminalOutput.destroy(pipelineError);
+      }
+      for (let other = 0; other < streams.length; other += 1) {
+        const stream = streams[other];
+        if (
+          !completed[other] && !stream.destroyed &&
+          typeof stream.destroy === "function"
+        ) {
+          stream.destroy(pipelineError);
+        }
+      }
+    };
     const complete = (index, error) => {
       if (completed[index]) return;
       completed[index] = true;
-      if (error !== undefined && error !== null && !hasPipelineError) {
-        hasPipelineError = true;
-        pipelineError = error;
-        for (let other = 0; other < streams.length; other += 1) {
-          const stream = streams[other];
-          if (
-            !completed[other] && !stream.destroyed &&
-            typeof stream.destroy === "function"
-          ) {
-            stream.destroy(pipelineError);
-          }
-        }
+      if (error !== undefined && error !== null) {
+        handlePipelineError(error);
       }
       remaining -= 1;
       if (remaining === 0) {
         if (lastReadable) cleanups[cleanups.length - 1]?.();
-        if (callback) callback(hasPipelineError ? pipelineError : undefined);
+        for (const cleanup of edgeCleanups) cleanup();
+        terminalController?.abort();
+        terminalOutput?.removeListener("error", onTerminalOutputError);
+        if (callback) {
+          callback(
+            hasPipelineError ? pipelineError : undefined,
+            hasPipelineError ? undefined : terminalValue,
+          );
+        }
       }
     };
     for (let index = 0; index < streams.length; index += 1) {
       const stream = streams[index];
+      const use = streamUses[index];
       cleanups.push(finished(stream, {
-        readable: index < streams.length - 1,
-        writable: index > 0,
+        readable: use.readable,
+        writable: use.writable,
       }, (error) => complete(index, error)));
+      const onError = (error) => {
+        if (
+          error && error.name !== "AbortError" &&
+          error.code !== "ERR_STREAM_PREMATURE_CLOSE"
+        ) {
+          handlePipelineError(error);
+        }
+      };
+      stream.on("error", onError);
+      if (lastReadable && index === streams.length - 1) {
+        cleanups.push(() => stream.removeListener("error", onError));
+      }
+    }
+    if (terminalFunction) {
+      const finishTerminal = (error, value) => {
+        if (terminalSettled) return;
+        terminalSettled = true;
+        if (error) {
+          nextTick(() => complete(streams.length, error));
+          return;
+        }
+        try {
+          terminalValue = value;
+          if (value !== undefined && value !== null) {
+            terminalOutput.write(value);
+          }
+          terminalOutput.end();
+          nextTick(() => complete(streams.length));
+        } catch (failure) {
+          nextTick(() => complete(streams.length, failure));
+        }
+      };
+      if (typeof terminalThen === "function") {
+        Reflect.apply(terminalThen, terminalResult, [
+          (value) => finishTerminal(undefined, value),
+          (error) => finishTerminal(error),
+        ]);
+      } else {
+        (async () => {
+          try {
+            for await (const chunk of terminalResult) {
+              await writeTerminalPipelineChunk(terminalOutput, chunk);
+            }
+            terminalOutput.end();
+            nextTick(() => complete(streams.length));
+          } catch (error) {
+            nextTick(() => complete(streams.length, error));
+          }
+        })();
+      }
     }
     // Register completion observers before connecting the pipe.  A finite
     // iterable may emit `end` synchronously during the first read; attaching
     // `finished` afterwards loses that terminal edge and leaves the callback
     // pending forever.
-    for (let i = 0; i + 1 < streams.length; i += 1) {
-      streams[i].pipe(streams[i + 1]);
+    if (!hasPipelineError) {
+      for (const [source, destination] of pipeEdges) {
+        let ended = false;
+        const onDestinationClose = () => {
+          if (ended) return;
+          const index = streamUses.findIndex((use, candidate) =>
+            !completed[candidate] && (use === source || use === destination)
+          );
+          if (index >= 0) complete(index, prematureCloseError());
+        };
+        destination.stream.on("close", onDestinationClose);
+        edgeCleanups.push(() =>
+          destination.stream.removeListener("close", onDestinationClose)
+        );
+        const endDestination = () => {
+          if (ended) return;
+          ended = true;
+          destination.stream.end();
+        };
+        source.stream.pipe(destination.stream, { end: false });
+        if (source.stream._readableState?.endEmitted) {
+          nextTick(endDestination);
+        } else {
+          source.stream.once("end", endDestination);
+        }
+      }
     }
-    const last = streams[streams.length - 1];
-    return last;
+    return terminalOutput || current.stream;
   }
 
   const composeWritable = (stage) =>
@@ -4023,7 +4281,7 @@
             else writable.write(chunk, encoding, callback);
           } else if (webWritable) {
             const writer = webWritable.getWriter();
-            writer.write(chunk).then(() => {
+            writer.ready.then(() => writer.write(chunk)).then(() => {
               writer.releaseLock();
               callback?.();
             }, (error) => {

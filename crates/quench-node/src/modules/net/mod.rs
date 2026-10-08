@@ -160,9 +160,6 @@ pub struct NetState {
     /// Bootstrap PerformanceObserver bridge captured while a VM context is
     /// active; the event-loop pump may run outside that context.
     pub performance_record: Option<Value>,
-    /// Nonblocking TCP projection used by the shared VM; legacy sockets keep
-    /// their existing engine-owned records above during the staged cutover.
-    pub(crate) shared_transport: shared_vm::Transport,
 }
 
 /// Buffered values and pending consumers for one server/socket iterator.
@@ -209,7 +206,6 @@ impl NetState {
             async_streams: HashMap::new(),
             socket_prototype: None,
             performance_record: None,
-            shared_transport: shared_vm::Transport::new(),
         }
     }
 

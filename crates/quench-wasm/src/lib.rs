@@ -1,14 +1,15 @@
 //! WebAssembly format: parse, validate, and wast scoring.
 //!
 //! This crate owns the binary/text format and the spec-suite harness.
-//! `quench-runtime` is the VM: load, instantiate, interpret.
+//! Quench's shared VM owns execution; this crate owns Wasm decoding and WAST scoring.
 
 use std::fmt;
 
 mod decode;
 mod legacy_try;
 mod shared;
-mod wast_exec;
+mod shared_wast;
+mod wast_protocol;
 mod wast_script;
 
 pub use decode::{
@@ -67,7 +68,7 @@ impl Engine {
 
     /// Score every directive in a wast script using features implied by `filename`.
     pub fn run_wast(&self, filename: &str, source: &str) -> WastReport {
-        run_wast(filename, source)
+        shared_wast::run_wast(filename, source)
     }
 }
 

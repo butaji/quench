@@ -70,7 +70,9 @@ impl<'a> ModuleRecordBuilder<'a> {
                         .filter_map(|export_entry| export_entry.export_name.default_export_span()),
                 );
             if default_exports.clone().count() > 1 {
-                errors.push(diagnostics::duplicate_default_export(default_exports.collect()));
+                errors.push(diagnostics::duplicate_default_export(
+                    default_exports.collect(),
+                ));
             }
         }
 
@@ -107,7 +109,8 @@ impl<'a> ModuleRecordBuilder<'a> {
 
     fn add_export_binding(&mut self, name: Str<'a>, span: Span) {
         if let Some(old_node) = self.module_record.exported_bindings.insert(name, span) {
-            self.exported_bindings_duplicated.push(NameSpan::new(name, old_node));
+            self.exported_bindings_duplicated
+                .push(NameSpan::new(name, old_node));
         }
     }
 
@@ -189,9 +192,10 @@ impl<'a> ModuleRecordBuilder<'a> {
     }
 
     pub fn visit_import_expression(&mut self, e: &ImportExpression<'a>) {
-        self.module_record
-            .dynamic_imports
-            .push(DynamicImport { span: e.span, module_request: e.source.span() });
+        self.module_record.dynamic_imports.push(DynamicImport {
+            span: e.span,
+            module_request: e.source.span(),
+        });
     }
 
     pub fn visit_import_meta(&mut self, span: Span) {
@@ -255,9 +259,15 @@ impl<'a> ModuleRecordBuilder<'a> {
                 .exported
                 .as_ref()
                 .map_or(ExportImportName::AllButDefault, |_| ExportImportName::All),
-            export_name: decl.exported.as_ref().map_or(ExportExportName::Null, |exported_name| {
-                ExportExportName::Name(NameSpan::new(exported_name.name(), exported_name.span()))
-            }),
+            export_name: decl
+                .exported
+                .as_ref()
+                .map_or(ExportExportName::Null, |exported_name| {
+                    ExportExportName::Name(NameSpan::new(
+                        exported_name.name(),
+                        exported_name.span(),
+                    ))
+                }),
             local_name: ExportLocalName::default(),
             is_type: decl.export_kind.is_type(),
         };
@@ -689,8 +699,10 @@ mod module_record_tests {
     #[test]
     fn indirect_export_entries() {
         let allocator = Allocator::default();
-        let module_record =
-            build(&allocator, "import { x } from 'mod';export { x };export * as ns from 'mod';");
+        let module_record = build(
+            &allocator,
+            "import { x } from 'mod';export { x };export * as ns from 'mod';",
+        );
         assert_eq!(module_record.indirect_export_entries.len(), 2);
         assert_eq!(
             module_record.indirect_export_entries[0],
@@ -733,7 +745,10 @@ mod module_record_tests {
         let module_record = build(&allocator, "import('foo')");
         assert_eq!(module_record.dynamic_imports.len(), 1);
         assert_eq!(module_record.dynamic_imports[0].span, Span::new(0, 13));
-        assert_eq!(module_record.dynamic_imports[0].module_request, Span::new(7, 12));
+        assert_eq!(
+            module_record.dynamic_imports[0].module_request,
+            Span::new(7, 12)
+        );
     }
 
     #[test]

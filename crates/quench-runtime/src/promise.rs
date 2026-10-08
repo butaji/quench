@@ -75,21 +75,23 @@ fn capability_executor_function(id: u64, target: Builtin) -> Value {
             ("configurable".to_string(), Value::Boolean(true)),
         ])))
     };
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(target),
-        receiver: Value::Number(id as f64),
-        arguments: Vec::new(),
-        properties: RefCell::new(vec![
-            ("length".to_string(), length.clone()),
-            (
-                crate::builtins::descriptor_key("length"),
-                descriptor(length),
-            ),
-            ("name".to_string(), name.clone()),
-            (crate::builtins::descriptor_key("name"), descriptor(name)),
-        ]),
-    }))
+    Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm: crate::vm::current_context_or_default().realm(),
+            target: Value::Builtin(target),
+            receiver: Value::Number(id as f64),
+            arguments: Vec::new(),
+            properties: RefCell::new(vec![
+                ("length".to_string(), length.clone()),
+                (
+                    crate::builtins::descriptor_key("length"),
+                    descriptor(length),
+                ),
+                ("name".to_string(), name.clone()),
+                (crate::builtins::descriptor_key("name"), descriptor(name)),
+            ]),
+        },
+    ))
 }
 
 pub(crate) fn new_promise_capability(
@@ -656,23 +658,25 @@ fn bound_settler(target: Builtin, promise: &Rc<PromiseData>, length: f64) -> Val
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
     ])));
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(target),
-        receiver: Value::Promise(Rc::clone(promise)),
-        arguments: Vec::new(),
-        properties: RefCell::new(vec![
-            ("length".to_string(), length),
-            (crate::builtins::descriptor_key("length"), descriptor),
-            ("name".to_string(), Value::String(name)),
-            (crate::builtins::descriptor_key("name"), name_descriptor),
-            (
-                "\0realm".to_string(),
-                crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-                    .unwrap_or(Value::Undefined),
-            ),
-        ]),
-    }))
+    Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm: crate::vm::current_context_or_default().realm(),
+            target: Value::Builtin(target),
+            receiver: Value::Promise(Rc::clone(promise)),
+            arguments: Vec::new(),
+            properties: RefCell::new(vec![
+                ("length".to_string(), length),
+                (crate::builtins::descriptor_key("length"), descriptor),
+                ("name".to_string(), Value::String(name)),
+                (crate::builtins::descriptor_key("name"), name_descriptor),
+                (
+                    "\0realm".to_string(),
+                    crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+                        .unwrap_or(Value::Undefined),
+                ),
+            ]),
+        },
+    ))
 }
 
 pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {

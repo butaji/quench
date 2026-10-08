@@ -1,10 +1,11 @@
 use super::activation::ContinuationId;
 use super::module::{ModuleEvaluationStack, ModuleOutcome, ModulePhase, ModuleRecord};
 use super::*;
+use crate::HostExecutionContext;
 use std::collections::VecDeque;
 
-const PROMISE_CAPABILITY_RESOLVE: &str = "\0rqj:promise-capability-resolve";
-const PROMISE_CAPABILITY_REJECT: &str = "\0rqj:promise-capability-reject";
+const PROMISE_CAPABILITY_RESOLVE: &str = "\0quench:promise-capability-resolve";
+const PROMISE_CAPABILITY_REJECT: &str = "\0quench:promise-capability-reject";
 use crate::ModuleSource;
 use rustc_hash::FxHashSet;
 
@@ -947,19 +948,42 @@ pub(super) struct PromiseReaction {
     pub(super) on_fulfilled: Value,
     pub(super) on_rejected: Value,
     pub(super) next: Value,
+    pub(super) execution_context: Option<HostExecutionContext>,
 }
-#[derive(Clone, Copy, Debug)]
-pub(super) struct FinallyReaction {
-    pub(super) handler: Value,
-    pub(super) next: Value,
-}
-
 #[derive(Clone, Debug)]
 pub(super) struct PromiseRecord {
     pub(super) state: PromiseState,
     pub(super) result: Value,
     pub(super) reactions: Vec<PromiseReaction>,
-    pub(super) finally_reactions: Vec<FinallyReaction>,
+    pub(super) rejection: PromiseRejectionState,
+    pub(super) rejection_id: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PromiseRejectionState {
+    Unobserved,
+    Observed,
+    AwaitingReport,
+    Reporting,
+    Reported,
+    HandledReported,
+    Handled,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum RejectionNotification {
+    Unhandled(Value),
+    Handled(Value),
+}
+
+impl PromiseRecord {
+    pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
+        std::iter::once(self.result).chain(
+            self.reactions
+                .iter()
+                .flat_map(|reaction| [reaction.on_fulfilled, reaction.on_rejected, reaction.next]),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -968,6 +992,7 @@ pub(super) struct PromiseJob {
     pub(super) next: Value,
     pub(super) rejected: bool,
     pub(super) value: Value,
+    pub(super) execution_context: Option<HostExecutionContext>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -975,22 +1000,7 @@ pub(super) struct ThenableJob {
     pub(super) then: Value,
     pub(super) thenable: Value,
     pub(super) promise: Value,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct FinallyJob {
-    pub(super) handler: Value,
-    pub(super) next: Value,
-    pub(super) rejected: bool,
-    pub(super) value: Value,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(super) struct FinallyContinuationJob {
-    pub(super) next: Value,
-    pub(super) original_rejected: bool,
-    pub(super) cleanup_rejected: bool,
-    pub(super) value: Value,
+    pub(super) execution_context: Option<HostExecutionContext>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1068,10 +1078,10 @@ pub(super) struct DynamicImportJob {
 #[derive(Default)]
 pub(super) struct PromiseRuntime {
     pub(super) records: FxHashMap<Value, PromiseRecord>,
+    pub(super) rejection_notifications: VecDeque<RejectionNotification>,
+    pub(super) last_rejection_id: u64,
     pub(super) jobs: FxHashMap<Value, PromiseJob>,
     pub(super) thenable_jobs: FxHashMap<Value, ThenableJob>,
-    pub(super) finally_jobs: FxHashMap<Value, FinallyJob>,
-    pub(super) finally_continuation_jobs: FxHashMap<Value, FinallyContinuationJob>,
     pub(super) finally_handler_callbacks: FxHashMap<Value, FinallyHandlerCallback>,
     pub(super) finally_continuation_callbacks: FxHashMap<Value, FinallyContinuationCallback>,
     pub(super) aggregates: FxHashMap<Value, AggregateRecord>,
@@ -1084,6 +1094,46 @@ pub(super) struct PromiseRuntime {
     pub(super) module_sources: FxHashMap<std::path::PathBuf, Value>,
     pub(super) waiting_static_modules: Vec<ModuleSource>,
     pub(super) active_native: Vec<super::activation::NativeActivation>,
+}
+
+impl PromiseRuntime {
+    pub(super) fn owned_edges(&self) -> impl Iterator<Item = (Value, Value)> + '_ {
+        macro_rules! edges {
+            ($table:expr, |$record:ident| $roots:expr) => {
+                $table.iter().flat_map(|(owner, $record)| {
+                    ($roots).into_iter().map(move |root| (*owner, root))
+                })
+            };
+        }
+        edges!(self.records, |record| record.roots())
+            .chain(edges!(self.jobs, |job| [job.handler, job.next, job.value]))
+            .chain(edges!(self.thenable_jobs, |job| [
+                job.then,
+                job.thenable,
+                job.promise
+            ]))
+            .chain(edges!(self.finally_handler_callbacks, |callback| [
+                callback.handler,
+                callback.constructor
+            ]))
+            .chain(edges!(self.finally_continuation_callbacks, |callback| [
+                callback.original
+            ]))
+            .chain(edges!(self.aggregates, |record| {
+                [record.output, record.resolve, record.reject]
+                    .into_iter()
+                    .chain(record.values.iter().copied())
+                    .chain(record.keys.iter().flatten().copied())
+            }))
+            .chain(edges!(self.aggregate_jobs, |job| [job.aggregate]))
+            .chain(edges!(self.reaction_capabilities, |capability| [
+                capability.0,
+                capability.1
+            ]))
+            .chain(edges!(self.async_resume_jobs, |job| {
+                [Some(job.promise), job.generator].into_iter().flatten()
+            }))
+    }
 }
 
 impl<H: Host> Vm<H> {
@@ -1154,10 +1204,7 @@ impl<H: Host> Vm<H> {
         let promise_resolver = !env.is_null()
             && matches!(
                 kind,
-                Native::PromiseResolve
-                    | Native::PromiseReject
-                    | Native::PromiseAggregateJob
-                    | Native::PromiseFinallyJob
+                Native::PromiseResolve | Native::PromiseReject | Native::PromiseAggregateJob
             );
         let anonymous_capability_executor =
             !env.is_null() && kind == Native::PromiseCapabilityExecutor;
@@ -1299,7 +1346,8 @@ impl<H: Host> Vm<H> {
                 state: PromiseState::Pending,
                 result: Value::UNDEFINED,
                 reactions: vec![],
-                finally_reactions: vec![],
+                rejection: PromiseRejectionState::Unobserved,
+                rejection_id: None,
             },
         );
         promise
@@ -1531,11 +1579,6 @@ impl<H: Host> Vm<H> {
                 self.promise_reaction_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
             Native::PromiseThenableJob => self.promise_thenable_job(p),
-            Native::PromiseFinallyJob => self.promise_finally_job(p, args),
-            Native::PromiseFinallyContinuationJob => self.promise_finally_continuation_job(
-                p,
-                args.first().copied().unwrap_or(Value::UNDEFINED),
-            ),
             Native::PromiseAggregateJob => {
                 self.promise_aggregate_job(p, args.first().copied().unwrap_or(Value::UNDEFINED))
             }
@@ -2483,47 +2526,56 @@ impl<H: Host> Vm<H> {
         allow_evaluation: bool,
     ) -> Result<(), JsError> {
         let jobs = std::mem::take(&mut self.realm.promise.dynamic_import_jobs);
-        for job in jobs {
-            if let Some(outcome) = self
-                .realm
-                .promise
-                .modules
-                .get(&job.cache_key)
-                .map(|record| record.outcome)
-                && self.settle_dynamic_import_waiters(p, &job.promises, outcome)?
-            {
-                continue;
-            }
-            if !allow_evaluation {
-                self.realm.promise.dynamic_import_jobs.push(job);
-                continue;
-            }
-            let mut active = ModuleEvaluationStack::default();
-            if let Err(error) = self.evaluate_static_module_source(p, job.module, &mut active) {
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                for promise in job.promises {
-                    self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+        // Taking the batch transfers its roots out of the persistent queue.
+        // Keep every waiter alive, including jobs not yet evaluated, until it
+        // is settled or transferred back to a queue/module record.
+        let waiters: Vec<_> = jobs
+            .iter()
+            .flat_map(|job| job.promises.iter().copied())
+            .collect();
+        self.with_call_roots(waiters, |vm| {
+            for job in jobs {
+                if let Some(outcome) = vm
+                    .realm
+                    .promise
+                    .modules
+                    .get(&job.cache_key)
+                    .map(|record| record.outcome)
+                    && vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                {
+                    continue;
                 }
-                continue;
-            }
-            let outcome = self
-                .realm
-                .promise
-                .modules
-                .get(&job.cache_key)
-                .map(|record| record.outcome)
-                .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
-            if !self.settle_dynamic_import_waiters(p, &job.promises, outcome)?
-                && let Some(record) = self.realm.promise.modules.get_mut(&job.cache_key)
-            {
-                for promise in job.promises {
-                    record.add_waiter(promise);
+                if !allow_evaluation {
+                    vm.realm.promise.dynamic_import_jobs.push(job);
+                    continue;
+                }
+                let mut active = ModuleEvaluationStack::default();
+                if let Err(error) = vm.evaluate_static_module_source(p, job.module, &mut active) {
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
+                    for promise in job.promises {
+                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    }
+                    continue;
+                }
+                let outcome = vm
+                    .realm
+                    .promise
+                    .modules
+                    .get(&job.cache_key)
+                    .map(|record| record.outcome)
+                    .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
+                if !vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                    && let Some(record) = vm.realm.promise.modules.get_mut(&job.cache_key)
+                {
+                    for promise in job.promises {
+                        record.add_waiter(promise);
+                    }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn settle_dynamic_import_waiters(
@@ -2553,9 +2605,9 @@ impl<H: Host> Vm<H> {
         let root_key = module_cache_key(&cycle_root.to_string_lossy(), "javascript");
         match self.realm.promise.modules.get(&root_key)?.outcome {
             ModuleOutcome::Errored(reason) => Some(reason),
-            ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) | ModuleOutcome::Evaluated(_) => {
-                None
-            }
+            ModuleOutcome::Pending(_)
+            | ModuleOutcome::Deferred(_)
+            | ModuleOutcome::Evaluated(_) => None,
         }
     }
 
@@ -2837,6 +2889,7 @@ impl<H: Host> Vm<H> {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // Source bindings are linked before any dependency can execute.
         for (request, module) in requests.iter().zip(&resolved) {
             if request.phase == crate::bytecode::ModuleRequestPhase::Source {
                 self.module_source_value(p, module)?;
@@ -3077,9 +3130,9 @@ impl<H: Host> Vm<H> {
         }
         let namespace = self.evaluate_static_synthetic_module(p, module, module_type)?;
         let default_atom = self.intern_atom("default");
-        let default_value = self.own_property(namespace, default_atom).ok_or_else(|| {
-            self.type_error(p, "synthetic module has no default export".into())
-        })?;
+        let default_value = self
+            .own_property(namespace, default_atom)
+            .ok_or_else(|| self.type_error(p, "synthetic module has no default export".into()))?;
         let deferred = self.module_namespace_with_tag(
             vec![("default".into(), default_value)],
             "Deferred Module",
@@ -3510,7 +3563,7 @@ impl<H: Host> Vm<H> {
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
-            })?;
+                })?;
             let dependency_key = module_cache_key(&dependency.name, "javascript");
             let module_identity =
                 crate::module_identity::normalize(std::path::Path::new(&module.name));
@@ -4506,6 +4559,7 @@ impl<H: Host> Vm<H> {
         match constant {
             Constant::Number(value) => Value::number(value),
             Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
             Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
             Constant::StringUnits(value) => {
                 self.heap.alloc(Cell::String(JsString::from_units(&value)))
@@ -4572,6 +4626,7 @@ impl<H: Host> Vm<H> {
                 then,
                 thenable: value,
                 promise,
+                execution_context: self.host.capture_job_context(),
             },
         );
         self.enqueue_job(job, vec![]);
@@ -4593,17 +4648,21 @@ impl<H: Host> Vm<H> {
         on_fulfilled: Value,
         on_rejected: Value,
     ) -> Result<Value, JsError> {
-        if !self.realm.promise.records.contains_key(&promise) {
-            return Err(self.type_error(p, "Promise.prototype method called on non-Promise".into()));
-        }
-        let constructor = self.promise_species_constructor(p, promise)?;
-        let (next, resolve, reject) = self.new_promise_capability(p, constructor)?;
-        self.realm
-            .promise
-            .reaction_capabilities
-            .insert(next, (resolve, reject));
-        self.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
-        Ok(next)
+        self.with_call_roots([promise, on_fulfilled, on_rejected], |vm| {
+            if !vm.realm.promise.records.contains_key(&promise) {
+                return Err(
+                    vm.type_error(p, "Promise.prototype method called on non-Promise".into())
+                );
+            }
+            let constructor = vm.promise_species_constructor(p, promise)?;
+            let (next, resolve, reject) = vm.new_promise_capability(p, constructor)?;
+            vm.realm
+                .promise
+                .reaction_capabilities
+                .insert(next, (resolve, reject));
+            vm.perform_promise_then(p, promise, on_fulfilled, on_rejected, next);
+            Ok(next)
+        })
     }
 
     pub(super) fn promise_then_intrinsic(
@@ -4634,6 +4693,7 @@ impl<H: Host> Vm<H> {
         on_rejected: Value,
         next: Value,
     ) {
+        self.observe_promise_rejection(promise);
         let reaction = PromiseReaction {
             on_fulfilled: if self.is_function(on_fulfilled) {
                 on_fulfilled
@@ -4646,6 +4706,7 @@ impl<H: Host> Vm<H> {
                 Value::UNDEFINED
             },
             next,
+            execution_context: self.host.capture_job_context(),
         };
         // Species selection and capability construction may settle the source.
         // Read its authoritative state only when installing this reaction.

@@ -10,6 +10,7 @@ use wait_timeout::ChildExt;
 use crate::NodeOutcome;
 
 pub const DEFAULT_CASE_TIMEOUT_SECS: u64 = 30;
+pub const NODE_PARALLEL_DIR: &str = "tests/node/test/parallel";
 const WORKER_OPTION: &str = "--case-worker";
 
 macro_rules! case_results {
@@ -107,6 +108,24 @@ pub fn observe_parallel_case(
         .map_err(|error| format!("read {}: {error}", fixture.display()))?;
     let metadata = crate::fixture_metadata::fixture_metadata(&source);
     observe_case_with_environment(executable, fixture, timeout, &metadata.env, true)
+}
+
+/// Apply the harness boundary selected by the inventory's fixture source.
+pub fn observe_inventory_case(
+    executable: &Path,
+    fixture: &Path,
+    repository: &Path,
+    timeout: Duration,
+) -> Result<CaseObservation, String> {
+    if is_node_parallel_fixture(repository, fixture) {
+        observe_parallel_case(executable, fixture, timeout)
+    } else {
+        observe_case(executable, fixture, timeout)
+    }
+}
+
+pub fn is_node_parallel_fixture(repository: &Path, fixture: &Path) -> bool {
+    fixture.starts_with(repository.join(NODE_PARALLEL_DIR))
 }
 
 fn observe_case_with_environment(

@@ -1,0 +1,1102 @@
+{
+  "schema": 1,
+  "task": "19",
+  "kind": "node_api_family_ownership",
+  "reviewed_on": "2026-10-05",
+  "source_revision": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
+  "source_state": "dirty; case and owner hashes bind the review to current bytes",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "8e4687ced061c85bc6bc37aa609891e6f0c30fecb23f86a679c3e4240ceecae8",
+    "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+    "candidate_assertions": 80,
+    "candidate_observations": 1
+  },
+  "projection": {
+    "family": "Crypto",
+    "direct_specifier_hits": 64,
+    "direct_assertion_hits": 63,
+    "direct_observation_hits": 1,
+    "common_crypto_helper_hits": 45,
+    "direct_helper_overlap": 28,
+    "unique_candidate_paths": 81,
+    "newly_included_assertions": 45,
+    "pending_other_owner_paths": 33,
+    "pending_composite_paths": 1,
+    "already_included_buffer_assertions": 2,
+    "membership_frozen": false
+  },
+  "membership_rule": "Assertions determine the owning API; direct crypto specifiers and common/crypto helper calls are locators only. Include implemented behavior regardless of pass/fail; keep other-owner and composite cases pending until their owners review them.",
+  "active_route": {
+    "legacy_summary": "NodeRunner wraps CJS through modules/require.rs; crypto and node:crypto exports route from registry.rs through dispatch.rs to modules/crypto.rs, crypto_dh.rs and crypto_cipher.rs. X509 internal exports are assembled through require.rs and dispatch.rs. WebCrypto globals use host.rs, modules/webcrypto.rs and webcrypto_global.rs; TLS/HTTPS overlap uses modules/tls.rs and modules/http.rs.",
+    "shared_vm_gap": "The shared NodeHost does not yet register the full Crypto, WebCrypto, TLS or HTTPS surfaces; their migration remains in task 21.",
+    "warning_gap": "The crypto API cases that expect DEP0181/DEP0183/DEP0204/DEP0206/DEP0179 remain included because the capability exists; warning emission is a correctness obligation owned by crypto/process behavior."
+  },
+  "owner_sources_sha256": {
+    "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
+    "crates/quench-node/src/host.rs": "43a1dd8166b4e609f35a5639a79b18d684d6d7a55e2639ab9fbb0aec84dabe17",
+    "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
+    "crates/quench-node/src/modules/crypto.rs": "76456f0131b8241aa01f23884ed74ef0446c3f8355d5f10c747644754e92a568",
+    "crates/quench-node/src/modules/crypto_cipher.rs": "1c799da81d8be1c62f52f128391843c0084c01f9582345496bf76a8fdf922f13",
+    "crates/quench-node/src/modules/crypto_dh.rs": "b6564d88f27bd91fe582468b572102b95febc4df28b0ba46d1ed50c9a1884f5a",
+    "crates/quench-node/src/modules/http.rs": "193ed21a2a38920d8f86979dd69f1645c776425ddff282dbb7a4ea4d0b1e2c87",
+    "crates/quench-node/src/modules/process.rs": "1ae3ac711e4a36818f7f4cb34bf5a37ae978456c323ad2dde68c1258ba1988b8",
+    "crates/quench-node/src/modules/require.rs": "edabc2dae189ae01575c09dec41a16100d0051bff2842a1e503ed6a6225b5225",
+    "crates/quench-node/src/modules/tls.rs": "023be348bf3833c16eb67dc915df6f052142b39b58b772613783cdb5059e3f0b",
+    "crates/quench-node/src/modules/webcrypto.rs": "4080bc88bb7c37df52747450dcea8162fe8a04f901ebd115381cc9209501c0cb",
+    "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs": "ffcc579d3d63984ac28e8aacdb4364a0e93ae47e80b88c7f71b62951d38c31f7",
+    "crates/quench-node/src/registry.rs": "41a90d1ce79bfb694ae1108d138648ffd5c64c4878ded5bb2ae91982b8f226c7"
+  },
+  "selected_cases": [
+    {
+      "path": "tests/node-compat/stage-1474/crypto-rsa-pss-digest-aliases.js",
+      "role": "assertion_case",
+      "sha256": "72229aa6de7dd1f6be37badd8b60a80277f31bf9cb4130d2cbf31169b1334147",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "crypto.hash accepts sha384/sha512 digest aliases and returns the expected 96/128 hex characters."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2535/crypto-random-size-truncation.js",
+      "role": "assertion_case",
+      "sha256": "dc49e2bee85d626e53e870b1096f332a70cf9cdf0ee4f3661493ce26d3a73f28",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "randomBytes truncates fractional size and rejects NaN with ERR_OUT_OF_RANGE."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2550/crypto-hash-order.js",
+      "role": "assertion_case",
+      "sha256": "cd0b8ece2982588ecbbb86ab527b12de42fb95572d73c36a3ae77d8d5bf6bf51",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "crypto.getHashes returns the exact expected ordering."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2551/crypto-rsa-small-key-error.js",
+      "role": "assertion_case",
+      "sha256": "3b166d60161fe1ebadf70d45dd1f8cb7c52aa90613db1a646cbfbc5cf477eacc",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "createSign/update/sign on a small RSA key exposes the asserted OpenSSL error fields."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2552/crypto-hmac-sha512-block.js",
+      "role": "assertion_case",
+      "sha256": "7f3723a1b681841b78b0883a987fccf0159f13b276d2ea10c736ea930489ce2a",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "HMAC-SHA512 digest matches the fixture vector."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2553/crypto-sha512-and-invalid-hmac.js",
+      "role": "assertion_case",
+      "sha256": "1ea5ad19e128f818c60e8ccb3c6d30bd7845517ebe2d56cff6e8c0731b759a8e",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "SHA-512 digest matches the vector and invalid HMAC digest reports the expected error."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-2564/hkdf-invalid-digest-code.js",
+      "role": "assertion_case",
+      "sha256": "0c571af15c5e7fbf4e2ed512c87bac096eccec90839b07332129be229a03eab7",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Synchronous and callback HKDF reject an invalid digest with the expected error code."
+      ]
+    },
+    {
+      "path": "tests/node-compat/stage-487/crypto-random-bytes-validation.js",
+      "role": "assertion_case",
+      "sha256": "d94f77716aaeb4be9e96df8528da36de75d5bfcbb7556a37919c4214968fae45",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "randomBytes validates negative/fractional sizes and callback arguments."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-assert-deep.js",
+      "role": "assertion_case",
+      "sha256": "014faa09f6a322a6b10e150fc151f0fc7ed266d855907afe8321e2e9bd237cd9",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Crypto values are comparison inputs; assertions belong to assert deep-equality semantics."
+    },
+    {
+      "path": "tests/node/test/parallel/test-assert-partial-deep-equal.js",
+      "role": "assertion_case",
+      "sha256": "3ccc75c936ea7a7019f0260cc1fb351d488ccebde1c4d0a6bce1dde7eba570d6",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Crypto values are comparison inputs; assertions belong to assert partial deep-equality semantics."
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-alloc.js",
+      "role": "assertion_case",
+      "sha256": "ba7f216531cb67bace11f8f46ec180550bd6a7179cf0763ddf139394e8546da4",
+      "family_disposition": "already_included_buffer",
+      "global_status": "included",
+      "reason": "Crypto is only digest/payload setup; the asserted behavior is already owned by the Buffer family audit."
+    },
+    {
+      "path": "tests/node/test/parallel/test-buffer-concat.js",
+      "role": "assertion_case",
+      "sha256": "807c2845212484a3549dcaafab98d9f8105a521aea30a244f368e668de994847",
+      "family_disposition": "already_included_buffer",
+      "global_status": "included",
+      "reason": "Crypto is only digest/payload setup; the asserted behavior is already owned by the Buffer family audit."
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-argon2-unsupported.js",
+      "role": "assertion_case",
+      "sha256": "234fbfb5dbef6a3fd3e28e11b51356add9b75dc89fb561be80189a079a85b8eb",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "The implemented argon2 entry point returns the asserted unsupported-operation error code."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-authenticated.js",
+      "role": "assertion_case",
+      "sha256": "fb8854894390b2bc686c863ed400a02d6420dff3ba1af7c5b8886d7011129f4d",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_cipher.rs"
+      ],
+      "obligations": [
+        "Authenticated cipher text/tag behavior, authentication failure and state transitions match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-certificate.js",
+      "role": "assertion_case",
+      "sha256": "e6db728ad831963bfecb6c1e421b5bac73f537a222b5c6e0c690cea950d64e83",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Certificate SPKAC verification/export results and invalid-input behavior match the assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-cipheriv-decipheriv.js",
+      "role": "assertion_case",
+      "sha256": "8f5691057127bab3397f2a61141e9613c65f744e609a7d95199d6ea9c8907756",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_cipher.rs"
+      ],
+      "obligations": [
+        "Cipheriv/Decipheriv identities, update/final transitions and errors match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-classes.js",
+      "role": "assertion_case",
+      "sha256": "36c5a8878f843241ce61fcfdb52306e9b024fb6caa0c7992a182e7959f6d606f",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs",
+        "crates/quench-node/src/modules/crypto_cipher.rs"
+      ],
+      "obligations": [
+        "Hash, Hmac, cipher, sign/verify and DH factory results carry the asserted class identities."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-default-shake-lengths-oneshot.js",
+      "role": "assertion_case",
+      "sha256": "132cf8a4419f7ef647dc304d42967ada1466619328ec54700dabc95433a60f08",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "One-shot SHAKE hashing uses the asserted default output length and validation."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-default-shake-lengths.js",
+      "role": "assertion_case",
+      "sha256": "4fba7f0b6cd4c8dc4ca488cb24179b636eae77b28e656638e29fbf8883d0b35f",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "SHAKE createHash defaults output length correctly and rejects invalid copy use."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dep0181.js",
+      "role": "assertion_case",
+      "sha256": "4c9d5287406536110a188841bcb3a975d45839e5e9408834d2dd573e5ac1e5d2",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "Hmac invocation without new preserves constructor identity and emits the expected DEP0181 warning."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dep0183.js",
+      "role": "assertion_case",
+      "sha256": "46554c8da5b2e34b5e83c84a8eac70db71fa457854697e59cd2f9a5b6ee6fab0",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "setEngine accepts the asserted error variants and emits the expected DEP0183 warning."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dep0204.js",
+      "role": "assertion_case",
+      "sha256": "f6af086bbecd99c33e28124a273ef1c1c6bd0730f14dd4b898ab27b0e8cbfc6a",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/process.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/webcrypto.rs",
+        "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+      ],
+      "obligations": [
+        "KeyObject.from rejects nonextractable/tampered CryptoKey values and converts extractable keys; DEP0204 warning is observable."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dep0206.js",
+      "role": "assertion_case",
+      "sha256": "61d7eb22a9b44ad757ac99ede0da87818bf5bd20fd762f1901fd9a19390c5a62",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "Repeated Hmac.digest calls preserve the asserted output/state transition and DEP0206 warning."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dh-curves.js",
+      "role": "assertion_case",
+      "sha256": "c2b6cd0eb251bcf03412a37fc80edfab396b36411264975ddfc96e5eb488bcb9",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs"
+      ],
+      "obligations": [
+        "DH/ECDH curve selection, verifyError, encodings, secrets and invalid inputs match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dh-errors.js",
+      "role": "assertion_case",
+      "sha256": "1a83beb3a6be9f60135d4eabac0a33197d7c1a344fe010cca3e9602e1c6abc94",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs"
+      ],
+      "obligations": [
+        "DiffieHellman constructor and method argument validation expose the asserted errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dh-group-setters.js",
+      "role": "assertion_case",
+      "sha256": "9f0de82c1e1b58c4dbda4a2820c035cd381e1a466755a1eb54a658f607fd91be",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs"
+      ],
+      "obligations": [
+        "Named DH group identity and unsupported setter behavior match the assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dh-shared.js",
+      "role": "assertion_case",
+      "sha256": "5ecaf30f89065c2e3c64bfba61ebbf919ca097126189fd0d9899ad2ac891d510",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs"
+      ],
+      "obligations": [
+        "Named group peers derive the same shared secret."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-dh.js",
+      "role": "assertion_case",
+      "sha256": "637fb872534724d0a9947bab2b7e02956cb2b94ba501be45b13b5a3d99fa5655",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_dh.rs"
+      ],
+      "obligations": [
+        "DiffieHellman key generation, prime/generator, verifyError and secret exchange match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-encoding-validation-error.js",
+      "role": "assertion_case",
+      "sha256": "2ce285d49e98d1cc5f66b288c3b2c257a812bcebbf49c57c08d8e022919664dd",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/crypto_cipher.rs"
+      ],
+      "obligations": [
+        "Cipher and random input encoding validation returns the asserted errors."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-hash.js",
+      "role": "assertion_case",
+      "sha256": "89787c4d7b6d2b128d352f11433aad746e4a834a6180e1936ee3e10c80999cb1",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/process.rs"
+      ],
+      "obligations": [
+        "Hash construction, streaming/copy/digest encodings, SHAKE behavior and errors match assertions; DEP0179 warning remains an obligation."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-hkdf.js",
+      "role": "assertion_case",
+      "sha256": "e0d9931f1e9121cf4cd506bfe8df04c564cdf3dae65038ca3645bf893d74e4f4",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Synchronous/callback HKDF derivation and argument validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-hmac.js",
+      "role": "assertion_case",
+      "sha256": "8a01c7a901bd14ac192e57e7c3c670336003eadd37849086b1f6d6ed43c3d773",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "HMAC digest vectors, encodings and input validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-keygen.js",
+      "role": "assertion_case",
+      "sha256": "00e2a24a266dd38fc97489ecb4d4864b6c72b0b03e9634d507cd1bb8bc1846dc",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Synchronous/asynchronous key-pair option validation and callback behavior match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-pbkdf2.js",
+      "role": "assertion_case",
+      "sha256": "84b8f700ba8b7dc75ce739efa8a3f2efe82fb3c1b5d157467f7f7126901fa5e0",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Synchronous/callback PBKDF2 derivation and argument validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-randomfillsync-regression.js",
+      "role": "assertion_case",
+      "sha256": "66f62b26cf31f7407f11240600a89742a5e53e636e90a86d7b16e9e23ec17cda",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "randomFillSync mutates the target bytes as asserted."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-randomuuid.js",
+      "role": "assertion_case",
+      "sha256": "a7b7c2a1ba1791276e1b7d911b3084d8f5fc82f72b88671a13cf8643583a9f2e",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "UUID v4 format, variant, uniqueness and option validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-randomuuidv7.js",
+      "role": "assertion_case",
+      "sha256": "14b7685606ce7dd272c2d3261fc7bd71dba5f0cd14b6ed9028fb79fa334df851",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "UUID v7 version, monotonic timestamp, uniqueness and option validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-rsa-dsa.js",
+      "role": "assertion_case",
+      "sha256": "a17f98a3b4c56cda0ba1a1f5094369572075ea8c3d39cd0a49e1d3ab0a3f86cc",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "RSA/DSA key parsing, encryption/decryption and signing/verification match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-rsa-oaep-mgf1.js",
+      "role": "assertion_case",
+      "sha256": "8fdba725c6a693d60a220aa421f7e962b58546b690001f6aa014a50598779179",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "RSA OAEP/MGF1 option handling, round trips and validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-rsa-pss-default-salt-length.js",
+      "role": "assertion_case",
+      "sha256": "ae263a8d52a74e6b7c5769702466e42421568137c8e8b2dd73135b048657c7c8",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "RSA-PSS default salt length is consistent across hash, sign and verify."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-scrypt.js",
+      "role": "assertion_case",
+      "sha256": "8c918f3f0fa7c47c599ed7276eda3d6971e123318f0ca9d23c174d3236b210f0",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Synchronous/callback scrypt derivation and option validation match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-sign-verify.js",
+      "role": "assertion_case",
+      "sha256": "b3f5b2dcb49b15663bbade042cd439b7802a5d88a4fb6f405be80695f20d94f8",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "Sign/Verify construction, stream and direct signature/key/error behavior match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-verify-failure.js",
+      "role": "assertion_case",
+      "sha256": "b288011b7753da4230cb744399515574a82e359b5a4875c6ef2464068f44dbbb",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/tls.rs"
+      ],
+      "obligations": [
+        "Invalid createVerify input preserves the asserted TLS connection behavior."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-crypto-x509.js",
+      "role": "assertion_case",
+      "sha256": "05c04c0b73a46f91860b02a6712a51344ab03a0331f59c63ac1121f480287bfe",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs"
+      ],
+      "obligations": [
+        "X509 parsing, fields, fingerprints, legacy view, identity and check methods match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-agent-additional-options.js",
+      "role": "assertion_case",
+      "sha256": "126588de89b9ae510d3fded26278c51da17a6954f4ac183e5675359fd49f6d0b",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe HTTPS agent options; crypto values are setup inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-agent-pfx-object-array-reuse.js",
+      "role": "assertion_case",
+      "sha256": "5d2c68270f7226c54145fbe678fc2a453aff527a8bc40934617a1f4e52165d79",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies fixture helpers; assertions observe HTTPS PFX reuse."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-agent-session-eviction.js",
+      "role": "assertion_case",
+      "sha256": "37e959aad2e9f197b4f6c40bb4c1e4689ce18a970b5356e45a2735a4a519ae2b",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe HTTPS agent session eviction; crypto values are setup inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-agent-session-reuse.js",
+      "role": "assertion_case",
+      "sha256": "0e145bf5b8fcd07f71b31955cfcfe3324d1a0cdbec49d22656bd25613a940ab8",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe HTTPS agent session reuse; crypto values are setup inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-foafssl.js",
+      "role": "assertion_case",
+      "sha256": "e3af148e5c66738dc78acc5ae8207d5ddf3d046737a0bfe3142cc73608d98a9d",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies opensslCli fixture setup; assertions observe HTTPS peer-certificate fields."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-pfx.js",
+      "role": "assertion_case",
+      "sha256": "cd01b750999478c9183731d937f2c8a26af7a4939fb34e7d61e014282f5e8a82",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies fixture helpers; assertions observe HTTPS PFX validation/authentication."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-resume-after-renew.js",
+      "role": "observation_case",
+      "sha256": "d73a9f88f01f2d4860d75b1aaf9d0d2b3a27ea02327e0f56c4a87b7bb0a3158f",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "The observation compares HTTPS resume-after-renew traces; common/crypto provides only certificate setup, so classify under HTTPS/TLS and require a matched local-Node trace."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-selfsigned-no-keycertsign-no-crash.js",
+      "role": "assertion_case",
+      "sha256": "1952e185a960228c9cb977ef3da2b0ea8f71efabc25c081d833817ee5f39ded2",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe TLS certificate handling; crypto supplies fixture inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-https-snicallback-override.js",
+      "role": "assertion_case",
+      "sha256": "3354bb3c02e0ed24f19e5776c375a408917e39e620170aa3e8b48604b980bdec",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/tls.rs",
+        "crates/quench-node/src/modules/http.rs"
+      ],
+      "obligations": [
+        "X509 parsing/fingerprint behavior remains correct across HTTPS SNI selection."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-process-env-allowed-flags-are-documented.js",
+      "role": "assertion_case",
+      "sha256": "e6894be0200b060312315b3b4aa23e955df44712d4c73f649e52904a3b9050dc",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe process flags/documentation."
+    },
+    {
+      "path": "tests/node/test/parallel/test-process-versions.js",
+      "role": "assertion_case",
+      "sha256": "03a52c4fd68a07d734f13546b1d02b4d270e8386617fbc14ca90d3670e055489",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe process.versions."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-alpn-server-client.js",
+      "role": "assertion_case",
+      "sha256": "5346bba8d9fc38db6250f005d7d4939b861215b4879a7a3842a777d7117fca1b",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies certificates/gates; assertions observe TLS ALPN negotiation."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-cert-ext-encoding.js",
+      "role": "assertion_case",
+      "sha256": "715de8b7264d92321f5b242c6ac6d1eefa6eafe40a030019afe0442579a274c6",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies certificate setup; assertions observe TLS certificate-extension encoding."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-cipher-list.js",
+      "role": "assertion_case",
+      "sha256": "c3b7659807137ace7e492d6eea60bf776d6dd4384fbf830c0ca5f52ab159dbd1",
+      "family_disposition": "pending_composite_owner",
+      "global_status": "pending",
+      "owners": [
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/child_process.rs",
+        "crates/quench-node/src/modules/tls.rs"
+      ],
+      "reason": "The assertions combine absent crypto.constants.defaultCoreCipherList/defaultCipherList with --tls-cipher-list and child execution; TLS/child-process owners must finish the case review before global membership changes."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-client-auth.js",
+      "role": "assertion_case",
+      "sha256": "343d1ab259a0963147c55bef08cd7de1158f4ce751d57f4127431407d7766f4f",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies keys/certificates; assertions observe TLS client authentication."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-client-cert-resumption.js",
+      "role": "assertion_case",
+      "sha256": "b9dd5c304c271a1e63bb3d4228848e1ddba831105f87898f6b54d68562a5560f",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe TLS client-certificate resumption; crypto values are setup inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-ecdh.js",
+      "role": "assertion_case",
+      "sha256": "57eee8719cb0640a0c5718adc113439f3a27fe670f40525e834bb01cd0f0c90e",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies opensslCli setup; assertions observe TLS ECDH negotiation."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-empty-sni-context.js",
+      "role": "assertion_case",
+      "sha256": "75b6bff01560a345b6fe260f1098f6f915d19d5d3558e80e3cea858dd0b44c8f",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies certificates; assertions observe TLS SNI error behavior."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-env-extra-ca-with-options.js",
+      "role": "assertion_case",
+      "sha256": "23a6458801ff7b45fda9561a5c4c3da5b2da391fb23f16489bbdfc2a8a4a31ed",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies CA fixtures; assertions observe TLS CA options."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-getcertificate-x509.js",
+      "role": "assertion_case",
+      "sha256": "7f105c40622a11b4381da35cbd9f214b4f2377e4502f8f5de0ed4dd78a1df099",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/modules/tls.rs"
+      ],
+      "obligations": [
+        "TLS peer certificate is an X509Certificate with the asserted issuer and serial identity."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-getprotocol.js",
+      "role": "assertion_case",
+      "sha256": "03485be3bf78f01801bf3e11ac91e825a92eeeba1f9e2d6e43221e1ce5b621fb",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies handshake setup; assertions observe the negotiated TLS protocol."
+    },
+    {
+      "path": "tests/node/test/parallel/test-tls-ticket.js",
+      "role": "assertion_case",
+      "sha256": "70937f375610260ae543321de90d13d6be2e2af216f9fcd8c3124e44a82f74a3",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe TLS ticket behavior; crypto values are setup inputs."
+    },
+    {
+      "path": "tests/node/test/parallel/test-util-types.js",
+      "role": "assertion_case",
+      "sha256": "f3c00531e5cfd35f14bcc83ff15af97ede19c858e0be4cb0e422228c76b64a0d",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Crypto values are samples; assertions belong to util.types predicates."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-constructors.js",
+      "role": "assertion_case",
+      "sha256": "61581966b8ded304679836befd3bb8848d4e5c30ec64d0737b895bad5e2c4edc",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe global Crypto/CryptoKey/SubtleCrypto constructors."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-derivebits.js",
+      "role": "assertion_case",
+      "sha256": "6545c5a258467c5914c6371b6271c5bb047e30f834778f52f8bfa2aad73e5bf5",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe SubtleCrypto deriveBits."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-derivekey.js",
+      "role": "assertion_case",
+      "sha256": "14c23004d5835d994ecb70181a4c6311c542e736cbafe7c1664f3170265408ce",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies feature/key helpers; assertions observe SubtleCrypto deriveKey."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-digest.js",
+      "role": "assertion_case",
+      "sha256": "7565aab3c4a5e6b36c1f7725d62f7a3ddfdad07064a536d75b9299293f33dcfe",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/webcrypto.rs",
+        "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+      ],
+      "obligations": [
+        "Legacy createHash output equals subtle.digest output for the asserted algorithms."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-encrypt-decrypt-aes.js",
+      "role": "assertion_case",
+      "sha256": "bb17f692a258aec302eaee7f0f21264067a5c84242864d8d9b9147c047d06723",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe global SubtleCrypto AES behavior; Crypto getFips is only a gate."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-encrypt-decrypt-chacha20-poly1305.js",
+      "role": "assertion_case",
+      "sha256": "2d519b9361d2d82d66353ddc237e5fdf8092630241cddd1258b1e95d83bddb35",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe SubtleCrypto ChaCha20-Poly1305."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-encrypt-decrypt.js",
+      "role": "assertion_case",
+      "sha256": "b494e3ba5d9ac836fecc8bf5e9a85083ee5837964d999522bffe59446c7d535b",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe global SubtleCrypto encryption/decryption; Crypto getFips is only a gate."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-export-import-ec.js",
+      "role": "assertion_case",
+      "sha256": "01abbdd96563f47d3eec9bd53bc8ee69054dba1edd74be3b27ca166fd08c728e",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Crypto constructors only prepare KeyObject inputs; assertions observe SubtleCrypto EC import/export."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-export-import-rsa.js",
+      "role": "assertion_case",
+      "sha256": "63fe9bdeca437e05da31530390f3983d3270e5acdb733f2a990f0da1403ac7d0",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Crypto constructors only prepare KeyObject inputs; assertions observe SubtleCrypto RSA import/export."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-export-import.js",
+      "role": "assertion_case",
+      "sha256": "35fffbe9eb2c52f108bd0de27ffc4a861f761746fde1a0f65892ac8b08830e05",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/webcrypto.rs",
+        "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+      ],
+      "obligations": [
+        "KeyObject.toCryptoKey/export interoperability with subtle import matches assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-keygen.js",
+      "role": "assertion_case",
+      "sha256": "53d4fb08a9a199df81f01bef0a59b3ef2ea45bc30d9518e400d18d9f84564ae1",
+      "family_disposition": "included_crypto",
+      "global_status": "included",
+      "owners": [
+        "crates/quench-node/src/registry.rs",
+        "crates/quench-node/src/dispatch.rs",
+        "crates/quench-node/src/modules/require.rs",
+        "crates/quench-node/src/modules/crypto.rs",
+        "crates/quench-node/src/host.rs",
+        "crates/quench-node/src/modules/webcrypto.rs",
+        "crates/quench-node/src/polyfills/bootstrap/webcrypto_global.rs"
+      ],
+      "obligations": [
+        "KeyObject.from asymmetric details and WebCrypto generated-key interoperability match assertions."
+      ]
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-sign-verify-ecdsa.js",
+      "role": "assertion_case",
+      "sha256": "9911de788c6b1e55e98d22f9df2b5b42e37a9a7b48d6237f334971f9a87414b0",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe global SubtleCrypto ECDSA behavior; Crypto getFips is only a gate."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-sign-verify-rsa.js",
+      "role": "assertion_case",
+      "sha256": "925793199457b232538ec42a566a171dcafaf5d92d352d2251e245ac96c54ea2",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "common/crypto supplies a feature gate; assertions observe SubtleCrypto RSA signing."
+    },
+    {
+      "path": "tests/node/test/parallel/test-webcrypto-sign-verify.js",
+      "role": "assertion_case",
+      "sha256": "a43ec32f65dc1ec7898a1074bfbf7ef25d442c15f46b9362cd69e0460ae656c2",
+      "family_disposition": "pending_other_owner",
+      "global_status": "pending",
+      "reason": "Assertions observe global SubtleCrypto sign/verify; Crypto getFips is only a gate."
+    }
+  ],
+  "limitations": [
+    "33 candidate paths remain globally pending under other API owners; 1 crypto/TLS/child-process composite remains pending until those owners finish review.",
+    "The HTTPS observation case remains pending until its local-Node trace is matched.",
+    "No outcomes or suite results were used for membership; no Crypto, Test262, Wasm or Node suite was run.",
+    "The shared Node runner still lacks full fixture harness and observation-comparison qualification; inventory execution remains closed while membership is unfrozen."
+  ]
+}

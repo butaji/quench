@@ -70,6 +70,7 @@ impl<H: Host> Vm<H> {
             suspended_free: vec![],
             test262_agent: Default::default(),
             programs: ProgramStore::default(),
+            program_cache_layouts: Vec::new(),
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),

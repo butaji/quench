@@ -293,7 +293,10 @@ impl<'a, C: Config> Lexer<'a, C> {
         // No identifier found
         let start = self.offset();
         let c = self.consume_char();
-        self.error(diagnostics::invalid_character(c, Span::new(start, self.offset())));
+        self.error(diagnostics::invalid_character(
+            c,
+            Span::new(start, self.offset()),
+        ));
         self.advance_to_end();
         Kind::Eof
     }

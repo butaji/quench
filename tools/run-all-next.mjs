@@ -11,7 +11,9 @@ if (!root || root === "--help" || root === "-h") {
 }
 const timeout = Number(process.env.DIFF_TIMEOUT_MS);
 if (!Number.isSafeInteger(timeout) || timeout <= 0) {
-  console.error("DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds");
+  console.error(
+    "DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds",
+  );
   process.exit(2);
 }
 
@@ -69,7 +71,8 @@ for (const source of sources) {
 const mismatches = records.filter((record) => {
   const nodeMismatch = Array.isArray(record.matches_node) &&
     record.matches_node.some((match) => !match);
-  return nodeMismatch || record.matches_next !== true;
+  return record.observation_complete !== true || nodeMismatch ||
+    record.matches_next !== true;
 }).length;
 console.log(
   JSON.stringify(
@@ -77,6 +80,9 @@ console.log(
       schema: 2,
       root: directory,
       fixture_count: sources.length,
+      inventory_complete: records.every((record) =>
+        record.observation_complete === true
+      ),
       deterministic_order: sources.map((source) =>
         path.relative(directory, source)
       ),

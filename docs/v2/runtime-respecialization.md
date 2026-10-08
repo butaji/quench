@@ -6,7 +6,7 @@ mechanism from the semantic transformation it would need to pay for.
 
 ## Current ownership boundary
 
-rqj deliberately stages compilation and execution into different processes:
+Quench deliberately stages compilation and execution into different processes:
 
 1. the compiler parses source with OXC and produces a `ResidualProgram`;
 2. the CLI serializes that residual and releases the source/parser pages;

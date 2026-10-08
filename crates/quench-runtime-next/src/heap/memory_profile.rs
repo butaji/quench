@@ -5,7 +5,6 @@ use std::mem::size_of;
 const KINDS: usize = CellKind::NAMES.len();
 const BUCKETS: usize = 8;
 
-#[derive(Default)]
 pub(crate) struct MemoryProfile {
     clock: u64,
     births: Vec<u64>,
@@ -23,6 +22,28 @@ pub(crate) struct MemoryProfile {
     lifetime_buckets: [[u64; BUCKETS]; KINDS],
     first_orders: [u64; KINDS],
     last_orders: [u64; KINDS],
+}
+impl Default for MemoryProfile {
+    fn default() -> Self {
+        Self {
+            clock: 0,
+            births: Vec::new(),
+            birth_bytes: Vec::new(),
+            kinds: Vec::new(),
+            live_counts: [0; KINDS],
+            live_birth_bytes: [0; KINDS],
+            peak_counts: [0; KINDS],
+            peak_birth_bytes: [0; KINDS],
+            allocated_counts: [0; KINDS],
+            allocated_bytes: [0; KINDS],
+            size_buckets: [[0; BUCKETS]; KINDS],
+            freed_counts: [0; KINDS],
+            freed_bytes: [0; KINDS],
+            lifetime_buckets: [[0; BUCKETS]; KINDS],
+            first_orders: [0; KINDS],
+            last_orders: [0; KINDS],
+        }
+    }
 }
 
 impl MemoryProfile {
@@ -68,7 +89,7 @@ impl MemoryProfile {
         live_bytes: [usize; KINDS],
     ) {
         eprintln!(
-            "{{\"kind\":\"rqj-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
+            "{{\"kind\":\"quench-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
             CellKind::NAMES,
             self.clock,
             self.allocated_counts,
@@ -185,8 +206,15 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::Iterator { .. }
             | Cell::Proxy { .. }
             | Cell::ArrayFromAsyncState(_)
-            | Cell::BindingReference { .. }
-            | Cell::WasmBits64(_) => 0,
+            | Cell::WasmBits64(_)
+            | Cell::WasmV128(_)
+            | Cell::WasmExtern(_)
+            | Cell::WasmTag { .. }
+            | Cell::WasmGlobal { .. }
+            | Cell::BindingReference { .. } => 0,
+            Cell::WasmHostFunction { .. } | Cell::WasmException { .. } => {
+                Heap::cell_payload_bytes(cell)
+            }
             Cell::TemporalZonedDateTime {
                 time_zone,
                 calendar,
@@ -196,8 +224,14 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
+            Cell::WasmElements(elements)
+            | Cell::WasmTable { elements, .. }
+            | Cell::WasmGc {
+                fields: elements, ..
+            } => elements.capacity() * size_of::<Value>(),
             Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+            Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),

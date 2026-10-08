@@ -1,14 +1,16 @@
 //! Shared-VM projection of the existing guest stream state machine.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
 pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,
     string_decoder: RootId,
 ) -> Result<RootId, RootedError> {
-    let factory =
-        context.evaluate_script_rooted(crate::modules::stream::PRELUDE, "node:stream/shared.js")?;
+    let factory = context.evaluate_script_rooted(
+        crate::modules::stream_source::PRELUDE,
+        "node:stream/shared.js",
+    )?;
     let dependencies = context.object_rooted()?;
     let events = context.object_rooted()?;
     let global = context.global_root()?;

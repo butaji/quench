@@ -66,7 +66,7 @@ mod tests {
     fn vm() -> Vm<SilentHost> {
         let mut vm = Vm::new(SilentHost);
         vm.frames.push(Frame {
-            context: super::activation::CallContext::Internal,
+            context: CallContext::Internal,
             original_arguments: vec![],
             program: ProgramId::MAIN,
             function: 3,

@@ -173,13 +173,15 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
     if let Some(value) = cached_intrinsic(&state, builtin) {
         return Some(value);
     }
-    let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: id,
-        target: Value::Builtin(builtin),
-        receiver: Value::HostCapability(Rc::clone(&state.token)),
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }));
+    let value = Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm: id,
+            target: Value::Builtin(builtin),
+            receiver: Value::HostCapability(Rc::clone(&state.token)),
+            arguments: Vec::new(),
+            properties: RefCell::new(Vec::new()),
+        },
+    ));
     state.intrinsics.borrow_mut().push((builtin, value.clone()));
     Some(value)
 }
@@ -213,16 +215,20 @@ fn root_intrinsic(builtin: Builtin) -> Value {
         {
             return value.clone();
         }
-        let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-            realm: RealmId::ROOT,
-            target: Value::Builtin(builtin),
-            receiver: Value::HostCapability(Rc::new(HostCapabilityValue::new(HostCapabilityRef {
+        let value = Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+            crate::value::BoundFunctionValue {
                 realm: RealmId::ROOT,
-                kind: HostCapabilityKind::GetGlobal,
-            }))),
-            arguments: Vec::new(),
-            properties: RefCell::new(Vec::new()),
-        }));
+                target: Value::Builtin(builtin),
+                receiver: Value::HostCapability(Rc::new(HostCapabilityValue::new(
+                    HostCapabilityRef {
+                        realm: RealmId::ROOT,
+                        kind: HostCapabilityKind::GetGlobal,
+                    },
+                ))),
+                arguments: Vec::new(),
+                properties: RefCell::new(Vec::new()),
+            },
+        ));
         intrinsics.borrow_mut().push((builtin, value.clone()));
         value
     })

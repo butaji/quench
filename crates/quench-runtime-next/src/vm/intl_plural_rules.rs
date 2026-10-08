@@ -1,19 +1,19 @@
 use super::*;
 
 const DEFAULT_PLURAL_RULES_LOCALE: &str = "en-US";
-const PLURAL_RULES_LOCALE_SLOT: &str = "\0rqj:intl-plural-rules-locale";
-const PLURAL_RULES_TYPE_SLOT: &str = "\0rqj:intl-plural-rules-type";
-const PLURAL_RULES_NOTATION_SLOT: &str = "\0rqj:intl-plural-rules-notation";
-const PLURAL_RULES_COMPACT_DISPLAY_SLOT: &str = "\0rqj:intl-plural-rules-compact-display";
-const PLURAL_RULES_MIN_INTEGER_SLOT: &str = "\0rqj:intl-plural-rules-minimum-integer";
-const PLURAL_RULES_MIN_FRACTION_SLOT: &str = "\0rqj:intl-plural-rules-minimum-fraction";
-const PLURAL_RULES_MAX_FRACTION_SLOT: &str = "\0rqj:intl-plural-rules-maximum-fraction";
-const PLURAL_RULES_MIN_SIGNIFICANT_SLOT: &str = "\0rqj:intl-plural-rules-minimum-significant";
-const PLURAL_RULES_MAX_SIGNIFICANT_SLOT: &str = "\0rqj:intl-plural-rules-maximum-significant";
-const PLURAL_RULES_ROUNDING_INCREMENT_SLOT: &str = "\0rqj:intl-plural-rules-rounding-increment";
-const PLURAL_RULES_ROUNDING_MODE_SLOT: &str = "\0rqj:intl-plural-rules-rounding-mode";
-const PLURAL_RULES_ROUNDING_PRIORITY_SLOT: &str = "\0rqj:intl-plural-rules-rounding-priority";
-const PLURAL_RULES_TRAILING_ZERO_SLOT: &str = "\0rqj:intl-plural-rules-trailing-zero";
+const PLURAL_RULES_LOCALE_SLOT: &str = "\0quench:intl-plural-rules-locale";
+const PLURAL_RULES_TYPE_SLOT: &str = "\0quench:intl-plural-rules-type";
+const PLURAL_RULES_NOTATION_SLOT: &str = "\0quench:intl-plural-rules-notation";
+const PLURAL_RULES_COMPACT_DISPLAY_SLOT: &str = "\0quench:intl-plural-rules-compact-display";
+const PLURAL_RULES_MIN_INTEGER_SLOT: &str = "\0quench:intl-plural-rules-minimum-integer";
+const PLURAL_RULES_MIN_FRACTION_SLOT: &str = "\0quench:intl-plural-rules-minimum-fraction";
+const PLURAL_RULES_MAX_FRACTION_SLOT: &str = "\0quench:intl-plural-rules-maximum-fraction";
+const PLURAL_RULES_MIN_SIGNIFICANT_SLOT: &str = "\0quench:intl-plural-rules-minimum-significant";
+const PLURAL_RULES_MAX_SIGNIFICANT_SLOT: &str = "\0quench:intl-plural-rules-maximum-significant";
+const PLURAL_RULES_ROUNDING_INCREMENT_SLOT: &str = "\0quench:intl-plural-rules-rounding-increment";
+const PLURAL_RULES_ROUNDING_MODE_SLOT: &str = "\0quench:intl-plural-rules-rounding-mode";
+const PLURAL_RULES_ROUNDING_PRIORITY_SLOT: &str = "\0quench:intl-plural-rules-rounding-priority";
+const PLURAL_RULES_TRAILING_ZERO_SLOT: &str = "\0quench:intl-plural-rules-trailing-zero";
 const DEFAULT_MINIMUM_INTEGER_DIGITS: usize = 1;
 const MAXIMUM_INTEGER_DIGITS: usize = 21;
 const DEFAULT_MINIMUM_FRACTION_DIGITS: usize = 0;
@@ -54,7 +54,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_plural_rules_prototypes.insert(global, prototype);
+        self.realm
+            .intrinsics
+            .intl_plural_rules_prototypes
+            .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_non_writable_property(constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -167,7 +170,8 @@ impl<H: Host> Vm<H> {
             Some(value) => self.box_object(value)?,
         };
         self.with_call_roots([options], |vm| {
-            let locale_matcher = vm.plural_option_string(p, options, "localeMatcher", "best fit")?;
+            let locale_matcher =
+                vm.plural_option_string(p, options, "localeMatcher", "best fit")?;
             validate_plural_option(p, &locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
             let rule_type = vm.plural_option_string(p, options, "type", "cardinal")?;
             validate_plural_option(p, &rule_type, &["cardinal", "ordinal"], "type")?;
@@ -226,7 +230,8 @@ impl<H: Host> Vm<H> {
                     MAXIMUM_ROUNDING_INCREMENT,
                 )?
                 .unwrap_or(DEFAULT_ROUNDING_INCREMENT);
-            let rounding_mode = vm.plural_option_string(p, options, "roundingMode", "halfExpand")?;
+            let rounding_mode =
+                vm.plural_option_string(p, options, "roundingMode", "halfExpand")?;
             validate_plural_option(
                 p,
                 &rounding_mode,
@@ -243,7 +248,8 @@ impl<H: Host> Vm<H> {
                 ],
                 "roundingMode",
             )?;
-            let rounding_priority = vm.plural_option_string(p, options, "roundingPriority", "auto")?;
+            let rounding_priority =
+                vm.plural_option_string(p, options, "roundingPriority", "auto")?;
             validate_plural_option(
                 p,
                 &rounding_priority,

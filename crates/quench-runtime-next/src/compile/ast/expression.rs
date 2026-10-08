@@ -2,6 +2,16 @@ use super::destructure::AssignmentReference;
 use super::*;
 impl FunctionCompiler<'_, '_> {
     pub(crate) fn expression(&mut self, expression: &Expression<'_>) -> Register {
+        let position = self.owner.source_position(expression.span().start);
+        let previous = self
+            .current_source_position
+            .replace((position.line, position.column));
+        let result = self.expression_at_current_position(expression);
+        self.current_source_position = previous;
+        result
+    }
+
+    fn expression_at_current_position(&mut self, expression: &Expression<'_>) -> Register {
         match expression {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
@@ -13,7 +23,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::NullLiteral(_) => self.literal(Constant::Null),
             Expression::Identifier(value) => self.load_name(value.name.as_str()),
             Expression::ThisExpression(_) => self.load_this_value(),
-            Expression::NewTarget(_) => self.load_name("\0rqj:new-target"),
+            Expression::NewTarget(_) => self.load_name("\0quench:new-target"),
             Expression::ImportMeta(_) => {
                 if !self.owner.module_goal {
                     self.owner.reject(
@@ -70,7 +80,7 @@ impl FunctionCompiler<'_, '_> {
                     None => crate::bytecode::ModuleRequestPhase::Evaluation,
                 };
                 let phase = self.literal(Constant::Number(phase.runtime_value()));
-                let callee = self.load_name("\0rqj:dynamic-import");
+                let callee = self.load_name("\0quench:dynamic-import");
                 let this = self.literal(Constant::Undefined);
                 let base = self.next_reg;
                 for argument in [specifier, options, phase] {
@@ -275,7 +285,7 @@ impl FunctionCompiler<'_, '_> {
         }
         if self.owner.atoms[atom as usize]
             .as_ref()
-            .contains("\0rqj:class-binding:")
+            .contains("\0quench:class-binding:")
             || immutable_lexical
             || (self.with_depth == 0
                 && !self.dynamic_eval
@@ -342,15 +352,11 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn annex_b_outer_binding_allowed(&self, atom: Atom, declaration_start: u32) -> bool {
-        let replaces_arguments_object = self.arguments_slot.is_some()
-            && self.owner.atoms[atom as usize].as_ref() == "arguments";
         let parameter_binding = self
             .local_slots
             .get(&atom)
             .is_some_and(|slot| usize::from(*slot) < self.parameter_local_count);
-        !replaces_arguments_object
-            && !parameter_binding
-            && !self.annex_b_collisions.contains(&declaration_start)
+        !parameter_binding && !self.annex_b_collisions.contains(&declaration_start)
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
@@ -422,7 +428,7 @@ impl FunctionCompiler<'_, '_> {
         value: &oxc_ast::ast::ArrowFunctionExpression<'_>,
     ) -> Register {
         let lexical_this_atom = self.this_override.map(|this| {
-            let atom = self.hidden_local("\0rqj:lexical-this-override");
+            let atom = self.hidden_local("\0quench:lexical-this-override");
             self.store_atom(atom, this);
             atom
         });

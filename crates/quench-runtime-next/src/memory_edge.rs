@@ -31,7 +31,7 @@ pub fn report_allocator_memory(phase: &str) {
         );
         let page_size = getpagesize() as u64;
         eprintln!(
-            "{{\"kind\":\"rqj-allocator-memory\",\"phase\":\"{phase}\",\"blocks_in_use\":{},\"size_in_use\":{},\"max_size_in_use\":{},\"size_allocated\":{},\"resident_bytes\":{},\"resident_pages\":{},\"peak_resident_bytes\":{}}}",
+            "{{\"kind\":\"quench-allocator-memory\",\"phase\":\"{phase}\",\"blocks_in_use\":{},\"size_in_use\":{},\"max_size_in_use\":{},\"size_allocated\":{},\"resident_bytes\":{},\"resident_pages\":{},\"peak_resident_bytes\":{}}}",
             malloc.blocks_in_use,
             malloc.size_in_use,
             malloc.max_size_in_use,

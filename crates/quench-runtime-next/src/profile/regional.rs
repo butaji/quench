@@ -60,7 +60,7 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
     }
     regions.sort_unstable_by_key(|region| std::cmp::Reverse(region.binaries.iter().sum::<u64>()));
     eprint!(
-        "{{\"kind\":\"rqj-regional-numeric\",\"general_binary\":{{\"fast_integer\":{},\"fallback\":{},\"total\":{}}},\"numeric_dispatch_binary\":{numeric_dispatch_binaries},\"backward_regions\":[",
+        "{{\"kind\":\"quench-regional-numeric\",\"general_binary\":{{\"fast_integer\":{},\"fallback\":{},\"total\":{}}},\"numeric_dispatch_binary\":{numeric_dispatch_binaries},\"backward_regions\":[",
         general[1],
         general[0],
         general.iter().sum::<u64>(),

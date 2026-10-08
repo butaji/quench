@@ -1,0 +1,167 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "framework_core_shared_vm_profile",
+  "run_date": "2026-10-06",
+  "source_revision": "7caf598bdf970ec20d714c2548f1aeb2831b6f01",
+  "source_state": "Dirty worktree; current runner binary SHA-256, selected fixture hashes, and manifest hash bind this run.",
+  "source_diff_sha256": "d0db8fadb76035a977b0fda74c485bbc3fb5ab13ed727d720fded22d79fee30e",
+  "runner": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --profile framework-core",
+    "engine": "shared VM through run-parallel-next",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "73d5515411591e95bb5992e524ef72d1b2f3402c9819235433c0a895c0fa775d",
+    "timeout_seconds_per_fixture": 30
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "c6021ca6c501cd7ea5ba3bab5456f42b08c0b8d190a0f980f008bbc6ab011e43",
+    "profile": "framework-core",
+    "selected_count": 26,
+    "selected_fixtures": [
+      {
+        "path": "tests/node/test/parallel/test-http-methods.js",
+        "sha256": "8f002f7fd5486e2923715290ac40578fd5320eb677aeec121d47350551fa8cbd",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-auto-destroy.js",
+        "sha256": "ce70ab3322951b022ffad201832c068cb35d225bdd7b2ca4b5560e71790e95c2",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-readable-from.js",
+        "sha256": "81a800f5e3d73933d110e9578b3bf31776e814c73b472910ec34e20bfd3b5124",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-extname.js",
+        "sha256": "923a9c4d615770ea3aa054756d21046c17883d350fe53dc7dad22ae65bb24048",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-join.js",
+        "sha256": "ee432aef91fdd4e58c91a9d511e31607727fc9f29ee27a1ddfff788db47dd6ff",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-normalize.js",
+        "sha256": "334d57232e4a7201b86c41b6220882d2d6d1d52e480699e87cb6a9ce7c633264",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-path-resolve.js",
+        "sha256": "0154a0781d8a3ba011e629d04b224aafe0b95af6cff8afdb7ba4a1e68d79b1e2",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-util-inherits.js",
+        "sha256": "d0a116a7004a87b5575e188abc5f8f42a7dd50de15e5cb3d711865c91e7db114",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-buffer-tostring.js",
+        "sha256": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-string-decoder.js",
+        "sha256": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-event-emitter-get-max-listeners.js",
+        "sha256": "8c1e179c08ca0565afe0fdf71b7ea68a573a0f67403936d476eb5bf969793a83",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-event-emitter-once.js",
+        "sha256": "0eaa75b1102a47f307f9004a60fb9a48b0968e94a4e484e07436228abc4241fd",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-has-subscribers.js",
+        "sha256": "f45355d6191bbbcef10fa8693727c0db02bf5e8505f87e05b1ada609fa9c67f6",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-object-channel-pub-sub.js",
+        "sha256": "80ec1039fa620286f417ea7cf2aa994e24e9985b25d3a30528796806d1f85dca",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-diagnostics-channel-tracing-channel-sync-run-stores.js",
+        "sha256": "3d54d2674fcc699f81cdc3da8d5deaf0c805a9e745cb8184684acb82eb0b2e13",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-automatic-headers.js",
+        "sha256": "d2609d4f489072c05656a1e9c13e6ab67fd447480557075bc97f5a36e08d3b57",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-content-length.js",
+        "sha256": "e186764239b92c15d0fc1e4c7779cdf51c0920e48d05ebd116919121fb1c6aed",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-write-head.js",
+        "sha256": "3cbf91eb1a9ed7a427fc7cb0295ae08ae92d123e7d31279ad5c52cdfd0446c38",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-fs-read-stream-resume.js",
+        "sha256": "10a15e6f5519a5d656112baa16f78d1d5c0c93e66321fa6dd138e3b8576c49b0",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-stream-pipe-flow.js",
+        "sha256": "c4fa2e99f48622811e592d0363687731b1f13d87f59e4bdc928b1c473c5f48f8",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-async-hooks-run-in-async-scope-this-arg.js",
+        "sha256": "ce0e2666d3ac2d752d745c0e2e6009fef7b3bf557c6e9c388130c42a0eb3b56f",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-request-end.js",
+        "sha256": "3e0b807998d5d332cb0f0ebaa4d9131776a0889c92729e0092216285e0737c33",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-response-readable.js",
+        "sha256": "6fd7cd5b9a45b4ecb5c5204f3af1e4658bf257eee4a8ca80382aaee0adffabac",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-allow-content-length-304.js",
+        "sha256": "549f270f168edd84dc9a3f68b60dbdf342064080fd1d37837e8b135ea36863f1",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-http-listening.js",
+        "sha256": "59bf8088ec4ad0fce262e0a50a7ea7c79950d39e4bf202d49634ee9fc30dd0f8",
+        "status": "pass"
+      },
+      {
+        "path": "tests/node/test/parallel/test-global-webstreams.js",
+        "sha256": "eb3016b2899247ca258c8f8229d351150be47703e79711693778a3b33dac2f06",
+        "status": "pass"
+      }
+    ]
+  },
+  "result": {
+    "pass": 26,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 0,
+    "crash": 0,
+    "unclassified": 0,
+    "total": 26
+  },
+  "qualification": "All selected upstream fixture assertions completed through the shared VM. This profile is not the full implemented-Node inventory gate or Stage A gate.",
+  "node_oracle_comparison": "not run; fixture assertions are the profile oracle"
+}

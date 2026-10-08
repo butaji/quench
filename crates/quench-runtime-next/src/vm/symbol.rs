@@ -12,13 +12,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(global, "Symbol", constructor)?;
-        for (name, native) in [
-            ("for", Native::SymbolFor),
-            ("keyFor", Native::SymbolKeyFor),
-        ] {
+        for (name, native) in [("for", Native::SymbolFor), ("keyFor", Native::SymbolKeyFor)] {
             let method = self.native_with_realm(native, global, global);
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(constructor, name, method)?;
@@ -93,7 +90,7 @@ impl<H: Host> Vm<H> {
                 let value = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     this
                 } else {
-                    let value_atom = self.intern_atom("\0rqj:symbol-value");
+                    let value_atom = self.intern_atom("\0quench:symbol-value");
                     self.own_property(this, value_atom)
                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
                         .ok_or_else(|| {
@@ -110,7 +107,7 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     Ok(this)
                 } else {
-                    let value_atom = self.intern_atom("\0rqj:symbol-value");
+                    let value_atom = self.intern_atom("\0quench:symbol-value");
                     self.own_property(this, value_atom).ok_or_else(|| {
                         self.type_error(
                             p,
@@ -123,7 +120,7 @@ impl<H: Host> Vm<H> {
                 let symbol = if matches!(self.heap.get(this), Some(Cell::Symbol(_))) {
                     this
                 } else {
-                    let value_atom = self.intern_atom("\0rqj:symbol-value");
+                    let value_atom = self.intern_atom("\0quench:symbol-value");
                     self.own_property(this, value_atom)
                         .filter(|value| matches!(self.heap.get(*value), Some(Cell::Symbol(_))))
                         .ok_or_else(|| {

@@ -1,0 +1,1523 @@
+{
+  "captured_date": "2026-10-06",
+  "comparisons": {
+    "all_zero_regressions": true,
+    "method": "official compare-runs --reports for each selected stage; grouped predecessors were projected to the exact matching stage inventory",
+    "results": [
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-8-11.json",
+        "baseline_report_sha256": "e618b6432972aeed2933329298262bdb56c06934d496d856a4514da9eef0015c",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-9.json",
+          "target/iteration/task20-current-stage-9.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-9.json",
+        "current_report": "target/iteration/task20-current-stage-9.json",
+        "current_report_sha256": "4c20413e6d13eb5101efb06ba5eb5092060a092071a5666c6ba6fd1cfbc818d7",
+        "exit_code": 0,
+        "stage": 9,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-10-final.json",
+        "baseline_report_sha256": "479d3b830f7239ee8f10a16a2c767e7e6a135d1fcfaa42dc4b944cf01d69cb25",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/test262-pin-f2d-stage-10-final.json",
+          "target/iteration/task20-current-stage-10.json"
+        ],
+        "comparison_input": "target/iteration/test262-pin-f2d-stage-10-final.json",
+        "current_report": "target/iteration/task20-current-stage-10.json",
+        "current_report_sha256": "f10984c6c97c25a1ce96318f2376565d7b9e41c41c5f570ebca0428013228a57",
+        "exit_code": 0,
+        "stage": 10,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-8-11.json",
+        "baseline_report_sha256": "e618b6432972aeed2933329298262bdb56c06934d496d856a4514da9eef0015c",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-11.json",
+          "target/iteration/task20-current-stage-11.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-11.json",
+        "current_report": "target/iteration/task20-current-stage-11.json",
+        "current_report_sha256": "0fcf01b3179854241cb4577b594ee1f1a3863495c5e4884959517a5f70b94e48",
+        "exit_code": 0,
+        "stage": 11,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-13-14.json",
+        "baseline_report_sha256": "f4241a0164770b26de4e905b6b30f0809811492872676b79bb2042e99bd0e3a2",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-14.json",
+          "target/iteration/task20-current-stage-14.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-14.json",
+        "current_report": "target/iteration/task20-current-stage-14.json",
+        "current_report_sha256": "1ed66cf140698969002a69a85c9c78ceb2dfbf875a0789cecf4f4d7f303aedb6",
+        "exit_code": 0,
+        "stage": 14,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-16-final.json",
+        "baseline_report_sha256": "83d189ef087bb44fc942b0cdc793b893bc512f74a2b253234326f684ddbdfe5b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/test262-pin-f2d-stage-16-final.json",
+          "target/iteration/task20-current-stage-16.json"
+        ],
+        "comparison_input": "target/iteration/test262-pin-f2d-stage-16-final.json",
+        "current_report": "target/iteration/task20-current-stage-16.json",
+        "current_report_sha256": "60e1cb58bddd380bd8c71d00e52ca8a0f8f2b42f0e60e64057640383a42f2de6",
+        "exit_code": 0,
+        "stage": 16,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-20-final.json",
+        "baseline_report_sha256": "b4e3919637c6752471853e1ec42ef650264c73a476d22467050e013b715e3512",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/test262-pin-f2d-stage-20-final.json",
+          "target/iteration/task20-current-stage-20.json"
+        ],
+        "comparison_input": "target/iteration/test262-pin-f2d-stage-20-final.json",
+        "current_report": "target/iteration/task20-current-stage-20.json",
+        "current_report_sha256": "9e6db1a8b72a95f4029ab517d041386d83604f52ad928947959538f82d03defe",
+        "exit_code": 0,
+        "stage": 20,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-26-26.json",
+        "baseline_report_sha256": "61564d9c155713b0c10c1e33e4de0c147d3c3193780b57c1661425f35c6266f5",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-26.json",
+          "target/iteration/task20-current-stage-26.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-26.json",
+        "current_report": "target/iteration/task20-current-stage-26.json",
+        "current_report_sha256": "0b1fe07c8942934ba428e7b00c976fcc4412f5f1958ef7832750efada98583b1",
+        "exit_code": 0,
+        "stage": 26,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-31-31.json",
+        "baseline_report_sha256": "e9b1b1a0834536a758fc93d09415982468e711c21dfb00d486591a38377845fe",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-31.json",
+          "target/iteration/task20-current-stage-31.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-31.json",
+        "current_report": "target/iteration/task20-current-stage-31.json",
+        "current_report_sha256": "ec1ac41cc9d4436e1a7fd5401e4d1b28e382ded2f09b0f9fa1b1cdeb0b15cfa4",
+        "exit_code": 0,
+        "stage": 31,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-34-39.json",
+        "baseline_report_sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-34.json",
+          "target/iteration/task20-current-stage-34.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-34.json",
+        "current_report": "target/iteration/task20-current-stage-34.json",
+        "current_report_sha256": "46ac36e415425d5fd39deb310a895c3520565f61cfeabf010f4fcc6c4854ac4c",
+        "exit_code": 0,
+        "stage": 34,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-34-39.json",
+        "baseline_report_sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-35.json",
+          "target/iteration/task20-current-stage-35.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-35.json",
+        "current_report": "target/iteration/task20-current-stage-35.json",
+        "current_report_sha256": "bf98364b2d1a2623c0baebb3c54f059311c2f32c5c4719c6861e7206606bf94e",
+        "exit_code": 0,
+        "stage": 35,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-34-39.json",
+        "baseline_report_sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-36.json",
+          "target/iteration/task20-current-stage-36.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-36.json",
+        "current_report": "target/iteration/task20-current-stage-36.json",
+        "current_report_sha256": "d716d109a4b88df5625a99d8bc4702acc4e2bd735a93089d4d3a370fdc90c791",
+        "exit_code": 0,
+        "stage": 36,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-34-39.json",
+        "baseline_report_sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-37.json",
+          "target/iteration/task20-current-stage-37.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-37.json",
+        "current_report": "target/iteration/task20-current-stage-37.json",
+        "current_report_sha256": "277a9e716c2bebccfbb2eaeb845551eddab28857653e6b3eeb6ca3152f8a3187",
+        "exit_code": 0,
+        "stage": 37,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-34-39.json",
+        "baseline_report_sha256": "7d2702f8a0ab8cbf3542f9905d5cc1c4b059dc990e15c6472af3b9fdf89c538b",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-38.json",
+          "target/iteration/task20-current-stage-38.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-38.json",
+        "current_report": "target/iteration/task20-current-stage-38.json",
+        "current_report_sha256": "f700a1eb2b67c9178103794bed13181110d7fefc32fd1f016d71f781aa579f15",
+        "exit_code": 0,
+        "stage": 38,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-39.json",
+        "baseline_report_sha256": "32568d12ec676fa032fdb2887b10f5ddf56cb68e8cfa99c0c5888f426cc26a0e",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/test262-pin-f2d-stage-39.json",
+          "target/iteration/task20-current-stage-39.json"
+        ],
+        "comparison_input": "target/iteration/test262-pin-f2d-stage-39.json",
+        "current_report": "target/iteration/task20-current-stage-39.json",
+        "current_report_sha256": "2799a22dc67105b7693a03f72128e96d91e5c209e80973afecdbf652a15e2bd6",
+        "exit_code": 0,
+        "stage": 39,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-45-47.json",
+        "baseline_report_sha256": "7b42cabadfb80db1686367dfadd9ed5c45aa48007ed7a08c5131ed4ded0e06fe",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-46.json",
+          "target/iteration/task20-current-stage-46.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-46.json",
+        "current_report": "target/iteration/task20-current-stage-46.json",
+        "current_report_sha256": "b32d7afb9b23de57bdbc958497aa2755a2c12c1de8ea1f2beff858c8ec4b3547",
+        "exit_code": 0,
+        "stage": 46,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-45-47.json",
+        "baseline_report_sha256": "7b42cabadfb80db1686367dfadd9ed5c45aa48007ed7a08c5131ed4ded0e06fe",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-47.json",
+          "target/iteration/task20-current-stage-47.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-47.json",
+        "current_report": "target/iteration/task20-current-stage-47.json",
+        "current_report_sha256": "fb4987159ebf8a583f25a7f54b3707d2d7b3b6e75588744f7e5b793e244a1faa",
+        "exit_code": 0,
+        "stage": 47,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-49-50.json",
+        "baseline_report_sha256": "2aca7169917ac41bae8f8bbf4ce93dc74e1cbadd7612a5e9079b73b878f14dbc",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-49.json",
+          "target/iteration/task20-current-stage-49.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-49.json",
+        "current_report": "target/iteration/task20-current-stage-49.json",
+        "current_report_sha256": "391650fa8611cfa26b527c65f9aea1cce3c6a0b3f1a35fe642ba51a9aa09f89d",
+        "exit_code": 0,
+        "stage": 49,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-49-50.json",
+        "baseline_report_sha256": "2aca7169917ac41bae8f8bbf4ce93dc74e1cbadd7612a5e9079b73b878f14dbc",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-50.json",
+          "target/iteration/task20-current-stage-50.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-50.json",
+        "current_report": "target/iteration/task20-current-stage-50.json",
+        "current_report_sha256": "520054184601aebf9f849db17aecc70b913fdcf4b80511378a6aa3b56a26dfd2",
+        "exit_code": 0,
+        "stage": 50,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-52-53.json",
+        "baseline_report_sha256": "4311fb1c9e6660701d975a325e3c30de3cee32550da1f9e174f373def5f8f0c6",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-53.json",
+          "target/iteration/task20-current-stage-53.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-53.json",
+        "current_report": "target/iteration/task20-current-stage-53.json",
+        "current_report_sha256": "7f8d88a2c6eac27befe80bd5afe6678739934c8079867a22698c92cbccdecf19",
+        "exit_code": 0,
+        "stage": 53,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-58-58.json",
+        "baseline_report_sha256": "a94f95566ec05e9d88065a9c58b0a29b9e35bb0a14314556295923680f93d0af",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-58.json",
+          "target/iteration/task20-current-stage-58.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-58.json",
+        "current_report": "target/iteration/task20-current-stage-58.json",
+        "current_report_sha256": "95a566240a60c1fb96ccb47d69dff940e1d81f62f80ddaf2cc857755b00969ea",
+        "exit_code": 0,
+        "stage": 58,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-60-61.json",
+        "baseline_report_sha256": "21f285506bf26f6d158447a1e2bfde7fd20cb92da8a40c145d17ec07f040956d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-60.json",
+          "target/iteration/task20-current-stage-60.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-60.json",
+        "current_report": "target/iteration/task20-current-stage-60.json",
+        "current_report_sha256": "cfed7d582944a0a0066dfceda6473348a63ccfa67e18f7e8c674a3fc9a9256cf",
+        "exit_code": 0,
+        "stage": 60,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/test262-pin-f2d-stage-61.json",
+        "baseline_report_sha256": "500bd15240061ba2e72a268b49bd1593aeca31976220ee58892f31a3efbfc05d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/test262-pin-f2d-stage-61.json",
+          "target/iteration/task20-current-stage-61.json"
+        ],
+        "comparison_input": "target/iteration/test262-pin-f2d-stage-61.json",
+        "current_report": "target/iteration/task20-current-stage-61.json",
+        "current_report_sha256": "1e4e27784260c1aee3f73e198e18ca23d6e50154e07ab5a9b924c9bcb3312b88",
+        "exit_code": 0,
+        "stage": 61,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-affected-stage-66-before.json",
+        "baseline_report_sha256": "8435132baf2c587280cb9fc6950cb4a3d647c55af453f59e0e68dbd69b5824e4",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-affected-stage-66-before.json",
+          "target/iteration/task20-current-stage-66.json"
+        ],
+        "comparison_input": "target/iteration/task20-affected-stage-66-before.json",
+        "current_report": "target/iteration/task20-current-stage-66.json",
+        "current_report_sha256": "1d3765bbde623745586227c6bfd7c3a77ba55c8a0d50e15c55a668c11f77ec28",
+        "exit_code": 0,
+        "stage": 66,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-72-73.json",
+        "baseline_report_sha256": "a1501216ea8f031bd268c3c727df209651bba342b4ef507eeaf84f640191825d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-73.json",
+          "target/iteration/task20-current-stage-73.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-73.json",
+        "current_report": "target/iteration/task20-current-stage-73.json",
+        "current_report_sha256": "f9f5d7f6acb1ae008d9ec6bb774af8ef28ef8fbeb766267575dfc971160e7556",
+        "exit_code": 0,
+        "stage": 73,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-79-81.json",
+        "baseline_report_sha256": "1443d62c08a47823fe0ab4dca39514248c40c00c3601304fbece0bc4979cf90d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-79.json",
+          "target/iteration/task20-current-stage-79.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-79.json",
+        "current_report": "target/iteration/task20-current-stage-79.json",
+        "current_report_sha256": "c83fff387d9b4cf4907376d5cd4c59c08bd13678247edc6de88bd03b7cd20a6f",
+        "exit_code": 0,
+        "stage": 79,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-79-81.json",
+        "baseline_report_sha256": "1443d62c08a47823fe0ab4dca39514248c40c00c3601304fbece0bc4979cf90d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-80.json",
+          "target/iteration/task20-current-stage-80.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-80.json",
+        "current_report": "target/iteration/task20-current-stage-80.json",
+        "current_report_sha256": "fcc60130b6f80fce4d32469d31ac1428be4670cab14621404ba974c61c724e3b",
+        "exit_code": 0,
+        "stage": 80,
+        "verdict": "regressions=0"
+      },
+      {
+        "baseline_report": "target/iteration/task20-dirty-owner-stages-79-81.json",
+        "baseline_report_sha256": "1443d62c08a47823fe0ab4dca39514248c40c00c3601304fbece0bc4979cf90d",
+        "compare_command": [
+          "target/iteration/compare-runs",
+          "--reports",
+          "target/iteration/task20-current-baseline-stage-81.json",
+          "target/iteration/task20-current-stage-81.json"
+        ],
+        "comparison_input": "target/iteration/task20-current-baseline-stage-81.json",
+        "current_report": "target/iteration/task20-current-stage-81.json",
+        "current_report_sha256": "1368408a3c0ccba225b7248161df15c8755d39bc3ceef9b4c938c652ee8e13e4",
+        "exit_code": 0,
+        "stage": 81,
+        "verdict": "regressions=0"
+      }
+    ]
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "stage_definitions_path": "docs/STAGES.md",
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+  },
+  "focused_upstream_conflict": {
+    "corrective_pull_request": "https://github.com/tc39/test262/pull/5112",
+    "interpretation": "Pinned Stage 94 assertion conflicts with Stage 114 and current Node/spec. This is not an owner affected by this source change; retain both suite inputs and semantics. Current pinned inventory cannot reach 100% until the upstream fixture is corrected and the pin is advanced.",
+    "node_observation": "For no parameters, a normal parameter, and a rest parameter, the sloppy function returns the block function named arguments; the real Test262 formal-parameter control is separate.",
+    "node_version": "v26.10.0",
+    "reports": [
+      {
+        "failed": 1,
+        "passed": 0,
+        "path": "block-decl-func-skip-arguments.js",
+        "report": "target/iteration/task20-annexb-94-current.json",
+        "report_sha256": "b50bf5cae895d734a5bf9aeb8c7eb7f15d76a372947d29e74343c424ba04c7ce",
+        "stage": 94,
+        "total": 1
+      },
+      {
+        "failed": 0,
+        "passed": 1,
+        "path": "block-scoped-functions-annex-b-arguments.js",
+        "report": "target/iteration/task20-annexb-114-current.json",
+        "report_sha256": "5003397aae07703fabab1c22d03343ac1bf0881411c9182e000ab9051251cbd7",
+        "stage": 114,
+        "total": 1
+      }
+    ],
+    "upstream_issue": "https://github.com/tc39/test262/issues/5113"
+  },
+  "limitations": [
+    "Affected-stage ratchet only; not the Task 24 full pinned-inventory gate.",
+    "Stage 94 has the separately recorded upstream corpus conflict; do not force runtime behavior to satisfy the stale assertion.",
+    "Source hashes were captured after the sequential build/run; no code edits occurred during this run."
+  ],
+  "reports": [
+    {
+      "failed": 0,
+      "passed": 3,
+      "path": "target/iteration/task20-current-stage-9.json",
+      "sha256": "4c20413e6d13eb5101efb06ba5eb5092060a092071a5666c6ba6fd1cfbc818d7",
+      "stage": 9,
+      "total": 3
+    },
+    {
+      "failed": 0,
+      "passed": 11102,
+      "path": "target/iteration/task20-current-stage-10.json",
+      "sha256": "f10984c6c97c25a1ce96318f2376565d7b9e41c41c5f570ebca0428013228a57",
+      "stage": 10,
+      "total": 11102
+    },
+    {
+      "failed": 0,
+      "passed": 217,
+      "path": "target/iteration/task20-current-stage-11.json",
+      "sha256": "0fcf01b3179854241cb4577b594ee1f1a3863495c5e4884959517a5f70b94e48",
+      "stage": 11,
+      "total": 217
+    },
+    {
+      "failed": 0,
+      "passed": 14,
+      "path": "target/iteration/task20-current-stage-14.json",
+      "sha256": "1ed66cf140698969002a69a85c9c78ceb2dfbf875a0789cecf4f4d7f303aedb6",
+      "stage": 14,
+      "total": 14
+    },
+    {
+      "failed": 0,
+      "passed": 128,
+      "path": "target/iteration/task20-current-stage-16.json",
+      "sha256": "60e1cb58bddd380bd8c71d00e52ca8a0f8f2b42f0e60e64057640383a42f2de6",
+      "stage": 16,
+      "total": 128
+    },
+    {
+      "failed": 0,
+      "passed": 599,
+      "path": "target/iteration/task20-current-stage-20.json",
+      "sha256": "9e6db1a8b72a95f4029ab517d041386d83604f52ad928947959538f82d03defe",
+      "stage": 20,
+      "total": 599
+    },
+    {
+      "failed": 0,
+      "passed": 9337,
+      "path": "target/iteration/task20-current-stage-26.json",
+      "sha256": "0b1fe07c8942934ba428e7b00c976fcc4412f5f1958ef7832750efada98583b1",
+      "stage": 26,
+      "total": 9337
+    },
+    {
+      "failed": 0,
+      "passed": 3081,
+      "path": "target/iteration/task20-current-stage-31.json",
+      "sha256": "ec1ac41cc9d4436e1a7fd5401e4d1b28e382ded2f09b0f9fa1b1cdeb0b15cfa4",
+      "stage": 31,
+      "total": 3081
+    },
+    {
+      "failed": 0,
+      "passed": 104,
+      "path": "target/iteration/task20-current-stage-34.json",
+      "sha256": "46ac36e415425d5fd39deb310a895c3520565f61cfeabf010f4fcc6c4854ac4c",
+      "stage": 34,
+      "total": 104
+    },
+    {
+      "failed": 0,
+      "passed": 38,
+      "path": "target/iteration/task20-current-stage-35.json",
+      "sha256": "bf98364b2d1a2623c0baebb3c54f059311c2f32c5c4719c6861e7206606bf94e",
+      "stage": 35,
+      "total": 38
+    },
+    {
+      "failed": 0,
+      "passed": 18,
+      "path": "target/iteration/task20-current-stage-36.json",
+      "sha256": "d716d109a4b88df5625a99d8bc4702acc4e2bd735a93089d4d3a370fdc90c791",
+      "stage": 36,
+      "total": 18
+    },
+    {
+      "failed": 0,
+      "passed": 23,
+      "path": "target/iteration/task20-current-stage-37.json",
+      "sha256": "277a9e716c2bebccfbb2eaeb845551eddab28857653e6b3eeb6ca3152f8a3187",
+      "stage": 37,
+      "total": 23
+    },
+    {
+      "failed": 0,
+      "passed": 48,
+      "path": "target/iteration/task20-current-stage-38.json",
+      "sha256": "f700a1eb2b67c9178103794bed13181110d7fefc32fd1f016d71f781aa579f15",
+      "stage": 38,
+      "total": 48
+    },
+    {
+      "failed": 0,
+      "passed": 13,
+      "path": "target/iteration/task20-current-stage-39.json",
+      "sha256": "2799a22dc67105b7693a03f72128e96d91e5c209e80973afecdbf652a15e2bd6",
+      "stage": 39,
+      "total": 13
+    },
+    {
+      "failed": 0,
+      "passed": 93,
+      "path": "target/iteration/task20-current-stage-46.json",
+      "sha256": "b32d7afb9b23de57bdbc958497aa2755a2c12c1de8ea1f2beff858c8ec4b3547",
+      "stage": 46,
+      "total": 93
+    },
+    {
+      "failed": 0,
+      "passed": 47,
+      "path": "target/iteration/task20-current-stage-47.json",
+      "sha256": "fb4987159ebf8a583f25a7f54b3707d2d7b3b6e75588744f7e5b793e244a1faa",
+      "stage": 47,
+      "total": 47
+    },
+    {
+      "failed": 0,
+      "passed": 23,
+      "path": "target/iteration/task20-current-stage-49.json",
+      "sha256": "391650fa8611cfa26b527c65f9aea1cce3c6a0b3f1a35fe642ba51a9aa09f89d",
+      "stage": 49,
+      "total": 23
+    },
+    {
+      "failed": 0,
+      "passed": 61,
+      "path": "target/iteration/task20-current-stage-50.json",
+      "sha256": "520054184601aebf9f849db17aecc70b913fdcf4b80511378a6aa3b56a26dfd2",
+      "stage": 50,
+      "total": 61
+    },
+    {
+      "failed": 0,
+      "passed": 165,
+      "path": "target/iteration/task20-current-stage-53.json",
+      "sha256": "7f8d88a2c6eac27befe80bd5afe6678739934c8079867a22698c92cbccdecf19",
+      "stage": 53,
+      "total": 165
+    },
+    {
+      "failed": 0,
+      "passed": 94,
+      "path": "target/iteration/task20-current-stage-58.json",
+      "sha256": "95a566240a60c1fb96ccb47d69dff940e1d81f62f80ddaf2cc857755b00969ea",
+      "stage": 58,
+      "total": 94
+    },
+    {
+      "failed": 0,
+      "passed": 3411,
+      "path": "target/iteration/task20-current-stage-60.json",
+      "sha256": "cfed7d582944a0a0066dfceda6473348a63ccfa67e18f7e8c674a3fc9a9256cf",
+      "stage": 60,
+      "total": 3411
+    },
+    {
+      "failed": 0,
+      "passed": 729,
+      "path": "target/iteration/task20-current-stage-61.json",
+      "sha256": "1e4e27784260c1aee3f73e198e18ca23d6e50154e07ab5a9b924c9bcb3312b88",
+      "stage": 61,
+      "total": 729
+    },
+    {
+      "failed": 0,
+      "passed": 383,
+      "path": "target/iteration/task20-current-stage-66.json",
+      "sha256": "1d3765bbde623745586227c6bfd7c3a77ba55c8a0d50e15c55a668c11f77ec28",
+      "stage": 66,
+      "total": 383
+    },
+    {
+      "failed": 0,
+      "passed": 98,
+      "path": "target/iteration/task20-current-stage-73.json",
+      "sha256": "f9f5d7f6acb1ae008d9ec6bb774af8ef28ef8fbeb766267575dfc971160e7556",
+      "stage": 73,
+      "total": 98
+    },
+    {
+      "failed": 0,
+      "passed": 141,
+      "path": "target/iteration/task20-current-stage-79.json",
+      "sha256": "c83fff387d9b4cf4907376d5cd4c59c08bd13678247edc6de88bd03b7cd20a6f",
+      "stage": 79,
+      "total": 141
+    },
+    {
+      "failed": 0,
+      "passed": 29,
+      "path": "target/iteration/task20-current-stage-80.json",
+      "sha256": "fcc60130b6f80fce4d32469d31ac1428be4670cab14621404ba974c61c724e3b",
+      "stage": 80,
+      "total": 29
+    },
+    {
+      "failed": 0,
+      "passed": 85,
+      "path": "target/iteration/task20-current-stage-81.json",
+      "sha256": "1368408a3c0ccba225b7248161df15c8755d39bc3ceef9b4c938c652ee8e13e4",
+      "stage": 81,
+      "total": 85
+    }
+  ],
+  "runner": {
+    "command_pattern": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=target/iteration/task20-current-stage-<id>.json target/iteration/run-stages-next <id> <id>",
+    "host": "macos-aarch64",
+    "jobs": 4,
+    "path": "target/iteration/run-stages-next",
+    "profile": "iteration",
+    "sha256": "de8daf8d76003292ef62ed1830ba5daa89ee253de16e635ed0b5faab400eb439",
+    "timeout_ms": 900000
+  },
+  "schema": "task20-current-affected-stage-recheck-v1",
+  "scope": {
+    "basis": "Current dirty runtime owner-to-stage audit; only stages whose direct or documented shared execution owner changed. Compared with the older 38-stage projection, this selection removes 12 stages without changed owners and adds Stage 66. Stages 34 and 73 remain because their current owners changed.",
+    "full_test262_run": false,
+    "unit_tests_run": false
+  },
+  "selection": {
+    "failed": 0,
+    "mapping": {
+      "31,60": "Array async construction and ordinary Object prototype",
+      "34": "AsyncDisposableStack Promise settlement/job lifecycle",
+      "35,36,37,38,39,49,50,61": "async/generator/Promise lifecycle",
+      "46,58": "Error and TypeError realm setup",
+      "47,79,80,81": "GC owner edges, weak references and finalization",
+      "53": "JSON serialization",
+      "66": "Set integrity",
+      "73": "Symbol.prototype descriptor",
+      "9,10,11,14,16,20,26": "module, lexical lookup and common execution canaries"
+    },
+    "passed": 30084,
+    "stage_counts": {
+      "10": {
+        "failed": 0,
+        "passed": 11102,
+        "total": 11102
+      },
+      "11": {
+        "failed": 0,
+        "passed": 217,
+        "total": 217
+      },
+      "14": {
+        "failed": 0,
+        "passed": 14,
+        "total": 14
+      },
+      "16": {
+        "failed": 0,
+        "passed": 128,
+        "total": 128
+      },
+      "20": {
+        "failed": 0,
+        "passed": 599,
+        "total": 599
+      },
+      "26": {
+        "failed": 0,
+        "passed": 9337,
+        "total": 9337
+      },
+      "31": {
+        "failed": 0,
+        "passed": 3081,
+        "total": 3081
+      },
+      "34": {
+        "failed": 0,
+        "passed": 104,
+        "total": 104
+      },
+      "35": {
+        "failed": 0,
+        "passed": 38,
+        "total": 38
+      },
+      "36": {
+        "failed": 0,
+        "passed": 18,
+        "total": 18
+      },
+      "37": {
+        "failed": 0,
+        "passed": 23,
+        "total": 23
+      },
+      "38": {
+        "failed": 0,
+        "passed": 48,
+        "total": 48
+      },
+      "39": {
+        "failed": 0,
+        "passed": 13,
+        "total": 13
+      },
+      "46": {
+        "failed": 0,
+        "passed": 93,
+        "total": 93
+      },
+      "47": {
+        "failed": 0,
+        "passed": 47,
+        "total": 47
+      },
+      "49": {
+        "failed": 0,
+        "passed": 23,
+        "total": 23
+      },
+      "50": {
+        "failed": 0,
+        "passed": 61,
+        "total": 61
+      },
+      "53": {
+        "failed": 0,
+        "passed": 165,
+        "total": 165
+      },
+      "58": {
+        "failed": 0,
+        "passed": 94,
+        "total": 94
+      },
+      "60": {
+        "failed": 0,
+        "passed": 3411,
+        "total": 3411
+      },
+      "61": {
+        "failed": 0,
+        "passed": 729,
+        "total": 729
+      },
+      "66": {
+        "failed": 0,
+        "passed": 383,
+        "total": 383
+      },
+      "73": {
+        "failed": 0,
+        "passed": 98,
+        "total": 98
+      },
+      "79": {
+        "failed": 0,
+        "passed": 141,
+        "total": 141
+      },
+      "80": {
+        "failed": 0,
+        "passed": 29,
+        "total": 29
+      },
+      "81": {
+        "failed": 0,
+        "passed": 85,
+        "total": 85
+      },
+      "9": {
+        "failed": 0,
+        "passed": 3,
+        "total": 3
+      }
+    },
+    "stage_ids": [
+      9,
+      10,
+      11,
+      14,
+      16,
+      20,
+      26,
+      31,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      46,
+      47,
+      49,
+      50,
+      53,
+      58,
+      60,
+      61,
+      66,
+      73,
+      79,
+      80,
+      81
+    ],
+    "total": 30084
+  },
+  "source": {
+    "changed_source_files": [
+      {
+        "path": "crates/quench-runtime-next/src/api.rs",
+        "sha256": "9e7e668789a4840ebb463cde40f2dc7571aa0bdce27fd734f2d68dfb81210855",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/api_embedding.rs",
+        "sha256": "d03843084cc0885c575bae4b5c5d3a491775b9d2878b8f279cc6eeb9f22bf5c8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/api_iterator_tests.rs",
+        "sha256": null,
+        "status": "deleted"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/api_native.rs",
+        "sha256": "8748f608072088506794d9b044fff675fa8f874a4e92b400491f56b78de52acb",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/api_native_tests.rs",
+        "sha256": "37c623ccbeb870c67bdc57a1f2ae1c5a0076817f7413b4b9a120236c1c861331",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/api_promise_tests.rs",
+        "sha256": "17ee2e4d86422eac16853f82771f900519a335094f1b0ddb4c693c738374c7e3",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bin/quench-next.rs",
+        "sha256": "8067f28ccd2eb43d6404e68f36a1546b1cf2749e64272c95377bfe952c0d02c8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode.rs",
+        "sha256": "5e3c73433bba36e9a083ffb82d160ebf7ba72436b7a0c3c974e68d4063520741",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/binary.rs",
+        "sha256": "6d695330a7a9817debaff9be6a619d4cce49bba89b1e738b1edef1273bcbe9cf",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/disassemble.rs",
+        "sha256": "df71589c984518e3c95f499dd67b44df0f5c4a939a2e40acef824ea0b648f865",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/instruction.rs",
+        "sha256": "bc692ae5326749a26785a59867b714fe063b9f1975ce8110059e94304011285d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/tests.rs",
+        "sha256": "1c08aab9fa244bd949cefc43796fc3f7bf2ccfe334c1b693cf6fbec5be6b32c5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/bytecode/validate.rs",
+        "sha256": "4f8b7d20c196a1aa88e7dd22e90ca8e0c832b436277490d4f2adb1c6b61d487f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile.rs",
+        "sha256": "eedeb0084de4573435f6fc21faeb4d375f3ff55c34b742545a416259f99a84b9",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/arrow.rs",
+        "sha256": "fdc15029dbf315e2371ebf961d8e474de29b68e68d9053d5a8be9a3cf8f33138",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/ast.rs",
+        "sha256": "3e5043bbadd3dd85a6a88d6244a6ff85a172f6e3388b476b439c5facbdae12dc",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/ast/expression.rs",
+        "sha256": "8db1173dcec0a49ddf87a7a40d3e2a4f5c0b9da8f76635ea6589320b90efcf0f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/ast/statement.rs",
+        "sha256": "c9132e075e368978e7aa7f181f5475fc886143a63254e0dfb07efbcfbe98f209",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/liveness.rs",
+        "sha256": "419da8fca4d67e6e9585dce023382c4008492c9bbf5fbc8a65ab01705ab8bec8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/compile/numeric.rs",
+        "sha256": "78dc52b7c3ac71b95d8a06b8c645f982dc8cfcb7451db826117e801573a7c92d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/heap.rs",
+        "sha256": "efd547cc22e47b72349db5db32aee3bfcda2fe35e48d8340d7a17cc9a331c870",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/heap/cell.rs",
+        "sha256": "1914c678ba025b59f115e6a8fd421a6fba9d06e97c0b8a450ce2824b9aa87247",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/heap/memory_profile.rs",
+        "sha256": "49e45d3c3929d5c5af0e035bb454dde4e9026a6647438a1f5d0cafb77482b3f7",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/heap/tests.rs",
+        "sha256": "a57470ca54cd8c1c0bfd27d6fa088a17ffba5c1a4c7dc215b0f03111c82e89ba",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/host.rs",
+        "sha256": "a5ee856d558d2e9b1f1412ab1bdeb39a802131b4a63429350293ee0c168233b2",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/lib.rs",
+        "sha256": "9d59fa2530cc027b02b6013e80dd57c80aec9955fa9d414058f099d4e3805cf7",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/profile/dispatch_pairs.rs",
+        "sha256": "e24d05b65755a3449fb6ac287bebb565e55570b26507224ba229aff86871e587",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm.rs",
+        "sha256": "ec936b400d24e1c36c5ae18577c163348d38165391e0f6e74cb7c3cf6821b6a0",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/activation_lifecycle.rs",
+        "sha256": "f56637ab35a0c0440dc6b4578da4300970bd1fa8eeceeb1884803cdc29c36b38",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/array_buffer.rs",
+        "sha256": "8f29c8a94b1ee57dc5a51ca5a720b89e0aaef2c4ead66a85fefdc5bcf9a260a2",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/array_indexed.rs",
+        "sha256": "fecad85ce12171f47619e344e60388b5d7335f6036816884cb6ff64cf15d4689",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/array_modern.rs",
+        "sha256": "3bae1f1b0f8e99d058b6539cc4a4ba4c7adb357ff4e6b1d90e017931ef7bf454",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/builtins.rs",
+        "sha256": "3f968219d8867d489b4d0b0ef980fa96c3f8f3e70a1c2a60e2522b46326a4fde",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/collections.rs",
+        "sha256": "a7b34a02c2b628d816072fd14b2e7f0fce38ea0b3912c46ac26ba53e08b33ab5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/date.rs",
+        "sha256": "9854a5cbd8b0cdf3723547d9b6ebf99c73f18acfa3356880cae01ba687682eda",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/dispatch.rs",
+        "sha256": "82ae9df71835a80838b5138cce02c990f2de814fcc0833f882d4a034ea22672d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/dispatch_frame.rs",
+        "sha256": "fdd079e90cbfaa9b963b4bebd64bc452c88e19e43105e59ed50468b767fa6c40",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/embedding.rs",
+        "sha256": "5d02310276de9aa2f226cd081068cbf34af18604f160f970092fe651852018ce",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/equality.rs",
+        "sha256": "dcc30fa890d6d32522fb532ef9eed4860ac0566faf2de595bf7ce6edf4fd16db",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/error.rs",
+        "sha256": "d13d83c6f4e156069003eeb5b98bbf70ba0d8dac2f8ada194dca8a50858ed146",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/field_cache.rs",
+        "sha256": "d3a80c6e62be83fca861523093aad5da5e7e46aca7186419f324575b29d8fb93",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/gc.rs",
+        "sha256": "8f9504c6334c3eefa1362414a72fbadb80caa397fd725377f722420cc20f5b78",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/generator.rs",
+        "sha256": "3da2349cfadaac7dbbe9308759c83e3e28b0ecdc3c84dccbddd583ceb24375a5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_collator.rs",
+        "sha256": "71ba48ab9fc1cc2fc427296bd6e46684b358bef5fc30585917a15565a3d864d9",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_datetime.rs",
+        "sha256": "1791988722c6e1b4a9dff0b58cba4bcb9bc43eccc5fe98bfda492b8510c952ba",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_display_names.rs",
+        "sha256": "8af1df48e9757d034f3bc8fec637b1dd0d4b0576b221504454a70024b209b11f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_duration_format.rs",
+        "sha256": "53da2f411864594905a7f08f4ad564e515f70c7b13f607712220fdae453fa781",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_list_format.rs",
+        "sha256": "b06aaa98a772a322acc01d601f1175f5a5605f0c0f4c81270b63bdf127e882d9",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_namespace.rs",
+        "sha256": "e6c653087be7dd307fe4d4a9ce4e11904296ef783c46f100b60a221bf136fb79",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_number.rs",
+        "sha256": "4dae58688797f091e1a69ac170ea755c9703714538db152ce35681ae486a628a",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_plural_rules.rs",
+        "sha256": "a116f7ebbe03dbf3a054ec478e20e4bb2e4ea64f59c340edf5e742d51c18b298",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_relative.rs",
+        "sha256": "257a943ca4a7bb00510e5da919cb5f1998dfeb7e2bacc1c0e2082b18c6d6a834",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/intl_segmenter.rs",
+        "sha256": "e40fd2460737f566fe8af99ed6d6287c85f919cf16d5e9ea651ef0b29274da4a",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/iterators.rs",
+        "sha256": "a341bd7794a95f1f9a988e098e42e10d400dea11acece3305c4fcdda9773f854",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/json.rs",
+        "sha256": "12cf1d19afb386fba727b9a6508e657385409e6db33c4da5215c9a2c9df8c74e",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object.rs",
+        "sha256": "abf9dc22902e77fd9e7857947081e1b7a9f62deef326e9c312c4dc606bcfbef1",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_builtins.rs",
+        "sha256": "77545a7a3d3ffd8d8f06785cc14300a2eafeb27aa0503a917d3e5dbc60cbfbf2",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_descriptors.rs",
+        "sha256": "9c5e96016f5033a50695c69637d65b480589fee7461a68cb2a1b34d7db6eeac0",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_integrity.rs",
+        "sha256": "df152cef7fdac99f64ab9928d26ca3bbdfa59aabd109c45c8a85e9844ceb4a75",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_static.rs",
+        "sha256": "06dbdc45e5c6c8b81f3031b335feafa00ad8d37549b3b38739ddf2370333d8e7",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_symbols.rs",
+        "sha256": "57cf3ad0c49095b32466c92f82b10e1fa62c52a71d061de7f2646ac005d466c7",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/object_tests.rs",
+        "sha256": "ada5bbd7092bba8d6def768a3597663395eea2d3e4cb929b02c2b9de3d50165c",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/operations.rs",
+        "sha256": "7254714f76641232d74948316d2adb74650ac3ba28d20a847fcda36389936987",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/primitives.rs",
+        "sha256": "a7b3d2f7fd4f0722c8512722c3fa1431d315e1ad8c8e56fbafe31f5894ab443c",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/profile_edges.rs",
+        "sha256": "db8cd166172536ba2fb534b2b19092d5f9e59d5966ead6ce58bca1e6fe35a878",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/program_store.rs",
+        "sha256": "35327f42cea8624756f91ebaab41026e57a394a7dc363cdbb17b109fd2bed545",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/promise.rs",
+        "sha256": "8182f9a0fef267966a05d6bb09b6d7f7468b9328237730722315602250c0784d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/promise_aggregate.rs",
+        "sha256": "f42a21fe7e7e73b40734a4e1c30e44574c1791e37872b50d36fb9caf6d85d9fd",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/promise_async.rs",
+        "sha256": "06a3b6e168da6872e5b9cabf41d7c738cf6df3565f66b552e4a4d4492fce1749",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/promise_jobs.rs",
+        "sha256": "750bb20a84a439682ca9956b5cdafaafa4618a742fd72e53e281071693e000a0",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/promise_state.rs",
+        "sha256": "27937190b4f18875aeb5d6f3fe29681c9327f6230324d2b2640ff779c0208091",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/proxy.rs",
+        "sha256": "ffea365f24076f26e29727f17827996529a761c9e19b0425b82ce88891bddd3d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/reflect.rs",
+        "sha256": "6aa945912da92c1af7a44533437dd170b6e297dd26880d071715a806c2aa066f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/sort.rs",
+        "sha256": "0d7068eaea0175e0e2f6b2de42dd3f9dd807a967755bf7543e164b7b2fca8b7d",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/string.rs",
+        "sha256": "bc2ee57f344c041d6dc8a1e4e464db76a1506db738ece6294062f29d56e0d3d2",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/symbol.rs",
+        "sha256": "02e93bbf1a9ac666ef57de3abfc9e9a74b7ecf36f1bb70669fc082f4640618e6",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/temporal.rs",
+        "sha256": "bda17d3e1d039d4ede31f194b282e03d521cee6760d8443f0395a6cce37608a6",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/temporal_date_parse.rs",
+        "sha256": "f416aee4fe49ec2c209273a5388c25843db46dc34271ed1c3a8ecd038562b0e4",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/temporal_instant.rs",
+        "sha256": "aba9f4d848ac6da75e683ec8468865ba871668ed2b6f455e99bd35baad442e21",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/tests.rs",
+        "sha256": "ed145e9f05d69cc432b4dd93cc1a18e92f87b70a629e2b14fee0d4b687f416ee",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/typed_array.rs",
+        "sha256": "60d609338ea329eb7db98b513486b21bc0c8731932a26a799090dceacae6681e",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/wasm.rs",
+        "sha256": "700784f78eb6784921ced57c545386c12d5e21005106dea3df5c8f0d31063f78",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/wasm_exception.rs",
+        "sha256": "8a4a40d03b3f13d3191251a35b796c90d66e6eda97be5c4823c6af39416f196e",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/wasm_gc.rs",
+        "sha256": "9db096b2e1d1c81d4452a3e1d1610bbc42c0de92200a5fa3bdae9adac5019555",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/wasm_host.rs",
+        "sha256": "fae49399215b32f6dfa2cbf6f0174e18689e932888ca8a63fad82a4b8065b0ac",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/vm/wasm_table.rs",
+        "sha256": "87d7242be6bd191dd8d6894bb59d1962c73fb61cc7dee12d7183247a5437f438",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm.rs",
+        "sha256": "787d43d7bfa186274d258ad331aaf0742f73cd48c52181b39bfcd4de1a433c4f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/atomic.rs",
+        "sha256": "5e0bc3bd3de95e043d34b820289b3399f7c4d5a503633d49df05f5d8dd5c1502",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/constant.rs",
+        "sha256": "e002704e93737ec913577411784c4f6d567935a81dfa5bea6d00a3f8bf693aa5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/control.rs",
+        "sha256": "79da2819de684fcc224d1d8fa725fc099f633e6dc24b9917435070d04dc83d80",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/conversion.rs",
+        "sha256": "d94e889b429ffb65609807905ccc19dbdc37595c142520e0837e3fc71318d610",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/element.rs",
+        "sha256": "cc73b36e6b8dbea71c0e50f8b875be322cf44606e2614ec88c813d3f8adb962e",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/gc.rs",
+        "sha256": "72ffd80a01d85f86ed880a190d4fcce204f09de19885e43f6162ad44d8225c73",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/i31.rs",
+        "sha256": "f30df7122a629a9dd9d536f607312894d65cc9bb10df023cffa973f1a044471c",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/integer.rs",
+        "sha256": "94b93b45002e30d45e3cec63b6bef457242789d0c9b8afb1aea0b32d7f5a2fd9",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/memory.rs",
+        "sha256": "9510a8311c7ed3452d23d99d6ecff49209c0dbef45af7aaf10e9c23596f09cef",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/reference.rs",
+        "sha256": "245bd318e62c45657bcec8737c05da6f70bc97f43b066d992fcb9390d08527c8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/scalar.rs",
+        "sha256": "24a16656e3b67bcf6e05387bfd8aa31f95deec17ee76ea558650de58b57d94f3",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/simd.rs",
+        "sha256": "780fabc404f8a43d495d25a14eac9216bb072e0b934670229bdccd254bb9de62",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/simd/integer.rs",
+        "sha256": "541697187ea2846438cc82255d31d483559ddc00b5427fa69d2005afd67665e8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/table.rs",
+        "sha256": "c24a0c88982ff467482c9c5839ebca1c36f4791bd7621fa8176ef9269174113a",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/tag.rs",
+        "sha256": "33160f6585224921a875a1e5f7d4113919daf7d808d17b493a73c5824b4b3b27",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/types.rs",
+        "sha256": "69904a454b2e0fd320d1504126cc6dca69f7f852ffff8e91b3254be12e9ffa03",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime-next/src/wasm/wait.rs",
+        "sha256": "10bf2efb28ecc6ebb6c18cae2fb5f6506de73dbc2285c88d27ae4ac6f973c448",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/collections/set.rs",
+        "sha256": "331e3d140b4bebd2e3c7a0379dd9e8da6275974c858c058b7376e070293e9ef5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/construct_realm.rs",
+        "sha256": "d4c1d769da631a00dd742f26436324e19400f4db8e301bdfda21c6dd35c1b1c5",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/cycle_collector.rs",
+        "sha256": "98699587a932fc00948b65c74a95d62475c91466a85826002e99d3c8adab42d8",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/functions_arguments.rs",
+        "sha256": "7e9b50e4c5c9493e4cf4dce1aa8adb32d280b16c79c49ce89f4974bc4289ed9c",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/host_api.rs",
+        "sha256": "7c86b4ceab8ee5c3689fe0eb44c27748bee16f34ab7f107117ab1713d8dc158f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/promise.rs",
+        "sha256": "0537134c4e92c0c2faf033a6498497d1461f58527acb30b9af131ac2fe56e139",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/promise_finally.rs",
+        "sha256": "b0473bff9fbb4388eceebdc8e48707213c55625c5386db028b048c811bc82d41",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/proxy.rs",
+        "sha256": "43cc1aa22b0df6bbc7dbac7f5a8b2a0cc29a94c69c2d07a07c91d853bf28996e",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/reflect.rs",
+        "sha256": "e48190ea156d52ae0128deaf4af7682443d5c92bd660c2539583c406eb7baae6",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/value.rs",
+        "sha256": "c463df216b1b69ab84ef6e2e21d9bf813d2d55a4656cb949d7b253a975462a66",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/realm.rs",
+        "sha256": "f89fa5a7c857120aedfd9a9d55508bd525072dd0efbeccf57463ad258814626f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/vm_host.rs",
+        "sha256": "e6eb8dd7fb3be6210650b138be92800bf198e85e21bed0e230a0ed31b5331368",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/vm_object_properties.rs",
+        "sha256": "0146525c1fd6c02d65a5ab87170ab6f2c6437247d8a1df708e647e921a1d8071",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/vm_properties_special.rs",
+        "sha256": "8ff3434f188ebd6853f3252ef14593d74ccc160b44c6696a800fa4172c50cec7",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "vendor/oxc-parser-next/src/js/grammar.rs",
+        "sha256": "26ea14fa11747af0890c28d6b393234b0f20c495b7e4bd6f7c18a060fb05888f",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "vendor/oxc-parser-next/src/js/statement.rs",
+        "sha256": "3c79ba4d3aa6cd4fddc6debe00a122680b7fabb801e0db9877ef0964a0702d2b",
+        "status": "modified_or_untracked"
+      },
+      {
+        "path": "vendor/oxc-parser-next/src/lib.rs",
+        "sha256": "9151e06ca5fd2465bcffe7d6c25ee470799e54e32fbbedfe73aa5420956a799d",
+        "status": "modified_or_untracked"
+      }
+    ],
+    "changed_source_manifest_sha256": "22da240c6d81b4ca2bff794ac53706ec4f4c0a41d999021092f19c0e6f6e4d77",
+    "dirty": true,
+    "head": "62109e265221b718a2b0c4680e057453d0f3941a",
+    "owner_source_sha256": {
+      "crates/quench-runtime-next/src/api.rs": "9e7e668789a4840ebb463cde40f2dc7571aa0bdce27fd734f2d68dfb81210855",
+      "crates/quench-runtime-next/src/bytecode/validate.rs": "4f8b7d20c196a1aa88e7dd22e90ca8e0c832b436277490d4f2adb1c6b61d487f",
+      "crates/quench-runtime-next/src/compile/liveness.rs": "419da8fca4d67e6e9585dce023382c4008492c9bbf5fbc8a65ab01705ab8bec8",
+      "crates/quench-runtime-next/src/vm/array_modern.rs": "3bae1f1b0f8e99d058b6539cc4a4ba4c7adb357ff4e6b1d90e017931ef7bf454",
+      "crates/quench-runtime-next/src/vm/builtins.rs": "3f968219d8867d489b4d0b0ef980fa96c3f8f3e70a1c2a60e2522b46326a4fde",
+      "crates/quench-runtime-next/src/vm/collections.rs": "a7b34a02c2b628d816072fd14b2e7f0fce38ea0b3912c46ac26ba53e08b33ab5",
+      "crates/quench-runtime-next/src/vm/error.rs": "d13d83c6f4e156069003eeb5b98bbf70ba0d8dac2f8ada194dca8a50858ed146",
+      "crates/quench-runtime-next/src/vm/gc.rs": "8f9504c6334c3eefa1362414a72fbadb80caa397fd725377f722420cc20f5b78",
+      "crates/quench-runtime-next/src/vm/generator.rs": "3da2349cfadaac7dbbe9308759c83e3e28b0ecdc3c84dccbddd583ceb24375a5",
+      "crates/quench-runtime-next/src/vm/json.rs": "12cf1d19afb386fba727b9a6508e657385409e6db33c4da5215c9a2c9df8c74e",
+      "crates/quench-runtime-next/src/vm/object_integrity.rs": "df152cef7fdac99f64ab9928d26ca3bbdfa59aabd109c45c8a85e9844ceb4a75",
+      "crates/quench-runtime-next/src/vm/promise.rs": "8182f9a0fef267966a05d6bb09b6d7f7468b9328237730722315602250c0784d",
+      "crates/quench-runtime-next/src/vm/promise_async.rs": "06a3b6e168da6872e5b9cabf41d7c738cf6df3565f66b552e4a4d4492fce1749",
+      "crates/quench-runtime-next/src/vm/symbol.rs": "02e93bbf1a9ac666ef57de3abfc9e9a74b7ecf36f1bb70669fc082f4640618e6"
+    }
+  },
+  "task": "20"
+}

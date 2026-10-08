@@ -15,7 +15,7 @@
   },
   "focused_runtime_test": {
     "command": "cargo test -p quench-runtime-next api::tests::regression_json_numbers_share_javascript_number_representation -- --exact",
-    "test_binary": "target/debug/deps/rqj-4dd9006612a58c8a",
+    "test_binary": "target/debug/deps/quench-4dd9006612a58c8a",
     "test_binary_sha256": "12bae3ed18428aa09ac36779b9b13a0cbf433ea64bafd384b96a1bf59270c8f3",
     "result": "passed: 1 test; both execution modes; 508 filtered"
   },

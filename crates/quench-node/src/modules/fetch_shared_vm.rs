@@ -4,8 +4,8 @@
 //! roots and response objects stay on the VM thread and are delivered at the
 //! shared event-loop checkpoint.
 
-use crate::host::{HostState, NodeHost};
-use rqj::{NativeContext, RootId, RootedError, Value};
+use crate::host::{NodeHost, SharedNodeState};
+use quench_runtime_next::{NativeContext, RootId, RootedError, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -90,15 +90,13 @@ pub(crate) fn fetch(
     let request = request_from_args(context, args)?;
     let id = context
         .host_mut()
-        .state()
+        .shared_state()
         .borrow_mut()
         .fetch
         .reserve(request)?;
     let id_data = context.number(id as f64);
-    let executor = context.host_function_with_data(
-        crate::host::shared_vm::operation("fetchExecutor"),
-        id_data,
-    )?;
+    let executor = context
+        .host_function_with_data(crate::host::shared_vm::operation("fetchExecutor"), id_data)?;
     let global = context.global_root()?;
     let promise_key = context.string_rooted("Promise");
     let promise = context.get_property_rooted(global, promise_key)?;
@@ -107,7 +105,7 @@ pub(crate) fn fetch(
         Err(error) => {
             context
                 .host_mut()
-                .state()
+                .shared_state()
                 .borrow_mut()
                 .fetch
                 .requests
@@ -138,10 +136,15 @@ fn request_from_args(
 
     let request_method = property(context, input, "method")?;
     let init = args.get(1).copied();
-    let init_method = init.map(|init| property(context, init, "method")).transpose()?.flatten();
-    let method_root = init_method
-        .or(request_method)
-        .filter(|root| context.rooted_value(*root).is_some_and(|value| !value.is_undefined()));
+    let init_method = init
+        .map(|init| property(context, init, "method"))
+        .transpose()?
+        .flatten();
+    let method_root = init_method.or(request_method).filter(|root| {
+        context
+            .rooted_value(*root)
+            .is_some_and(|value| !value.is_undefined())
+    });
     let method = method_root
         .map(|root| context.to_string(root))
         .transpose()?
@@ -156,7 +159,11 @@ fn request_from_args(
         .transpose()?
         .flatten();
     let headers_root = init_headers
-        .filter(|root| context.rooted_value(*root).is_some_and(|value| !value.is_undefined()))
+        .filter(|root| {
+            context
+                .rooted_value(*root)
+                .is_some_and(|value| !value.is_undefined())
+        })
         .or(request_headers);
     let headers = headers_root
         .map(|root| headers_from_object(context, root))
@@ -169,7 +176,11 @@ fn request_from_args(
         .transpose()?
         .flatten();
     let body_root = init_body
-        .filter(|root| context.rooted_value(*root).is_some_and(|value| !value.is_undefined()))
+        .filter(|root| {
+            context
+                .rooted_value(*root)
+                .is_some_and(|value| !value.is_undefined())
+        })
         .or(request_body)
         .filter(|root| {
             context
@@ -177,7 +188,10 @@ fn request_from_args(
                 .is_some_and(|value| !value.is_undefined() && !value.is_null())
         });
     if body_root.is_some() && matches!(method.as_str(), "GET" | "HEAD") {
-        return Err(type_error(context, "Request with GET/HEAD method cannot have body"));
+        return Err(type_error(
+            context,
+            "Request with GET/HEAD method cannot have body",
+        ));
     }
     let body = body_root
         .map(|root| context.to_string(root).map(String::into_bytes))
@@ -246,7 +260,7 @@ pub(crate) fn executor(
         .map(|id| id as u64)
         .ok_or_else(|| RootedError::host("invalid Fetch request id"))?;
     let (request, sender) = {
-        let state = context.host_mut().state();
+        let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
         let request = host
             .fetch
@@ -263,7 +277,9 @@ pub(crate) fn executor(
             .ok_or_else(|| RootedError::host("Fetch reject callback is missing"))?;
         let resolve = context.retain(resolve)?;
         let reject = context.retain(reject)?;
-        host.fetch.pending.insert(id, PendingFetch { resolve, reject });
+        host.fetch
+            .pending
+            .insert(id, PendingFetch { resolve, reject });
         (request, host.fetch.sender.clone())
     };
     let spawned = std::thread::Builder::new()
@@ -273,21 +289,23 @@ pub(crate) fn executor(
             let _ = sender.send(FetchCompletion { id, result });
         });
     if let Err(error) = spawned {
-        let state = context.host_mut().state();
+        let state = context.host_mut().shared_state();
         let pending = state.borrow_mut().fetch.pending.remove(&id);
         if let Some(pending) = pending {
             context.release_root(pending.resolve);
             context.release_root(pending.reject);
         }
-        return Err(RootedError::host(format!("cannot start Fetch worker: {error}")));
+        return Err(RootedError::host(format!(
+            "cannot start Fetch worker: {error}"
+        )));
     }
     Ok(context.undefined())
 }
 
 pub(crate) fn poll(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
-    state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    runtime: &mut quench_runtime_next::Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    state: &std::rc::Rc<std::cell::RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let mut completions = Vec::new();
     loop {
@@ -318,8 +336,7 @@ pub(crate) fn poll(
         match result {
             Ok(result) => {
                 runtime.release_root(result);
-                runtime.run_host_jobs(program)
-                    .map_err(|error| runtime.format_error(program, &error))?;
+                crate::modules::process::shared_vm::run_host_jobs_with_uncaught(runtime, program)?;
             }
             Err(error) => return Err(runtime.format_error(program, &error.error)),
         }
@@ -329,7 +346,7 @@ pub(crate) fn poll(
     Ok(true)
 }
 
-pub(crate) fn has_pending(state: &std::rc::Rc<std::cell::RefCell<HostState>>) -> bool {
+pub(crate) fn has_pending(state: &std::rc::Rc<std::cell::RefCell<SharedNodeState>>) -> bool {
     state.borrow().fetch.pending()
 }
 
@@ -352,7 +369,7 @@ pub(crate) fn complete(
         .ok_or_else(|| RootedError::host("invalid Fetch completion id"))?;
     let pending = context
         .host_mut()
-        .state()
+        .shared_state()
         .borrow_mut()
         .fetch
         .pending
@@ -360,7 +377,7 @@ pub(crate) fn complete(
         .ok_or_else(|| RootedError::host("Fetch completion has no pending promise"))?;
     let result = context
         .host_mut()
-        .state()
+        .shared_state()
         .borrow_mut()
         .fetch
         .completions
@@ -537,10 +554,8 @@ fn install_data_method(
     operation: &str,
     data: RootId,
 ) -> Result<(), RootedError> {
-    let function = context.host_function_with_data(
-        crate::host::shared_vm::operation(operation),
-        data,
-    )?;
+    let function =
+        context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
     set(context, object, name, function)
 }
 
@@ -584,7 +599,9 @@ fn set(
     if context.set_property_rooted(object, key, value, object)? {
         Ok(())
     } else {
-        Err(RootedError::host(format!("cannot install Fetch property {name}")))
+        Err(RootedError::host(format!(
+            "cannot install Fetch property {name}"
+        )))
     }
 }
 
@@ -679,7 +696,11 @@ fn transact(target: &url::Url, request: &FetchRequest) -> Result<FetchResponse, 
         "/".to_owned()
     } else {
         target.path().to_owned()
-    } + target.query().map(|query| format!("?{query}")).as_deref().unwrap_or("");
+    } + target
+        .query()
+        .map(|query| format!("?{query}"))
+        .as_deref()
+        .unwrap_or("");
     let mut headers = request
         .headers
         .iter()
@@ -779,7 +800,9 @@ fn parse_response(mut bytes: Vec<u8>, head_only: bool) -> Result<FetchResponse, 
     }
     let chunked = headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("transfer-encoding")
-            && value.split(',').any(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
+            && value
+                .split(',')
+                .any(|coding| coding.trim().eq_ignore_ascii_case("chunked"))
     });
     let content_length = headers
         .iter()
@@ -848,10 +871,9 @@ fn authority(target: &url::Url) -> String {
 
 fn is_token(text: &str) -> bool {
     !text.is_empty()
-        && text.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric()
-                || b"!#$%&'*+-.^_`|~".contains(&byte)
-        })
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
 }
 
 fn contains_line_break(text: &str) -> bool {

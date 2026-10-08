@@ -1,7 +1,7 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
-use crate::host::{EntryGoal, ModuleCache, NodeHost, ProcessModule};
-use rqj::{NativeContext, RootId, RootedError};
+use crate::host::{EntryGoal, NodeHost};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -11,10 +11,10 @@ const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, _
 const WRAPPER_SUFFIX: &str = "\n});";
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
-pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
+pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime_next::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
-        Some("mjs") => return Ok(rqj::SourceKind::Module),
-        Some("cjs") => return Ok(rqj::SourceKind::Script),
+        Some("mjs") => return Ok(quench_runtime_next::SourceKind::Module),
+        Some("cjs") => return Ok(quench_runtime_next::SourceKind::Script),
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -31,32 +31,32 @@ pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
         == Some("module");
     Ok(
         if path.extension().is_some_and(|extension| extension == "js") && module {
-            rqj::SourceKind::Module
+            quench_runtime_next::SourceKind::Module
         } else {
-            rqj::SourceKind::Script
+            quench_runtime_next::SourceKind::Script
         },
     )
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let state = context.host_mut().state();
-    if let Some(root) = state.borrow_mut().assert_module.take() {
+    let roots = context.host_mut().shared_state();
+    if let Some(root) = roots.borrow_mut().assert_module.take() {
         context.release_root(root);
     }
-    if let Some(root) = state.borrow_mut().path_module.take() {
+    if let Some(root) = roots.borrow_mut().path_module.take() {
         context.release_root(root);
     }
-    let previous = std::mem::replace(
-        &mut state.borrow_mut().module_cache,
-        ModuleCache::Shared(Default::default()),
-    );
-    if let ModuleCache::Shared(cache) = previous {
-        for root in cache.into_values() {
-            context.release_root(root);
-        }
+    let previous = std::mem::take(&mut roots.borrow_mut().module_cache);
+    for root in previous.into_values() {
+        context.release_root(root);
     }
     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
     crate::modules::buffer::shared_vm::install_global(context, buffer_module)?;
+    crate::modules::url::shared_vm::install_global(context)?;
+    install_shared_web_globals(context, buffer_module)?;
+    let console = cached_builtin(context, BuiltinModule::Console)?;
+    let global = context.global_root()?;
+    set(context, global, "console", console)?;
     if context.is_module()? {
         return Ok(());
     }
@@ -84,6 +84,21 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
+fn install_shared_web_globals(
+    context: &mut Context<'_>,
+    buffer_module: RootId,
+) -> Result<(), RootedError> {
+    let web_streams = crate::polyfills::bootstrap::web_streams::JS;
+    let root =
+        context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
+    context.release_root(root);
+
+    let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
+    let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
+    context.release_root(root);
+    crate::modules::buffer::shared_vm::install_blob_export(context, buffer_module)
+}
+
 pub(super) fn require(
     context: &mut Context<'_>,
     _: RootId,
@@ -92,18 +107,20 @@ pub(super) fn require(
     let specifier = specifier(context, args, Request::Require)?;
     match BuiltinModule::from_specifier(&specifier) {
         Some(BuiltinModule::Process) => {
-            return match context.host_mut().state().borrow().process_module.as_ref() {
-                Some(ProcessModule::Shared(root)) => Ok(*root),
+            return match context.host_mut().shared_state().borrow().process_module {
+                Some(root) => Ok(root),
                 _ => Err(RootedError::host(
                     "shared process module is not initialized",
                 )),
             };
         }
         Some(BuiltinModule::Assert) => {
-            return crate::modules::assert::shared_vm::module(context);
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            return crate::modules::assert::shared_vm::module(context, util);
         }
         Some(BuiltinModule::AssertStrict) => {
-            let module = crate::modules::assert::shared_vm::module(context)?;
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            let module = crate::modules::assert::shared_vm::module(context, util)?;
             return get(context, module, "strict");
         }
         Some(BuiltinModule::Path) => {
@@ -124,6 +141,36 @@ pub(super) fn require(
         Some(BuiltinModule::Events) => {
             return cached_builtin(context, BuiltinModule::Events);
         }
+        Some(BuiltinModule::Console) => {
+            return cached_builtin(context, BuiltinModule::Console);
+        }
+        Some(BuiltinModule::Tty) => {
+            return cached_builtin(context, BuiltinModule::Tty);
+        }
+        Some(BuiltinModule::Crypto) => {
+            return cached_builtin(context, BuiltinModule::Crypto);
+        }
+        Some(BuiltinModule::V8) => {
+            return cached_builtin(context, BuiltinModule::V8);
+        }
+        Some(BuiltinModule::AsyncHooks) => {
+            return crate::modules::async_hooks::shared_vm::module(context);
+        }
+        Some(BuiltinModule::DiagnosticsChannel) => {
+            return crate::modules::diagnostics_channel::shared_vm::module(context);
+        }
+        Some(BuiltinModule::Dns) => {
+            return cached_builtin(context, BuiltinModule::Dns);
+        }
+        Some(BuiltinModule::PerfHooks) => {
+            return cached_builtin(context, BuiltinModule::PerfHooks);
+        }
+        Some(BuiltinModule::Zlib) => {
+            return cached_builtin(context, BuiltinModule::Zlib);
+        }
+        Some(BuiltinModule::WebStreams) => {
+            return cached_builtin(context, BuiltinModule::WebStreams);
+        }
         Some(
             module @ (BuiltinModule::Fs
             | BuiltinModule::Net
@@ -131,10 +178,16 @@ pub(super) fn require(
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
+            | BuiltinModule::StreamPromises
+            | BuiltinModule::Timers
+            | BuiltinModule::TimersPromises
+            | BuiltinModule::NodeTest
             | BuiltinModule::StringDecoder
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
-            | BuiltinModule::ChildProcess),
+            | BuiltinModule::ChildProcess
+            | BuiltinModule::Https
+            | BuiltinModule::Http2),
         ) => {
             return cached_builtin(context, module);
         }
@@ -173,13 +226,29 @@ enum BuiltinModule {
     Os,
     Buffer,
     Stream,
+    StreamPromises,
+    WebStreams,
     StringDecoder,
     WorkerThreads,
     Util,
+    Timers,
+    TimersPromises,
+    NodeTest,
     ChildProcess,
     Url,
     Querystring,
     Events,
+    Console,
+    Tty,
+    Crypto,
+    V8,
+    AsyncHooks,
+    DiagnosticsChannel,
+    Dns,
+    Https,
+    Http2,
+    PerfHooks,
+    Zlib,
 }
 
 impl BuiltinModule {
@@ -197,13 +266,28 @@ impl BuiltinModule {
             Self::Os => Some("os"),
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
+            Self::StreamPromises => Some("stream/promises"),
+            Self::WebStreams => Some("stream/web"),
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
+            Self::Timers => Some("timers"),
+            Self::TimersPromises => Some("timers/promises"),
+            Self::NodeTest => Some("node:test"),
             Self::ChildProcess => Some("child_process"),
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
             Self::Events => Some("events"),
+            Self::Console => Some("console"),
+            Self::Tty => Some("tty"),
+            Self::Crypto => Some("crypto"),
+            Self::V8 => Some("v8"),
+            Self::Dns => Some("dns"),
+            Self::Https => Some("https"),
+            Self::Http2 => Some("http2"),
+            Self::PerfHooks => Some("perf_hooks"),
+            Self::Zlib => Some("zlib"),
+            Self::AsyncHooks | Self::DiagnosticsChannel => None,
             Self::Process
             | Self::Assert
             | Self::AssertStrict
@@ -239,6 +323,15 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
+    ("stream/promises", BuiltinModule::StreamPromises),
+    ("node:stream/promises", BuiltinModule::StreamPromises),
+    ("stream/web", BuiltinModule::WebStreams),
+    ("node:stream/web", BuiltinModule::WebStreams),
+    ("timers", BuiltinModule::Timers),
+    ("node:timers", BuiltinModule::Timers),
+    ("timers/promises", BuiltinModule::TimersPromises),
+    ("node:timers/promises", BuiltinModule::TimersPromises),
+    ("node:test", BuiltinModule::NodeTest),
     ("string_decoder", BuiltinModule::StringDecoder),
     ("node:string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),
@@ -253,6 +346,31 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:querystring", BuiltinModule::Querystring),
     ("events", BuiltinModule::Events),
     ("node:events", BuiltinModule::Events),
+    ("console", BuiltinModule::Console),
+    ("node:console", BuiltinModule::Console),
+    ("tty", BuiltinModule::Tty),
+    ("node:tty", BuiltinModule::Tty),
+    ("crypto", BuiltinModule::Crypto),
+    ("node:crypto", BuiltinModule::Crypto),
+    ("v8", BuiltinModule::V8),
+    ("node:v8", BuiltinModule::V8),
+    ("async_hooks", BuiltinModule::AsyncHooks),
+    ("node:async_hooks", BuiltinModule::AsyncHooks),
+    ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
+    (
+        "node:diagnostics_channel",
+        BuiltinModule::DiagnosticsChannel,
+    ),
+    ("dns", BuiltinModule::Dns),
+    ("node:dns", BuiltinModule::Dns),
+    ("https", BuiltinModule::Https),
+    ("node:https", BuiltinModule::Https),
+    ("http2", BuiltinModule::Http2),
+    ("node:http2", BuiltinModule::Http2),
+    ("perf_hooks", BuiltinModule::PerfHooks),
+    ("node:perf_hooks", BuiltinModule::PerfHooks),
+    ("zlib", BuiltinModule::Zlib),
+    ("node:zlib", BuiltinModule::Zlib),
 ];
 
 fn cached_builtin(
@@ -263,22 +381,19 @@ fn cached_builtin(
         .cache_key()
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
     let key = format!("\0builtin:{canonical}");
-    let state = context.host_mut().state();
-    if let Some(module) = match &state.borrow().module_cache {
-        ModuleCache::Shared(cache) => cache.get(&key).copied(),
-        ModuleCache::Legacy(_) => {
-            return Err(RootedError::host("CommonJS requires a shared module cache"));
-        }
-    } {
+    let roots = context.host_mut().shared_state();
+    if let Some(module) = roots.borrow().module_cache.get(&key).copied() {
         return Ok(module);
     }
 
     let module = build_builtin(context, builtin)?;
     let retained = context.retain(module)?;
-    if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-        cache.insert(key, retained);
-    }
+    roots.borrow_mut().module_cache.insert(key, retained);
     Ok(module)
+}
+
+pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Stream)
 }
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
@@ -292,7 +407,23 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
             crate::modules::stream::shared_vm::module(context, decoder)
         }
+        BuiltinModule::StreamPromises => {
+            let stream = cached_builtin(context, BuiltinModule::Stream)?;
+            get(context, stream, "promises")
+        }
+        BuiltinModule::WebStreams => {
+            let global = context.global_root()?;
+            get(context, global, "__quenchWebStreams")
+        }
         BuiltinModule::StringDecoder => crate::modules::string_decoder::shared_vm::module(context),
+        BuiltinModule::Timers => {
+            let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
+            crate::modules::timers::shared_vm::timers_module(context, promises)
+        }
+        BuiltinModule::TimersPromises => {
+            crate::modules::timers::shared_vm::promises_module(context)
+        }
+        BuiltinModule::NodeTest => crate::modules::test::shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
             let module = context.object_rooted()?;
             let is_main = context.boolean(true);
@@ -302,8 +433,24 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Url => crate::modules::url::shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring::shared_vm::module(context),
         BuiltinModule::Events => crate::modules::events::shared_vm::module(context),
+        BuiltinModule::Console => crate::modules::console::shared_vm::module(context),
+        BuiltinModule::Tty => crate::modules::tty::shared_vm::module(context),
+        BuiltinModule::Dns => crate::modules::dns::shared_vm::module(context),
+        BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
+        BuiltinModule::Zlib => {
+            let stream = cached_builtin(context, BuiltinModule::Stream)?;
+            crate::modules::zlib::shared_vm::module(context, stream)
+        }
+        BuiltinModule::Crypto => crate::modules::crypto::shared_vm::module(context),
+        BuiltinModule::V8 => crate::modules::v8::shared_vm::module(context),
+        BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(
+            "stateful builtin passed to generic shared module builder",
+        )),
         BuiltinModule::Util => crate::modules::util::shared_vm::module(context),
         BuiltinModule::ChildProcess => context.object_rooted(),
+        // Fastify imports both alternatives at module initialization. Its
+        // selected HTTP/1 path does not access these TLS-only exports.
+        BuiltinModule::Https | BuiltinModule::Http2 => context.object_rooted(),
         BuiltinModule::Process
         | BuiltinModule::Assert
         | BuiltinModule::AssertStrict
@@ -461,8 +608,8 @@ fn module_record(
         .collect::<Vec<_>>();
     let paths = context.array_rooted(&paths)?;
     set(context, module, "paths", paths)?;
-    let process = match context.host_mut().state().borrow().process_module.as_ref() {
-        Some(ProcessModule::Shared(root)) => *root,
+    let process = match context.host_mut().shared_state().borrow().process_module {
+        Some(root) => root,
         _ => {
             return Err(RootedError::host(
                 "shared process module is not initialized",
@@ -492,13 +639,8 @@ fn load(
     goal: EntryGoal,
 ) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
-    let state = context.host_mut().state();
-    let cached = match &state.borrow().module_cache {
-        ModuleCache::Shared(cache) => cache.get(&key).copied(),
-        ModuleCache::Legacy(_) => {
-            return Err(RootedError::host("CommonJS requires a shared module cache"));
-        }
-    };
+    let roots = context.host_mut().shared_state();
+    let cached = roots.borrow().module_cache.get(&key).copied();
     if let Some(module) = cached {
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Attach)?;
@@ -510,9 +652,10 @@ fn load(
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
     let retained = context.retain(module)?;
-    if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-        cache.insert(key.clone(), retained);
-    }
+    roots
+        .borrow_mut()
+        .module_cache
+        .insert(key.clone(), retained);
     let result = (|| {
         let bytes =
             std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
@@ -533,7 +676,8 @@ fn load(
             }
             _ => {
                 if goal == EntryGoal::Node
-                    && source_kind(filename).map_err(RootedError::host)? == rqj::SourceKind::Module
+                    && source_kind(filename).map_err(RootedError::host)?
+                        == quench_runtime_next::SourceKind::Module
                 {
                     return Err(RootedError::host(
                         "requiring an ES module is not implemented on the shared VM",
@@ -544,7 +688,7 @@ fn load(
                 } else {
                     text
                 };
-                let wrapper = context.evaluate_script_rooted(
+                let wrapper = context.evaluate_specialized_script_rooted(
                     &format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}"),
                     &key,
                 )?;
@@ -569,9 +713,7 @@ fn load(
         get(context, module, "exports")
     })();
     if result.is_err() {
-        if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-            cache.remove(&key);
-        }
+        roots.borrow_mut().module_cache.remove(&key);
         context.release_root(retained);
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;

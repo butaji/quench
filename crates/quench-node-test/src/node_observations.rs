@@ -1,9 +1,9 @@
 //! Matched raw process traces for the inventory's output-observation cases.
 
 use crate::{
-    case_process::{observe_case, observe_command, CaseObservation, DEFAULT_CASE_TIMEOUT_SECS},
-    inventory::{NodeInventory, ObservationInput},
+    case_process::{observe_command, CaseObservation, DEFAULT_CASE_TIMEOUT_SECS},
     fixture_metadata::fixture_flags,
+    inventory::{NodeInventory, ObservationInput},
     outcome::NodeOutcome,
 };
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ use std::{
     env,
     ffi::OsStr,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -23,7 +24,8 @@ const NODE_COMMONJS_ADAPTER: &str = r#"
 const fs = require('node:fs');
 const path = require('node:path');
 const { Module } = require('node:module');
-const filename = path.resolve(process.argv[1]);
+const filename = path.resolve(process.argv[2]);
+process.argv.splice(1, 1, filename);
 const fixture = new Module(filename);
 fixture.filename = filename;
 fixture.paths = Module._nodeModulePaths(path.dirname(filename));
@@ -111,13 +113,30 @@ pub(crate) fn trace_observations(
     }
 
     let node = node_identity()?;
+    let mut adapter = tempfile::Builder::new()
+        .prefix("quench-node-observation-")
+        .suffix(".cjs")
+        .tempfile()
+        .map_err(|error| format!("create local Node adapter: {error}"))?;
+    adapter
+        .write_all(NODE_COMMONJS_ADAPTER.as_bytes())
+        .map_err(|error| format!("write local Node adapter: {error}"))?;
     let shared_runner = executable_identity(
         &env::current_exe().map_err(|error| format!("resolve shared runner: {error}"))?,
     )?;
     let timeout = Duration::from_secs(DEFAULT_CASE_TIMEOUT_SECS);
     let records = observations
         .iter()
-        .map(|input| capture_observation(input, repository, &node, &shared_runner, timeout))
+        .map(|input| {
+            capture_observation(
+                input,
+                repository,
+                &node,
+                adapter.path(),
+                &shared_runner,
+                timeout,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let evidence = ObservationEvidence {
         schema: TRACE_SCHEMA,
@@ -151,6 +170,7 @@ fn capture_observation(
     input: &ObservationInput,
     repository: &Path,
     node: &NodeIdentity,
+    node_adapter: &Path,
     shared_runner: &ExecutableIdentity,
     timeout: Duration,
 ) -> Result<ObservationRecord, String> {
@@ -158,20 +178,29 @@ fn capture_observation(
     let source = fs::read_to_string(&fixture)
         .map_err(|error| format!("read {}: {error}", fixture.display()))?;
     let flags = fixture_flags(&source);
+    let parallel_fixture = crate::case_process::is_node_parallel_fixture(repository, &fixture);
     let mut node_command = Command::new(&node.path);
     node_command
         .args(&flags)
-        .arg("--input-type=commonjs")
-        .arg("--eval")
-        .arg(NODE_COMMONJS_ADAPTER)
+        .arg(node_adapter)
         .arg(&fixture)
         .env_remove("NODE_OPTIONS")
         .env_remove("NODE_PATH")
         .current_dir(repository);
+    if parallel_fixture {
+        // The official Node test runner applies fixture flags before asking
+        // common/index.js to inspect them, so the child must not re-exec.
+        node_command.env("NODE_SKIP_FLAG_CHECK", "true");
+    }
     let node_observation = observe_command(node_command, timeout)
         .map_err(|error| format!("local Node {}: {error}", input.path.display()))?;
-    let shared_observation = observe_case(&shared_runner.path, &fixture, timeout)
-        .map_err(|error| format!("shared VM {}: {error}", input.path.display()))?;
+    let shared_observation = crate::case_process::observe_inventory_case(
+        &shared_runner.path,
+        &fixture,
+        repository,
+        timeout,
+    )
+    .map_err(|error| format!("shared VM {}: {error}", input.path.display()))?;
     let record = ObservationRecord {
         path: input.path.clone(),
         sha256: input.sha256.clone(),

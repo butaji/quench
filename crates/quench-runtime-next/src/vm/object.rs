@@ -1,7 +1,7 @@
 use super::property_key::PropertyKey;
 use super::*;
 
-const PRIVATE_NAME_PREFIX: &str = "\0rqj:private:";
+const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
 fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
@@ -270,7 +270,11 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
-        let value = self.frames[frame].this;
+        let atom = self.intern_atom("\0quench:lexical-this");
+        let value = self
+            .dynamic_binding(frame, atom)
+            .unwrap_or(self.frames[frame].this);
+        self.frames[frame].this = value;
         if value.is_deleted() {
             return Err(self.reference_error(
                 p,
@@ -359,13 +363,14 @@ impl<H: Host> Vm<H> {
                 .heap
                 .alloc_object_pair(self.object_proto, two, first, second);
         }
-        let shape = if self.object_shapes[site] != u32::MAX {
-            self.object_shapes[site]
+        let cache_site = self.object_cache_index(site);
+        let shape = if self.object_shapes[cache_site] != u32::MAX {
+            self.object_shapes[cache_site]
         } else {
             let atoms = program.object_sites[site].atoms;
             let one = self.transition_shape(0, atoms[0]);
             let two = self.transition_shape(one, atoms[1]);
-            self.object_shapes[site] = two;
+            self.object_shapes[cache_site] = two;
             two
         };
         self.heap
@@ -435,42 +440,38 @@ impl<H: Host> Vm<H> {
         if !self.specialized || !p.specialized {
             return self.get_property(p, object, atom);
         }
+        let site = self.field_cache_index(site);
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return self.get_property(p, object, atom);
         };
         let receiver_shape = receiver.shape();
-        // SAFETY: cache-site ids are emitted only by the compiler and execute
-        // against the exactly-sized cache vector initialized for this program.
-        let cache = unsafe { *self.field_caches.get_unchecked(site as usize) };
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(site) };
         if cache.receiver == receiver_shape
-            && let Some(owner) = self.field_cache_owner(object, cache)
-            && let Some(owner_data) = self.object_data(owner)
             && self
                 .heap
-                .property_get(owner_data, cache.slot as usize)
+                .property_get(receiver, cache.slot as usize)
                 .is_some()
         {
-            // SAFETY: receiver shape, owner identity, owner shape, and slot
-            // were recorded together on the cache miss path.
+            // SAFETY: receiver shape and slot were recorded together for an
+            // own data property on the cache miss path.
             let value = unsafe {
                 self.heap
-                    .property_get_unchecked(owner_data, cache.slot as usize)
+                    .property_get_unchecked(receiver, cache.slot as usize)
             };
             self.profile.field_cache_hit(0, 0);
             return Ok(value);
         }
         if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
-            && let Some(owner) = self.field_cache_owner(object, cache)
-            && let Some(owner_data) = self.object_data(owner)
             && self
                 .heap
-                .property_get(owner_data, cache.slot as usize)
+                .property_get(receiver, cache.slot as usize)
                 .is_some()
         {
             // SAFETY: the table is keyed by the immutable receiver shape.
             let value = unsafe {
                 self.heap
-                    .property_get_unchecked(owner_data, cache.slot as usize)
+                    .property_get_unchecked(receiver, cache.slot as usize)
             };
             self.profile.field_cache_hit(2, 0);
             return Ok(value);
@@ -485,48 +486,32 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         object: Value,
         atom: Atom,
-        site: u16,
+        site: usize,
     ) -> Result<Value, JsError> {
-        let mut owner = object;
-        let mut depth = 0u16;
-        loop {
-            let Some(current) = self.shape_property_lookup(owner, atom) else {
-                return self.get_property(p, object, atom);
-            };
-            if self
-                .property_attributes(owner, PropertyKey::string(atom))
-                .is_some_and(|attributes| attributes.accessor)
-            {
-                return self.get_property(p, object, atom);
-            }
-            if let Some(slot) = self.shape_slot(current.shape(), atom)
-                && let Some(value) = self.heap.property_get(current, slot)
-            {
-                if slot < FIELD_CACHE_SLOT_CAPACITY {
-                    let receiver = self.object_data(object).unwrap().shape();
-                    self.record_field_cache(
-                        site,
-                        FieldCache {
-                            receiver,
-                            atom,
-                            owner,
-                            owner_shape: current.shape(),
-                            slot: slot as u16,
-                            depth,
-                        },
-                    );
-                }
-                return Ok(value);
-            }
-            owner = current.proto;
-            if owner.is_null() {
-                return Ok(Value::UNDEFINED);
-            }
-            let Some(next_depth) = depth.checked_add(1) else {
-                return self.get_property(p, object, atom);
-            };
-            depth = next_depth;
+        let Some(receiver) = self.shape_property_lookup(object, atom) else {
+            return self.get_property(p, object, atom);
+        };
+        if self
+            .property_attributes(object, PropertyKey::string(atom))
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return self.get_property(p, object, atom);
         }
+        if let Some(slot) = self.shape_slot(receiver.shape(), atom)
+            && let Some(value) = self.heap.property_get(receiver, slot)
+        {
+            if slot < FIELD_CACHE_SLOT_CAPACITY {
+                self.record_field_cache(
+                    site,
+                    FieldCache {
+                        receiver: receiver.shape(),
+                        slot: slot as u16,
+                    },
+                );
+            }
+            return Ok(value);
+        }
+        self.get_property(p, object, atom)
     }
     pub(super) fn set_property(
         &mut self,
@@ -1009,6 +994,7 @@ impl<H: Host> Vm<H> {
         if !self.specialized || !p.specialized {
             return self.set_property_with_program(p, object, atom, value);
         }
+        let site = self.field_cache_index(site);
         let existing = self
             .object_data(object)
             .and_then(|data| self.shape_slot(data.shape(), atom));
@@ -1017,8 +1003,8 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .map(Object::shape)
             .unwrap_or(u32::MAX);
-        let cache = self.field_caches[site as usize];
-        if shape != u32::MAX && cache.receiver == shape && cache.depth == 0 {
+        let cache = self.field_caches[site];
+        if shape != u32::MAX && cache.receiver == shape {
             let invalidates_method = self.callable_write(object, cache.slot as usize, value);
             // SAFETY: a matching immutable shape proves the cached slot layout.
             unsafe {
@@ -1058,11 +1044,7 @@ impl<H: Host> Vm<H> {
                 site,
                 FieldCache {
                     receiver: data_shape,
-                    atom,
-                    owner: object,
-                    owner_shape: data_shape,
                     slot: slot as u16,
-                    depth: 0,
                 },
             );
         }
@@ -1191,9 +1173,9 @@ impl<H: Host> Vm<H> {
                 .and_then(|object| self.heap.property_get(object, slot))
                 .is_some_and(|old| self.is_function(old))
     }
-    pub(super) fn record_field_cache(&mut self, site: u16, cache: FieldCache) {
+    pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
-        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {
             // SAFETY: every non-sentinel index is written when its table is pushed.
             let entries = unsafe {
@@ -1203,7 +1185,7 @@ impl<H: Host> Vm<H> {
             entries.insert(cache);
             return;
         }
-        let entry = &mut self.field_caches[site as usize];
+        let entry = &mut self.field_caches[site];
         if entry.receiver == cache.receiver || entry.receiver == u32::MAX {
             *entry = cache;
             return;
@@ -1213,16 +1195,14 @@ impl<H: Host> Vm<H> {
             .push(FieldCacheSet::with_pair(*entry, cache));
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         unsafe {
-            *self
-                .megamorphic_field_indices
-                .get_unchecked_mut(site as usize) = table_index;
+            *self.megamorphic_field_indices.get_unchecked_mut(site) = table_index;
         }
     }
     #[inline(always)]
-    fn megamorphic_field_cache(&self, site: u16, shape: u32) -> Option<FieldCache> {
+    fn megamorphic_field_cache(&self, site: usize, shape: u32) -> Option<FieldCache> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
-        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site as usize) };
+        let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index == NO_MEGAMORPHIC_FIELD {
             return None;
         }

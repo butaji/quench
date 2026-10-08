@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "official_node_parallel_shared_console_slice",
+  "reviewed_on": "2026-10-06",
+  "source_revision": "62109e265221b718a2b0c4680e057453d0f3941a",
+  "source_state": "Dirty worktree; current owner and runner SHA-256 values bind this focused rerun to the tested snapshot.",
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "e72613082b78a734fbac78689496771781e25cfe6b1890b456e12030548617cd",
+    "runner": "quench-node-test run-parallel-next / shared NodeHost"
+  },
+  "shared_vm_run": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel-next -- --filter test-console-log-",
+    "status": "pass",
+    "result": {
+      "pass": 2,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 2
+    },
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "7319c819aa8b0b0160b912eb0fe3eaec59c0009ff9c61ade467b8ff403e6d456",
+    "build_profile": "iteration; behavior qualification only, no performance claim"
+  },
+  "local_node_oracle": {
+    "node": "v26.10.0",
+    "status": "pass",
+    "command": "Run each byte-identical fixture copy as adjacent .cjs with NODE_SKIP_FLAG_CHECK=1; root package.json otherwise classifies upstream .js fixtures as ES modules.",
+    "cases_passed": 2
+  },
+  "cases": [
+    {
+      "path": "tests/node/test/parallel/test-console-log-throw-primitive.js",
+      "sha256": "488c375fa39447990470de8f7e430d38c64549917bb18fb5c3b610a1c615a4d1",
+      "role": "included assertion case",
+      "obligation": "new Console({ stdout }) accepts the caller-owned Writable and log does not throw when its _write callback path throws null.",
+      "shared_vm": "pass",
+      "local_node_exit": 0
+    },
+    {
+      "path": "tests/node/test/parallel/test-console-log-stdio-broken-dest.js",
+      "sha256": "6ecff4702acbcf5b8d4fe52e7ae8d0dd84e38153286536ece70714d77124e070",
+      "role": "included assertion case",
+      "obligation": "Console logging through the caller-owned Writable with a failing writev does not emit the forbidden process warning.",
+      "shared_vm": "pass",
+      "local_node_exit": 0
+    }
+  ],
+  "owner_sha256": {
+    "crates/quench-node/src/host/shared_vm/commonjs.rs": "ef67566622e166f986e308a9a4ed07c22271e1822e25d4c714cc2ecafc6d396c",
+    "crates/quench-node/src/host/shared_vm.rs": "633cf27c4c52ed2c6e7fd755b455c909807c4efdd6cbdada76c95bd144433ddf",
+    "crates/quench-node/src/modules/console.rs": "bd4f77439f393cc1248f962eb3f654b51ba34bb51e1eea92b26085181e62b76b",
+    "crates/quench-node/src/modules/console/shared_vm.rs": "47bbcb75cfc3d2f79e594b48e0304bee48f31a160dfacb52a56e666fd1f13a7e",
+    "crates/quench-node/src/modules/stream/shared_vm.rs": "7c2f9974486854a06b7ab7235e9f98f089977199c41082694ddf5eab39cc65fc",
+    "crates/quench-node/src/modules/stream_prelude.js": "1945385d07a61198cdf6784f7e7ff43eaed1324b7a8767e1e940c915e42aded9",
+    "crates/quench-node/src/modules/util/shared_vm.rs": "2fba1df2567c131bd404656363243ea64df2c6b319336b15338844a4b7bd2e4a",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "a34d56d6464b3f9e1056fbb76f88181ab1aba496041c3de64d6b0dc388651e89",
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/parallel_profile.rs": "f63cfdbd628d65d845bf64ce998e359db305ccb251b33f642a7d32d0963c0eff",
+    "crates/quench-node-test/src/shared_runner.rs": "a21fad01f23d3910168d726c9cf375c5b0dd48bd38619669d475e88c1aed52e1",
+    "crates/quench-node-test/src/case_process.rs": "c3c22940bebc194360df3329218e7e9e514ca2b8eaa1d845ff7a46d2d37c5317"
+  },
+  "representation": {
+    "aliases": "console and node:console map to one BuiltinModule::Console and canonical cache key console.",
+    "class": "The shared module creates its default instance and Console export from the existing CONSOLE_CLASS source; no second Console class or output subsystem is introduced.",
+    "stream_error": "The selected stream path owns the thrown-null completion behavior. Console does not add a broad exception-swallowing rule."
+  },
+  "limits": "This qualifies the two included Console logging fixtures on shared NodeHost. It does not qualify global console installation, formatting options, other Console methods, or the full implemented Node inventory."
+}

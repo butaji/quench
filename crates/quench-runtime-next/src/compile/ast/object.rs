@@ -32,7 +32,7 @@ impl FunctionCompiler<'_, '_> {
                 matches!(property, ObjectPropertyKind::ObjectProperty(property)
                 if property.method || property.kind != PropertyKind::Init)
             })
-            .then(|| self.hidden_local(&format!("\0rqj:object-home:{}", value.span.start)));
+            .then(|| self.hidden_local(&format!("\0quench:object-home:{}", value.span.start)));
         if let Some(super_atom) = super_atom {
             self.clone_environment_slots(vec![self.local_slots[&super_atom]]);
             self.store_atom(super_atom, dst);
@@ -203,7 +203,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn object_literal_prototype(&mut self, object: Register, prototype: Register) {
-        let callee = self.load_name("\0rqj:object-literal-prototype");
+        let callee = self.load_name("\0quench:object-literal-prototype");
         let this = self.literal(Constant::Undefined);
         let start = self.next_reg;
         for argument in [object, prototype] {

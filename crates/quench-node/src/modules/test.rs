@@ -15,6 +15,9 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+#[path = "test/shared_vm.rs"]
+pub(crate) mod shared_vm;
+
 struct Frame {
     before: Vec<Value>,
     after: Vec<Value>,

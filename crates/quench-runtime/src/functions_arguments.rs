@@ -1,8 +1,4 @@
-fn emit_function_expression(
-    ops: &mut Vec<Op>,
-    next: &mut u16,
-    emission: FunctionEmission,
-) -> u16 {
+fn emit_function_expression(ops: &mut Vec<Op>, next: &mut u16, emission: FunctionEmission) -> u16 {
     let FunctionEmission {
         spec,
         declared_name,
@@ -615,15 +611,15 @@ fn bind_function_target(
         crate::value::Value::String(name.clone()),
         name_descriptor(&name),
     );
-    Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
-        crate::value::BoundFunctionValue {
+    Ok(crate::value::Value::BoundFunction(
+        crate::value::BoundFunctionValue::allocate(crate::value::BoundFunctionValue {
             realm: crate::vm::current_context_or_default().realm(),
             target,
             receiver: bound_target,
             arguments: extra,
             properties: std::cell::RefCell::new(properties),
-        },
-    )))
+        }),
+    ))
 }
 
 fn insert_bound_property(

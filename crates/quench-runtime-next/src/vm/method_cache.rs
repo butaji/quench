@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         entries.extend(self.megamorphic_methods.iter().flat_map(|set| {
             set.entries[..usize::from(set.len)]
                 .iter()
-                .map(|entry| (usize::from(set.site), *entry))
+                .map(|entry| (set.site, *entry))
         }));
         entries
     }
@@ -160,11 +160,16 @@ impl<H: Host> Vm<H> {
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
-            .find(|set| usize::from(set.site) == site)
+            .find(|set| set.site == site)
         {
             if let Some(entry) = set.entries[..usize::from(set.len)]
                 .iter_mut()
-                .find(|entry| entry.shape == cache.shape && entry.proto == cache.proto)
+                .find(|entry| {
+                    entry.shape == cache.shape
+                        && entry.atom == cache.atom
+                        && entry.proto == cache.proto
+                        && entry.callee == cache.callee
+                })
             {
                 *entry = cache;
             } else if usize::from(set.len) < METHOD_MEGAMORPHIC_LIMIT {
@@ -174,17 +179,19 @@ impl<H: Host> Vm<H> {
             return;
         }
         let entries = &mut self.method_caches[site];
-        if entries
-            .iter()
-            .any(|entry| entry.shape == cache.shape && entry.proto == cache.proto)
-            || entries[1].target.is_none()
+        if entries.iter().any(|entry| {
+            entry.shape == cache.shape
+                && entry.atom == cache.atom
+                && entry.proto == cache.proto
+                && entry.callee == cache.callee
+        }) || entries[1].target.is_none()
         {
             entries[1] = entries[0];
             entries[0] = cache;
             return;
         }
         let mut set = MethodCacheSet {
-            site: site as u16,
+            site,
             len: 3,
             entries: [EMPTY_METHOD_CACHE; METHOD_MEGAMORPHIC_LIMIT],
         };
@@ -195,7 +202,29 @@ impl<H: Host> Vm<H> {
 }
 
 impl<H: Host> Vm<H> {
-    fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<FieldCache> {
+    fn method_cache_owner(&self, object: Value, atom: Atom, guard: MethodGuard) -> Option<Value> {
+        let mut owner = object;
+        for depth in 0..=guard.depth {
+            let current = self.shape_property_lookup(owner, atom)?;
+            if depth == guard.depth {
+                return (owner == guard.owner && current.shape() == guard.owner_shape)
+                    .then_some(owner);
+            }
+            if self
+                .shape_slot(current.shape(), atom)
+                .is_some_and(|slot| self.heap.property_get(current, slot).is_some())
+            {
+                return None;
+            }
+            owner = current.proto;
+            if owner.is_null() {
+                return None;
+            }
+        }
+        None
+    }
+
+    fn method_cache_guard(&self, receiver: Value, atom: Atom) -> Option<MethodGuard> {
         let receiver_shape = self.object_data(receiver)?.shape();
         if self.shape_is_dictionary(receiver_shape) {
             return None;
@@ -217,9 +246,7 @@ impl<H: Host> Vm<H> {
                 {
                     return None;
                 }
-                return Some(FieldCache {
-                    receiver: receiver_shape,
-                    atom,
+                return Some(MethodGuard {
                     owner,
                     owner_shape: data.shape(),
                     slot: slot as u16,
@@ -308,11 +335,15 @@ fn retain_entries(heap: &crate::heap::Heap, entries: &mut [MethodCache], len: us
 fn method_cache_live(heap: &crate::heap::Heap, entry: MethodCache) -> bool {
     let key_live = !entry.proto.is_heap() || heap.get(entry.proto).is_some();
     let owner_live = !entry.guard.owner.is_heap() || heap.get(entry.guard.owner).is_some();
+    let callee_live = !entry.callee.is_heap() || heap.get(entry.callee).is_some();
     let env = match entry.target {
         Some(CallTarget::User(_, _, env) | CallTarget::NumericUser(_, _, env)) => Some(env),
         _ => None,
     };
-    key_live && owner_live && env.is_none_or(|value| !value.is_heap() || heap.get(value).is_some())
+    key_live
+        && owner_live
+        && callee_live
+        && env.is_none_or(|value| !value.is_heap() || heap.get(value).is_some())
 }
 
 impl<H: Host> Vm<H> {
@@ -324,6 +355,7 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let metadata = p.method_sites[site];
+        let cache_site = self.method_cache_index(site);
         let start = metadata.argument_start as usize;
         let registers = &p.method_arguments[start..start + metadata.argument_count as usize];
         let arguments = CallArguments::from_values(
@@ -336,8 +368,9 @@ impl<H: Host> Vm<H> {
             .map(|object| (object.shape(), object.proto))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
 
-        let mut candidate = if self.specialized {
-            self.method_caches[site]
+        let specialized = self.specialized && p.specialized;
+        let mut candidate = if specialized {
+            self.method_caches[cache_site]
                 .iter()
                 .enumerate()
                 .find(|(_, entry)| {
@@ -349,11 +382,11 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if self.specialized && candidate.is_none() {
+        if specialized && candidate.is_none() {
             candidate = self
                 .megamorphic_methods
                 .iter()
-                .find(|set| usize::from(set.site) == site)
+                .find(|set| set.site == cache_site)
                 .and_then(|set| {
                     set.entries[..usize::from(set.len)]
                         .iter()
@@ -368,13 +401,7 @@ impl<H: Host> Vm<H> {
         }
 
         let cached_call = candidate.and_then(|(entry, tier)| {
-            if entry.guard.receiver != shape || entry.guard.atom != metadata.atom {
-                return None;
-            }
-            let owner = self.field_cache_owner(this, entry.guard)?;
-            if owner != entry.guard.owner {
-                return None;
-            }
+            let owner = self.method_cache_owner(this, metadata.atom, entry.guard)?;
             let owner_data = self.object_data(owner)?;
             if owner_data.shape() != entry.guard.owner_shape {
                 return None;
@@ -382,6 +409,9 @@ impl<H: Host> Vm<H> {
             let callee = self
                 .heap
                 .property_get(owner_data, entry.guard.slot as usize)?;
+            if entry.callee != callee {
+                return None;
+            }
             let target = entry.target?;
             Some((callee, target, tier))
         });
@@ -401,20 +431,21 @@ impl<H: Host> Vm<H> {
 
         let guard = self.method_cache_guard(this, metadata.atom);
         let callee = self.get_field_cached(p, this, metadata.atom, metadata.cache)?;
-        if self.specialized
+        if specialized
             && let Some(guard) = guard
             && matches!(self.heap.get(callee), Some(Cell::Function { .. }))
             && let Ok(target) = self.call_target(callee)
         {
             let cache_proto = if guard.depth == 0 { this } else { proto };
             #[cfg(feature = "profile-aggregate")]
-            self.profile_method_refill(site, shape, cache_proto, target);
+            self.profile_method_refill(cache_site, shape, cache_proto, target);
             self.record_method_cache(
-                site,
+                cache_site,
                 MethodCache {
                     shape,
                     atom: metadata.atom,
                     proto: cache_proto,
+                    callee,
                     guard,
                     target: Some(target),
                 },

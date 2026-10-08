@@ -2710,7 +2710,7 @@ pub(crate) fn request_head(
     request_head_with_chunking(host, method, path, headers, body_len, omit_host, false)
 }
 
-fn request_head_with_chunking(
+pub(crate) fn request_head_with_chunking(
     host: &str,
     method: &str,
     path: &str,

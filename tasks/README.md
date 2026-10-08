@@ -7,7 +7,7 @@ Stage membership remains separate because a lane can span both stages.
 
 | Stage                       | Required result                                                                                                                              | Closure                                            |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; 100% of lower-stage-adjudicated pinned Test262 cases, 100% Wasm, plus the framework-core Node profile and pinned Express/Koa/Fastify scenarios | [86](86.md), on the final cleaned production build |
+| A — correctness and cleanup | One OXC/Wasm VM, no legacy or unused clutter, units only for internals or uncovered scenarios; all Node-adjudicated pinned Test262 cases, 100% Wasm, plus the framework-core Node profile and pinned Express/Koa/Fastify scenarios | [86](86.md), on the final cleaned production build |
 | B — performance             | Best Score and lowest maximum RSS on **every** V8-v7 benchmark against QuickJS, Bun/JSC without JIT and Node/V8 without JIT                  | [61](61.md), recorded by [28](28.md)               |
 
 ## Stage A — single VM and correctness
@@ -30,11 +30,12 @@ Stage membership remains separate because a lane can span both stages.
   A complicated regression may remain for its uncovered obligation; a regression
   label or multiple execution modes alone does not justify duplicate suite
   cases.
-- Pass every lower-stage-adjudicated pinned Test262 case, every pinned Wasm
+- Pass every Node-adjudicated pinned Test262 case, every pinned Wasm
   directive, every upstream fixture tagged
   `framework-core` in `parallel.txt`, and the pinned Express, Koa and Fastify
-  scenarios. For direct Test262 conflicts, the lower-numbered stage controls;
-  keep contradictory higher-stage outcomes visible as waivers, never passes.
+  scenarios. For direct Test262 conflicts, exact local Node runs with the
+  pinned harness and the current ECMAScript algorithm arbitrate; preserve
+  contradicted raw outcomes as waivers, never passes.
   The manifest owns fixture membership; `tests/frameworks` owns the package
   scenarios. The broad Node inventory is diagnostic only and adds no gate
   cases.
@@ -43,19 +44,19 @@ The three package scenarios define the Stage A framework target. Do not expand
 the Node gate to unrelated upstream APIs or the broader proposals in
 [88](88.md)/[89](89.md).
 
-Stage A remains open because integrated qualification, production cutover and
-final cleanup remain. Test262 conflicts follow the lower-numbered-stage rule:
-Stage 94 defines the Annex B behavior, and the two contradictory Stage 114
-cases remain explicit waivers rather than passes. The current source-bound
-resolution is in [Task 20](20.md#current-conflict-resolution). The shared-VM
-Wasm and framework Node gates have current source-bound passes; Task 24 still
-needs the complete gate on one build.
+Stage A remains open because production cutover and final cleanup remain.
+Task 24 records the initial same-build qualification; Task 86 owns final
+requalification after cleanup. Test262 conflicts follow the Node-oracle rule:
+Node agrees with both Stage 114 Annex B fixtures, while the contradictory
+Stage 94 fixture remains a raw failure and explicit waiver. The current
+source-bound resolution is in [Task 20](20.md#current-conflict-resolution).
+The shared-VM Wasm and framework Node gates have current source-bound passes;
+Task 24 provides the initial full-inventory baseline for the final gate.
 
-The remaining work is:
+The remaining critical-path work is:
 
-- [24](24.md): pass all three suite gates on one build; [27](27.md): promote the
-  shared VM and delete legacy execution; [86](86.md): remove audited clutter and
-  close Stage A on the final production build.
+- [27](27.md): promote the shared VM and delete legacy execution; [86](86.md):
+  remove audited clutter and close Stage A on the final production build.
 
 Prioritize failing suite cases, missing shared-VM execution paths and production
 cutover blockers. Do not start discretionary architecture or new host
@@ -64,8 +65,9 @@ capabilities. Task 48's report/ratchet tooling is complete independently of the
 Node target. Audit support tasks against required suite behavior and necessary
 internal invariants. Close satisfied obligations with evidence and implement
 only actual gaps. Historical plans, host rewrites, runner-speed targets, new
-APIs and broad architecture proposals add no gates.
-Performance campaigns are not required in A.
+APIs and broad architecture proposals add no gates. Final performance
+qualification is not required in A; limited diagnostics may identify measured
+bottlenecks before the gate closes.
 
 Task 24 is the sole initial full-inventory campaign and owns the same-build
 reports for all raw Test262 outcomes plus the adjudicated pass count, Wasm and
@@ -84,13 +86,17 @@ and checks, including existing specialization fallbacks, roots, host re-entry
 and exhaustion; completing their historical plans is not an extra gate. Phase
 task lists identify ownership, not mandatory implementation checklists.
 
-**Only task 86 closes Stage A and permits Stage B.** Partial or historical
-passes do not establish that gate. Once verified, proceed directly to tasks
-62/61.
+**Only task 86 closes Stage A and enables Stage B qualification.** Provisional
+pre-gate diagnostics may run now: V8-v7 preflight, one matched all-fixture
+round, and focused paired experiments on the current candidate. They do not
+complete tasks 62/61, establish performance leadership, or close Stage A.
+Partial or historical suite passes do not establish the Stage A gate. Once
+verified, proceed directly to tasks 62/61 qualification.
 
 ## Stage B — performance
 
-After Stage A, run every V8-v7 benchmark on Apple M4/macOS: Crypto, DeltaBlue,
+Stage B diagnostics may start before Stage A closes as specified above. After
+Stage A, run every V8-v7 benchmark on Apple M4/macOS: Crypto, DeltaBlue,
 EarleyBoyer, NavierStokes, RayTrace, RegExp, Richards and Splay. On **each
 benchmark**, Quench must have both the best Score and the lowest maximum RSS
 against QuickJS, Bun/JSC with JIT disabled and Node/V8 `--jitless`. An aggregate

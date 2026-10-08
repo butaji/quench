@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "current_stagea_suite_refresh",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "97dc815a6ccba7380553c20fbbe0f74f8cc6d788",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted repository-relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_files": 729,
+    "snapshot_sha256": "14e70a4e934928c773740873520b83d2599bbfc1baaefafa1c3d7e56370a3700",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-test262/src",
+      "crates/quench-wasm/src",
+      "crates/quench-wasm-test/src",
+      "crates/quench-intl/src",
+      "crates/quench-temporal/src",
+      "vendor/oxc-parser-next/src",
+      "Cargo.toml",
+      "Cargo.lock",
+      "the selected crate Cargo.toml files"
+    ]
+  },
+  "test262": {
+    "suite_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "stages": 116,
+    "cases": 53406,
+    "passed": 53405,
+    "failed": 1,
+    "timeouts_or_crashes": 0,
+    "command": "TEST262_TEST_TIMEOUT_MS=60000 TEST262_JOBS=8 TEST262_REPORT=target/iteration/task27-current-2026-10-08/test262-stages.json cargo run --profile iteration -p quench-test262 --bin run-stages -- --from 0 --to 115 --continue --max-failures 1000",
+    "runner_binary": "target/iteration/run-stages",
+    "runner_binary_sha256": "eb1d4409e0bed0af30830e530195604971b40016d88f31291f2aee6a5aa5bb63",
+    "report": "target/iteration/task27-current-2026-10-08/test262-stages.json",
+    "report_sha256": "618cefce039d3ae586b75b0ef73b35a4a5655b7bc5f8c6c5a1f7f7c79afa9dc9",
+    "raw_failure": {
+      "stage": 94,
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "disposition": "retained raw failure under the existing Node-arbitrated waiver; not counted as a pass",
+      "oracle_evidence": "tasks/evidence/task20-node-oracle-current-2026-10-07.json"
+    }
+  },
+  "wasm": {
+    "suite": "pinned WebAssembly testsuite",
+    "files": 288,
+    "input_manifest_sha256": "fe78577922f7360f39f0d66cb4ec33218ac3b43b4193e7016f6a2799952e424d",
+    "directives": 67124,
+    "passed": 67124,
+    "failed": 0,
+    "inventory_complete": true,
+    "timeouts": 0,
+    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task27-current-2026-10-08/wasm.json crates/quench-wasm-test/testsuite",
+    "runner_binary": "target/iteration/run",
+    "runner_binary_sha256": "75b20dbb160ce7bd9b475fb57d0422665d4648d37981496d05a819f11607f498",
+    "report": "target/iteration/task27-current-2026-10-08/wasm.json",
+    "report_sha256": "23308804cc78dc74cc68a2c883516f497d7338cb0ef49aee6ee9726b72e41652"
+  },
+  "node": {
+    "profile": "framework-core",
+    "cases": 43,
+    "passed": 43,
+    "skipped": 0,
+    "failed": 0,
+    "timeouts": 0,
+    "crashes": 0,
+    "unclassified": 0,
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+    "runner_binary": "target/iteration/run-parallel",
+    "runner_binary_sha256": "5f3c78975a0042114bae84143195ca685c2e0559069c2b6398ae936ee961ec1c",
+    "framework_scenarios": {
+      "comparison": "local Node vs target/iteration/quench-node; raw status, stdout bytes and stderr bytes",
+      "quench_binary_sha256": "62785c24f075b711e73509ecca3bb5605b50da41450dd8769fbebcc0fb7b7f15",
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout": "statuses 200,200,200,200,404\n",
+      "cases": {
+        "express": "MATCH, exit 0/0",
+        "koa": "MATCH, exit 0/0",
+        "fastify": "MATCH, exit 0/0"
+      }
+    }
+  },
+  "verification": {
+    "cargo_check_workspace_iteration": "passed",
+    "task_coherence": "passed: 80 tasks, 1 active, next=27, framework-core fixtures=43, package scenarios=3",
+    "git_diff_check": "passed",
+    "unit_tests": "not run",
+    "legacy_runtime": "still directly depended on by quench-node; task 27 remains open"
+  }
+}

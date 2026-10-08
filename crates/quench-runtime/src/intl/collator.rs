@@ -3,9 +3,7 @@
 use crate::{execute::VmError, value::Value};
 
 use icu_collator::{
-    preferences::CollationType,
-    provider::CollationTailoringV1,
-    CollatorPreferences,
+    preferences::CollationType, provider::CollationTailoringV1, CollatorPreferences,
 };
 use icu_provider::{
     marker::DataMarkerExt, DataIdentifierBorrowed, DataMarkerAttributes, DataProvider, DataRequest,

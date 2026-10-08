@@ -347,9 +347,7 @@ impl<H: Host> Vm<H> {
                 &options,
                 None,
                 &super::temporal_zoned_date_time::format_offset_nanoseconds(
-                    super::temporal_zoned_date_time::time_zone_display_offset(
-                        time_zone, offset,
-                    ),
+                    super::temporal_zoned_date_time::time_zone_display_offset(time_zone, offset),
                 ),
             )
         } else {

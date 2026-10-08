@@ -209,15 +209,15 @@ fn proxy_target_property(
             "bind" => Builtin::FunctionBind,
             _ => return Err(VmError::NotCallable),
         };
-        return Ok(Value::BoundFunction(Rc::new(
-            crate::value::BoundFunctionValue {
+        return Ok(Value::BoundFunction(
+            crate::value::BoundFunctionValue::allocate(crate::value::BoundFunctionValue {
                 realm: crate::vm::current_context_or_default().realm(),
                 target: Value::Builtin(builtin),
                 receiver: receiver.clone(),
                 arguments: Vec::new(),
                 properties: std::cell::RefCell::new(Vec::new()),
-            },
-        )));
+            }),
+        ));
     }
     crate::vm::get_property_with_receiver(
         &crate::locals::resolved_replacement(proxy.target.clone()),
@@ -851,7 +851,7 @@ mod classification_tests {
         let mut owners = Vec::new();
         for _ in 0..CLASSIFICATION_STRESS_DEPTH {
             owners.push(value.clone());
-            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+            value = Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
                 realm: crate::ops::RealmId::ROOT,
                 target: Value::BindingCell(crate::value::BindingCell::new(value)),
                 receiver: Value::Undefined,
@@ -873,7 +873,9 @@ mod classification_tests {
         assert!(!crate::conversion::is_html_dda(&proxy));
         let cell = crate::value::BindingCell::new(Value::Undefined);
         *cell.borrow_mut() = Value::BindingCell(cell.clone());
-        assert!(!crate::conversion::is_html_dda(&Value::BindingCell(cell.clone())));
+        assert!(!crate::conversion::is_html_dda(&Value::BindingCell(
+            cell.clone()
+        )));
         *cell.borrow_mut() = Value::Undefined;
     }
 
@@ -909,7 +911,7 @@ mod classification_tests {
         let mut owners = Vec::new();
         for _ in 0..CLASSIFICATION_STRESS_DEPTH {
             owners.push(value.clone());
-            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+            value = Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
                 realm: crate::ops::RealmId::ROOT,
                 target: value,
                 receiver: Value::Undefined,

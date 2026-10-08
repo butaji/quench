@@ -330,7 +330,7 @@ impl FunctionCompiler<'_, '_> {
                 if !visible.insert(atom) {
                     continue;
                 }
-                let catch_marker = format!("\0rqj:catch-capture:{name}");
+                let catch_marker = format!("\0quench:catch-capture:{name}");
                 bindings.push(crate::bytecode::EvalBinding {
                     atom,
                     location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
@@ -375,8 +375,8 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn super_constructor(&mut self) -> Register {
-        let active = self.load_name("\0rqj:super");
-        let get_prototype = self.load_name("\0rqj:super-base");
+        let active = self.load_name("\0quench:super");
+        let get_prototype = self.load_name("\0quench:super-base");
         let receiver = self.literal(Constant::Undefined);
         let argument = self.reg();
         self.emit(Op::Move, argument, active, 0, 0);

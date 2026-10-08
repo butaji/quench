@@ -272,6 +272,49 @@ impl<H: Host> Vm<H> {
         self.run_global_eval_program(p, program_id)
     }
 
+    pub(crate) fn evaluate_embedding_specialized_script(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let atom_count = self.atom_text.len() + self.dynamic_atoms.len();
+        let mut atom_prefix = Vec::with_capacity(atom_count);
+        let mut unindexable_prefix_atoms = Vec::new();
+        for atom in 0..atom_count {
+            atom_prefix.push(self.atom_name(atom as u32).to_owned());
+            if let Some(dynamic_index) = atom.checked_sub(self.atom_text.len())
+                && !self.dynamic_atoms[dynamic_index].has_lossless_host_string()
+            {
+                // Keep this ID reserved while preventing replacement characters from aliasing it.
+                unindexable_prefix_atoms.push(atom);
+            }
+        }
+        let residual = crate::Engine::specialize_script_with_atom_prefix(
+            source,
+            name,
+            &atom_prefix,
+            &unindexable_prefix_atoms,
+        )
+        .map_err(|diagnostics| {
+            if diagnostics
+                .iter()
+                .any(crate::compile::Diagnostic::is_stack_exhausted)
+            {
+                return self.stack_exhaustion_error();
+            }
+            let message = diagnostics
+                .first()
+                .map_or("invalid host script".to_owned(), ToString::to_string);
+            self.syntax_error_result(&program, &message)
+                .expect_err("specialized host-script syntax errors must throw")
+        })?;
+        let Some(program_id) = self.store_dynamic_program(residual) else {
+            return Err(self.type_error(&program, "dynamic program store is full".into()));
+        };
+        self.run_global_eval_program(&program, program_id)
+    }
+
     fn run_global_eval_program(
         &mut self,
         p: &ResidualProgram,
@@ -412,9 +455,9 @@ impl<H: Host> Vm<H> {
             let parent = if direct_eval && (root_scope || field_initializer) {
                 let dynamic_bindings = if field_initializer {
                     vec![
-                        (self.intern_atom("\0rqj:new-target"), Value::UNDEFINED),
+                        (self.intern_atom("\0quench:new-target"), Value::UNDEFINED),
                         (
-                            self.intern_atom("\0rqj:lexical-this"),
+                            self.intern_atom("\0quench:lexical-this"),
                             self.frames
                                 .last()
                                 .map_or(self.realm.globals, |frame| frame.this),
@@ -631,7 +674,7 @@ impl<H: Host> Vm<H> {
         if self.in_class_field_initializer(p) {
             return true;
         }
-        let new_target = self.intern_atom("\0rqj:new-target");
+        let new_target = self.intern_atom("\0quench:new-target");
         self.frames
             .len()
             .checked_sub(1)
@@ -690,7 +733,7 @@ impl<H: Host> Vm<H> {
             if self.direct_eval && self.in_class_field_initializer(p) {
                 return Ok(Value::UNDEFINED);
             }
-            let atom = self.intern_atom("\0rqj:new-target");
+            let atom = self.intern_atom("\0quench:new-target");
             return Ok(self
                 .frames
                 .len()
@@ -968,7 +1011,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn private_home_binding_atom(&mut self, private: Atom) -> Atom {
-        self.intern_atom(&format!("\0rqj:private-home:{private}"))
+        self.intern_atom(&format!("\0quench:private-home:{private}"))
     }
 
     fn mark_eval_syntax_error(
@@ -1057,7 +1100,7 @@ impl<H: Host> Vm<H> {
             .get(self.frames[frame].function as usize)?
             .super_home_atom;
         let field_initializer = self.in_class_field_initializer(p);
-        let atom = self.intern_atom("\0rqj:lexical-this");
+        let atom = self.intern_atom("\0quench:lexical-this");
         let super_calls = home_atom.is_some()
             && !field_initializer
             && self
@@ -1184,7 +1227,7 @@ impl<H: Host> Vm<H> {
 }
 
 fn private_identity_label(identity: &str) -> Option<String> {
-    let identity = identity.strip_prefix("\0rqj:private:")?;
+    let identity = identity.strip_prefix("\0quench:private:")?;
     let (_, label) = identity.rsplit_once(':')?;
     (!label.is_empty()).then(|| label.to_owned())
 }

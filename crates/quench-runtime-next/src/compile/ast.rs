@@ -81,6 +81,8 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) locals: Vec<Atom>,
     pub(super) code: Vec<Instr>,
     pub(super) wide: Vec<WideInstruction>,
+    pub(super) source_positions: Vec<crate::bytecode::SourcePosition>,
+    current_source_position: Option<(u32, u32)>,
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
@@ -112,7 +114,6 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     parameter_context: bool,
     pub(super) parameter_eval_arguments_error: bool,
     pub(super) parameter_arguments_slot: Option<u16>,
-    pub(super) arguments_slot: Option<u16>,
     pub(super) statement_completion: StatementCompletion,
     pub(super) parameter_local_count: usize,
     pub(super) super_call_binds_this: bool,
@@ -138,7 +139,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         async_function: bool,
         generator: bool,
         parameter_arguments_slot: Option<u16>,
-        arguments_slot: Option<u16>,
         parameter_local_count: usize,
         with_depth: u16,
     ) -> Self {
@@ -157,6 +157,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             locals,
             code: vec![],
             wide: vec![],
+            source_positions: vec![],
+            current_source_position: None,
             next_reg: 0,
             max_reg: 0,
             local_slots,
@@ -188,7 +190,6 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             parameter_context: false,
             parameter_eval_arguments_error: false,
             parameter_arguments_slot,
-            arguments_slot,
             statement_completion: StatementCompletion::Ignored,
             parameter_local_count,
             super_call_binds_this: false,
@@ -259,6 +260,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 })
         });
         self.code.push(instruction);
+        if let Some((line, column)) = self.current_source_position {
+            if self
+                .source_positions
+                .last()
+                .is_none_or(|position| position.line != line || position.column != column)
+            {
+                self.source_positions.push(crate::bytecode::SourcePosition {
+                    pc: u32::try_from(self.code.len() - 1).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                });
+            }
+        }
         if op == Op::MakeClosure && self.with_depth != self.inherited_with_depth {
             self.record_lexical_binding_site(self.code.len() - 1);
         }
@@ -463,11 +477,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     fn parameter_name(pattern: &BindingPattern<'_>, index: usize, hidden: bool) -> String {
         if hidden {
-            return format!("\0rqj:param:{index}");
+            return format!("\0quench:param:{index}");
         }
         match pattern {
             BindingPattern::BindingIdentifier(id) => id.name.to_string(),
-            _ => format!("\0rqj:param:{index}"),
+            _ => format!("\0quench:param:{index}"),
         }
     }
 
@@ -538,7 +552,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn emit_implicit_super(&mut self) {
-        let args = self.load_name("\0rqj:derived-args");
+        let args = self.load_name("\0quench:derived-args");
         let callee = self.super_constructor();
         let result = self.reg();
         self.emit(
@@ -819,7 +833,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 if let Some(identifier) = &class.id {
                     let source = self.owner.atom(identifier.name.as_str());
                     let target =
-                        self.hidden_local(&format!("\0rqj:block-class:{}", identifier.name));
+                        self.hidden_local(&format!("\0quench:block-class:{}", identifier.name));
                     scope.insert(source, target);
                 }
             }
@@ -827,7 +841,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 if let Some(identifier) = &function.id {
                     let source = self.owner.atom(identifier.name.as_str());
                     let target =
-                        self.hidden_local(&format!("\0rqj:block-function:{}", identifier.name));
+                        self.hidden_local(&format!("\0quench:block-function:{}", identifier.name));
                     scope.insert(source, target);
                 }
             }
@@ -837,7 +851,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     pub(super) fn scoped_statements(&mut self, body: &[Statement<'_>]) {
         let has_using = Self::has_using_declarations(body);
-        let disposal_error = has_using.then(|| self.hidden_local("\0rqj:using-error"));
+        let disposal_error = has_using.then(|| self.hidden_local("\0quench:using-error"));
         if has_using {
             self.push_disposal_scope();
             self.push_disposal_context();
@@ -898,7 +912,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                             scope.remove(marker);
                         }
                     }
-                    let catch_name = format!("\0rqj:catch-capture:{name}");
+                    let catch_name = format!("\0quench:catch-capture:{name}");
                     if let Some(marker) = self.owner.atom_index.get(catch_name.as_str()) {
                         scope.remove(marker);
                     }
@@ -929,7 +943,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
                                     .any(|kind| name.starts_with(kind.capture_prefix()))
-                                && !name.starts_with("\0rqj:catch-capture:"))
+                                && !name.starts_with("\0quench:catch-capture:"))
                             .then_some((*atom, *slot))
                         })
                         .collect(),
@@ -973,7 +987,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BindingPattern::BindingIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
                 scope.entry(atom).or_insert_with(|| {
-                    self.hidden_local(&format!("\0rqj:block-binding:{}", identifier.name))
+                    self.hidden_local(&format!("\0quench:block-binding:{}", identifier.name))
                 });
             }
             BindingPattern::ObjectPattern(pattern) => {

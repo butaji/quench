@@ -2,7 +2,12 @@ use super::*;
 use num_bigint::BigInt;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn equal(&mut self, p: &ResidualProgram, a: Value, b: Value) -> Result<bool, JsError> {
+    pub(super) fn equal(
+        &mut self,
+        p: &ResidualProgram,
+        a: Value,
+        b: Value,
+    ) -> Result<bool, JsError> {
         if a.as_number().is_some() && b.as_number().is_some() {
             return Ok(self.strict_equal(a, b));
         }

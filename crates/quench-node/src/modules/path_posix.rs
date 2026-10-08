@@ -69,7 +69,10 @@ pub fn resolve(
         .enumerate()
         .map(|(i, arg)| shared::validate_string(arg, &format!("paths[{i}]")))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Value::String(resolve_strings(&paths, &shared::js_cwd(state))))
+    Ok(Value::String(resolve_strings(
+        &paths,
+        &shared::js_cwd(state),
+    )))
 }
 
 /// Node's POSIX `resolve` transformation with the process cwd supplied by its

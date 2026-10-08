@@ -445,7 +445,13 @@ const NATIVES: &[Native] = &[
     Native::TemporalNowInstant, Native::TemporalNowPlainDateISO,
     Native::TemporalNowPlainDateTimeISO, Native::TemporalNowPlainTimeISO,
     Native::TemporalNowTimeZoneId, Native::TemporalNowZonedDateTimeISO,
-    Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorStackGetter, Native::ErrorStackSetter,
+    Native::Error, Native::ErrorToString, Native::ErrorIsError, Native::ErrorCaptureStackTrace,
+    Native::ErrorStackGetter, Native::ErrorStackSetter,
+    Native::CallSiteGetFileName, Native::CallSiteGetThis, Native::CallSiteGetFunctionName,
+    Native::CallSiteGetLineNumber, Native::CallSiteGetColumnNumber,
+    Native::CallSiteGetTypeName, Native::CallSiteGetMethodName,
+    Native::CallSiteIsEval, Native::CallSiteGetEvalOrigin,
+    Native::CallSiteIsConstructor, Native::CallSiteIsNative, Native::CallSiteToString,
     Native::AggregateError, Native::SuppressedError, Native::EvalError, Native::RangeError, Native::ReferenceError, Native::SyntaxError, Native::TypeError, Native::URIError, Native::ThrowTypeError,
     Native::RegExp,
     Native::RegExpCompile,
@@ -586,7 +592,7 @@ const NATIVES: &[Native] = &[
     Native::PromiseFinallyContinuationHandler,
     Native::PromiseAll, Native::PromiseAllKeyed, Native::PromiseRace, Native::PromiseAllSettled, Native::PromiseAllSettledKeyed, Native::PromiseAny,
     Native::PromiseReactionJob, Native::PromiseThenableJob,
-    Native::PromiseFinallyJob, Native::PromiseFinallyContinuationJob, Native::PromiseAggregateJob,
+    Native::PromiseAggregateJob,
     Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
     Native::AsyncGeneratorDelegateRejected, ];
@@ -612,7 +618,7 @@ impl<H: Host> Vm<H> {
         self.install_iterators(program)?;
         self.global(
             program,
-            "\0rqj:iterator-close",
+            "\0quench:iterator-close",
             self.native_value(Native::IteratorClose),
         )?;
         self.global(program, "undefined", Value::UNDEFINED)?;
@@ -636,18 +642,18 @@ impl<H: Host> Vm<H> {
         self.global(program, "print", self.native_value(Native::Print))?;
         self.global(
             program,
-            "\0rqj:to-string",
+            "\0quench:to-string",
             self.native_value(Native::ToString),
         )?;
         self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
         self.global(
             program,
-            "\0rqj:with-enter",
+            "\0quench:with-enter",
             self.native_value(Native::WithEnter),
         )?;
         self.global(
             program,
-            "\0rqj:with-exit",
+            "\0quench:with-exit",
             self.native_value(Native::WithExit),
         )?;
         self.install_date(program)?;
@@ -860,14 +866,20 @@ impl<H: Host> Vm<H> {
         self.set_named(program, console, "log", self.native_value(Native::Print))?;
         self.global(program, "console", console)
     }
-    pub(super) fn install_json_for_realm(&mut self, program: &ResidualProgram, global: Value) -> Result<(), JsError> {
+    pub(super) fn install_json_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+    ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
         let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
         for (name, native) in [
-            ("parse", Native::JsonParse), ("stringify", Native::JsonStringify),
-            ("rawJSON", Native::JsonRawJson), ("isRawJSON", Native::JsonIsRawJson),
+            ("parse", Native::JsonParse),
+            ("stringify", Native::JsonStringify),
+            ("rawJSON", Native::JsonRawJson),
+            ("isRawJSON", Native::JsonIsRawJson),
         ] {
             self.set_realm_builtin_named(program, json, name, native, realm)?;
         }
@@ -964,7 +976,7 @@ impl<H: Host> Vm<H> {
         self.throw_type_error_for_realm(self.realm.globals)
     }
     pub(super) fn throw_type_error_for_realm(&self, global: Value) -> Value {
-        self.lookup_atom("\0rqj:throw-type-error")
+        self.lookup_atom("\0quench:throw-type-error")
             .and_then(|atom| self.own_property(global, atom))
             .unwrap_or_else(|| self.native_value(Native::ThrowTypeError))
     }
@@ -972,7 +984,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         global: Value,
     ) -> Result<Value, JsError> {
-        const INTRINSIC_KEY: &str = "\0rqj:throw-type-error";
+        const INTRINSIC_KEY: &str = "\0quench:throw-type-error";
         let thrower = self.native_with_realm(Native::ThrowTypeError, global, global);
         self.set_builtin_function_name(thrower, "")?;
         for name in ["length", "name"] {
@@ -997,8 +1009,9 @@ impl<H: Host> Vm<H> {
         Ok(thrower)
     }
     pub(super) fn object(&mut self) -> Value {
-        self.heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)))
+        self.heap.alloc(Cell::Object(Self::empty_object(
+            self.realm_object_prototype(self.realm.globals),
+        )))
     }
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
         self.find_atom(Self::atom_hash_str(name), |atom| {

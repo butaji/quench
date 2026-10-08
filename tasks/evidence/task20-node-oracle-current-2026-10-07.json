@@ -1,0 +1,206 @@
+{
+  "schema": 1,
+  "task": "20",
+  "kind": "current_node_oracle_annexb_requalification",
+  "recorded_at": "2026-10-07",
+  "policy": {
+    "rule": "For direct pinned Test262 conflicts, exact local Node runs with the pinned harness and the current ECMAScript algorithm arbitrate; stage number does not.",
+    "accounting": "Preserve every fixture and inventory identity. Keep any contradicted raw Quench outcome visible as an explicit waiver, never a pass.",
+    "authority": "Latest user instruction: solve conflicts with Node as oracle"
+  },
+  "source": {
+    "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
+    "dirty": true,
+    "host": "darwin-arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 292,
+    "snapshot_sha256": "46ed50e3fe1a6dd45dfd41d6cdf5cb32a84587c880a77e8f1e63692e741a315e",
+    "snapshot_roots": [
+      "crates/quench-runtime-next/src",
+      "crates/quench-test262/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-test262/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "docs/STAGES.md"
+    ],
+    "changed_owner_sha256": {
+      "crates/quench-runtime-next/src/compile.rs": "c9e335ef7f432f83ff3cae6a489d87f764d4f8327fcb58193871ee3b5b8a1d44",
+      "crates/quench-runtime-next/src/compile/ast.rs": "ddd9db1cee763222531c504d4e44fb4ab48e2e78b63f7c6699ca1b98d7c8999e",
+      "crates/quench-runtime-next/src/compile/ast/expression.rs": "41cf75084dddc8a2fe70d39f25f61c132e4a87a3758903312e01e10173970498",
+      "crates/quench-runtime-next/src/compile/arrow.rs": "95fdb2943422c5a20c4f00727ba3fa3fb8fb69c01e9709e0fd40a0f95e0389ba"
+    }
+  },
+  "oracle": {
+    "executable": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+    "invoked_as": "/opt/homebrew/bin/node",
+    "version": "v26.10.0",
+    "executable_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+    "execution": "Each exact fixture was run in a fresh Node process after loading the pinned harness/sta.js and harness/assert.js via vm.runInThisContext.",
+    "harness_sha256": {
+      "tests/test262/harness/sta.js": "1930c54af79455c484799f43e9a28e2b2f15c40d0917c9941ca54e26db243f35",
+      "tests/test262/harness/assert.js": "6db1a0f6f7fcac43c93f688cdda55b202eb31c70f7fc8a7a3d56b64aa19df6dd"
+    },
+    "fixture_runs": [
+      {
+        "stage": "94",
+        "path": "tests/test262/test/annexB/language/function-code/block-decl-func-skip-arguments.js",
+        "fixture_sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+        "command": [
+          "/opt/homebrew/bin/node",
+          "-e",
+          "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+          "test/annexB/language/function-code/block-decl-func-skip-arguments.js"
+        ],
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "harness/assert.js:91\n  throw new Test262Error(message);\n  ^\n\nTest262Error {\n  message: 'Expected SameValue(\u00ab\"function arguments() {}\"\u00bb, \u00ab\"[object Arguments]\"\u00bb) to be true'\n}\n\nNode.js v26.10.0\n"
+      },
+      {
+        "stage": "114",
+        "path": "tests/test262/test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "fixture_sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab",
+        "command": [
+          "/opt/homebrew/bin/node",
+          "-e",
+          "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+          "test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "stage": "114",
+        "path": "tests/test262/test/staging/sm/regress/regress-602621.js",
+        "fixture_sha256": "43ec595a2220317a7b295e1ab23c3d0f94bb104bc65398e606a38a0d323f95cf",
+        "command": [
+          "/opt/homebrew/bin/node",
+          "-e",
+          "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+          "test/staging/sm/regress/regress-602621.js"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    ],
+    "spec": "https://tc39.es/ecma262/2025/multipage/ordinary-and-exotic-objects-behaviours.html#sec-functiondeclarationinstantiation",
+    "upstream_adjudication": "https://github.com/tc39/test262/issues/5113"
+  },
+  "corpus": {
+    "path": "tests/test262",
+    "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+    "clean": true,
+    "stage_definitions_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2",
+    "inputs_changed": false
+  },
+  "conflict": {
+    "node_behavior": "In sloppy code, the permitted Annex B block-function store replaces the containing function's arguments binding.",
+    "node_adjudicated_fixture": {
+      "stage": "94",
+      "path": "tests/test262/test/annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "fixture_sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "command": [
+        "/opt/homebrew/bin/node",
+        "-e",
+        "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+        "test/annexB/language/function-code/block-decl-func-skip-arguments.js"
+      ],
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "harness/assert.js:91\n  throw new Test262Error(message);\n  ^\n\nTest262Error {\n  message: 'Expected SameValue(\u00ab\"function arguments() {}\"\u00bb, \u00ab\"[object Arguments]\"\u00bb) to be true'\n}\n\nNode.js v26.10.0\n"
+    },
+    "raw_quench_failure_waiver": {
+      "stage": 94,
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "fixture_sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "outcome": "raw failure, excluded from the adjudicated pass denominator; never counted as a pass",
+      "reason": "The pinned expectation requires the Arguments object after the Annex B store, contradicting exact local Node behavior and the current FunctionDeclarationInstantiation algorithm; Test262 issue #5113 documents the stale expectation."
+    },
+    "stage_114_controls": [
+      {
+        "stage": "114",
+        "path": "tests/test262/test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js",
+        "fixture_sha256": "1bc4233bfb75d6b06a47773ad93e9fd3e7c500a0fbeb2de4a5b7eb508fdd8dab",
+        "command": [
+          "/opt/homebrew/bin/node",
+          "-e",
+          "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+          "test/staging/sm/lexical-environment/block-scoped-functions-annex-b-arguments.js"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      },
+      {
+        "stage": "114",
+        "path": "tests/test262/test/staging/sm/regress/regress-602621.js",
+        "fixture_sha256": "43ec595a2220317a7b295e1ab23c3d0f94bb104bc65398e606a38a0d323f95cf",
+        "command": [
+          "/opt/homebrew/bin/node",
+          "-e",
+          "const fs=require(\"node:fs\"),vm=require(\"node:vm\"),root=\"tests/test262/\",fixture=process.argv.at(-1); for(const file of [\"harness/sta.js\",\"harness/assert.js\",fixture]) vm.runInThisContext(fs.readFileSync(root+file,\"utf8\"),{filename:file});",
+          "test/staging/sm/regress/regress-602621.js"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    ],
+    "inventory_and_fixtures_preserved": true
+  },
+  "verification": {
+    "full_test262_run": false,
+    "unit_tests_run": false,
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --profile iteration -p quench-test262 --bin run-stages-next -p quench-test262 --bin compare-runs",
+    "runner_sha256": "62f53c7e7164e44c1a9e417142c8374d52f3497391f70c53598678d10afb6fec",
+    "compare_runs_sha256": "c57c9a6cf8db397f023524ca092e7c54c932552e933af4320f1e9396286b1827",
+    "affected_stages": [
+      {
+        "stage": 93,
+        "passed": 241,
+        "failed": 0,
+        "total": 241,
+        "failure_paths": [],
+        "report": "target/iteration/task20-node-arbitration-current-2026-10-07/stage-93.json",
+        "report_sha256": "8bbcd1473191595f5ee0c62dad72b9019b35d7f28368be39fcdef905755b462c",
+        "compared_with": "target/iteration/task20-lower-stage-2026-10-07/stage-93.json",
+        "comparison": "regressions=0",
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-node-arbitration-current-2026-10-07/stage-93.json target/iteration/run-stages-next 93 93"
+      },
+      {
+        "stage": 94,
+        "passed": 844,
+        "failed": 1,
+        "total": 845,
+        "failure_paths": [
+          "annexB/language/function-code/block-decl-func-skip-arguments.js"
+        ],
+        "report": "target/iteration/task20-node-arbitration-current-2026-10-07/stage-94.json",
+        "report_sha256": "66e73f93b6c705baa462ff21b4b8f717746f7d4cf72635cc55d85be050eb2108",
+        "compared_with": "target/iteration/node-arbitrage-2026-10-07/stage-94.json",
+        "comparison": "regressions=0",
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-node-arbitration-current-2026-10-07/stage-94.json target/iteration/run-stages-next 94 94"
+      },
+      {
+        "stage": 114,
+        "passed": 1482,
+        "failed": 0,
+        "total": 1482,
+        "failure_paths": [],
+        "report": "target/iteration/task20-node-arbitration-current-2026-10-07/stage-114.json",
+        "report_sha256": "4c38711341d6764a824a8a0b1b7fd53df00ad8274a26fecd66b59d47e74d7dca",
+        "compared_with": "target/iteration/node-arbitrage-2026-10-07/stage-114.json",
+        "comparison": "regressions=0",
+        "command": "TEST262_JOBS=4 TEST262_TEST_TIMEOUT_MS=900000 TEST262_REPORT=target/iteration/task20-node-arbitration-current-2026-10-07/stage-114.json target/iteration/run-stages-next 114 114"
+      }
+    ],
+    "result": "Stage 93 passes 241/241; Stage 94 has one Node-contradicted raw failure and passes its other 844/845 cases; Stage 114 passes 1482/1482. All three affected-stage comparisons report zero regressions against matching saved Node-arbitration reports. The final complete-inventory gate remains open."
+  }
+}

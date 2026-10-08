@@ -3,11 +3,22 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
     MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
     ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    Superinstruction, WideInstruction,
+    SourcePosition, Superinstruction, WideInstruction,
 };
 
-const RESIDUAL_MAGIC: &[u8; 5] = &[b'R', b'Q', b'J', 0, super::ResidualProgram::FORMAT_VERSION];
+const RESIDUAL_MAGIC: &[u8; 8] = &[
+    b'Q',
+    b'U',
+    b'E',
+    b'N',
+    b'C',
+    b'H',
+    RESIDUAL_MAGIC_TERMINATOR,
+    super::ResidualProgram::FORMAT_VERSION,
+];
+const RESIDUAL_MAGIC_TERMINATOR: u8 = 0;
 const WASM_BITS64_TAG: u8 = 8;
+const WASM_V128_TAG: u8 = 9;
 const EVAL_BINDING_LOCAL: u8 = 0;
 const EVAL_BINDING_CAPTURE: u8 = 1;
 const OPTIONAL_STRING_NONE: u8 = 0;
@@ -120,6 +131,10 @@ pub(super) fn write_program(
     out.u32(program.constants.len() as u32);
     for value in &program.constants {
         match value {
+            Constant::WasmV128(bits) => {
+                out.u8(WASM_V128_TAG);
+                out.bytes.extend_from_slice(bits);
+            }
             Constant::WasmBits64(bits) => {
                 out.u8(WASM_BITS64_TAG);
                 out.u64(*bits);
@@ -151,6 +166,8 @@ pub(super) fn write_program(
     for function in &program.functions {
         out.option_u32(function.parent);
         out.option_u32(function.name);
+        out.u8(u8::from(function.is_arrow));
+        out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
         write_optional_string(&mut out, function.source_text.as_deref());
         out.u16(function.params);
         out.u16(function.length);
@@ -252,6 +269,12 @@ pub(super) fn write_program(
             out.u32(handler.return_target.unwrap_or(u32::MAX));
             out.u16(handler.return_slot.unwrap_or(u16::MAX));
             out.u16(handler.with_depth);
+        }
+        out.u32(function.source_positions.len() as u32);
+        for position in &function.source_positions {
+            out.u32(position.pc);
+            out.u32(position.line);
+            out.u32(position.column);
         }
     }
     out.u16(program.cache_sites);
@@ -369,6 +392,9 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let atoms = input.strings()?;
     let constants = input.list(|input| match input.u8()? {
         WASM_BITS64_TAG => Ok(Constant::WasmBits64(input.u64()?)),
+        WASM_V128_TAG => Ok(Constant::WasmV128(
+            input.take(crate::wasm::V128_BYTES)?.try_into().unwrap(),
+        )),
         0 => Ok(Constant::Number(f64::from_bits(input.u64()?))),
         1 => Ok(Constant::String(input.string()?)),
         7 => Ok(Constant::StringUnits(input.u16s()?)),
@@ -382,6 +408,15 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let functions = input.list(|input| {
         let parent = input.option_u32()?;
         let name = input.option_u32()?;
+        let is_arrow = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid arrow function flag".into()),
+        };
+        let self_binding_slot = match input.u16()? {
+            u16::MAX => None,
+            slot => Some(slot),
+        };
         let source_text = read_optional_string(input)?;
         let params = input.u16()?;
         let length = input.u16()?;
@@ -522,9 +557,18 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
                 with_depth,
             })
         })?;
+        let source_positions = input.list(|input| {
+            Ok(SourcePosition {
+                pc: input.u32()?,
+                line: input.u32()?,
+                column: input.u32()?,
+            })
+        })?;
         Ok(Function {
             parent,
             name,
+            is_arrow,
+            self_binding_slot,
             source_text,
             params,
             length,
@@ -555,6 +599,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             global_annex_b_var_atoms,
             global_immutable_atoms,
             binding_sites,
+            source_positions,
             code,
             wide,
             registers,

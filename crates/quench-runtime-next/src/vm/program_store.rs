@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 struct ProgramEntry {
     residual: Rc<ResidualProgram>,
+    wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
     module_environment: Option<Value>,
@@ -51,10 +52,10 @@ impl ProgramStore {
         self.programs.len()
     }
 
-    pub(crate) fn reset(&mut self, main: &ResidualProgram) -> ProgramId {
+    pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.programs.clear();
         let module = main.is_module();
-        let id = self.insert(main.clone()).unwrap_or(ProgramId::MAIN);
+        let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
         if module && let Some(entry) = self.programs.get_mut(id.index()) {
             entry.module = true;
         }
@@ -62,9 +63,21 @@ impl ProgramStore {
     }
 
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
+        self.insert_shared(Rc::new(program))
+    }
+
+    pub(crate) fn find_shared(&self, program: &Rc<ResidualProgram>) -> Option<ProgramId> {
+        self.programs
+            .iter()
+            .position(|entry| Rc::ptr_eq(&entry.residual, program))
+            .and_then(ProgramId::from_index)
+    }
+
+    pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
         self.programs.push(ProgramEntry {
-            residual: Rc::new(program),
+            residual: program,
+            wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
             module_environment: None,
@@ -73,6 +86,159 @@ impl ProgramStore {
             module: false,
         });
         Some(id)
+    }
+
+    /// Attach the module's canonical type facts; a code identity cannot acquire
+    /// a different signature authority after functions have been registered.
+    pub(crate) fn attach_wasm_signatures(
+        &mut self,
+        id: ProgramId,
+        signatures: &Rc<crate::wasm::WasmSignatures>,
+    ) -> bool {
+        let Some(entry) = self.programs.get_mut(id.index()) else {
+            return false;
+        };
+        if let Some(existing) = &entry.wasm_signatures {
+            return Rc::ptr_eq(existing, signatures);
+        }
+        if entry.residual.validate().is_err()
+            || signatures.defined_count() != entry.residual.function_count()
+        {
+            return false;
+        }
+        for function in &entry.residual.functions {
+            for instruction in &function.code {
+                let instruction = if instruction.is_wide() {
+                    function.wide[instruction.wide_index()]
+                } else {
+                    instruction.as_wide()
+                };
+                let valid = match instruction.op() {
+                    crate::bytecode::Op::WasmRefFunc => {
+                        signatures.get(instruction.imm() as usize).is_some()
+                    }
+                    crate::bytecode::Op::WasmIndirectTarget => {
+                        signatures.type_signature(instruction.imm()).is_some()
+                    }
+                    op if crate::wasm::gc::StructConstruction::from_op(op).is_some() => {
+                        let mode = crate::wasm::gc::StructConstruction::from_op(op).unwrap();
+                        signatures
+                            .declarations
+                            .struct_fields(instruction.imm())
+                            .is_some_and(|fields| {
+                                mode.described()
+                                    == signatures
+                                        .declarations
+                                        .descriptor_type(instruction.imm())
+                                        .is_some()
+                                    && fields.iter().all(|field| match field.element_type {
+                                        wasmparser::StorageType::I8
+                                        | wasmparser::StorageType::I16 => true,
+                                        wasmparser::StorageType::Val(ty) => {
+                                            signatures
+                                                .declarations
+                                                .callable_value_type(ty)
+                                                .is_some()
+                                                && (!mode.defaulted() || ty.is_defaultable())
+                                        }
+                                    })
+                                    && (mode == crate::wasm::gc::StructConstruction::Default
+                                        || usize::from(instruction.register_window().count)
+                                            == if mode.defaulted() {
+                                                1
+                                            } else {
+                                                fields.len() + usize::from(mode.described())
+                                            })
+                            })
+                    }
+                    crate::bytecode::Op::WasmRefGetDesc => signatures
+                        .declarations
+                        .descriptor_type(instruction.imm())
+                        .is_some(),
+                    crate::bytecode::Op::WasmArrayNewData
+                    | crate::bytecode::Op::WasmArrayNewElem => {
+                        use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
+                        instruction.register_window().count == ArraySegmentInput::COUNT
+                            && signatures
+                                .declarations
+                                .array_field(instruction.imm())
+                                .is_some_and(|field| {
+                                    ArraySegmentKind::from_op(instruction.op())
+                                        .unwrap()
+                                        .accepts(field.element_type)
+                                        && match field.element_type {
+                                            wasmparser::StorageType::Val(ty) => signatures
+                                                .declarations
+                                                .callable_value_type(ty)
+                                                .is_some(),
+                                            _ => true,
+                                        }
+                                })
+                    }
+                    crate::bytecode::Op::WasmArrayNew
+                    | crate::bytecode::Op::WasmArrayNewDefault
+                    | crate::bytecode::Op::WasmArrayNewFixed => signatures
+                        .declarations
+                        .array_field(instruction.imm())
+                        .is_some_and(|field| {
+                            let valid = match field.element_type {
+                                wasmparser::StorageType::I8 | wasmparser::StorageType::I16 => true,
+                                wasmparser::StorageType::Val(ty) => {
+                                    signatures.declarations.callable_value_type(ty).is_some()
+                                        && (instruction.op()
+                                            != crate::bytecode::Op::WasmArrayNewDefault
+                                            || ty.is_defaultable())
+                                }
+                            };
+                            valid
+                                && (instruction.op() != crate::bytecode::Op::WasmArrayNewFixed
+                                    || usize::from(instruction.register_b())
+                                        .checked_add(usize::from(
+                                            instruction.register_window().count,
+                                        ))
+                                        .is_some_and(|end| end <= usize::from(function.registers)))
+                        }),
+                    crate::bytecode::Op::WasmDescriptorTest
+                    | crate::bytecode::Op::WasmDescriptorCast => {
+                        crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
+                            .and_then(|target| target.descriptor_type(&signatures.declarations))
+                            .is_some()
+                    }
+                    crate::bytecode::Op::WasmRefTest | crate::bytecode::Op::WasmRefCast => {
+                        crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
+                            .and_then(|target| target.reference_type())
+                            .and_then(|ty| {
+                                signatures
+                                    .declarations
+                                    .callable_value_type(wasmparser::ValType::Ref(ty))
+                            })
+                            .is_some()
+                    }
+                    _ => true,
+                };
+                if !valid {
+                    return false;
+                }
+            }
+        }
+        entry.wasm_signatures = Some(signatures.clone());
+        true
+    }
+
+    pub(crate) fn wasm_function_signature(
+        &self,
+        id: ProgramId,
+        index: u32,
+    ) -> Option<&crate::WasmSignature> {
+        self.programs
+            .get(id.index())?
+            .wasm_signatures
+            .as_ref()?
+            .defined_signature(index)
+    }
+
+    pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
+        self.programs.get(id.index())?.wasm_signatures.as_deref()
     }
 
     pub(crate) fn insert_module(&mut self, program: ResidualProgram) -> Option<ProgramId> {

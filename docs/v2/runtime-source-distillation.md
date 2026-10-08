@@ -2,7 +2,7 @@
 
 This document records mechanisms, not benchmark folklore. Each row comes from
 the source revision corresponding as closely as possible to the locally
-measured executable, and each proposed transfer must still pass rqj's exact
+measured executable, and each proposed transfer must still pass Quench's exact
 binary Score/RSS gate. JIT-generated guest code is out of scope.
 
 ## Revisions and modes
@@ -19,17 +19,17 @@ is not claimed to be byte-identical provenance for the bottle.
 
 ## Mechanism table for Crypto
 
-| mechanism | source evidence and why it is efficient | rqj state / transfer | expected effect and risk |
+| mechanism | source evidence and why it is efficient | Quench state / transfer | expected effect and risk |
 |---|---|---|---|
-| Threaded dispatch | QuickJS's `JS_CallInternal` builds a 256-entry computed-goto table in [`quickjs.c`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L17746). JSC's [`dispatch`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter.asm#L499) jumps through narrow/wide opcode maps. V8 tail-calls its dispatch-table entry in [`InterpreterAssembler::DispatchToBytecodeHandlerEntry`](https://github.com/nodejs/node/blob/b469d3fd9401ecbd5de334f4b7043dd0286e4a7b/deps/v8/src/interpreter/interpreter-assembler.cc#L1408). | rqj's exhaustive Rust match lets LLVM choose the machine layout; task 12 already rejected a function-handler table. Preserve the match unless assembly/profile evidence changes. | Potential dispatch reduction is large, but indirect handler calls damaged inlining previously. |
-| Unified direct operands and destination | JSC's [`binaryOpCustomStore`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L1194) reads `lhs`/`rhs`, performs the tagged fast path, and stores `dst` in one handler. [`loadConstantOrVariable`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L585) gives every operand one frame-slot/constant representation. V8 uses an accumulator plus one frame-register input; QuickJS consumes adjacent stack values. | rqj Binary now has canonical register/local/constant/field operands and a register/local destination, but other operations still require transport. Extend the representation only where liveness proves eliminated instructions; broad mode tables failed RSS in tasks 131/153/182. | Fewer dispatches and smaller residual code. Extra hot decode arms can enlarge text/touched pages. |
-| In-place local updates | QuickJS has direct [`OP_add_loc`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19743), `OP_inc_loc`, and `OP_dec_loc`. JSC's destination-bearing operations write frame slots directly. | rqj marks `LoadLocal, IncDec, StoreLocal` but retains and fetches all three instructions. Physically compact the already-proved triple into one data-bearing instruction while preserving old/new result registers and virtual profile events (task 211). | Crypto executes about 124M triples. Compaction should reduce fetch/PC/code footprint; encoding complexity and postfix aliasing are the risks. |
-| Tagged numeric fast path | QuickJS checks both integer tags once and uses checked 64-bit arithmetic in [`OP_add`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19696). JSC performs tag branches, overflow-aware integer arithmetic, direct destination stores, then a cold slow path in `binaryOpCustomStore`. In V8 jitless, [`LoadFeedbackVectorOrUndefinedIfJitless`](https://github.com/nodejs/node/blob/b469d3fd9401ecbd5de334f4b7043dd0286e4a7b/deps/v8/src/interpreter/interpreter-assembler.h#L165) removes arithmetic feedback updates. | rqj's `Value::int_pair` similarly projects two tags once and `numeric_binary` handles the five measured integer rows. Operator retagging and duplicated operand-mode arms have already failed exact gates. | Current semantic core is close; gains are likelier from surrounding transport/dispatch than another arithmetic branch table. |
-| Dense indexed access | QuickJS inlines integer-tag/class/bounds checks in [`OP_get_array_el`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19434) and `OP_put_array_el`. JSC's [`op_get_by_val`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L1811) specializes Int32/Contiguous/Double/ArrayStorage shapes in-handler; `putByValOp` also handles in-capacity growth before its slow edge. V8 routes keyed access through feedback-slot IC builtins. | rqj task 176 retains the tagged-int dense-array edge and task 197 feeds it local sources directly. Task 322 now forces only that dense wrapper inline while its property/coercion fallback remains cold and outlined. | Crypto has 125M dense hits and no misses. The precise hot/cold split improves Score without adding a storage representation or losing rqj's RSS lead. |
-| Contiguous frames and calls | QuickJS allocates arguments, locals, operand stack, and var-ref pointers in one `alloca` block in `JS_CallInternal`; small call arities have `call0..3`. V8 frame registers are pointer-sized contiguous slots and `CallProperty0..2` avoid generic argument-list handling. JSC addresses virtual registers directly from `cfr` and has fixed call-frame headers. | rqj pools frames and passes all 3.14M six-argument numeric calls directly from caller registers, but retains separate local/register vectors within a frame. Task 195 found a single allocation slower; revisit only with a representation that also removes instruction transport. | Calls matter, but the measured argument-copy opportunity is exhausted. Stack allocation could lower allocator pressure but complicates escaping environments and recursive borrowing. |
+| Threaded dispatch | QuickJS's `JS_CallInternal` builds a 256-entry computed-goto table in [`quickjs.c`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L17746). JSC's [`dispatch`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter.asm#L499) jumps through narrow/wide opcode maps. V8 tail-calls its dispatch-table entry in [`InterpreterAssembler::DispatchToBytecodeHandlerEntry`](https://github.com/nodejs/node/blob/b469d3fd9401ecbd5de334f4b7043dd0286e4a7b/deps/v8/src/interpreter/interpreter-assembler.cc#L1408). | Quench's exhaustive Rust match lets LLVM choose the machine layout; task 12 already rejected a function-handler table. Preserve the match unless assembly/profile evidence changes. | Potential dispatch reduction is large, but indirect handler calls damaged inlining previously. |
+| Unified direct operands and destination | JSC's [`binaryOpCustomStore`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L1194) reads `lhs`/`rhs`, performs the tagged fast path, and stores `dst` in one handler. [`loadConstantOrVariable`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L585) gives every operand one frame-slot/constant representation. V8 uses an accumulator plus one frame-register input; QuickJS consumes adjacent stack values. | Quench Binary now has canonical register/local/constant/field operands and a register/local destination, but other operations still require transport. Extend the representation only where liveness proves eliminated instructions; broad mode tables failed RSS in tasks 131/153/182. | Fewer dispatches and smaller residual code. Extra hot decode arms can enlarge text/touched pages. |
+| In-place local updates | QuickJS has direct [`OP_add_loc`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19743), `OP_inc_loc`, and `OP_dec_loc`. JSC's destination-bearing operations write frame slots directly. | Quench marks `LoadLocal, IncDec, StoreLocal` but retains and fetches all three instructions. Physically compact the already-proved triple into one data-bearing instruction while preserving old/new result registers and virtual profile events (task 211). | Crypto executes about 124M triples. Compaction should reduce fetch/PC/code footprint; encoding complexity and postfix aliasing are the risks. |
+| Tagged numeric fast path | QuickJS checks both integer tags once and uses checked 64-bit arithmetic in [`OP_add`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19696). JSC performs tag branches, overflow-aware integer arithmetic, direct destination stores, then a cold slow path in `binaryOpCustomStore`. In V8 jitless, [`LoadFeedbackVectorOrUndefinedIfJitless`](https://github.com/nodejs/node/blob/b469d3fd9401ecbd5de334f4b7043dd0286e4a7b/deps/v8/src/interpreter/interpreter-assembler.h#L165) removes arithmetic feedback updates. | Quench's `Value::int_pair` similarly projects two tags once and `numeric_binary` handles the five measured integer rows. Operator retagging and duplicated operand-mode arms have already failed exact gates. | Current semantic core is close; gains are likelier from surrounding transport/dispatch than another arithmetic branch table. |
+| Dense indexed access | QuickJS inlines integer-tag/class/bounds checks in [`OP_get_array_el`](https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L19434) and `OP_put_array_el`. JSC's [`op_get_by_val`](https://github.com/oven-sh/WebKit/blob/5488984d20e0dbfe4be2c3ba8fb18eb81a5e0e8b/Source/JavaScriptCore/llint/LowLevelInterpreter64.asm#L1811) specializes Int32/Contiguous/Double/ArrayStorage shapes in-handler; `putByValOp` also handles in-capacity growth before its slow edge. V8 routes keyed access through feedback-slot IC builtins. | Quench task 176 retains the tagged-int dense-array edge and task 197 feeds it local sources directly. Task 322 now forces only that dense wrapper inline while its property/coercion fallback remains cold and outlined. | Crypto has 125M dense hits and no misses. The precise hot/cold split improves Score without adding a storage representation or losing Quench's RSS lead. |
+| Contiguous frames and calls | QuickJS allocates arguments, locals, operand stack, and var-ref pointers in one `alloca` block in `JS_CallInternal`; small call arities have `call0..3`. V8 frame registers are pointer-sized contiguous slots and `CallProperty0..2` avoid generic argument-list handling. JSC addresses virtual registers directly from `cfr` and has fixed call-frame headers. | Quench pools frames and passes all 3.14M six-argument numeric calls directly from caller registers, but retains separate local/register vectors within a frame. Task 195 found a single allocation slower; revisit only with a representation that also removes instruction transport. | Calls matter, but the measured argument-copy opportunity is exhausted. Stack allocation could lower allocator pressure but complicates escaping environments and recursive borrowing. |
 | Native-local program counter | QuickJS keeps `pc` as a C local in `JS_CallInternal` and writes `sf->cur_pc` only before observable slow/call edges. JSC and V8 likewise keep interpreter PC/offset state in dedicated native interpreter state rather than round-tripping through a heap frame every opcode. | Task 308 keeps numeric-dispatch `pc` native-local. Task 383 applies the same rule to general dispatch and synchronizes at call, construction, GC, return, and error edges. | Task 383 improves Crypto by 0.74% in its 22-pair causal aggregate and improves Richards/DeltaBlue/Splay by 12.53%/3.17%/10.62%, with median RSS held. Stale PC at a reentrant/effect edge is the key invariant. |
 | Deduplicated constants | QuickJS bytecode functions own indexed constant pools and reuse literal slots; V8/JSC also address constants by pool index rather than materializing every source occurrence independently. | Task 289 interns scalar constants by exact variant/number bits while preserving fresh contiguous constant-array runs. | Reduces residual-child materialization/fragmentation without changing JS identity; signed zero and array contiguity are tested. |
-| Allocation and collection | QuickJS's small allocator uses 4-KiB size-class arenas (`js_malloc_block_sizes`, `__js_malloc`) for blocks through 512 bytes, reference counts values eagerly, and runs cycle removal under memory pressure. Apple's scalable allocator instead uses per-CPU tiny/small magazines. JSC uses segregated marked blocks and generational barriers; V8 uses a much larger generational heap. | rqj's tracing slots peak below 900 live cells in Crypto while about one thousand residual/runtime allocations occupy macOS zones. Tasks 356/357 bound the single-thread clean child to one magazine and request space-efficient reclamation, without changing the GC. | The policy removes 848 KiB of live physical footprint in paired `vmmap` snapshots and stabilizes RSS enough to admit faster handlers. It is macOS-specific; GC transplantation remains unjustified. |
+| Allocation and collection | QuickJS's small allocator uses 4-KiB size-class arenas (`js_malloc_block_sizes`, `__js_malloc`) for blocks through 512 bytes, reference counts values eagerly, and runs cycle removal under memory pressure. Apple's scalable allocator instead uses per-CPU tiny/small magazines. JSC uses segregated marked blocks and generational barriers; V8 uses a much larger generational heap. | Quench's tracing slots peak below 900 live cells in Crypto while about one thousand residual/runtime allocations occupy macOS zones. Tasks 356/357 bound the single-thread clean child to one magazine and request space-efficient reclamation, without changing the GC. | The policy removes 848 KiB of live physical footprint in paired `vmmap` snapshots and stabilizes RSS enough to admit faster handlers. It is macOS-specific; GC transplantation remains unjustified. |
 
 ## Current profile and decision
 
@@ -64,7 +64,7 @@ The isolated build improved Crypto Score by 31.1% but touched 128 KiB more
 RSS. Task 289 supplied the complementary representation reduction without
 changing dispatch: exact scalar constants share one residual slot while
 constant-array payloads remain contiguous. The retained pair (task 316)
-measures **2322 / 3,178,496 bytes** in the 11-run tournament, giving rqj the
+measures **2322 / 3,178,496 bytes** in the 11-run tournament, giving Quench the
 lowest RSS of all four engines. Bun/JSC's **3703** remains the active Score
 target.
 
@@ -89,7 +89,7 @@ removed one front decode load. That change alone gained Score but lost six RSS
 pages (task 334). Composing it with PGO opt-level 2 (task 335) shrinks `__TEXT`
 by 32 KiB and wins the paired Crypto gate at **2408 / 3,145,728 bytes** versus
 task 322's **2360 / 3,162,112**. The current throttled four-engine tournament
-still leaves Score open at **1682** versus Bun/JSC's **2797**, while rqj keeps
+still leaves Score open at **1682** versus Bun/JSC's **2797**, while Quench keeps
 the lowest RSS.
 
 Task 336 repeated native sampling on that exact opt-level-2 image: 82.3% of
@@ -115,7 +115,7 @@ already-marked `LoadLocal` removes two residual fetches and improves Crypto by
 `StoreLocal` remain the sole cold semantic fallback. A 2× DeltaBlue training
 weight damaged Crypto without improving Delta and was rejected; the balanced
 432/250/1012/61 corpus is retained. This is the useful QuickJS `add_loc` lesson
-in rqj's representation: residualize hot metadata into an existing carrier,
+in Quench's representation: residualize hot metadata into an existing carrier,
 but do not introduce a new opcode or absorb the cold coercion edge.
 
 Tasks 346–348 resampled that retained image and tested the remaining inline
@@ -131,7 +131,7 @@ layout fixed point. The transferable QuickJS/JSC lesson remains structural
 operator into one larger Rust match.”
 
 Task 349 retested QuickJS's register-resident `var_buf`/`sp` discipline after
-the deterministic-PGO and update-metadata changes. rqj cached only stable
+the deterministic-PGO and update-metadata changes. Quench cached only stable
 register/local allocation bases and excluded environment-promoting functions
 from the specialized loop. Although native text shrank by 412 bytes, Crypto
 lost 0.9% Score and six resident pages. With `pc`, frame index, code base, and
@@ -153,7 +153,7 @@ Tasks 351–353 show why allocator policy cannot be admitted from a short paired
 screen. `vmmap` assigns the projector's entire footprint delta to SMALL/TINY
 fragmentation even though it has fewer live allocations and less resident
 text. Disabling macOS nano metadata appeared to recover two pages and composed
-with the projector at first, but the 11-run four-engine schedule measured rqj
+with the projector at first, but the 11-run four-engine schedule measured Quench
 at 3,227,648 bytes versus QuickJS at 3,178,496. The same build scored 2,561,
 ahead of QuickJS and Node but below Bun's 3,742. Exact-capacity residual
 decoding likewise eliminated every measured decoder realloc yet added three
@@ -173,20 +173,20 @@ still lost 32 KiB. The handlers were correctly rejected in isolation.
 
 Tasks 356/357 resolve that composition constraint at the actual host edge.
 Apple's libmalloc source shows that the scalable zone keeps per-CPU magazines,
-a contention optimization rqj's single-thread clean child cannot use. Setting
+a contention optimization Quench's single-thread clean child cannot use. Setting
 `MallocMaxMagazines=1` and `MallocSpaceEfficient=1` only before residual `exec`
 reduces paired live footprint from 2,176 to 1,328 KiB, mostly by making 608 KiB
 of small-zone dirty pages reclaimable. With identical policy on both artifacts,
 the two operator rows improve exact Crypto by 6.1% and save one page. The final
-11-run tournament is rqj **2684 / 2,736,128 bytes**, QuickJS **2534 /
+11-run tournament is Quench **2684 / 2,736,128 bytes**, QuickJS **2534 /
 3,194,880**, Node jitless **2563 / 45,252,608**, and Bun/JSC no-JIT **3761 /
-55,934,976**. rqj now leads QuickJS and Node on both Crypto axes and keeps the
+55,934,976**. Quench now leads QuickJS and Node on both Crypto axes and keeps the
 lowest RSS; Bun's Score remains the active target.
 
 Task 375 tests the representation lesson directly without adopting a variable
 byte stream: QuickJS uses one-byte opcodes with format-sized operands, V8 uses
 byte opcodes plus operand-scale prefixes, and JSC generates narrow/wide opcode
-maps. rqj instead packs its already-specialized fixed schema into one validated
+maps. Quench instead packs its already-specialized fixed schema into one validated
 64-bit word. ARM64 now fetches an instruction with one power-of-two indexed
 `ldr`; the interpreter retains its inlined Rust match and a single canonical
 stream. The clean causal gate gains 6.57% Crypto Score and saves 1.73 pages;
@@ -199,7 +199,7 @@ observable helper/call edges; V8 Ignition advances an SSA bytecode offset and
 passes it through handler tail-dispatch, reloading after effects when needed;
 JSC LLInt advances a dedicated `PC` relative to `PB` before narrow/wide
 opcode-map dispatch. The common mechanism is native-resident bytecode position,
-not a particular pointer, opcode map, or handler ABI. rqj tested only a pointer
+not a particular pointer, opcode map, or handler ABI. Quench tested only a pointer
 into its immutable packed stream while retaining the inlined Rust match. ARM64
 did improve mechanically to a post-indexed `ldr`, but the decisive clean gate
 regressed Score by 0.1881% (95% interval -0.3634% to -0.0124%) and left RSS
@@ -228,7 +228,7 @@ agreement with macOS `sample`'s independent symbol summary. Of 310 samples in
 general dispatch, 293 resolve to the relative jump-table load; numeric
 dispatch's 1,825 samples are dominated by its packed-word fetch and matching
 jump-table load. This is not evidence for another semantic fusion. It confirms
-that rqj's current machine loop already has the direct-dispatch shape shared
+that Quench's current machine loop already has the direct-dispatch shape shared
 by QuickJS computed-goto, Ignition tail-dispatch, and LLInt opcode maps. The
 remaining source-level alternatives are not untested: indirect Rust handlers
 and a pointer cursor were rejected in Tasks 12 and 376. No production change
@@ -265,6 +265,6 @@ to 20 bytes and improves Crypto by 0.9038% at equal median RSS, but two clean
 Richards blocks aggregate to a supported 0.5543% regression. This refines the
 pinned QuickJS comparison: its direct `var_buf[idx]` access lives in a stable
 hand-laid interpreter and its documentation forbids untrusted bytecode;
-rqj must validate its serialized residual and also prove LLVM's resulting
+Quench must validate its serialized residual and also prove LLVM's resulting
 whole-loop placement across workloads. The unsafe edge remains rejected until
 both properties compose.

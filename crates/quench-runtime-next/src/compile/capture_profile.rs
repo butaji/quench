@@ -52,7 +52,7 @@ pub(super) fn report(functions: &[Function]) {
         })
         .count();
     eprintln!(
-        "{{\"kind\":\"rqj-capture-census\",\"functions\":{},\"closure_sites\":{},\"defining_functions\":{},\"promoted_slots\":{promoted_slots},\"captured_slots\":{captured_slots},\"avoidable_slots\":{},\"promoted_bytes\":{},\"captured_bytes\":{},\"environment_loads\":{environment_loads},\"environment_stores\":{environment_stores},\"capture_loads\":{capture_loads},\"capture_stores\":{capture_stores},\"max_capture_depth\":{max_depth},\"closures_without_direct_free_variables\":{closures_without_direct_free_variables}}}",
+        "{{\"kind\":\"quench-capture-census\",\"functions\":{},\"closure_sites\":{},\"defining_functions\":{},\"promoted_slots\":{promoted_slots},\"captured_slots\":{captured_slots},\"avoidable_slots\":{},\"promoted_bytes\":{},\"captured_bytes\":{},\"environment_loads\":{environment_loads},\"environment_stores\":{environment_stores},\"capture_loads\":{capture_loads},\"capture_stores\":{capture_stores},\"max_capture_depth\":{max_depth},\"closures_without_direct_free_variables\":{closures_without_direct_free_variables}}}",
         functions.len(),
         defining_closures.iter().sum::<usize>(),
         defining_closures

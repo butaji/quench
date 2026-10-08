@@ -60,8 +60,8 @@ impl FunctionCompiler<'_, '_> {
 
     fn try_finally_statement(&mut self, item: &TryStatement<'_>, finalizer: &BlockStatement<'_>) {
         self.clear_statement_completion();
-        let error_atom = self.hidden_local("\0rqj:finally-error");
-        let return_atom = self.hidden_local("\0rqj:finally-return");
+        let error_atom = self.hidden_local("\0quench:finally-error");
+        let return_atom = self.hidden_local("\0quench:finally-return");
         self.push_finally_context(return_atom);
         let start = self.code.len() as u32;
         self.iterator_close_exclusions.push(vec![]);
@@ -121,8 +121,8 @@ impl FunctionCompiler<'_, '_> {
     ) {
         self.clear_statement_completion();
         let (catch_slot, binding) = self.catch_slot(handler);
-        let error_atom = self.hidden_local("\0rqj:finally-error");
-        let return_atom = self.hidden_local("\0rqj:finally-return");
+        let error_atom = self.hidden_local("\0quench:finally-error");
+        let return_atom = self.hidden_local("\0quench:finally-return");
         self.push_finally_context(return_atom);
         let start = self.code.len() as u32;
         self.iterator_close_exclusions.push(vec![]);
@@ -396,12 +396,12 @@ impl FunctionCompiler<'_, '_> {
                 let BindingPattern::BindingIdentifier(_) = &parameter.pattern else {
                     unreachable!()
                 };
-                let binding = self.hidden_local("\0rqj:catch-binding");
+                let binding = self.hidden_local("\0quench:catch-binding");
                 (self.local_slot(binding), Some(binding))
             }
             None => (None, None),
             Some(_) => {
-                let atom = self.hidden_local("\0rqj:catch");
+                let atom = self.hidden_local("\0quench:catch");
                 (self.local_slot(atom), Some(atom))
             }
         }

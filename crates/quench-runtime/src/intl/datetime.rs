@@ -5,8 +5,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    SLOT, default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
+    slot_string, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.

@@ -848,7 +848,7 @@ impl FunctionCompiler<'_, '_> {
         let next_end = self.code.len() as u32;
         let after_next_error = self.emit(Op::Jump, 0, 0, 0, 0);
         let next_error_target = self.code.len() as u32;
-        let error_atom = self.hidden_local("\0rqj:iterator-next-error");
+        let error_atom = self.hidden_local("\0quench:iterator-next-error");
         self.handlers.push(crate::bytecode::Handler {
             start: next_start,
             end: next_end,
@@ -894,7 +894,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn begin_binding_iterator_protection(&mut self, iterator: BindingIterator) -> (u32, Atom) {
-        let iterator_atom = self.hidden_local("\0rqj:binding-iterator");
+        let iterator_atom = self.hidden_local("\0quench:binding-iterator");
         self.store_atom(iterator_atom, iterator.iterator);
         self.emit(
             Op::IteratorCleanupPush,
@@ -907,7 +907,7 @@ impl FunctionCompiler<'_, '_> {
             iterator: iterator_atom,
             control_depth: self.controls.len(),
         });
-        let error_atom = self.hidden_local("\0rqj:binding-iterator-error");
+        let error_atom = self.hidden_local("\0quench:binding-iterator-error");
         (self.code.len() as u32, error_atom)
     }
 
@@ -937,7 +937,7 @@ impl FunctionCompiler<'_, '_> {
         self.emit(Op::IteratorClose, 0, iterator.iterator, 0, 0);
         let close_end = self.code.len() as u32;
         let close_normal = self.emit(Op::Jump, 0, 0, 0, 0);
-        let ignored_atom = self.hidden_local("\0rqj:binding-iterator-close-error");
+        let ignored_atom = self.hidden_local("\0quench:binding-iterator-close-error");
         let ignored_target = self.code.len() as u32;
         self.handlers.push(crate::bytecode::Handler {
             start: close_start,

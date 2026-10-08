@@ -16,12 +16,18 @@ use super::kind::Kind;
 
 pub fn parse_int(s: &str, kind: Kind, has_sep: bool) -> Result<f64, &'static str> {
     match kind {
-        Kind::Decimal => {
-            Ok(if has_sep { parse_decimal_with_underscores(s) } else { parse_decimal(s) })
-        }
+        Kind::Decimal => Ok(if has_sep {
+            parse_decimal_with_underscores(s)
+        } else {
+            parse_decimal(s)
+        }),
         Kind::Binary => {
             let s = &s[2..];
-            Ok(if has_sep { parse_binary_with_underscores(s) } else { parse_binary(s) })
+            Ok(if has_sep {
+                parse_binary_with_underscores(s)
+            } else {
+                parse_binary(s)
+            })
         }
         Kind::Octal => {
             // Octals always begin with `0`. Trim off leading `0`, `0o` or `0O`.
@@ -33,18 +39,30 @@ pub fn parse_int(s: &str, kind: Kind, has_sep: bool) -> Result<f64, &'static str
             } else {
                 &s[1..] // legacy octal
             };
-            Ok(if has_sep { parse_octal_with_underscores(s) } else { parse_octal(s) })
+            Ok(if has_sep {
+                parse_octal_with_underscores(s)
+            } else {
+                parse_octal(s)
+            })
         }
         Kind::Hex => {
             let s = &s[2..];
-            Ok(if has_sep { parse_hex_with_underscores(s) } else { parse_hex(s) })
+            Ok(if has_sep {
+                parse_hex_with_underscores(s)
+            } else {
+                parse_hex(s)
+            })
         }
         _ => unreachable!(),
     }
 }
 
 pub fn parse_float(s: &str, has_sep: bool) -> Result<f64, &'static str> {
-    let s = if has_sep { s.cow_replace('_', "") } else { Cow::Borrowed(s) };
+    let s = if has_sep {
+        s.cow_replace('_', "")
+    } else {
+        Cow::Borrowed(s)
+    };
     debug_assert!(!s.contains('_'));
     s.parse::<f64>().map_err(|_| "invalid float")
 }
@@ -385,7 +403,11 @@ pub fn parse_big_int<'a>(
     has_sep: bool,
     allocator: &'a Allocator,
 ) -> Str<'a> {
-    let s = if has_sep { s.cow_replace('_', "") } else { Cow::Borrowed(s) };
+    let s = if has_sep {
+        s.cow_replace('_', "")
+    } else {
+        Cow::Borrowed(s)
+    };
     debug_assert!(!s.contains('_'));
 
     let radix = match kind {
@@ -499,8 +521,14 @@ mod test {
     #[expect(clippy::cast_precision_loss)]
     fn test_nondecimal_rounding() {
         let expected = 0x10000000000000801_i128 as f64;
-        assert_eq!(parse_int("0x10000000000000801", Kind::Hex, false), Ok(expected));
-        assert_eq!(parse_int("0x1_0000_0000_0000_0801", Kind::Hex, true), Ok(expected));
+        assert_eq!(
+            parse_int("0x10000000000000801", Kind::Hex, false),
+            Ok(expected)
+        );
+        assert_eq!(
+            parse_int("0x1_0000_0000_0000_0801", Kind::Hex, true),
+            Ok(expected)
+        );
         assert_eq!(
             parse_int(
                 "0b10000000000000000000000000000000000000000000000000000100000000001",
@@ -517,8 +545,14 @@ mod test {
             ),
             Ok(expected)
         );
-        assert_eq!(parse_int("0o2000000000000000004001", Kind::Octal, false), Ok(expected));
-        assert_eq!(parse_int("0o2_000_000_000_000_000_004_001", Kind::Octal, true), Ok(expected));
+        assert_eq!(
+            parse_int("0o2000000000000000004001", Kind::Octal, false),
+            Ok(expected)
+        );
+        assert_eq!(
+            parse_int("0o2_000_000_000_000_000_004_001", Kind::Octal, true),
+            Ok(expected)
+        );
     }
 
     #[test]
@@ -545,10 +579,17 @@ mod test {
                 ] {
                     for leading in ["", "00000000000000000000"] {
                         let literal = format!("{prefix}{leading}{digits}");
-                        assert_eq!(parse_int(&literal, kind, false), Ok(value as f64), "{literal}");
+                        assert_eq!(
+                            parse_int(&literal, kind, false),
+                            Ok(value as f64),
+                            "{literal}"
+                        );
                         if prefix != "0" {
-                            let separated =
-                                digits.chars().map(|c| c.to_string()).collect::<Vec<_>>().join("_");
+                            let separated = digits
+                                .chars()
+                                .map(|c| c.to_string())
+                                .collect::<Vec<_>>()
+                                .join("_");
                             let literal = format!("{prefix}{leading}{separated}");
                             assert_eq!(
                                 parse_int(&literal, kind, true),
@@ -573,20 +614,33 @@ mod test {
             // Largest finite f64, then immediately below and at the overflow midpoint.
             (format!("{}{}", "1".repeat(53), "0".repeat(971)), f64::MAX),
             (format!("{}0{}", "1".repeat(53), "1".repeat(970)), f64::MAX),
-            (format!("{}{}", "1".repeat(54), "0".repeat(970)), f64::INFINITY),
+            (
+                format!("{}{}", "1".repeat(54), "0".repeat(970)),
+                f64::INFINITY,
+            ),
             (format!("1{}", "0".repeat(1100)), f64::INFINITY),
             ("0".repeat(1100), 0.0),
             (format!("{}1", "0".repeat(1100)), 1.0),
         ] {
             // Convert the same exact integer to every radix, including separators.
             let value = BigInt::from_str_radix(&digits, 2).unwrap();
-            for (radix, prefix, kind) in
-                [(2, "0b", Kind::Binary), (8, "0o", Kind::Octal), (16, "0x", Kind::Hex)]
-            {
-                let digits = if radix == 2 { digits.clone() } else { value.to_str_radix(radix) };
+            for (radix, prefix, kind) in [
+                (2, "0b", Kind::Binary),
+                (8, "0o", Kind::Octal),
+                (16, "0x", Kind::Hex),
+            ] {
+                let digits = if radix == 2 {
+                    digits.clone()
+                } else {
+                    value.to_str_radix(radix)
+                };
                 let literal = format!("{prefix}{}{digits}", "0".repeat(65));
                 assert_eq!(parse_int(&literal, kind, false), Ok(expected), "{literal}");
-                let separated = digits.chars().map(|c| c.to_string()).collect::<Vec<_>>().join("_");
+                let separated = digits
+                    .chars()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>()
+                    .join("_");
                 let literal = format!("{prefix}{separated}");
                 assert_eq!(parse_int(&literal, kind, true), Ok(expected), "{literal}");
             }
@@ -596,7 +650,10 @@ mod test {
     #[test]
     fn test_large_number_of_leading_zeros() {
         assert_all_ints_eq(
-            vec![("000000000000000000000000000000000000000000000000000000001", 1)],
+            vec![(
+                "000000000000000000000000000000000000000000000000000000001",
+                1,
+            )],
             Kind::Decimal,
             false,
         );

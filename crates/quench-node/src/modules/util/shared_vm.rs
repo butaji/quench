@@ -1,7 +1,7 @@
 //! Shared-VM utilities whose behavior is defined in guest-visible JavaScript.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
 const UTIL: &str = quench_js_check::checked_js!(
     r#"(() => {
@@ -17,7 +17,7 @@ const UTIL: &str = quench_js_check::checked_js!(
     return `'${escaped}'`;
   };
 
-  const propertyName = (key) => /^[A-Za-z_$][\\w$]*$/.test(key) ? key : quote(key);
+  const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
     const settings = { ...inspect.defaultOptions, ...(options || {}) };
@@ -160,7 +160,114 @@ const UTIL: &str = quench_js_check::checked_js!(
     });
     Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
   };
-  return { inspect, getCallSites, inherits };
+  const debuglog = (section) => {
+    if (typeof section !== "string") {
+      throw new TypeError("The \"section\" argument must be of type string");
+    }
+    const debug = () => {};
+    debug.enabled = false;
+    return debug;
+  };
+  const warnedFunctions = new WeakSet();
+  const warnedCodes = new Set();
+  const deprecate = (callback, message = "", code, options = {}) => {
+    if (typeof callback !== "function") {
+      throw new TypeError("The \"fn\" argument must be of type function");
+    }
+    if (code !== undefined && typeof code !== "string") {
+      const received = code === null
+        ? " Received null"
+        : typeof code === "object"
+        ? " Received an instance of Object"
+        : ` Received type ${typeof code} (${String(code)})`;
+      const error = new TypeError(
+        `The \"code\" argument must be of type string.${received}`
+      );
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+
+    function deprecated(...args) {
+      const alreadyWarned = code === undefined
+        ? warnedFunctions.has(callback)
+        : warnedCodes.has(code);
+      if (!alreadyWarned) {
+        if (code === undefined) warnedFunctions.add(callback);
+        else warnedCodes.add(code);
+        if (typeof process.emitWarning === "function") {
+          process.emitWarning(message, { type: "DeprecationWarning", code });
+        }
+      }
+      if (new.target) {
+        return Reflect.construct(callback, args, new.target === deprecated ? callback : new.target);
+      }
+      return Reflect.apply(callback, this, args);
+    }
+
+    Object.defineProperty(deprecated, "length", { value: callback.length });
+    Object.defineProperty(deprecated, "name", { value: callback.name, configurable: true });
+    if (options.modifyPrototype === false) {
+      deprecated.prototype = {};
+    } else {
+      deprecated.prototype = callback.prototype;
+      Object.setPrototypeOf(deprecated, callback);
+    }
+    return deprecated;
+  };
+  const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");
+  const promisifyCustomArgs = Symbol.for("nodejs.util.promisify.customArgs");
+  const promisify = (original) => {
+    if (typeof original !== "function") {
+      const received = original === null
+        ? " Received null"
+        : ` Received type ${typeof original} (${String(original)})`;
+      throw Object.assign(
+        new TypeError(`The "original" argument must be of type function.${received}`),
+        { code: "ERR_INVALID_ARG_TYPE" },
+      );
+    }
+    const custom = original[promisifyCustom];
+    if (custom !== undefined) {
+      if (typeof custom !== "function") {
+        throw Object.assign(
+          new TypeError('The "util.promisify.custom" property must be of type function'),
+          { code: "ERR_INVALID_ARG_TYPE" },
+        );
+      }
+      Object.defineProperty(custom, promisifyCustom, {
+        value: custom,
+        configurable: true,
+      });
+      return custom;
+    }
+    const argumentNames = original[promisifyCustomArgs];
+    function promisified(...args) {
+      return new Promise((resolve, reject) => {
+        args.push((error, ...values) => {
+          if (error) return reject(error);
+          if (argumentNames !== undefined && values.length > 1) {
+            const result = {};
+            for (let index = 0; index < argumentNames.length; index++) {
+              result[argumentNames[index]] = values[index];
+            }
+            resolve(result);
+          } else {
+            resolve(values[0]);
+          }
+        });
+        Reflect.apply(original, this, args);
+      });
+    }
+    Object.setPrototypeOf(promisified, Object.getPrototypeOf(original));
+    Object.defineProperty(promisified, promisifyCustom, {
+      value: promisified,
+      configurable: true,
+    });
+    Object.defineProperties(promisified, Object.getOwnPropertyDescriptors(original));
+    return promisified;
+  };
+  promisify.custom = promisifyCustom;
+  return { inspect, getCallSites, inherits, debuglog, deprecate, promisify };
 })()"#
 );
 

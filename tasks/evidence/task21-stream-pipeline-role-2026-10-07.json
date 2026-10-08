@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "source_bound_stream_pipeline_role_rerun",
+  "reviewed_on": "2026-10-07",
+  "source_revision": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
+  "source_state": "Shared worktree is dirty. The source snapshot hashes all VM, host, compiler, runner and manifest inputs listed below.",
+  "platform": "macOS 26.5 arm64",
+  "runtime_versions": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "local_node": "v26.10.0",
+    "node_submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba"
+  },
+  "source_snapshot": {
+    "roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-node/Cargo.toml",
+      "crates/quench-node-test/Cargo.toml",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-runtime/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "crates/quench-node-test/node-tests/parallel.txt"
+    ],
+    "file_count": 1298,
+    "sha256": "289d756c04f05feac7e2b537852dd2c86dcde727c4aa93417e403f15b4743b75",
+    "digest_method": "SHA-256 over sorted repository-relative path, NUL, file SHA-256 hex, newline records"
+  },
+  "authority": {
+    "parallel_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "parallel_manifest_sha256": "ff34cb3273c9519e662aff29b7e18c5a14c8462d942ac1bddd1eab58d1c85ec5",
+    "framework_scenario_inputs_sha256": {
+      "tests/frameworks/driver.cjs": "e8dd245f9bbfcdcd3a430ff7ed663c3310fdf32fae23cfc5c24d24cbeda96bfb",
+      "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+      "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+      "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a",
+      "tests/frameworks/package.json": "ac12d20a360ff07f9dd25f711e38ba796aa4ab75ea6d6cfb16909e7a1e5e25ab",
+      "tests/frameworks/package-lock.json": "80d0926dc5cbf7c2a03b9b1ea0b08bf394644c6db1114d414ac368646b49bbbf"
+    }
+  },
+  "source_files_sha256": {
+    "crates/quench-node/src/modules/stream_prelude.js": "cdcac123aa034313befabd189f80863a0dc822eb323f3254b535d962455afee8",
+    "crates/quench-node/src/modules/stream.rs": "6139556c6298f999e4d1e1182c478d6dfbbc256435dd9f8dc5523b7c0d395e87",
+    "crates/quench-node/src/modules/net/shared_vm.rs": "6cd4f32aaa70e48ef1f25a9ac22b3c9a5db83330d2d4ed5d858d856d7d7fbc68",
+    "crates/quench-node-test/src/bin/run-parallel-next.rs": "7b4fa402270d313ecdf9286c00719abd63b1f19f3e5fa578c9e08de7cc845e05",
+    "crates/quench-node-test/src/shared_runner.rs": "a21fad01f23d3910168d726c9cf375c5b0dd48bd38619669d475e88c1aed52e1",
+    "crates/quench-node-test/src/parallel_profile.rs": "eca906ff715e206c588be2ed7a2c1437d457753d2cb82fa5add3f18788dfac1e",
+    "crates/quench-node-test/src/case_process.rs": "09f8cf7f354c577269f81af92162f99acba63c0cb8f298a92a66791528395fac"
+  },
+  "runner_binaries_sha256": {
+    "target/iteration/run-parallel-next": "607fcccdf3b1d2bd55e84f0d0af6d26ddf590828b1dcb376f4c5748cf946cbac",
+    "target/iteration/quench-node-next": "6bfe7e81bcb0b3865049c047c64854188aedd4cae5c8427eccc0d66f3133017c"
+  },
+  "upstream_fixture_sha256": {
+    "tests/node/test/parallel/test-webstreams-pipeline.js": "42dad02dddd5acacf58f5bc00070661e4b579cf226b91bf9a32aaa1959063e24",
+    "tests/node/test/parallel/test-stream-pipeline-async-iterator.js": "1327f0087c9ed6b9640f66708ab2ba72305e94b8ac7c29ba7500654d3e59a4b4",
+    "tests/node/test/parallel/test-stream-pipeline.js": "57225a22a9a0ec230a1d6255ef2de3f69bddc43ef2d625549da9903c6919e81a"
+  },
+  "shared_vm_runs": [
+    {
+      "selection": "framework-core",
+      "command": "target/iteration/run-parallel-next --profile framework-core",
+      "default_timeout_seconds": 30,
+      "result": {
+        "pass": 43,
+        "skip": 0,
+        "fail": 0,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 43
+      }
+    },
+    {
+      "selection": "pipeline",
+      "command": "target/iteration/run-parallel-next --filter pipeline",
+      "default_timeout_seconds": 30,
+      "result": {
+        "pass": 2,
+        "skip": 0,
+        "fail": 1,
+        "timeout": 0,
+        "crash": 0,
+        "unclassified": 0,
+        "total": 3
+      },
+      "cases": [
+        {
+          "path": "tests/node/test/parallel/test-stream-pipeline-async-iterator.js",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-webstreams-pipeline.js",
+          "status": "pass"
+        },
+        {
+          "path": "tests/node/test/parallel/test-stream-pipeline.js",
+          "status": "blocked_by_missing_shared_net_api",
+          "failure": "TypeError: value is not callable",
+          "reason": "The fixture calls net.createServer() and net.connect(); the shared net module currently exposes only auto-select-family timeout accessors. Its raw-socket pipeline cases at fixture lines 1191-1203 and 1236-1247 are outside the framework-core profile."
+        }
+      ]
+    }
+  ],
+  "framework_scenario_runs": {
+    "comparison": "Each shared-VM scenario exited 0 and emitted byte-identical stdout to the matching local Node run.",
+    "command_templates": {
+      "local_node": "node driver.cjs scenarios/<name>.cjs",
+      "shared_vm": "../../target/iteration/quench-node-next driver.cjs scenarios/<name>.cjs"
+    },
+    "express": {
+      "local_node": {
+        "exit_status": 0,
+        "stdout": "ICONV InternalDecoder utf8 function object function\nICONV made decoder function utf8\nICONV write entry function true Buffer 2062\nICONV before string decoder function utf8 Buffer\nstatuses 200,200,200,200,404\n"
+      },
+      "shared_vm": {
+        "exit_status": 0,
+        "stdout": "ICONV InternalDecoder utf8 function object function\nICONV made decoder function utf8\nICONV write entry function true Buffer 2062\nICONV before string decoder function utf8 Buffer\nstatuses 200,200,200,200,404\n"
+      }
+    },
+    "koa": {
+      "local_node": {
+        "exit_status": 0,
+        "stdout": "statuses 200,200,200,200,404\n"
+      },
+      "shared_vm": {
+        "exit_status": 0,
+        "stdout": "statuses 200,200,200,200,404\n"
+      }
+    },
+    "fastify": {
+      "local_node": {
+        "exit_status": 0,
+        "stdout": "statuses 200,200,200,200,404\n"
+      },
+      "shared_vm": {
+        "exit_status": 0,
+        "stdout": "statuses 200,200,200,200,404\n"
+      }
+    }
+  },
+  "change": "Pipeline readability is now derived from graph consumption: a stream becomes a readable pipeline endpoint when a later stage or terminal function consumes it. A final PassThrough used only as the writable sink is not observed for an end event. This matches Node's stage-role rule and avoids waiting for an unread readable side.",
+  "qualification_limit": "Focused shared-VM evidence only. The current framework-core profile and three pinned package scenarios pass; two selected pipeline fixtures pass. The broader test-stream-pipeline.js fixture is not qualified because shared net.createServer/connect is missing. These results do not qualify the full implemented-Node inventory or close Stage A. No unit tests or full Test262 run were performed."
+}

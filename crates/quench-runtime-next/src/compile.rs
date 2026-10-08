@@ -2,7 +2,7 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
     LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
-    SET_THIS_REGISTER, Superinstruction, WideInstruction,
+    SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
@@ -631,8 +631,8 @@ impl Engine {
                         }
                         expression => binding_time::expression(expression).static_value()?,
                     };
-                    exports.push(("\0rqj:module-default".into(), "default".into()));
-                    bindings.insert("\0rqj:module-default".into(), value);
+                    exports.push(("\0quench:module-default".into(), "default".into()));
+                    bindings.insert("\0quench:module-default".into(), value);
                 }
                 _ => return None,
             }
@@ -664,6 +664,29 @@ impl Engine {
             false,
             false,
             false,
+        )
+    }
+    /// Compile a host Script with the VM's positional atom prefix. Lossy UTF-16
+    /// slots stay reserved but cannot become source-name aliases.
+    pub(crate) fn specialize_script_with_atom_prefix(
+        source: &str,
+        name: &str,
+        atom_prefix: &[String],
+        unindexable_prefix_atoms: &[usize],
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode_and_private_names_and_atom_mask(
+            source,
+            name,
+            SpecializationMode::Enabled,
+            atom_prefix,
+            SourceType::script(),
+            false,
+            true,
+            false,
+            &[],
+            &[],
+            ParsedProgramShape::Any,
+            unindexable_prefix_atoms,
         )
     }
     pub fn specialize_unspecialized(
@@ -959,6 +982,36 @@ impl Engine {
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
+        Self::specialize_with_mode_and_private_names_and_atom_mask(
+            source,
+            name,
+            mode,
+            atom_prefix,
+            source_type,
+            module_goal,
+            capture_script_completion,
+            inherited_strict,
+            private_name_overrides,
+            annex_b_forbidden_names,
+            expected_shape,
+            &[],
+        )
+    }
+
+    fn specialize_with_mode_and_private_names_and_atom_mask(
+        source: &str,
+        name: &str,
+        mode: SpecializationMode,
+        atom_prefix: &[String],
+        source_type: SourceType,
+        module_goal: bool,
+        capture_script_completion: bool,
+        inherited_strict: bool,
+        private_name_overrides: &[(String, String)],
+        annex_b_forbidden_names: &[String],
+        expected_shape: ParsedProgramShape,
+        unindexable_prefix_atoms: &[usize],
+    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
         let mut parsed = annex_b_targets::parse_program(&allocator, &normalized, source_type);
@@ -1126,8 +1179,14 @@ impl Engine {
         } else {
             None
         };
-        let mut compiler =
-            Compiler::new_with_mode(name, &normalized, mode, atom_prefix, private_name_ids);
+        let mut compiler = Compiler::new_with_atom_mask(
+            name,
+            &normalized,
+            mode,
+            atom_prefix,
+            private_name_ids,
+            unindexable_prefix_atoms,
+        );
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
@@ -1138,9 +1197,9 @@ impl Engine {
             .collect();
         let program = compiler.program(&parsed.program, module_goal, inherited_strict);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
-                "{{\"kind\":\"rqj-oxc-memory\",\"used\":{},\"capacity\":{}}}",
+                "{{\"kind\":\"quench-oxc-memory\",\"used\":{},\"capacity\":{}}}",
                 allocator.used_bytes(),
                 allocator.capacity(),
             );
@@ -1190,7 +1249,7 @@ impl Engine {
 }
 
 pub(crate) fn module_default_binding(module_name: &str) -> String {
-    format!("\0rqj:module-default:{module_name}")
+    format!("\0quench:module-default:{module_name}")
 }
 
 fn static_declaration_exports(
@@ -1532,6 +1591,8 @@ enum SpecializationMode {
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
+    source_line_starts: Vec<usize>,
+    source_position_cursor: SourcePositionCursor,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
@@ -1554,6 +1615,14 @@ struct Compiler<'a> {
     object_sites: Vec<ObjectSite>,
     superinstructions: Vec<Superinstruction>,
 }
+
+#[derive(Clone, Copy)]
+struct SourcePositionCursor {
+    offset: usize,
+    line: u32,
+    column: u32,
+}
+
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
 
 fn private_name_ids(semantic: &oxc_semantic::Semantic<'_>) -> FxHashMap<(u32, u32), u32> {
@@ -1658,6 +1727,7 @@ enum ClassField<'a> {
 enum ConstantKey {
     Number(u64),
     WasmBits64(u64),
+    WasmV128([u8; crate::wasm::V128_BYTES]),
     String(String),
     StringUnits(Vec<u16>),
     BigInt(String),
@@ -1671,6 +1741,7 @@ impl From<&Constant> for ConstantKey {
         match value {
             Constant::Number(value) => Self::Number(value.to_bits()),
             Constant::WasmBits64(bits) => Self::WasmBits64(*bits),
+            Constant::WasmV128(bits) => Self::WasmV128(*bits),
             Constant::String(value) => Self::String(value.clone()),
             Constant::StringUnits(value) => Self::StringUnits(value.clone()),
             Constant::BigInt(value) => Self::BigInt(value.clone()),
@@ -1688,6 +1759,7 @@ impl<'a> Compiler<'a> {
         collisions
     }
 
+    #[cfg(test)]
     fn new_with_mode(
         source: &'a str,
         text: &'a str,
@@ -1695,17 +1767,46 @@ impl<'a> Compiler<'a> {
         atom_prefix: &[String],
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
+        Self::new_with_atom_mask(source, text, mode, atom_prefix, private_name_ids, &[])
+    }
+
+    fn new_with_atom_mask(
+        source: &'a str,
+        text: &'a str,
+        mode: SpecializationMode,
+        atom_prefix: &[String],
+        private_name_ids: FxHashMap<(u32, u32), u32>,
+        unindexable_prefix_atoms: &[usize],
+    ) -> Self {
         let atoms: Vec<Rc<str>> = atom_prefix
             .iter()
             .map(|atom| Rc::from(atom.as_str()))
             .collect();
+        let unindexable_prefix_atoms = unindexable_prefix_atoms
+            .iter()
+            .copied()
+            .collect::<FxHashSet<_>>();
         let mut atom_index = FxHashMap::default();
         for (index, atom) in atoms.iter().enumerate() {
-            atom_index.entry(Rc::clone(atom)).or_insert(index as Atom);
+            // An opaque prefix slot reserves its VM atom ID but is not a name alias.
+            if !unindexable_prefix_atoms.contains(&index) {
+                atom_index.entry(Rc::clone(atom)).or_insert(index as Atom);
+            }
         }
+        let mut source_line_starts = vec![0];
+        source_line_starts.extend(
+            text.match_indices('\n')
+                .map(|(index, _)| index.saturating_add(1)),
+        );
         Self {
             source,
             text,
+            source_line_starts,
+            source_position_cursor: SourcePositionCursor {
+                offset: 0,
+                line: 1,
+                column: 1,
+            },
             mode,
             root_strict: false,
             module_goal: false,
@@ -1727,6 +1828,46 @@ impl<'a> Compiler<'a> {
             field_sites: vec![],
             object_sites: vec![],
             superinstructions: vec![],
+        }
+    }
+
+    fn source_position(&mut self, offset: u32) -> SourcePosition {
+        let offset = (offset as usize).min(self.text.len());
+        let mut cursor = self.source_position_cursor;
+        if offset >= cursor.offset {
+            for character in self.text[cursor.offset..offset].chars() {
+                if character == '\n' {
+                    cursor.line = cursor.line.saturating_add(1);
+                    cursor.column = 1;
+                } else {
+                    cursor.column = cursor.column.saturating_add(character.len_utf16() as u32);
+                }
+            }
+            cursor.offset = offset;
+            self.source_position_cursor = cursor;
+            return SourcePosition {
+                pc: 0,
+                line: cursor.line,
+                column: cursor.column,
+            };
+        }
+
+        let line_index = self
+            .source_line_starts
+            .partition_point(|start| *start <= offset)
+            .saturating_sub(1);
+        let line_start = self.source_line_starts[line_index];
+        let column = self
+            .text
+            .get(line_start..offset)
+            .unwrap_or_default()
+            .encode_utf16()
+            .count()
+            .saturating_add(1);
+        SourcePosition {
+            pc: 0,
+            line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
+            column: u32::try_from(column).unwrap_or(u32::MAX),
         }
     }
 
@@ -1992,7 +2133,7 @@ impl<'a> Compiler<'a> {
             );
         }
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             capture_profile::report(&functions);
         }
         for function in &mut functions {
@@ -2018,7 +2159,7 @@ impl<'a> Compiler<'a> {
             &self.superinstructions,
         );
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             register_profile::report(
                 &functions,
                 &self.method_sites,
@@ -2082,7 +2223,7 @@ impl<'a> Compiler<'a> {
         let name = match self.private_name_ids.get(&(span.start, span.end)) {
             Some(id) => {
                 let label = self.private_name_label(span, *id);
-                let identity = format!("\0rqj:private:{}:{id}:{label}", self.source);
+                let identity = format!("\0quench:private:{}:{id}:{label}", self.source);
                 if let Some(override_name) = self.private_name_overrides.get(id) {
                     override_name.clone()
                 } else {
@@ -2091,7 +2232,7 @@ impl<'a> Compiler<'a> {
             }
             None => {
                 self.reject(span, "OXC did not resolve a private name identity");
-                "\0rqj:private:unresolved".to_owned()
+                "\0quench:private:unresolved".to_owned()
             }
         };
         self.atom(&name)
@@ -2309,10 +2450,16 @@ impl<'a> Compiler<'a> {
                 None
             } else {
                 let name = self.atoms[source_name as usize].to_string();
-                let binding = self.atom(&format!("{name}\0rqj:self-binding:{id}"));
+                let binding = self.atom(&format!("{name}\0quench:self-binding:{id}"));
                 locals.push(binding);
                 Some((source_name, binding))
             }
+        });
+        let self_binding_slot = name_binding.as_ref().and_then(|(_, binding)| {
+            locals
+                .iter()
+                .position(|atom| atom == binding)
+                .and_then(|slot| u16::try_from(slot).ok())
         });
         let arguments = self.atom("arguments");
         let parameter_shadows_arguments = locals[..parameter_local_count].contains(&arguments);
@@ -2320,14 +2467,13 @@ impl<'a> Compiler<'a> {
         let parameter_arguments_slot = options
             .defaults
             .filter(|parameters| {
-                name != Some("\0rqj:arrow")
-                    && has_arguments_binding
+                has_arguments_binding
                     && !parameter_shadows_arguments
                     && FunctionCompiler::has_non_simple_parameters(parameters)
             })
             .map(|_| {
                 let slot = locals.len() as u16;
-                locals.push(self.atom("\0rqj:parameter-arguments"));
+                locals.push(self.atom("\0quench:parameter-arguments"));
                 slot
             });
         let module_goal = self.module_goal;
@@ -2371,7 +2517,6 @@ impl<'a> Compiler<'a> {
             options.async_function,
             options.generator,
             parameter_arguments_slot,
-            arguments_slot,
             parameter_local_count,
             options.with_depth,
         );
@@ -2503,6 +2648,8 @@ impl<'a> Compiler<'a> {
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
+            is_arrow: false,
+            self_binding_slot,
             source_text: options.source_text,
             params: params.len() as u16,
             length: options.defaults.map_or(params.len(), Self::formal_length) as u16,
@@ -2539,6 +2686,7 @@ impl<'a> Compiler<'a> {
             global_immutable_atoms: Vec::new(),
             name_bindings,
             binding_sites: function.binding_sites,
+            source_positions: function.source_positions,
             environment_clones: function.environment_clones,
             code: function.code,
             wide: function.wide,

@@ -76,7 +76,7 @@
   },
   "audit": {
     "baseline": "No target/rewrite-baseline artifact or reusable tracked Node compatibility outcome report was found in the current target tree. Tracked paths/source hashes alone do not establish implementation coverage.",
-    "development_entry": "quench-node-next uses rqj::Runtime<SystemHost> with ExecutionRequest::script. It does not call the Node host run_script pipeline, install Node APIs, or pump the Node event loop. The directory comparator defaults to quench-next and validates process observations only. Existing smoke claims are JavaScript controls, not implemented Node migration proof.",
+    "development_entry": "quench-node-next uses quench_runtime_next::Runtime<SystemHost> with ExecutionRequest::script. It does not call the Node host run_script pipeline, install Node APIs, or pump the Node event loop. The directory comparator defaults to quench-next and validates process observations only. Existing smoke claims are JavaScript controls, not implemented Node migration proof.",
     "production_host": "quench-node/src/run.rs still imports legacy quench_runtime value, realm and VmContext/execute APIs. Task 43 and the Node capability migration remain unfinished."
   },
   "remaining": "Classify entry cases and support inputs, obtain complete observed legacy-versus-Node baseline evidence at the inventory/gate boundary, freeze implemented membership before shared migration closure, route the existing Node host through the shared VM, and verify every frozen case without shrinking it. Tasks 19/21/22 and Stage A remain open; no conformance suites or performance campaign were run."

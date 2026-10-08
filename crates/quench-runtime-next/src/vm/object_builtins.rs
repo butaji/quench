@@ -42,7 +42,10 @@ impl<H: Host> Vm<H> {
                 let record = self.to_property_descriptor(p, view)?;
                 definitions.push((
                     key,
-                    super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record),
+                    super::property_definition::RootedPropertyDescriptor::new(
+                        &mut self.heap,
+                        record,
+                    ),
                 ));
             }
             for (key, descriptor) in &definitions {
@@ -114,12 +117,12 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, object, "keys", Native::ObjectKeys)?;
         self.global(
             program,
-            "\0rqj:for-in-keys",
+            "\0quench:for-in-keys",
             self.native_value(Native::ForInKeys),
         )?;
         self.global(
             program,
-            "\0rqj:for-in-key-is-enumerable",
+            "\0quench:for-in-key-is-enumerable",
             self.native_value(Native::ForInKeyIsEnumerable),
         )?;
         let proxy = self.native_value(Native::Proxy);

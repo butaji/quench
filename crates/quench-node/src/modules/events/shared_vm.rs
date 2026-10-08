@@ -1,9 +1,10 @@
 //! Shared-VM projection of the existing Node EventEmitter bridge.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
-const EVENTS_API: &str = quench_js_check::checked_js!(r#"(() => {
+const EVENTS_API: &str = quench_js_check::checked_js!(
+    r#"(() => {
   const invalid = (message) => {
     const error = new TypeError(message);
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -62,16 +63,27 @@ const EVENTS_API: &str = quench_js_check::checked_js!(r#"(() => {
   };
 
   return { once, listenerCount };
-})()"#);
+})()"#
+);
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
-    let module = context.object_rooted()?;
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     let class_key = context.string_rooted("__nodeEventEmitter");
-    let constructor = context.get_property_rooted(global, class_key)?;
-    set(context, module, "EventEmitter", constructor)?;
+    let module = context.get_property_rooted(global, class_key)?;
+    set(context, module, "EventEmitter", module)?;
+
+    let utility = crate::modules::util::shared_vm::module(context)?;
+    let inspect_key = context.string_rooted("inspect");
+    let inspect = context.get_property_rooted(utility, inspect_key)?;
+    let internal_inspect = context.evaluate_script_rooted(
+        "Symbol.for('quench.internal.eventEmitter.inspect')",
+        "node:events/internal-inspect-symbol",
+    )?;
+    if !context.set_property_rooted(module, internal_inspect, inspect, module)? {
+        return Err(RootedError::host(
+            "cannot install the EventEmitter error inspector",
+        ));
+    }
 
     let api = context.evaluate_script_rooted(EVENTS_API, "node:events/shared-api.js")?;
     for name in ["once", "listenerCount"] {

@@ -1,7 +1,7 @@
 //! Legacy compiler projections of the shared runtime stack policy.
 use oxc::ast::{
     ast::{AssignmentTarget, BindingPattern, Expression, Program, Statement},
-    visit::{Visit, walk},
+    visit::{walk, Visit},
 };
 
 const STACK_DIAGNOSTIC_PREFIX: &str = "RangeError: ";

@@ -7,7 +7,7 @@ license = "MIT"
 description = "Pinned v2-derived interpreter snapshot for the Quench rewrite"
 
 [lib]
-name = "rqj"
+name = "quench_runtime_next"
 
 [[bin]]
 name = "quench-next"

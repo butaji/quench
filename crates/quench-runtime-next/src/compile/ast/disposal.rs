@@ -25,7 +25,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn push_disposal_context(&mut self) {
-        let return_atom = self.hidden_local("\0rqj:using-return");
+        let return_atom = self.hidden_local("\0quench:using-return");
         self.push_finally_context(return_atom);
     }
 
@@ -95,9 +95,9 @@ impl FunctionCompiler<'_, '_> {
         asynchronous: bool,
     ) {
         let method = if asynchronous {
-            "\0rqj:disposeAsyncWithCompletion"
+            "\0quench:disposeAsyncWithCompletion"
         } else {
-            "\0rqj:disposeWithCompletion"
+            "\0quench:disposeWithCompletion"
         };
         let method_atom = self.owner.atom(method);
         let cache = self.owner.cache_site();
@@ -122,7 +122,7 @@ impl FunctionCompiler<'_, '_> {
         if !self.has_disposal_stack() {
             return false;
         }
-        let error = self.hidden_local("\0rqj:function-using-error");
+        let error = self.hidden_local("\0quench:function-using-error");
         self.emit_disposal_scope_exit(start, end, error, context);
         self.pop_disposal_scope();
         true
@@ -137,7 +137,7 @@ impl FunctionCompiler<'_, '_> {
         if let Some(atom) = scope.stack {
             return self.load_atom(atom);
         }
-        let atom = self.hidden_local("\0rqj:disposable-stack");
+        let atom = self.hidden_local("\0quench:disposable-stack");
         self.disposal_scopes
             .last_mut()
             .expect("function disposal scope is present")

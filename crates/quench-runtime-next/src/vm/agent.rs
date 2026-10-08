@@ -185,7 +185,8 @@ impl<H: Host> Vm<H> {
     fn agent_get_report(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
         self.run_due_agent_timers(p);
         self.expire_agent_waiters(p)?;
-        self.drain_jobs(p)?;
+        // The outer job pump owns Promise continuations. Draining here would
+        // reenter the currently running getReport caller from the same queue.
         let now = Instant::now();
         let report = self
             .test262_agent

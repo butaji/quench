@@ -89,7 +89,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let number_value = self.intern_atom("\0rqj:number-value");
+        let number_value = self.intern_atom("\0quench:number-value");
         self.set_property(prototype, number_value, Value::number(0.0))?;
         self.set_property_attributes(
             prototype,
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let number_value = self.intern_atom("\0rqj:number-value");
+        let number_value = self.intern_atom("\0quench:number-value");
         self.set_property(prototype, number_value, Value::number(0.0))?;
         let methods = [
             ("toString", Native::NumberString),
@@ -231,7 +231,7 @@ impl<H: Host> Vm<H> {
         if let Some(number) = receiver.as_number() {
             return Ok(number);
         }
-        let value_atom = self.intern_atom("\0rqj:number-value");
+        let value_atom = self.intern_atom("\0quench:number-value");
         self.own_property(receiver, value_atom)
             .and_then(Value::as_number)
             .ok_or_else(|| {

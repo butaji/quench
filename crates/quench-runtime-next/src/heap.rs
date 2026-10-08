@@ -41,7 +41,7 @@ pub(crate) struct Heap {
     memory_profile: memory_profile::MemoryProfile,
 }
 #[cfg(feature = "profile-aggregate")]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct GcProfile {
     pub allocated_kinds: [u64; CellKind::COUNT],
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
@@ -56,6 +56,26 @@ pub(crate) struct GcProfile {
     pub sweep_nanos: u64,
     pub marked_kinds: [u64; CellKind::COUNT],
 }
+#[cfg(feature = "profile-aggregate")]
+impl Default for GcProfile {
+    fn default() -> Self {
+        Self {
+            allocated_kinds: [0; CellKind::COUNT],
+            allocated_payload_bytes: [0; CellKind::COUNT],
+            allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            roots: 0,
+            work_items: 0,
+            max_worklist: 0,
+            marked: 0,
+            freed: 0,
+            sweep_slots: 0,
+            mark_nanos: 0,
+            sweep_nanos: 0,
+            marked_kinds: [0; CellKind::COUNT],
+        }
+    }
+}
+
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 #[repr(usize)]
 #[derive(Clone, Copy)]
@@ -84,11 +104,21 @@ pub(crate) enum CellKind {
     TemporalPlainYearMonth,
     TemporalZonedDateTime,
     TemporalInstant,
+    WasmGlobal,
+    WasmMemory,
+    WasmTable,
+    WasmElements,
     WasmBits64,
+    WasmHostFunction,
+    WasmV128,
+    WasmGc,
+    WasmExtern,
+    WasmTag,
+    WasmException,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
-    pub(crate) const COUNT: usize = Self::WasmBits64 as usize + 1;
+    pub(crate) const COUNT: usize = Self::WasmException as usize + 1;
     #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
@@ -115,7 +145,17 @@ impl CellKind {
         "temporal_plain_year_month",
         "temporal_zoned_date_time",
         "temporal_instant",
+        "wasm_global",
+        "wasm_memory",
+        "wasm_table",
+        "wasm_elements",
         "wasm_bits64",
+        "wasm_host_function",
+        "wasm_v128",
+        "wasm_gc",
+        "wasm_extern",
+        "wasm_tag",
+        "wasm_exception",
     ];
 }
 #[derive(Default)]
@@ -273,10 +313,10 @@ impl Heap {
         }
         self.properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("RQJ_MEMORY").is_some() {
+        if std::env::var_os("QUENCH_MEMORY").is_some() {
             let after = self.properties.stats();
             eprintln!(
-                "{{\"kind\":\"rqj-property-compaction\",\"values_before\":{},\"values_after\":{},\"capacity_before\":{},\"capacity_after\":{},\"free_ranges_before\":{},\"free_ranges_after\":{}}}",
+                "{{\"kind\":\"quench-property-compaction\",\"values_before\":{},\"values_after\":{},\"capacity_before\":{},\"capacity_after\":{},\"free_ranges_before\":{},\"free_ranges_after\":{}}}",
                 before.0, after.0, before.1, after.1, before.2, after.2
             );
         }
@@ -321,12 +361,12 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_shape_roots(roots, |_, _| {})
+        self.collect_with_object_roots(roots, |_, _, _| {})
     }
-    pub(crate) fn collect_with_shape_roots(
+    pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
-        mut shape_roots: impl FnMut(u32, &mut Vec<Value>),
+        mut object_roots: impl FnMut(Value, u32, &mut Vec<Value>),
     ) -> Vec<(Value, Value)> {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
@@ -339,7 +379,7 @@ impl Heap {
         }
         {
             let mut ephemerons = weak::EphemeronWork::default();
-            self.mark_work(&mut work, &mut shape_roots, &mut ephemerons);
+            self.mark_work(&mut work, &mut object_roots, &mut ephemerons);
         }
         let finalization_jobs = self.prune_weak_entries();
         #[cfg(feature = "profile-aggregate")]
@@ -391,7 +431,7 @@ impl Heap {
     fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
-        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
     ) {
         while let Some(value) = work.pop() {
@@ -415,7 +455,7 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
-            Self::children(cell, &self.properties, work, shape_roots);
+            Self::children(value, cell, &self.properties, work, object_roots);
             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
             if let Some(elements) = self
                 .sparse_arrays
@@ -503,16 +543,18 @@ impl Heap {
             .properties = vector;
     }
     fn children(
+        owner: Value,
         cell: &Cell,
         properties: &ValueArena,
         work: &mut Vec<Value>,
-        shape_roots: &mut impl FnMut(u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
         let mut object = |object: &Object| {
             work.push(object.proto);
-            shape_roots(object.shape(), work);
+            object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
             properties.append_live_values(object.properties, work);
+            object.visit_stack_data_roots(|value| work.push(value));
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
@@ -664,6 +706,8 @@ impl Heap {
                 object(value);
                 work.extend([*env, *realm]);
             }
+            Cell::WasmGlobal { value, .. } => work.push(*value),
+            Cell::BindingReference { environment, .. } => work.push(*environment),
             Cell::Environment {
                 parent,
                 slots,
@@ -675,13 +719,26 @@ impl Heap {
                 work.extend(slots.roots());
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
-                        work.extend(bindings.iter().map(|(_, value)| *value))
+                        work.extend(bindings.iter().map(|(_, value)| *value));
                     }
                     EnvironmentBindings::Shared(owner) => work.push(*owner),
                 }
                 work.extend(with_objects.iter().copied());
             }
-            Cell::BindingReference { environment, .. } => work.push(*environment),
+            Cell::WasmElements(elements) | Cell::WasmTable { elements, .. } => {
+                work.extend(elements.iter().copied())
+            }
+            Cell::WasmGc {
+                fields, descriptor, ..
+            } => {
+                work.extend(fields.iter().copied());
+                work.extend(descriptor.iter().copied());
+            }
+            Cell::WasmExtern(value) => work.push(*value),
+            Cell::WasmException { tag, payload } => {
+                work.push(*tag);
+                work.extend(payload.iter().copied());
+            }
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
@@ -695,7 +752,11 @@ impl Heap {
             | Cell::BigInt(_)
             | Cell::Symbol(_)
             | Cell::Error(_)
-            | Cell::WasmBits64(_) => {}
+            | Cell::WasmTag { .. }
+            | Cell::WasmHostFunction { .. }
+            | Cell::WasmBits64(_)
+            | Cell::WasmV128(_)
+            | Cell::WasmMemory { .. } => {}
             _ => unreachable!("typed array backing handled above"),
         }
     }
@@ -720,7 +781,17 @@ impl Heap {
             Cell::Environment { .. } | Cell::BindingReference { .. } => CellKind::Environment,
             Cell::String(_) => CellKind::String,
             Cell::BigInt(_) => CellKind::BigInt,
+            Cell::WasmElements(_) => CellKind::WasmElements,
+            Cell::WasmGlobal { .. } => CellKind::WasmGlobal,
+            Cell::WasmMemory { .. } => CellKind::WasmMemory,
+            Cell::WasmTable { .. } => CellKind::WasmTable,
             Cell::WasmBits64(_) => CellKind::WasmBits64,
+            Cell::WasmV128(_) => CellKind::WasmV128,
+            Cell::WasmExtern(_) => CellKind::WasmExtern,
+            Cell::WasmTag { .. } => CellKind::WasmTag,
+            Cell::WasmException { .. } => CellKind::WasmException,
+            Cell::WasmGc { .. } => CellKind::WasmGc,
+            Cell::WasmHostFunction { .. } => CellKind::WasmHostFunction,
             Cell::Symbol(_) => CellKind::Symbol,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
@@ -749,14 +820,29 @@ impl Heap {
                 | Cell::Proxy { .. }
                 | Cell::Date { .. }
                 | Cell::PromiseResolvingState { .. }
+                | Cell::BindingReference { .. }
                 | Cell::TemporalDuration { .. }
                 | Cell::TemporalInstant { .. }
                 | Cell::TypedArray { .. }
                 | Cell::DataView { .. }
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
-                | Cell::BindingReference { .. }
-                | Cell::WasmBits64(_) => 0,
+                | Cell::WasmGlobal { .. }
+                | Cell::WasmBits64(_)
+                | Cell::WasmV128(_)
+                | Cell::WasmExtern(_)
+                | Cell::WasmTag { .. } => 0,
+                Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
+                Cell::WasmHostFunction { signature, .. } => {
+                    size_of::<crate::WasmSignature>()
+                        + (signature.params.capacity() + signature.results.capacity())
+                            * size_of::<crate::WasmType>()
+                }
+                Cell::WasmElements(elements)
+                | Cell::WasmTable { elements, .. }
+                | Cell::WasmGc {
+                    fields: elements, ..
+                } => elements.capacity() * size_of::<Value>(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }
@@ -769,6 +855,7 @@ impl Heap {
                 Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+                Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),

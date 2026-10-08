@@ -34,7 +34,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 Some(ObjectPropertyKind::SpreadProperty(_))
             )
         {
-            self.state.trailing_commas.insert(start, self.end_span(comma_start));
+            self.state
+                .trailing_commas
+                .insert(start, self.end_span(comma_start));
         }
         self.expect(Kind::RCurly);
         ObjectExpression::boxed(self.end_span(start), object_expression_properties, self)
@@ -65,8 +67,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
 
         let asterisk_token = self.eat(Kind::Star).then_some(self.prev_token_end - 1);
-        let token_is_identifier =
-            self.cur_kind().is_identifier_reference(self.ctx.has_yield(), self.ctx.has_await());
+        let token_is_identifier = self
+            .cur_kind()
+            .is_identifier_reference(self.ctx.has_yield(), self.ctx.has_await());
         let (key, computed) = self.parse_property_name();
 
         if asterisk_token.is_some() || matches!(self.cur_kind(), Kind::LParen | Kind::LAngle) {

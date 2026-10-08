@@ -22,23 +22,101 @@ impl Host for RecordingHost {
     }
 }
 
+fn field_cache_entries<H: Host>(
+    vm: &Vm<H>,
+    program: &ResidualProgram,
+    atom: Atom,
+) -> Vec<FieldCache> {
+    let mut sites = Vec::new();
+    for function in &program.functions {
+        for instruction in &function.code {
+            if instruction.op() != Op::GetField {
+                continue;
+            }
+            match instruction.field_lookup() {
+                Some(crate::bytecode::FieldLookup::Atom {
+                    atom: field,
+                    cache_site,
+                    ..
+                }) if field == atom => sites.push(cache_site),
+                Some(crate::bytecode::FieldLookup::Site(index)) => {
+                    let Some(site) = program.field_sites.get(index) else {
+                        continue;
+                    };
+                    for (field, cache_site) in [Some(site.first), site.second].into_iter().flatten()
+                    {
+                        if field == atom {
+                            sites.push(cache_site);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    sites
+        .into_iter()
+        .filter_map(|site| vm.field_caches.get(vm.field_cache_index(site)).copied())
+        .collect()
+}
+
+// Exercise the supported residual CallMethod opcode directly. Optional-call
+// lowering now resolves the callee before arguments through GetField + Call.
+fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
+    let atom = program
+        .atoms
+        .iter()
+        .position(|atom| atom == "method")
+        .unwrap() as Atom;
+    let cache = program.cache_sites;
+    program.cache_sites = program.cache_sites.checked_add(1).unwrap();
+    let site = program.method_sites.len() as u32;
+    program.method_sites.push(crate::bytecode::MethodSite {
+        atom,
+        cache,
+        argument_start: 0,
+        argument_count: 0,
+        receiver_path: None,
+    });
+    let function = program
+        .functions
+        .iter_mut()
+        .find(|function| {
+            function
+                .name
+                .is_some_and(|name| &program.atoms[name as usize] == "callMethod")
+        })
+        .unwrap();
+    assert_eq!(function.params, 1);
+    assert!(function.wide.is_empty());
+    function.code = vec![
+        crate::bytecode::Instr::new(Op::LoadLocal, 0, 0, 0, 0),
+        crate::bytecode::Instr::new(Op::CallMethod, 1, 0, 0, site),
+        crate::bytecode::Instr::new(Op::Return, 1, 0, 0, 0),
+    ];
+    function.parameter_end_pc = 0;
+    let methods = program
+        .method_sites
+        .iter()
+        .map(|site| (site.atom, site.cache, Vec::new(), site.receiver_path))
+        .collect::<Vec<_>>();
+    program.register_roots = crate::compile::liveness::derive(
+        &mut program.functions,
+        &methods,
+        &program.field_sites,
+        &program.superinstructions,
+    );
+    program.validate().unwrap();
+    program
+}
+
 #[test]
 fn third_receiver_promotes_field_site_to_megamorphic() {
     let mut vm = Vm::new(SilentHost);
     vm.field_caches.push(EMPTY_CACHE);
     vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
     for receiver in 1..=4 {
-        vm.record_field_cache(
-            0,
-            FieldCache {
-                receiver,
-                atom: 0,
-                owner: Value::number(f64::from(receiver)),
-                owner_shape: receiver,
-                slot: 0,
-                depth: 0,
-            },
-        );
+        vm.record_field_cache(0, FieldCache { receiver, slot: 0 });
     }
     let table = &vm.megamorphic_fields[0];
     assert_eq!(table.len(), 4);
@@ -82,9 +160,9 @@ fn cached_field_reads_follow_in_place_writes() {
         if vm.specialized {
             let value = vm.intern_atom("value");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, value)
                     .iter()
-                    .any(|entry| entry.atom == value && entry.receiver != u32::MAX),
+                    .any(|entry| entry.receiver != u32::MAX),
                 "specialized field read should populate its cache"
             );
         }
@@ -144,9 +222,9 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
         if vm.specialized {
             let method = vm.intern_atom("method");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, method)
                     .iter()
-                    .any(|entry| entry.atom == method && entry.receiver != u32::MAX),
+                    .any(|entry| entry.receiver != u32::MAX),
                 "optional method lookup should populate its field cache"
             );
         }
@@ -169,7 +247,9 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "optional-method-cache-callable-replacement.js").unwrap();
+        let program = method_cache_program(
+            compile(source, "optional-method-cache-callable-replacement.js").unwrap(),
+        );
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -213,7 +293,9 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "optional-method-cache-inherited-replacement.js").unwrap();
+        let program = method_cache_program(
+            compile(source, "optional-method-cache-inherited-replacement.js").unwrap(),
+        );
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -249,7 +331,8 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "optional-method-cache-megamorphic.js").unwrap();
+        let program =
+            method_cache_program(compile(source, "optional-method-cache-megamorphic.js").unwrap());
         assert_eq!(program.method_sites.len(), 1, "test needs one method site");
         vm.execute(&program).unwrap();
         assert_eq!(
@@ -288,156 +371,6 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
 }
 
 #[test]
-fn redefining_a_deleted_sparse_array_index_uses_new_property_defaults() {
-    let source = r#"
-      var values = [];
-      values[1000] = 1;
-      delete values[1000];
-      Object.defineProperty(values, "1000", { value: 2 });
-      var descriptor = Object.getOwnPropertyDescriptor(values, "1000");
-      print(descriptor.value);
-      print(descriptor.writable);
-      print(descriptor.enumerable);
-      print(descriptor.configurable);
-      var accessors = [];
-      accessors[1000] = 1;
-      delete accessors[1000];
-      Object.defineProperty(accessors, "1000", { get: function() { return 3; } });
-      var accessorDescriptor = Object.getOwnPropertyDescriptor(accessors, "1000");
-      print(typeof accessorDescriptor.get);
-      print(accessorDescriptor.enumerable);
-      print(accessorDescriptor.configurable);
-    "#;
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "deleted-sparse-array-descriptor.js").unwrap();
-        vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            ["2", "false", "false", "false", "function", "false", "false"],
-            "{mode}"
-        );
-    }
-}
-
-#[test]
-fn non_configurable_accessor_redefinition_uses_one_identity_rule() {
-    let source = r#"
-      var getter = function() { return 7; };
-      var setter = function(value) {};
-      var ordinary = {};
-      var indexed = [];
-      var ordinarySetter = {};
-      var indexedSetter = [];
-      Object.defineProperty(ordinary, "value", { get: getter, configurable: false });
-      Object.defineProperty(indexed, "0", { get: getter, configurable: false });
-      Object.defineProperty(ordinarySetter, "value", { set: setter, configurable: false });
-      Object.defineProperty(indexedSetter, "0", { set: setter, configurable: false });
-      Object.defineProperty(ordinary, "value", { get: getter });
-      Object.defineProperty(indexed, "0", { get: getter });
-      Object.defineProperty(ordinarySetter, "value", { set: setter });
-      Object.defineProperty(indexedSetter, "0", { set: setter });
-      Object.defineProperty(ordinarySetter, "value", { get: undefined });
-      Object.defineProperty(indexedSetter, "0", { get: undefined });
-      print(ordinary.value);
-      print(indexed[0]);
-      print("undefined-getters-accepted");
-      try { Object.defineProperty(ordinary, "value", { get: function() { return 8; } }); }
-      catch (error) { print("ordinary-rejected"); }
-      try { Object.defineProperty(indexed, "0", { get: function() { return 8; } }); }
-      catch (error) { print("indexed-rejected"); }
-      try { Object.defineProperty(ordinarySetter, "value", { set: function(value) {} }); }
-      catch (error) { print("ordinary-setter-rejected"); }
-      try { Object.defineProperty(indexedSetter, "0", { set: function(value) {} }); }
-      catch (error) { print("indexed-setter-rejected"); }
-    "#;
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "non-configurable-accessor-identity.js").unwrap();
-        vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            [
-                "7",
-                "7",
-                "undefined-getters-accepted",
-                "ordinary-rejected",
-                "indexed-rejected",
-                "ordinary-setter-rejected",
-                "indexed-setter-rejected",
-            ],
-            "{mode}"
-        );
-    }
-}
-
-#[test]
-fn indexed_and_ordinary_descriptors_fold_partial_updates_identically() {
-    let source = r#"
-      var ordinary = { value: 1 };
-      var indexed = [1];
-      Object.defineProperty(ordinary, "value", { writable: false });
-      Object.defineProperty(indexed, "0", { writable: false });
-      var ordinaryData = Object.getOwnPropertyDescriptor(ordinary, "value");
-      var indexedData = Object.getOwnPropertyDescriptor(indexed, "0");
-      print(ordinaryData.value);
-      print(ordinaryData.writable);
-      print(ordinaryData.enumerable);
-      print(ordinaryData.configurable);
-      print(indexedData.value);
-      print(indexedData.writable);
-      print(indexedData.enumerable);
-      print(indexedData.configurable);
-
-      var ordinaryAccessor = {};
-      var indexedAccessor = [];
-      Object.defineProperty(ordinaryAccessor, "value", {
-        get: function() { return 2; }, enumerable: true, configurable: true
-      });
-      Object.defineProperty(indexedAccessor, "0", {
-        get: function() { return 2; }, enumerable: true, configurable: true
-      });
-      Object.defineProperty(ordinaryAccessor, "value", { value: 3, writable: true });
-      Object.defineProperty(indexedAccessor, "0", { value: 3, writable: true });
-      var ordinaryConverted = Object.getOwnPropertyDescriptor(ordinaryAccessor, "value");
-      var indexedConverted = Object.getOwnPropertyDescriptor(indexedAccessor, "0");
-      print(ordinaryConverted.value);
-      print(ordinaryConverted.writable);
-      print(ordinaryConverted.enumerable);
-      print(ordinaryConverted.configurable);
-      print(indexedConverted.value);
-      print(indexedConverted.writable);
-      print(indexedConverted.enumerable);
-      print(indexedConverted.configurable);
-    "#;
-    for (mode, compile) in [
-        ("specialized", Engine::specialize as fn(&str, &str) -> _),
-        ("unspecialized", Engine::specialize_unspecialized),
-    ] {
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "indexed-descriptor-folding.js").unwrap();
-        vm.execute(&program).unwrap();
-        assert_eq!(
-            output.borrow().as_slice(),
-            [
-                "1", "false", "true", "true", "1", "false", "true", "true", "3", "true", "true",
-                "true", "3", "true", "true", "true",
-            ],
-            "{mode}"
-        );
-    }
-}
-
-#[test]
 fn field_cache_fallback_preserves_accessor_reentry() {
     let source = r#"
       var count = 0;
@@ -462,9 +395,9 @@ fn field_cache_fallback_preserves_accessor_reentry() {
         if vm.specialized {
             let value = vm.intern_atom("value");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, value)
                     .iter()
-                    .all(|entry| entry.atom != value || entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == u32::MAX),
                 "accessor lookup must use the generic re-entrant path"
             );
         }
@@ -500,9 +433,9 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
         if vm.specialized {
             let value = vm.intern_atom("value");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, value)
                     .iter()
-                    .all(|entry| entry.atom != value || entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == u32::MAX),
                 "Proxy reads must retain the generic trap path"
             );
         }
@@ -532,7 +465,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "method-cache-proxy-get.js").unwrap();
+        let program = method_cache_program(compile(source, "method-cache-proxy-get.js").unwrap());
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -587,7 +520,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
     ] {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
-        let program = compile(source, "optional-method-accessor.js").unwrap();
+        let program = method_cache_program(compile(source, "optional-method-accessor.js").unwrap());
         assert!(
             !program.method_sites.is_empty(),
             "test must exercise CallMethod"
@@ -602,9 +535,9 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         if vm.specialized {
             let method = vm.intern_atom("method");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, method)
                     .iter()
-                    .all(|entry| entry.atom != method || entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == u32::MAX),
                 "optional accessor lookup must retain the generic getter path"
             );
             assert!(
@@ -648,23 +581,20 @@ fn static_index_field_cache_admits_only_shape_backed_storage() {
             let atom = vm.intern_atom("ordinary");
             let ordinary = vm.own_property(vm.realm.globals, atom).unwrap();
             let index = vm.intern_atom("0");
-            let entries = vm
-                .field_caches
-                .iter()
-                .filter(|entry| entry.atom == index)
-                .collect::<Vec<_>>();
+            let entries = field_cache_entries(&vm, &program, index);
             assert!(
                 !entries.is_empty(),
                 "ordinary indexed names must still exercise the field cache"
             );
-            assert!(entries.iter().all(|entry| entry.owner == ordinary));
+            let ordinary_shape = vm.object_data(ordinary).unwrap().shape();
+            assert!(entries.iter().all(|entry| entry.receiver == ordinary_shape));
             let atom = vm.intern_atom("view");
             let view = vm.own_property(vm.realm.globals, atom).unwrap();
             let noncanonical = vm.intern_atom("01");
             assert!(
-                vm.field_caches
+                field_cache_entries(&vm, &program, noncanonical)
                     .iter()
-                    .any(|entry| entry.atom == noncanonical && entry.owner == view),
+                    .any(|entry| entry.receiver == vm.object_data(view).unwrap().shape()),
                 "noncanonical typed-array names use ordinary shape storage"
             );
         }

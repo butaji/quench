@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "node_parallel_affected_case",
+  "run_date": "2026-10-06",
+  "source_revision": "7caf598bdf970ec20d714c2548f1aeb2831b6f01",
+  "source_state": "Dirty worktree; exact runner binary, fixture hash, and manifest hash bind this run.",
+  "runner": {
+    "command": "target/iteration/run-parallel-next --filter test-stream-readable-async-iterators.js",
+    "engine": "shared VM through run-parallel-next",
+    "binary": "target/iteration/run-parallel-next",
+    "binary_sha256": "73d5515411591e95bb5992e524ef72d1b2f3402c9819235433c0a895c0fa775d",
+    "timeout_seconds_per_fixture": 30
+  },
+  "suite": {
+    "path": "tests/node/test/parallel",
+    "submodule_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "manifest": "crates/quench-node-test/node-tests/parallel.txt",
+    "manifest_sha256": "c6021ca6c501cd7ea5ba3bab5456f42b08c0b8d190a0f980f008bbc6ab011e43",
+    "fixture": "tests/node/test/parallel/test-stream-readable-async-iterators.js",
+    "fixture_sha256": "053c89c514f3b58eed64e5ec0b789078b366a203b8af00e315813766c3a80655",
+    "framework_core_member": false
+  },
+  "result": {
+    "pass": 0,
+    "skip": 0,
+    "fail": 0,
+    "timeout": 1,
+    "crash": 0,
+    "unclassified": 0,
+    "exit_code": 1
+  },
+  "reason": "Worker reached the 30-second per-case deadline and was terminated by signal 9.",
+  "qualification": "This included inventory case remains unqualified; its broader iterator, close, HTTP and filesystem obligations are outside the 26-case framework-core profile."
+}

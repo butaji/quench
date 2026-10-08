@@ -110,9 +110,9 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
     let value = match arguments.first().cloned().unwrap_or(Value::Undefined) {
-        Value::Number(value) => Value::String(
-            crate::conversion::to_string(&Value::Number(value)).unwrap_or_default(),
-        ),
+        Value::Number(value) => {
+            Value::String(crate::conversion::to_string(&Value::Number(value)).unwrap_or_default())
+        }
         Value::BigInt(value) => Value::String(value),
         value => value,
     };
@@ -325,8 +325,8 @@ fn realm_global_object(
     ] {
         properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
     }
-    let float16_enabled = realm::context(realm)
-        .is_some_and(|context| context.host_value("Float16Array").is_some());
+    let float16_enabled =
+        realm::context(realm).is_some_and(|context| context.host_value("Float16Array").is_some());
     if float16_enabled {
         properties.push((
             "Float16Array".to_string(),
@@ -348,24 +348,20 @@ fn float16_constructor_for_realm(realm: crate::ops::RealmId) -> Value {
         ("\0prototype".to_string(), prototype.clone()),
     ]);
     let receiver_for_update = receiver.clone();
-    let constructor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm,
-        target: Value::Builtin(Builtin::Uint16Array),
-        receiver,
-        arguments: Vec::new(),
-        properties: std::cell::RefCell::new(Vec::new()),
-    }));
+    let constructor = Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm,
+            target: Value::Builtin(Builtin::Uint16Array),
+            receiver,
+            arguments: Vec::new(),
+            properties: std::cell::RefCell::new(Vec::new()),
+        },
+    ));
     let constructor = crate::execute::set_property(constructor, "prototype", prototype.clone());
-    let constructor = crate::execute::set_property(
-        constructor,
-        "name",
-        Value::String("Float16Array".into()),
-    );
-    let constructor = crate::execute::set_property(
-        constructor,
-        "BYTES_PER_ELEMENT",
-        Value::Number(2.0),
-    );
+    let constructor =
+        crate::execute::set_property(constructor, "name", Value::String("Float16Array".into()));
+    let constructor =
+        crate::execute::set_property(constructor, "BYTES_PER_ELEMENT", Value::Number(2.0));
     let _ = crate::execute::set_property_in_place(
         &constructor,
         "\0function_prototype",

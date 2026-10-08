@@ -1,16 +1,16 @@
 {
   "schema": 1,
   "task": "23",
-  "kind": "pinned-wasm-shared-vm-qualification",
+  "kind": "pinned_wasm_shared_vm_qualification_current",
   "recorded_at": "2026-10-07",
   "source": {
-    "revision": "4a7fa2c50a0720f8e22bcf6b0076f618072eb666",
+    "revision": "cebb58b5cf4118fb8022386f013d8009193cc306",
     "dirty": true,
-    "platform": "Darwin arm64",
+    "platform": "macOS-26.5-arm64-arm-64bit",
     "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
-    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 repository-relative path, NUL, file SHA-256 hex, newline records",
     "snapshot_file_count": 283,
-    "snapshot_sha256": "e34e467e7e8f37281a6d0b42658b28414b3192b0c17a248a99e036ac61158ad6",
+    "snapshot_sha256": "c7c13ad6e001568bf287b1f3a8242bf507dd2c11ee66534c5e9e0d1134f8f221",
     "snapshot_roots": [
       "crates/quench-runtime-next/src",
       "crates/quench-wasm/src",
@@ -30,15 +30,17 @@
     "name": "pinned Wasm testsuite",
     "path": "crates/quench-wasm-test/testsuite",
     "files": 288,
-    "input_manifest_sha256": "e06ab2dc8b479bb7d733db147c54906e7f652a890fb19965b54a76976c6cc0aa",
-    "input_mismatches": 0
+    "input_manifest_algorithm": "SHA-256 of compact JSON over ordered [path, sha256] pairs sorted by path",
+    "input_manifest_sha256": "fe78577922f7360f39f0d66cb4ec33218ac3b43b4193e7016f6a2799952e424d",
+    "input_mismatches": 0,
+    "mismatched_paths": []
   },
   "run": {
-    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task23-current-shared-vm-2026-10-07.json crates/quench-wasm-test/testsuite",
+    "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/task27-current-2026-10-07/wasm.json crates/quench-wasm-test/testsuite",
     "binary": "target/iteration/run",
-    "binary_sha256": "d0c5e8174609a3ad7682d057b378bb4ed3ea137b889251a86bbca09a7dd7d1dc",
-    "report": "target/iteration/task23-current-shared-vm-2026-10-07.json",
-    "report_sha256": "fdf67e6cd20fbad4eafec9a2d72b1daac1516b329b81c903371600c73093fa4e"
+    "binary_sha256": "1d8e00caaecd82a9c6e78947dae404cf956ea49a0890614f2d87300f550c3149",
+    "report": "target/iteration/task27-current-2026-10-07/wasm.json",
+    "report_sha256": "f6734cbc6bf9a2a892f1d038c514860d8696434acefa97fca17e259f92185161"
   },
   "result": {
     "passed": 67124,
@@ -46,7 +48,10 @@
     "total": 67124,
     "inventory_complete": true,
     "file_timeouts": 0,
-    "failed_files": []
+    "file_errors": []
   },
-  "qualification_limit": "This is current-tree Wasm suite evidence. Task 24 still requires one same-build integrated Test262, Wasm and Node gate; Task 27/86 production cutover and cleanup remain open."
+  "verification": {
+    "unit_tests_run": false
+  },
+  "qualification_limit": "This is current-tree pinned Wasm evidence on the shared VM. It does not prove single-runtime package cleanup. The user permits moving to Stage B with minor suite residuals; this Wasm inventory has no failures. Stage A legacy-runtime removal remains unfinished."
 }

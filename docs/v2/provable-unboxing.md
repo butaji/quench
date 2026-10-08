@@ -62,7 +62,7 @@ removing checks from the dominant numeric body.
 No retained workload contains a hot region satisfying the no-guard proof
 obligation, so there is no sound unboxed candidate to benchmark. Treating the
 observed `am3` integers as proof would reproduce task 14's speculative type
-feedback under a different name. rqj keeps the existing boxed `Value` numeric
+feedback under a different name. Quench keeps the existing boxed `Value` numeric
 dispatcher and its checked integer fast path. This task can be reopened when
 whole-program call-target/type analysis proves a hot function's inputs, or a
 future benchmark contains a hot constant-origin numeric region.

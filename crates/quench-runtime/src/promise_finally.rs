@@ -46,17 +46,19 @@ fn settle_original(fulfilled: bool, original: Value) -> Result<Value, VmError> {
 }
 
 fn finally_settle_handler(fulfilled: bool, original: Value) -> Value {
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(if fulfilled {
-            Builtin::PromiseFinallyFulfilled
-        } else {
-            Builtin::PromiseFinallyRejected
-        }),
-        receiver: original,
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }))
+    Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm: crate::vm::current_context_or_default().realm(),
+            target: Value::Builtin(if fulfilled {
+                Builtin::PromiseFinallyFulfilled
+            } else {
+                Builtin::PromiseFinallyRejected
+            }),
+            receiver: original,
+            arguments: Vec::new(),
+            properties: RefCell::new(Vec::new()),
+        },
+    ))
 }
 
 fn settle_finally_value(fulfilled: bool, original: Option<&Value>) -> Result<Value, VmError> {

@@ -5,35 +5,92 @@ use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
+/// One Node-style error record shared by the legacy and shared VM adapters.
+pub(crate) struct FsErrorDetails {
+    pub name: Option<&'static str>,
+    pub code: &'static str,
+    pub errno: i32,
+    pub syscall: String,
+    pub path: Option<String>,
+    pub message: String,
+}
+
+pub(crate) fn error_details(
+    syscall: &str,
+    path: Option<&str>,
+    error: &std::io::Error,
+) -> FsErrorDetails {
+    let (code, errno) = code_for(error);
+    let message = match path {
+        Some(path) => format!("{code}: {}, {syscall} '{path}'", strerror(code)),
+        None => format!("{code}: {}, {syscall}", strerror(code)),
+    };
+    FsErrorDetails {
+        name: None,
+        code,
+        errno,
+        syscall: syscall.to_owned(),
+        path: path.map(str::to_owned),
+        message,
+    }
+}
+
+pub(crate) fn operation_error_details(
+    error: &crate::modules::fs::ops::OperationError,
+) -> FsErrorDetails {
+    match error {
+        crate::modules::fs::ops::OperationError::Io {
+            syscall,
+            path,
+            error,
+        } => error_details(syscall, Some(path), error),
+        crate::modules::fs::ops::OperationError::DirectoryRequiresRecursive { path } => {
+            FsErrorDetails {
+                name: Some("SystemError"),
+                code: "ERR_FS_EISDIR",
+                errno: libc::EISDIR,
+                syscall: "rm".to_owned(),
+                path: Some(path.clone()),
+                message: format!("Path is a directory: rm returned EISDIR (is a directory) {path}"),
+            }
+        }
+    }
+}
+
 /// `fs` system errors are plain `Error` instances with extra props.
 pub fn fs_error(syscall: &str, path: Option<&str>, error: &std::io::Error) -> VmError {
-    let (code, errno) = code_for(error);
-    let detail = strerror(code);
-    let message = match path {
-        Some(p) => format!("{code}: {detail}, {syscall} '{p}'"),
-        None => format!("{code}: {detail}, {syscall}"),
-    };
+    from_details(error_details(syscall, path, error))
+}
+
+pub(crate) fn operation_error(error: &crate::modules::fs::ops::OperationError) -> VmError {
+    from_details(operation_error_details(error))
+}
+
+fn from_details(details: FsErrorDetails) -> VmError {
     let error = quench_runtime::execute::call(
         &Value::Builtin(quench_runtime::ops::Builtin::Error),
         &Value::Undefined,
-        &[Value::String(message)],
+        &[Value::String(details.message)],
     )
     .unwrap_or_else(|_| host_api::object(vec![]));
+    if let Some(name) = details.name {
+        let _ = quench_runtime::execute::set_property_in_place(
+            &error,
+            "name",
+            Value::String(name.to_string()),
+        );
+    }
     for (name, value) in [
-        ("code", Value::String(code.to_string())),
-        ("errno", Value::Number(errno as f64)),
-        ("syscall", Value::String(syscall.to_string())),
+        ("code", Value::String(details.code.to_string())),
+        ("errno", Value::Number(details.errno as f64)),
+        ("syscall", Value::String(details.syscall.to_string())),
     ] {
         let _ = quench_runtime::execute::set_property_in_place(&error, name, value);
     }
-    if let Some(p) = path {
-        let _ = quench_runtime::execute::set_property_in_place(
-            &error,
-            "path",
-            Value::String(p.to_string()),
-        );
+    if let Some(p) = details.path {
+        let _ = quench_runtime::execute::set_property_in_place(&error, "path", Value::String(p));
     }
-    if syscall == "access" {
+    if details.syscall == "access" {
         let stack = quench_runtime::execute::get_property(&error, "stack");
         let stack = match stack {
             Value::String(stack) => format!("{stack}\n    at async Object.access"),
@@ -79,7 +136,7 @@ pub fn with_dest_error(
 }
 
 /// Node/libuv-style code and (negative) errno for an I/O error.
-fn code_for(error: &std::io::Error) -> (&'static str, i32) {
+pub(crate) fn code_for(error: &std::io::Error) -> (&'static str, i32) {
     if let Some(raw) = error.raw_os_error() {
         return (code_name(raw), -raw);
     }
@@ -131,7 +188,7 @@ fn code_name(raw: i32) -> &'static str {
     }
 }
 
-fn strerror(code: &str) -> &'static str {
+pub(crate) fn strerror(code: &str) -> &'static str {
     match code {
         "EPERM" => "operation not permitted",
         "ENOENT" => "no such file or directory",

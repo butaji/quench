@@ -19,14 +19,7 @@ where
         while start < source.len() {
             let middle = start.saturating_add(run_width).min(source.len());
             let end = middle.saturating_add(run_width).min(source.len());
-            merge_runs(
-                &source,
-                &mut target,
-                start,
-                middle,
-                end,
-                &mut compare,
-            )?;
+            merge_runs(&source, &mut target, start, middle, end, &mut compare)?;
             start = end;
         }
         std::mem::swap(&mut source, &mut target);

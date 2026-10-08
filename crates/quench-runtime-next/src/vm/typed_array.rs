@@ -272,11 +272,14 @@ impl<H: Host> Vm<H> {
         let length = self.typed_array_length(this).unwrap_or_default();
         if matches!(
             native,
-            Native::Uint8ArrayReverse
-                | Native::Uint8ArrayFill
-                | Native::Uint8ArrayCopyWithin
-        ) && matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
-        {
+            Native::Uint8ArrayReverse | Native::Uint8ArrayFill | Native::Uint8ArrayCopyWithin
+        ) && matches!(
+            self.heap.get(buffer),
+            Some(Cell::ArrayBuffer {
+                immutable: true,
+                ..
+            })
+        ) {
             return Err(self.type_error(p, "typed array backing buffer is immutable".into()));
         }
         match native {
@@ -311,9 +314,12 @@ impl<H: Host> Vm<H> {
                         .min(current_length.saturating_sub(target))
                         .min(current_length.saturating_sub(start));
                     let (buffer, offset, width) = match self.heap.get(this) {
-                        Some(Cell::TypedArray { buffer, offset, kind, .. }) => {
-                            (*buffer, *offset, kind.width())
-                        }
+                        Some(Cell::TypedArray {
+                            buffer,
+                            offset,
+                            kind,
+                            ..
+                        }) => (*buffer, *offset, kind.width()),
                         _ => unreachable!("typed array receiver was validated"),
                     };
                     let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
@@ -408,7 +414,9 @@ impl<H: Host> Vm<H> {
                 let current_length = if native == Native::Uint8ArrayIncludes {
                     length
                 } else {
-                    self.typed_array_length(this).unwrap_or_default().min(length)
+                    self.typed_array_length(this)
+                        .unwrap_or_default()
+                        .min(length)
                 };
                 let found = (from..current_length).find(|index| {
                     let Some(value) = self.typed_array_get(this, *index) else {
@@ -604,7 +612,13 @@ impl<H: Host> Vm<H> {
         let buffer = *buffer;
         if self.typed_array_out_of_bounds(this)
             || self.array_buffer_detached(buffer)
-            || matches!(self.heap.get(buffer), Some(Cell::ArrayBuffer { immutable: true, .. }))
+            || matches!(
+                self.heap.get(buffer),
+                Some(Cell::ArrayBuffer {
+                    immutable: true,
+                    ..
+                })
+            )
         {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         }
@@ -642,12 +656,7 @@ impl<H: Host> Vm<H> {
         if !length_tracks {
             constructor_args.push(Value::number(target_length as f64));
         }
-        self.typed_array_species_create_with_args(
-            p,
-            this,
-            &constructor_args,
-            target_length,
-        )
+        self.typed_array_species_create_with_args(p, this, &constructor_args, target_length)
     }
 
     pub(super) fn typed_array_sort_native(
@@ -911,7 +920,9 @@ impl<H: Host> Vm<H> {
         let (buffer, offset, length, length_tracking, kind) =
             (*buffer, *offset, *length, *length_tracking, *kind);
         let (buffer_length, detached) = match self.heap.get(buffer) {
-            Some(Cell::ArrayBuffer { bytes, detached, .. }) => (bytes.len(), *detached),
+            Some(Cell::ArrayBuffer {
+                bytes, detached, ..
+            }) => (bytes.len(), *detached),
             _ => (0, true),
         };
         let out_of_bounds = detached
@@ -932,12 +943,10 @@ impl<H: Host> Vm<H> {
             Native::TypedArrayByteOffsetGetter if !out_of_bounds => {
                 Value::number(self.typed_array_byte_offset(this).unwrap_or_default() as f64)
             }
-            Native::TypedArrayLengthGetter if !out_of_bounds => {
-                Value::number(view_length as f64)
+            Native::TypedArrayLengthGetter if !out_of_bounds => Value::number(view_length as f64),
+            Native::TypedArrayByteLengthGetter if !out_of_bounds => {
+                Value::number((view_length * kind.width()) as f64)
             }
-            Native::TypedArrayByteLengthGetter if !out_of_bounds => Value::number(
-                (view_length * kind.width()) as f64,
-            ),
             Native::TypedArrayByteOffsetGetter
             | Native::TypedArrayLengthGetter
             | Native::TypedArrayByteLengthGetter => Value::number(0.0),
@@ -953,7 +962,11 @@ impl<H: Host> Vm<H> {
     ) -> Result<usize, JsError> {
         let Some(value) = value else { return Ok(0) };
         let number = self.to_number(p, *value)?;
-        let integer = if number.is_finite() { number.trunc() } else { number };
+        let integer = if number.is_finite() {
+            number.trunc()
+        } else {
+            number
+        };
         Ok(if integer.is_nan() || integer == 0.0 {
             0
         } else if integer < 0.0 {

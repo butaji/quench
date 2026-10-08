@@ -1,0 +1,108 @@
+{
+  "scope": "Shared-VM Node runner wiring only; does not qualify implemented Node compatibility outcomes",
+  "source_revision": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
+  "source_worktree_dirty": true,
+  "host": "macOS-26.5-arm64-arm-64bit",
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "8e4687ced061c85bc6bc37aa609891e6f0c30fecb23f86a679c3e4240ceecae8",
+    "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
+    "state": "input_sources_classified_capability_audit_pending",
+    "case_candidates": 1576,
+    "assertion_candidates": 1556,
+    "observation_candidates": 20,
+    "included_assertions": 418,
+    "pending_assertions": 1106,
+    "excluded_assertions": 32,
+    "included_observations": 4,
+    "pending_observations": 15,
+    "excluded_observations": 1,
+    "membership_frozen": false,
+    "included_observation_paths": [
+      "tests/node-compat/stage-2344/stream-backpressure-trace.js",
+      "tests/node-compat/stage-2442/stream-backpressure-trace.js",
+      "tests/node-compat/stage-2445/stream-backpressure-eleven.js",
+      "crates/quench-node-test/node-tests/test-console.js"
+    ]
+  },
+  "checks": [
+    {
+      "command": "cargo check -p quench-node --bin quench-node-next -p quench-node-test --bins",
+      "exit": 0
+    },
+    {
+      "command": "cargo run -p quench-node --bin quench-node-next -- -e 'console.log(\"shared-run-ok\")'",
+      "exit": 0,
+      "stdout": "shared-run-ok"
+    },
+    {
+      "command": "cargo run -p quench-node --bin quench-node-next -- /tmp/quench-runner-smoke-current/entry.cjs",
+      "exit": 0,
+      "stdout": "cjs-entry-ok"
+    },
+    {
+      "command": "cargo run -p quench-node --bin quench-node-next -- /tmp/quench-runner-smoke-current/entry.mjs",
+      "exit": 0,
+      "stdout": "esm-entry-ok"
+    },
+    {
+      "command": "cargo run -p quench-node-test --bin run-compat-next -- --case-worker /tmp/quench-runner-smoke-current/flags.js /tmp/quench-runner-smoke-current/flags-result.json",
+      "exit": 0,
+      "stdout": "flags-ok",
+      "worker_result": {
+        "outcome": "pass"
+      }
+    },
+    {
+      "command": "cargo test -p quench-node-test --lib case_process::tests::only_completed_consistent_worker_results_can_pass",
+      "exit": 0,
+      "passed": 1,
+      "filtered_out": 5
+    },
+    {
+      "command": "cargo run -p quench-node-test --bin run-compat-next -- --inventory tasks/node-compat-inventory.json --subset --filter path",
+      "exit": 2,
+      "stderr": "error: implemented Node membership is not frozen; --list is diagnostic only",
+      "guest_cases_run": 0
+    },
+    {
+      "command": "node tools/check-task-coherence.mjs",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "unqualified_probes": [
+    {
+      "input": "/tmp/quench-runner-smoke-current/exit.js",
+      "result": "failed with TypeError: value is not callable",
+      "meaning": "process.exit is not yet exposed by the shared NodeHost; no guest exit behavior is qualified."
+    }
+  ],
+  "limitations": [
+    "The inventory remains unfrozen; no inventory-selected Node case ran and no Node compatibility pass is claimed.",
+    "Four included observation identities have no matched local-Node trace execution/comparison path, so observation qualification remains a gate blocker.",
+    "The shared worker passes fixture Flags into process.execArgv, but flag semantics and upstream Node test harness policy remain incomplete.",
+    "GuestExit records are preserved as raw, unclassified worker outcomes; the shared NodeHost does not yet expose process.exit.",
+    "No Test262, Wasm, or Node conformance suite was run."
+  ],
+  "source_sha256": {
+    "crates/quench-node/src/bin/quench-node-next.rs": "6fc879c1c999c385a9a0f00d089d1dc3bd3b05d1b302109a6821dd8b3b3c887e",
+    "crates/quench-node/src/lib.rs": "8b9c7612b30ba26d55d386e6897ecb4a9d58a4b657083877788c940064b2734a",
+    "crates/quench-node/src/shared_run.rs": "edc9616ff128cff71aa2bb2d9e01867fffed4d5c6835779dc02d7efa614ef356",
+    "crates/quench-node/src/host.rs": "43a1dd8166b4e609f35a5639a79b18d684d6d7a55e2639ab9fbb0aec84dabe17",
+    "crates/quench-node/src/modules/process/shared_vm.rs": "a0afc5693e8ec1d624d053d49470de73ea742a539247ac616d40bebb8bc3d9f6",
+    "crates/quench-node-test/src/bin/run-compat.rs": "5b09f980418cb2ea60f390d78af06bd7b460e02c9b654c047d6dd7174bba251d",
+    "crates/quench-node-test/src/bin/run-compat-next.rs": "874bfa9d7adb47f20f463abbfb983d046fdcd2e1e7b1fe2317655892355e3ab4",
+    "crates/quench-node-test/src/bin/run.rs": "b44d4231e4bcc7600f2b52092fdc97f359bb6e36462f7efa72817caa5d8e5f8a",
+    "crates/quench-node-test/src/case_process.rs": "e2305573b90026f9d0fe16d981efeae98bbf9fb9adc6cfb73f4afd1f9c4590b1",
+    "crates/quench-node-test/src/compat_cli.rs": "7b1c6000d5e45bee3b86f03ec9cddac1de0756cc2107bcbf1fffb74589ce2b90",
+    "crates/quench-node-test/src/lib.rs": "b0c7f064a817dc43f45d0a4f829a20dfed1a0346b4655b4755c34d7251b38bdb",
+    "crates/quench-node-test/src/reader.rs": "9036b89da0a1ff2fe6a322b1929e60dff95a3c8e6ff29362033bfe80a1c8999e",
+    "crates/quench-node-test/src/shared_runner.rs": "2566686e0486a596c460b4d52ee33686e561d1a35e7c389d2be4ef0afd15c44e",
+    "tasks/node-compat-inventory.json": "8e4687ced061c85bc6bc37aa609891e6f0c30fecb23f86a679c3e4240ceecae8"
+  },
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)"
+}

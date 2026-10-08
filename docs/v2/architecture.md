@@ -1,6 +1,6 @@
 # Staged interpreter architecture
 
-RQJ treats compilation as Futamura's first projection: specialize one
+Quench treats compilation as Futamura's first projection: specialize one
 general ES5-subset interpreter with respect to a known source program, then
 execute the residual bytecode. It generates no native guest code. The design
 keeps three binding times explicit.
@@ -42,7 +42,7 @@ observable in tests and profiling.
 
 An interpretive partial evaluator would receive both an interpreter and a
 guest program, then repeatedly walk the interpreter's own semantics to decide
-what can be reduced. RQJ does not do that at runtime. `Engine::specialize` is
+what can be reduced. Quench does not do that at runtime. `Engine::specialize` is
 a hand-written *generating extension*: the specialization decisions for this
 fixed ES5-subset interpreter have already been compiled into Rust, so each
 source program is mapped directly from OXC syntax and derived binding facts to
