@@ -413,12 +413,13 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn initialize_handler_binding(
         &mut self,
+        p: &ResidualProgram,
         frame: usize,
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
         self.clone_frame_environment(frame, &[slot])?;
-        if self.frames[frame].captured {
+        if self.local_slot_is_environment_owned(p, frame, usize::from(slot)) {
             *self
                 .heap
                 .environment_slot_mut(self.frames[frame].env, usize::from(slot))
@@ -432,7 +433,17 @@ impl<H: Host> Vm<H> {
     pub(super) fn activation_binding_value(&self, frame: usize, atom: Atom) -> Option<Value> {
         let slot = self.activation_binding_slot(frame, atom)?;
         let frame = self.frames.get(frame)?;
-        if frame.captured {
+        let environment_owned = frame.captured
+            && self
+                .programs
+                .get(frame.program)
+                .is_none_or(|program| {
+                    program
+                        .functions
+                        .get(frame.function as usize)
+                        .is_none_or(|function| function.local_slot_uses_environment(slot))
+                });
+        if environment_owned {
             self.heap.environment_slot(frame.env, slot)
         } else {
             frame.locals.get(slot).copied()
@@ -445,9 +456,27 @@ impl<H: Host> Vm<H> {
         slot: usize,
         value: Value,
     ) -> bool {
-        let activation = &self.frames[frame];
-        let binding = if activation.captured {
-            self.heap.environment_slot_mut(activation.env, slot)
+        let (captured, env, program_id, function_id) = {
+            let activation = &self.frames[frame];
+            (
+                activation.captured,
+                activation.env,
+                activation.program,
+                activation.function,
+            )
+        };
+        let environment_owned = captured
+            && self
+                .programs
+                .get(program_id)
+                .is_none_or(|program| {
+                    program
+                        .functions
+                        .get(function_id as usize)
+                        .is_none_or(|function| function.local_slot_uses_environment(slot))
+                });
+        let binding = if environment_owned {
+            self.heap.environment_slot_mut(env, slot)
         } else {
             self.frames[frame].locals.get_mut(slot)
         };
@@ -528,7 +557,7 @@ impl<H: Host> Vm<H> {
         if initializing {
             return Ok(());
         }
-        let value = if self.frames[frame].captured {
+        let value = if self.local_slot_is_environment_owned(p, frame, slot) {
             self.heap.environment_slot(self.frames[frame].env, slot)
         } else {
             self.frames[frame].locals.get(slot).copied()
@@ -544,6 +573,18 @@ impl<H: Host> Vm<H> {
             self.checked_binding_read(p, atom, value)?;
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn local_slot_is_environment_owned(
+        &self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+    ) -> bool {
+        let activation = &self.frames[frame];
+        activation.captured
+            && p.functions[activation.function as usize].local_slot_uses_environment(slot)
     }
 
     /// All local execution views read the same binding owner before coercion.
@@ -568,7 +609,7 @@ impl<H: Host> Vm<H> {
             slot,
         ) {
             value
-        } else if self.frames[frame].captured {
+        } else if self.local_slot_is_environment_owned(p, frame, slot) {
             self.heap
                 .environment_slot(self.frames[frame].env, slot)
                 .ok_or_else(|| JsError("invalid local environment".into()))?
