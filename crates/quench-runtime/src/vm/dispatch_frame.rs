@@ -67,7 +67,12 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, this, args, context, false)
+        match self.call_user_frame_mode(p, id, parent, this, args, context, false, false)? {
+            UserFrameStart::Outcome(outcome) => Ok(outcome),
+            UserFrameStart::Pushed(_) => {
+                unreachable!("ordinary call unexpectedly stayed in dispatch")
+            }
+        }
     }
 
     pub(super) fn call_user_construct_frame(
@@ -78,7 +83,38 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, Value::UNDEFINED, args, context, true)
+        match self.call_user_frame_mode(
+            p,
+            id,
+            parent,
+            Value::UNDEFINED,
+            args,
+            context,
+            true,
+            false,
+        )? {
+            UserFrameStart::Outcome(outcome) => Ok(outcome),
+            UserFrameStart::Pushed(_) => {
+                unreachable!("constructor unexpectedly stayed in dispatch")
+            }
+        }
+    }
+
+    pub(super) fn push_general_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<crate::stack::StackGuard, JsError> {
+        match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
+            UserFrameStart::Pushed(guard) => Ok(guard),
+            UserFrameStart::Outcome(_) => {
+                unreachable!("pushed user call unexpectedly ran to completion")
+            }
+        }
     }
 
     fn call_user_frame_mode(
@@ -90,7 +126,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
         capture_constructor_this: bool,
-    ) -> Result<FrameOutcome, JsError> {
+        push_to_dispatch: bool,
+    ) -> Result<UserFrameStart, JsError> {
         self.profile.function(id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
@@ -204,6 +241,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
+        debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers(register_count);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -213,6 +251,22 @@ impl<H: Host> Vm<H> {
             let environment = self.promote_frame_environment(frame_index);
             self.programs
                 .set_module_environment(self.frames[frame_index].program, environment);
+        }
+        if push_to_dispatch {
+            let stack_guard = match self.enter_stack() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let outcome = Err(error);
+                    let mut frame = self.frames.pop().unwrap();
+                    self.deactivate_frame(&mut frame, &outcome);
+                    self.persist_global_lexical_bindings(p, &frame);
+                    return match outcome {
+                        Err(error) => Err(error),
+                        Ok(_) => unreachable!(),
+                    };
+                }
+            };
+            return Ok(UserFrameStart::Pushed(stack_guard));
         }
         // Numeric dispatch changes the body loop only. Frame activation and cleanup
         // remain shared; unsupported tail-call and suspension completions use general.
@@ -241,7 +295,7 @@ impl<H: Host> Vm<H> {
                     FrameOutcome::Complete(value)
                 };
                 self.frame_pool.push(Self::recycle_frame(frame));
-                Ok(outcome)
+                Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
@@ -251,11 +305,11 @@ impl<H: Host> Vm<H> {
             }
             FrameOutcome::Await {
                 value, destination, ..
-            } => Ok(FrameOutcome::Await {
+            } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
                 value,
                 destination,
                 frame: Some(frame),
-            }),
+            })),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
             }
@@ -627,10 +681,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let entry_program = p;
         let frame_program = self.frames[frame].program;
+        let allow_inline_calls = stop_pc.is_none()
+            && initial_error.is_none()
+            && p.kind != crate::bytecode::ProgramKind::Wasm;
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
+            let mut frame = frame;
+            let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
                 crate::stack::StackGuard::enter()
                     .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
@@ -674,12 +733,38 @@ impl<H: Host> Vm<H> {
                     .opcode(ins.op() as usize, frame, function as u32, instruction_pc);
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);
-                match self.step(p, frame, ins, &mut pc) {
+                match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Complete(value));
+                        if let Some(pending) = pending_calls.pop() {
+                            debug_assert_eq!(frame, pending.caller + 1);
+                            let result = Ok(FrameOutcome::Complete(value));
+                            let mut completed_frame = self.frames.pop().unwrap();
+                            self.deactivate_frame(&mut completed_frame, &result);
+                            self.persist_global_lexical_bindings(p, &completed_frame);
+                            self.frame_pool.push(Self::recycle_frame(completed_frame));
+                            frame = pending.caller;
+                            self.write(frame, pending.destination, value);
+                            pc = self.frames[frame].pc;
+                            drop(pending.stack_guard);
+                        } else {
+                            self.frames[frame].pc = pc;
+                            return Ok(FrameOutcome::Complete(value));
+                        }
                     }
                     Ok(StepResult::Continue) => {}
+                    Ok(StepResult::PushFrame {
+                        destination,
+                        stack_guard,
+                    }) => {
+                        pending_calls.push(PendingGeneralCall {
+                            caller: frame,
+                            call_pc: instruction_pc as u32,
+                            destination,
+                            stack_guard,
+                        });
+                        frame += 1;
+                        pc = self.frames[frame].pc;
+                    }
                     Ok(StepResult::TailCall) => {
                         if self.frames[frame].program != executing_program {
                             self.active_program = self.frames[frame].program;
@@ -693,6 +778,7 @@ impl<H: Host> Vm<H> {
                         self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                     }
                     Ok(StepResult::Await { value, destination }) => {
+                        debug_assert!(pending_calls.is_empty());
                         self.frames[frame].pc = pc;
                         return Ok(FrameOutcome::Await {
                             value,
@@ -705,6 +791,7 @@ impl<H: Host> Vm<H> {
                         destination,
                         delegated_result,
                     }) => {
+                        debug_assert!(pending_calls.is_empty());
                         self.frames[frame].pc = pc;
                         return Ok(FrameOutcome::Yield {
                             value,
@@ -714,19 +801,43 @@ impl<H: Host> Vm<H> {
                         });
                     }
                     Err(error) => {
-                        pc = match self.exception_handler_target(
-                            p,
-                            frame,
-                            function,
-                            instruction_pc as u32,
-                            error,
-                        ) {
-                            Ok(target) => target,
-                            Err(error) => {
-                                self.frames[frame].pc = pc;
-                                return Err(error);
+                        let mut throwing_pc = instruction_pc as u32;
+                        let mut error = error;
+                        loop {
+                            let function = self.frames[frame].function as usize;
+                            match self.exception_handler_target(
+                                p,
+                                frame,
+                                function,
+                                throwing_pc,
+                                error,
+                            ) {
+                                Ok(target) => {
+                                    pc = target;
+                                    break;
+                                }
+                                Err(unhandled) => {
+                                    self.frames[frame].pc = pc;
+                                    if let Some(pending) = pending_calls.pop() {
+                                        debug_assert_eq!(frame, pending.caller + 1);
+                                        let result = Err(unhandled);
+                                        let mut failed_frame = self.frames.pop().unwrap();
+                                        self.deactivate_frame(&mut failed_frame, &result);
+                                        self.persist_global_lexical_bindings(p, &failed_frame);
+                                        frame = pending.caller;
+                                        pc = self.frames[frame].pc;
+                                        throwing_pc = pending.call_pc;
+                                        drop(pending.stack_guard);
+                                        error = match result {
+                                            Err(error) => error,
+                                            Ok(_) => unreachable!(),
+                                        };
+                                    } else {
+                                        return Err(unhandled);
+                                    }
+                                }
                             }
-                        };
+                        }
                     }
                 }
             }
