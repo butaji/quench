@@ -73,18 +73,22 @@ pub(crate) fn path_to_file_url(
         .transpose()?
         .flatten()
         .ok_or_else(|| invalid_argument(context, "path"))?;
-    let path = PathBuf::from(path);
-    let absolute = if path.is_absolute() {
-        path
+    let windows = windows_option(context, args)?;
+    let href = if windows {
+        windows_path_to_url(&path)
     } else {
-        std::env::current_dir()
-            .map_err(|error| RootedError::host(error.to_string()))?
-            .join(path)
-    };
-    let absolute = normalize_path(&absolute);
-    let href = url::Url::from_file_path(&absolute)
-        .map_err(|_| invalid_argument(context, "path"))?
-        .to_string();
+        let path = PathBuf::from(path);
+        let absolute = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .map_err(|error| RootedError::host(error.to_string()))?
+                .join(path)
+        };
+        url::Url::from_file_path(normalize_path(&absolute)).ok()
+    }
+    .ok_or_else(|| invalid_argument(context, "path"))?
+    .to_string();
     let href = context.string_rooted(&href);
     let constructor = url_constructor(context)?;
     context.construct_rooted(constructor, constructor, &[href])
@@ -99,6 +103,7 @@ pub(crate) fn file_url_to_path(
         return Err(invalid_argument(context, "url"));
     };
     let input = url_argument_text(context, input)?.ok_or_else(|| invalid_argument(context, "url"))?;
+    let windows = windows_option(context, args)?;
     let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
     if parsed.scheme() != "file" {
         return Err(coded_url_type_error(
@@ -107,7 +112,7 @@ pub(crate) fn file_url_to_path(
             "The URL must be of scheme file",
         ));
     }
-    if parsed
+    if !windows && parsed
         .host_str()
         .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
     {
@@ -118,7 +123,7 @@ pub(crate) fn file_url_to_path(
         ));
     }
     if parsed.path().to_ascii_lowercase().contains("%2f")
-        || (cfg!(windows) && parsed.path().to_ascii_lowercase().contains("%5c"))
+        || (windows && parsed.path().to_ascii_lowercase().contains("%5c"))
     {
         return Err(coded_url_type_error(
             context,
@@ -126,10 +131,150 @@ pub(crate) fn file_url_to_path(
             "File URL path must not include encoded path separators",
         ));
     }
-    let path = parsed
-        .to_file_path()
-        .map_err(|_| invalid_url(context, &input))?;
-    Ok(context.string_rooted(&path.to_string_lossy()))
+    let path = if windows && !cfg!(windows) {
+        windows_file_url_path(&parsed).ok_or_else(|| {
+            coded_url_type_error(
+                context,
+                "ERR_INVALID_FILE_URL_PATH",
+                "File URL path must be an absolute Windows path",
+            )
+        })?
+    } else {
+        parsed
+            .to_file_path()
+            .map_err(|_| invalid_url(context, &input))?
+            .to_string_lossy()
+            .into_owned()
+    };
+    Ok(context.string_rooted(&path))
+}
+
+fn windows_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+) -> Result<bool, RootedError> {
+    let Some(options) = args.get(1).copied() else {
+        return Ok(cfg!(windows));
+    };
+    if context
+        .rooted_value(options)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(cfg!(windows));
+    }
+    let key = context.string_rooted("windows");
+    let windows = context.get_property_rooted(options, key)?;
+    if context
+        .rooted_value(windows)
+        .is_some_and(|value| value.is_undefined())
+    {
+        Ok(cfg!(windows))
+    } else {
+        context.truthy_rooted(windows)
+    }
+}
+
+fn windows_path_to_url(path: &str) -> Option<url::Url> {
+    let path = path.replace('\\', "/");
+    if let Some(unc) = path.strip_prefix("//") {
+        let (host, path) = unc.split_once('/')?;
+        if host.is_empty() || path.is_empty() {
+            return None;
+        }
+        let mut url = url::Url::parse(&format!("file://{host}/")).ok()?;
+        push_url_segments(&mut url, path, path.ends_with('/'))?;
+        return Some(url);
+    }
+
+    if path.len() >= 2 && path.as_bytes()[0].is_ascii_alphabetic() && path.as_bytes()[1] == b':' {
+        let drive = &path[..2];
+        let mut rest = path[2..].to_owned();
+        if !rest.starts_with('/') {
+            let cwd = std::env::current_dir().ok()?.to_string_lossy().replace('\\', "/");
+            rest = format!("/{}/{}", cwd.trim_start_matches('/'), rest);
+        }
+        let mut url = url::Url::parse("file:///").ok()?;
+        {
+            let mut segments = url.path_segments_mut().ok()?;
+            segments.push(drive);
+            for segment in rest.trim_start_matches('/').split('/') {
+                if !segment.is_empty() {
+                    segments.push(segment);
+                }
+            }
+            if rest.ends_with('/') {
+                segments.push("");
+            }
+        }
+        return Some(url);
+    }
+
+    let path = if path.starts_with('/') {
+        PathBuf::from(path)
+    } else {
+        let cwd = std::env::current_dir().ok()?;
+        cwd.join(path)
+    };
+    url::Url::from_file_path(normalize_path(&path)).ok()
+}
+
+fn push_url_segments(url: &mut url::Url, path: &str, trailing_slash: bool) -> Option<()> {
+    let mut segments = url.path_segments_mut().ok()?;
+    for segment in path.split('/') {
+        if !segment.is_empty() {
+            segments.push(segment);
+        }
+    }
+    if trailing_slash {
+        segments.push("");
+    }
+    Some(())
+}
+
+fn windows_file_url_path(url: &url::Url) -> Option<String> {
+    let path = percent_decode(url.path())?;
+    if let Some(host) = url
+        .host_str()
+        .filter(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+    {
+        let share_path = path.trim_start_matches('/').replace('/', "\\");
+        return Some(format!("\\\\{host}\\{share_path}"));
+    }
+    let drive_path = path.strip_prefix('/')?;
+    if drive_path.len() < 2
+        || !drive_path.as_bytes()[0].is_ascii_alphabetic()
+        || drive_path.as_bytes()[1] != b':'
+    {
+        return None;
+    }
+    Some(drive_path.replace('/', "\\"))
+}
+
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            decoded.push((high << 4) | low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn normalize_path(path: &Path) -> PathBuf {
