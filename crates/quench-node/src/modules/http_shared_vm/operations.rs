@@ -919,11 +919,11 @@ pub(crate) fn response_finish(
     let response = {
         let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
-        let response = host
-            .http
-            .responses
-            .get_mut(&id)
-            .ok_or_else(|| RootedError::host("shared HTTP response is no longer active"))?;
+        let Some(response) = host.http.responses.get_mut(&id) else {
+            // A peer close may retire the host-side response between an
+            // end() call and a later idempotent end() from Node middleware.
+            return Ok(context.undefined());
+        };
         let headers_sent = response.lifecycle == super::state::ResponseLifecycle::HeadersSent;
         if !response.lifecycle.end() {
             None

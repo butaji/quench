@@ -68,7 +68,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         let filename = std::env::current_dir()
             .map_err(|error| RootedError::host(error.to_string()))?
             .join("[eval]");
-        let module = module_record(context, &filename, None)?;
+        let module = module_record(context, &filename, None, false)?;
         let global = context.global_root()?;
         for name in ["exports", "require"] {
             let value = get(context, module, name)?;
@@ -152,6 +152,9 @@ pub(super) fn require(
         }
         Some(BuiltinModule::V8) => {
             return cached_builtin(context, BuiltinModule::V8);
+        }
+        Some(BuiltinModule::Module) => {
+            return cached_builtin(context, BuiltinModule::Module);
         }
         Some(BuiltinModule::AsyncHooks) => {
             return crate::modules::async_hooks_shared_vm::module(context);
@@ -242,6 +245,7 @@ enum BuiltinModule {
     Tty,
     Crypto,
     V8,
+    Module,
     AsyncHooks,
     DiagnosticsChannel,
     Dns,
@@ -282,6 +286,7 @@ impl BuiltinModule {
             Self::Tty => Some("tty"),
             Self::Crypto => Some("crypto"),
             Self::V8 => Some("v8"),
+            Self::Module => Some("module"),
             Self::Dns => Some("dns"),
             Self::Https => Some("https"),
             Self::Http2 => Some("http2"),
@@ -354,6 +359,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:crypto", BuiltinModule::Crypto),
     ("v8", BuiltinModule::V8),
     ("node:v8", BuiltinModule::V8),
+    ("module", BuiltinModule::Module),
+    ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
     ("node:async_hooks", BuiltinModule::AsyncHooks),
     ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
@@ -441,6 +448,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Crypto => crate::modules::crypto_shared_vm::module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
+        BuiltinModule::Module => crate::modules::module_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(
             "stateful builtin passed to generic shared module builder",
         )),
@@ -570,13 +578,13 @@ fn module_record(
     context: &mut Context<'_>,
     filename: &Path,
     parent: Option<RootId>,
+    is_main: bool,
 ) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let exports = context.object_rooted()?;
     set(context, module, "exports", exports)?;
-    let main_file = context.host_mut().commonjs_entry.is_some();
     let id = if parent.is_none() {
-        if main_file {
+        if is_main {
             "."
         } else {
             "[eval]"
@@ -614,7 +622,7 @@ fn module_record(
             ));
         }
     };
-    if main_file
+    if is_main
         && context
             .rooted_value(parent)
             .is_some_and(|value| value.is_undefined())
@@ -628,6 +636,14 @@ fn module_record(
     set(context, require, "main", main)?;
     set(context, module, "require", require)?;
     Ok(module)
+}
+
+pub(crate) fn create_require(
+    context: &mut Context<'_>,
+    filename: &Path,
+) -> Result<RootId, RootedError> {
+    let module = module_record(context, filename, None, false)?;
+    get(context, module, "require")
 }
 
 fn load(
@@ -645,7 +661,8 @@ fn load(
         }
         return get(context, module, "exports");
     }
-    let module = module_record(context, filename, parent)?;
+    let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
+    let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
