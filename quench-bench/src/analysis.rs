@@ -24,6 +24,7 @@ struct SuiteInput {
     host: HostInput,
     corpus: CorpusInput,
     engines: Vec<EngineInput>,
+    suite_inputs: Vec<ArtifactInput>,
     fixtures: BTreeMap<String, FixtureInput>,
     complete: bool,
     qualification_ready: bool,
@@ -69,8 +70,11 @@ struct FixtureInput {
     rounds: Vec<RoundInput>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct ArtifactInput {
+    path: String,
+    size_bytes: Option<u64>,
+    modified_unix_ns: Option<u128>,
     sha256: Option<String>,
 }
 
@@ -94,7 +98,9 @@ struct SampleInput {
 struct AnalysisReport {
     schema: u32,
     created_unix_ns: u128,
+    input_report_path: String,
     input_report_sha256: String,
+    quench_bench_binary: ArtifactInput,
     source_revision: String,
     source_dirty: bool,
     corpus_revision: String,
@@ -103,6 +109,7 @@ struct AnalysisReport {
     engine_provenance: Vec<EngineInput>,
     rounds_per_fixture: usize,
     analysis_runtime: String,
+    suite_inputs: Vec<ArtifactInput>,
     bootstrap: BootstrapMethod,
     fixtures: BTreeMap<String, FixtureAnalysis>,
     qualified: bool,
@@ -183,6 +190,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 
     let input_report_sha256 = sha256(&input_path)
         .ok_or_else(|| format!("cannot hash {} with shasum", input_path.display()))?;
+    let binary_path = std::env::current_exe()
+        .map_err(|error| format!("cannot resolve analyzer executable: {error}"))?;
+    let quench_bench_binary = artifact_input(&binary_path)?;
     let mut fixtures = BTreeMap::new();
     for name in crate::FIXTURES {
         let (fixture_path, fixture) = find_fixture(&input.fixtures, name)?;
@@ -224,7 +234,9 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let report = AnalysisReport {
         schema: 1,
         created_unix_ns: now_ns(),
+        input_report_path: input_path.display().to_string(),
         input_report_sha256,
+        quench_bench_binary,
         source_revision: input.source_revision,
         source_dirty: input.source_dirty,
         corpus_revision,
@@ -233,6 +245,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         engine_provenance,
         rounds_per_fixture: input.rounds_requested,
         analysis_runtime,
+        suite_inputs: input.suite_inputs,
         bootstrap: BootstrapMethod {
             name: "paired percentile bootstrap of the difference between medians",
             interval_level: BOOTSTRAP_INTERVAL_LEVEL,
@@ -340,6 +353,25 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
             "benchmark report does not contain exactly the eight required fixtures".to_string(),
         );
     }
+    let suite_input_paths = input
+        .suite_inputs
+        .iter()
+        .map(|artifact| artifact.path.as_str())
+        .collect::<BTreeSet<_>>();
+    if suite_input_paths.len() != input.suite_inputs.len()
+        || input.suite_inputs.is_empty()
+        || input.suite_inputs.iter().any(|artifact| {
+            artifact.path.is_empty()
+                || !artifact
+                    .sha256
+                    .as_deref()
+                    .is_some_and(|hash| hash.len() == 64 && is_hex(hash))
+        })
+    {
+        return Err(
+            "benchmark report has incomplete or duplicate suite input provenance".to_string(),
+        );
+    }
     if input.source_revision.len() != 40 || !is_hex(&input.source_revision) {
         return Err("benchmark report has an invalid source revision".to_string());
     }
@@ -403,6 +435,23 @@ fn find_fixture<'a>(
         ));
     }
     Ok((first.0.as_str(), first.1))
+}
+
+fn artifact_input(path: &Path) -> Result<ArtifactInput, String> {
+    let metadata =
+        fs::metadata(path).map_err(|error| format!("cannot stat {}: {error}", path.display()))?;
+    let modified_unix_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    let hash = sha256(path).ok_or_else(|| format!("cannot hash {}", path.display()))?;
+    Ok(ArtifactInput {
+        path: path.display().to_string(),
+        size_bytes: Some(metadata.len()),
+        modified_unix_ns,
+        sha256: Some(hash),
+    })
 }
 
 fn analyze_fixture(
