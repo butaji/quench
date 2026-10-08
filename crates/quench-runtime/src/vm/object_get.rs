@@ -517,8 +517,8 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
                 Some(Cell::Object(x))
                 | Some(Cell::Array { object: x, .. })
-                | Some(Cell::ShadowRealm { object: x, .. })
-                | Some(Cell::RegExp { object: x, .. }) => object = x.proto,
+                | Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
+                Some(Cell::RegExp { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto
                 }

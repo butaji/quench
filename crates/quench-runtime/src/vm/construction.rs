@@ -233,7 +233,7 @@ impl<H: Host> Vm<H> {
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
                 dynamic_bindings: Vec::new().into(),
-                with_objects,
+                with_objects: with_objects.into_boxed_slice(),
             });
         }
         let is_arrow = p.functions[id as usize].is_arrow;
@@ -246,7 +246,7 @@ impl<H: Host> Vm<H> {
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
                 dynamic_bindings: Vec::new().into(),
-                with_objects: Vec::new(),
+                with_objects: Box::default(),
             });
         }
         let generator_prototype_parent =
