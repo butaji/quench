@@ -2,7 +2,7 @@ use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
-const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
   const writeBytes = (data, options) => {
@@ -83,6 +83,9 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
   return {
     mkdirSync(path, options) {
       return mkdirSync(normalizePath(path), options);
+    },
+    rmdirSync(path) {
+      return rmdirSync(normalizePath(path));
     },
     rmSync(path, options) {
       return rmSync(normalizePath(path), options);
@@ -195,6 +198,7 @@ pub(crate) fn install(
     module: RootId,
 ) -> Result<(), RootedError> {
     let mkdir = context.host_function(crate::host::shared_vm::operation("fsMkdirSync"))?;
+    let rmdir = context.host_function(crate::host::shared_vm::operation("fsRmdirSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -209,6 +213,7 @@ pub(crate) fn install(
         undefined,
         &[
             mkdir,
+            rmdir,
             rm,
             write,
             open,
@@ -220,6 +225,7 @@ pub(crate) fn install(
     )?;
     for (name, method) in [
         ("mkdirSync", "mkdirSync"),
+        ("rmdirSync", "rmdirSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),
@@ -397,6 +403,25 @@ pub(crate) fn mkdir_sync(
     match first_created {
         Some(path) => Ok(context.string_rooted(&path)),
         None => Ok(context.undefined()),
+    }
+}
+
+pub(crate) fn rmdir_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = path_argument(context, args.first().copied())?;
+    match std::fs::remove_dir(&path) {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => throw_operation_error(
+            context,
+            &ops::OperationError::Io {
+                syscall: "rmdir",
+                path,
+                error,
+            },
+        ),
     }
 }
 

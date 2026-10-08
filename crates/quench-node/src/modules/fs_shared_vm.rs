@@ -790,6 +790,33 @@ const ASYNC_MKDIR_API: &str = r#"(mkdirSync) => {
   };
 }"#;
 
+const ASYNC_RMDIR_API: &str = r#"(rmdirSync) => {
+  return function rmdir(path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (options != null && typeof options !== 'object') {
+      const error = new TypeError('The "options" argument must be of type object.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        rmdirSync(path);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -998,6 +1025,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let undefined = context.undefined();
     let mkdir = context.call_rooted(mkdir_factory, undefined, &[mkdir_sync])?;
     set(context, module, "mkdir", mkdir)?;
+    let rmdir_sync = get(context, module, "rmdirSync")?;
+    let rmdir_factory = context.evaluate_script_rooted(
+        ASYNC_RMDIR_API,
+        "node:fs/shared-async-rmdir.js",
+    )?;
+    let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
+    set(context, module, "rmdir", rmdir)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -1033,6 +1067,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         write_file_sync,
         append_file_sync,
         mkdir_sync,
+        rmdir_sync,
     )?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
@@ -1083,6 +1118,7 @@ pub(crate) fn promises_module(
     write_file_sync: RootId,
     append_file_sync: RootId,
     mkdir_sync: RootId,
+    rmdir_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -1116,6 +1152,12 @@ pub(crate) fn promises_module(
     )?;
     let mkdir = context.call_rooted(mkdir_factory, undefined, &[mkdir_sync])?;
     set(context, promises, "mkdir", mkdir)?;
+    let rmdir_factory = context.evaluate_script_rooted(
+        "(rmdirSync) => (...args) => Promise.resolve().then(() => rmdirSync(...args))",
+        "node:fs/promises/shared-rmdir.js",
+    )?;
+    let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
+    set(context, promises, "rmdir", rmdir)?;
     Ok(promises)
 }
 
