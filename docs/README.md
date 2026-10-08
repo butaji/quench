@@ -26,11 +26,12 @@ outcomes remain visible as failures and never count as passes. The broader Node
 inventory is diagnostic only.
 The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).
 
-The rewrite gate must use the v2-derived runtime explicitly. Test262 progress
-uses affected stages with `run-stages-next` plus saved-report comparison for
-ordinary changes. Full inventories run only at gates 24/27 and stage transitions. Every case has its own mandatory timeout, and the runner
-reports and executes deterministic batches capped at 100 cases. Task 20 owns
-the current stage and cumulative coverage record.
+The rewrite gate uses Quench's shared runtime. Test262 progress uses affected
+stages with canonical `run-stages` plus saved-report comparison for ordinary
+changes. Full inventories run only at gates 24/27 and stage transitions. Every
+case has its own mandatory timeout, and the runner reports and executes
+deterministic batches capped at 100 cases. Task 20 owns the current stage and
+cumulative coverage record.
 
 The default `dev` profile is incremental and uses no optimization for the
 shortest Rust edit/compile cycle. For conformance iterations, use the
@@ -42,7 +43,7 @@ performance measurements.
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
-  cargo run --profile iteration -p quench-test262 --bin run-stages-next -- 10 10
+  cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10
 ```
 
 ```sh
@@ -52,15 +53,16 @@ TEST262_TEST_TIMEOUT_MS=30000 TEST262_JOBS=10 \
 
 ```sh
 TEST262_TEST_TIMEOUT_MS=30000 \
-  cargo run --release -p quench-test262 --bin run-stages-next -- 0 0
+  cargo run --release -p quench-test262 --bin run-stages -- 0 0
 ```
 
-The existing `run-stages`/`run-all` binaries retain the legacy host for
-reference comparisons and are not evidence for the next-runtime gate.
-Every Test262 execution runner/tool (`run-test`, both stage/all variants, `triage`,
-and execution modes of `compare-runs`) requires a positive `TEST262_TEST_TIMEOUT_MS`;
-the batch wrapper has the same requirement. `run-all-next` and
-`run-stages-next` run case processes concurrently (configurable with
+The canonical `run-stages` runner uses the shared VM. The `run-all` and
+`run-test` binaries retain legacy execution for now and are not evidence for
+the Stage A gate. Every Test262 execution runner/tool (`run-test`, `run-all`,
+`run-all-next`, `run-stages`, `triage`, and execution modes of `compare-runs`)
+requires a positive `TEST262_TEST_TIMEOUT_MS`; the batch wrapper has the same
+requirement. `run-all-next` and `run-stages` run case processes concurrently
+(configurable with
 `TEST262_JOBS`, defaulting to available parallelism), preserve discovery-order
 reports, and keep stage batches capped at 100. The fixture comparison scripts
 `tools/diff-next.mjs` and `tools/run-all-next.mjs` require positive
@@ -110,14 +112,14 @@ TEST262_TEST_TIMEOUT_MS=30000 \
 This refuses to overwrite an existing baseline and records
 `basis: user_assumption` and the suite revision, without generating observed
 outcomes. A later complete observed all-pass run replaces that basis with
-`observed`. `run-stages-next` compares only baseline expectations owned by its
+`observed`. `run-stages` compares only baseline expectations owned by its
 selected stages and path filter, including previously expected paths removed
 from discovery. Focused runs never update the baseline. `TEST262_RATCHET`
 selects the same baseline in both runners; an explicitly selected missing or
 invalid baseline is an error. A stage selection discovering no cases is an
 error.
 
-`run-stages-next` writes discovery-order case outcomes, stage counts, normalized
+`run-stages` writes discovery-order case outcomes, stage counts, normalized
 failure messages, and source/binary/host provenance to
 `target/iteration/test262-stages-report.json` (override with `TEST262_REPORT`).
 The report is written before a failed-stage verdict, so failures remain available
@@ -136,10 +138,10 @@ cannot silently pass.
 Compare reports with the same selection; a narrower current selection reports
 missing baseline passes as regressions.
 
-For long runs, advance one stage at a time with `run-stages-next`; it divides
+For long runs, advance one stage at a time with `run-stages`; it divides
 large stages into deterministic batches of at most 100 cases and preserves
-discovery order. Do not use the legacy `run-all` batch wrapper for the current
-next-runtime ratchet.
+discovery order. Do not use the legacy `run-all` batch wrapper for the shared
+runtime ratchet.
 
 ## Shared runtime host roots
 
