@@ -8,6 +8,45 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath) => ({
+  readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
+  stat: (...args) => Promise.resolve().then(() => stat(...args)),
+  lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
+  readdir: (...args) => Promise.resolve().then(() => readdir(...args)),
+  readlink: (...args) => Promise.resolve().then(() => readlink(...args)),
+  realpath: (...args) => Promise.resolve().then(() => realpath(...args)),
+})"#);
+
+const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
+  const entries = readDir(path);
+  if (!options || options.withFileTypes !== true) return entries.map((entry) => entry.name);
+  return entries.map((entry) => {
+    const dirent = { name: entry.name };
+    for (const name of ["isFile", "isDirectory", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
+      const result = entry[name];
+      Object.defineProperty(dirent, name, { value: () => result });
+    }
+    return dirent;
+  });
+}"#);
+
+const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) => {
+  function realpath(path, options, callback) {
+    if (typeof options === "function") callback = options;
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, realpathSync(path)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  }
+  realpath.native = realpath;
+  return realpath;
+}"#);
+
 const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readable) => {
   function ReadStream(path, options) {
     if (!(this instanceof ReadStream)) return new ReadStream(path, options);
@@ -126,6 +165,29 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.object_rooted()?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
+    let stat_sync = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
+    set(context, module, "statSync", stat_sync)?;
+    let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
+    set(context, module, "lstatSync", lstat_sync)?;
+    let readdir_host = context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
+    let readdir_factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
+    let undefined = context.undefined();
+    let readdir_sync = context.call_rooted(readdir_factory, undefined, &[readdir_host])?;
+    set(context, module, "readdirSync", readdir_sync)?;
+    let readlink_sync = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
+    set(context, module, "readlinkSync", readlink_sync)?;
+    let realpath_sync = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    set(context, module, "realpathSync", realpath_sync)?;
+    let native = context.string_rooted("native");
+    if !context.set_property_rooted(realpath_sync, native, realpath_sync, realpath_sync)? {
+        return Err(RootedError::host("cannot install fs.realpathSync.native"));
+    }
+    let realpath_factory = context.evaluate_script_rooted(REALPATH_FACTORY, "node:fs/shared-realpath.js")?;
+    let undefined = context.undefined();
+    let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
+    set(context, module, "realpath", realpath)?;
+    let promises = promises_module(context)?;
+    set(context, module, "promises", promises)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
 
@@ -153,6 +215,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     write_stream::install(context, module, writable)?;
 
     Ok(module)
+}
+
+pub(crate) fn promises_module(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
+    let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
+    let stat = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
+    let lstat = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
+    let readdir = context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
+    let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
+    let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    let undefined = context.undefined();
+    context.call_rooted(
+        factory,
+        undefined,
+        &[read_file, stat, lstat, readdir, readlink, realpath],
+    )
 }
 
 fn get(

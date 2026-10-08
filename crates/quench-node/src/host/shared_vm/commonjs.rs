@@ -179,6 +179,7 @@ pub(super) fn require(
         }
         Some(
             module @ (BuiltinModule::Fs
+            | BuiltinModule::FsPromises
             | BuiltinModule::Net
             | BuiltinModule::Http
             | BuiltinModule::Os
@@ -227,6 +228,7 @@ enum BuiltinModule {
     PathPosix,
     PathWin32,
     Fs,
+    FsPromises,
     Net,
     Http,
     Os,
@@ -269,6 +271,7 @@ impl BuiltinModule {
     fn cache_key(self) -> Option<&'static str> {
         match self {
             Self::Fs => Some("fs"),
+            Self::FsPromises => Some("fs/promises"),
             Self::Net => Some("net"),
             Self::Http => Some("http"),
             Self::Os => Some("os"),
@@ -323,6 +326,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:path/win32", BuiltinModule::PathWin32),
     ("fs", BuiltinModule::Fs),
     ("node:fs", BuiltinModule::Fs),
+    ("fs/promises", BuiltinModule::FsPromises),
+    ("node:fs/promises", BuiltinModule::FsPromises),
     ("net", BuiltinModule::Net),
     ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
@@ -413,6 +418,7 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
+        BuiltinModule::FsPromises => crate::modules::fs_shared_vm::promises_module(context),
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
