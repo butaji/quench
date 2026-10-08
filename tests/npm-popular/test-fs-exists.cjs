@@ -7,6 +7,8 @@ const manifest = path.resolve('package.json');
 assert.equal(fs.existsSync(manifest), true);
 assert.equal(fs.existsSync(`${manifest}.missing`), false);
 assert.throws(() => fs.exists(manifest), { code: 'ERR_INVALID_ARG_TYPE' });
+assert.equal(fs.accessSync(manifest), undefined);
+assert.throws(() => fs.accessSync(`${manifest}.missing`), { code: 'ENOENT' });
 
 let callbacks = 0;
 fs.exists(manifest, (exists) => {
@@ -17,4 +19,11 @@ fs.exists(`${manifest}.missing`, (exists) => {
   assert.equal(exists, false);
   callbacks++;
 });
-setImmediate(() => assert.equal(callbacks, 2));
+fs.access(manifest, (error) => {
+  assert.ifError(error);
+  callbacks++;
+});
+fs.promises.access(manifest).then(() => {
+  callbacks++;
+});
+setImmediate(() => assert.equal(callbacks, 4));
