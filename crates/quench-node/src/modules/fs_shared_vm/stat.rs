@@ -169,6 +169,46 @@ pub(crate) fn chmod_sync(
     }
 }
 
+pub(crate) fn fchmod_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as u32;
+    let result = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let result = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|descriptor| {
+                #[cfg(unix)]
+                {
+                    descriptor
+                        .file
+                        .set_permissions(std::fs::Permissions::from_mode(mode))
+                }
+                #[cfg(not(unix))]
+                {
+                    descriptor.file.metadata().map(|_| ())
+                }
+            });
+        result
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "fchmod")?),
+    }
+}
+
 pub(crate) fn lstat_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
