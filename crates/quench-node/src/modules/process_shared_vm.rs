@@ -371,8 +371,13 @@ pub(crate) fn exit(
             number as i64 as i32
         }
     };
+    let emit_abort = !process_control.exit_emitting();
     process_control.request_exit(code);
-    Err(RootedError::host("process.exit"))
+    if emit_abort {
+        Err(RootedError::host("process.exit"))
+    } else {
+        Ok(context.undefined())
+    }
 }
 
 fn parse_exit_code_string(value: &str) -> f64 {
@@ -607,6 +612,21 @@ pub(crate) fn finish_after_uncaught_error(
     crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
     emit_exit(runtime, program, 1)?;
     handler_error.map_or(Ok(false), Err)
+}
+
+pub(crate) fn finish_requested_exit(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+) -> Result<(), String> {
+    let process_control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    let shared_state = runtime.host_mut().shared_state();
+    crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
+    emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
 }
 
 fn emit_uncaught_exception(
@@ -1456,6 +1476,10 @@ fn emit_exit(
     code: i32,
 ) -> Result<(), String> {
     let shared_state = runtime.host_mut().shared_state();
+    shared_state
+        .borrow()
+        .process_control
+        .begin_exit_emission();
     let listeners = shared_state.borrow_mut().scheduler.begin_shared_exit();
     if let Some(process) = shared_process_root(runtime) {
         let event_count = shared_state.borrow().scheduler.shared_listener_count();

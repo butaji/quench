@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(sha1, Buffer) => {
+    r#"(sha1, Buffer, randomBytes) => {
   const states = new WeakMap();
   const unsupportedDigest = (algorithm) => {
     const error = new Error(`Digest method not supported: ${algorithm}`);
@@ -56,17 +56,48 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
-  return { createHash: (algorithm) => new Hash(algorithm) };
+  const randomBuffer = (size) => Buffer.from(randomBytes(size));
+  const randomFillSync = (buffer, offset = 0, size = buffer.length - offset) => {
+    const bytes = randomBytes(size);
+    for (let i = 0; i < size; i++) buffer[offset + i] = bytes[i];
+    return buffer;
+  };
+  const randomUUID = () => {
+    const bytes = randomBuffer(16);
+    bytes[6] = bytes[6] & 0x0f | 0x40;
+    bytes[8] = bytes[8] & 0x3f | 0x80;
+    const hex = bytes.toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
+  return { createHash: (algorithm) => new Hash(algorithm), randomBytes: randomBuffer, randomFillSync, randomUUID };
 }"#
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let sha1 = context.host_function(crate::host::shared_vm::operation("cryptoHashSha1"))?;
+    let random_bytes = context.host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[sha1, buffer])
+    context.call_rooted(factory, undefined, &[sha1, buffer, random_bytes])
+}
+
+pub(crate) fn random_bytes(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(size) = args.first().copied().and_then(|size| context.rooted_value(size)).and_then(|value| value.as_number()) else {
+        return Err(type_error(context, "The \"size\" argument must be of type number" )?);
+    };
+    if !size.is_finite() || size < 0.0 || size.fract() != 0.0 || size > 16_777_216.0 {
+        return Err(type_error(context, "The \"size\" argument must be a non-negative integer" )?);
+    }
+    let mut bytes = vec![0_u8; size as usize];
+    openssl::rand::rand_bytes(&mut bytes).map_err(|_| RootedError::host("crypto random generation failed"))?;
+    let values = bytes.into_iter().map(|byte| context.number(f64::from(byte))).collect::<Vec<_>>();
+    context.array_rooted(&values)
 }
 
 pub(crate) fn sha1(
