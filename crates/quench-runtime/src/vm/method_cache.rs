@@ -420,7 +420,7 @@ impl<H: Host> Vm<H> {
         self.profile
             .method_cache_tier(cached_call.map(|(_, _, tier)| tier));
         if let Some((callee, target, _)) = cached_call {
-            return self.call_value_with_target(
+            return self.call_value_with_target_from_frame(
                 p,
                 callee,
                 this,
@@ -451,6 +451,6 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.call_value(p, callee, this, arguments.as_slice())
+        self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
     }
 }
