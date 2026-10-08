@@ -18,6 +18,41 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
+    // Node's upstream test checkout is a separate repository rooted at
+    // `tests/node`. The compatibility workspace may itself be a module
+    // package, but that package scope must not leak into the Node checkout.
+    let node_tests_root = std::env::current_dir()
+        .map_err(|error| error.to_string())?
+        .join("tests/node")
+        .canonicalize()
+        .ok();
+    if node_tests_root
+        .as_ref()
+        .is_some_and(|root| path.starts_with(root))
+    {
+        let mut directory = path.parent();
+        while let Some(current) = directory {
+            let package_json = current.join("package.json");
+            if package_json.is_file() {
+                let package: serde_json::Value = serde_json::from_slice(
+                    &std::fs::read(&package_json).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
+                let module = package.get("type").and_then(serde_json::Value::as_str)
+                    == Some("module");
+                return Ok(if module {
+                    quench_runtime::SourceKind::Module
+                } else {
+                    quench_runtime::SourceKind::Script
+                });
+            }
+            if node_tests_root.as_deref() == Some(current) {
+                break;
+            }
+            directory = current.parent();
+        }
+        return Ok(quench_runtime::SourceKind::Script);
+    }
     let resolution = oxc_resolver::Resolver::new(Default::default())
         .resolve(
             path.parent().unwrap_or(Path::new(".")),

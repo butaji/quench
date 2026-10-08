@@ -18,18 +18,66 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
     if (value === undefined) throw new TypeError("Illegal invocation");
     return value;
   };
+  const serialize = (value) => {
+    const auth = value.username || value.password
+      ? `${value.username}${value.password ? `:${value.password}` : ""}@`
+      : "";
+    return `${value.protocol}${value.host ? `//${auth}${value.host}` : ""}${value.pathname}${value.search}${value.hash}`;
+  };
+  const syncSearchParams = (receiver, value) => {
+    const current = data(receiver);
+    current.search = value;
+    current.href = serialize(current);
+  };
   class URL {
     constructor(input, base) {
-      state.set(this, parse(String(input), base === undefined ? undefined : String(base)));
+      const value = parse(String(input), base === undefined ? undefined : String(base));
+      if (!value) throw new TypeError("Invalid URL");
+      state.set(this, value);
     }
     toString() { return data(this).href; }
     toJSON() { return data(this).href; }
+    get searchParams() {
+      const value = data(this);
+      if (!value._searchParams) {
+        const params = new globalThis.URLSearchParams(value.search);
+        Object.defineProperty(params, "_onchange", {
+          configurable: true,
+          value: () => syncSearchParams(this, params.toString() ? `?${params.toString()}` : ""),
+        });
+        value._searchParams = params;
+      }
+      return value._searchParams;
+    }
   }
   for (const field of fields) {
     Object.defineProperty(URL.prototype, field, {
       configurable: true,
       enumerable: true,
       get() { return data(this)[field]; },
+      set(value) {
+        const current = data(this);
+        if (field === "href") {
+          const updated = parse(String(value), undefined);
+          if (!updated) throw new TypeError("Invalid URL");
+          if (current._searchParams) {
+            const params = new globalThis.URLSearchParams(updated.search);
+            current._searchParams._pairs = params._pairs;
+          }
+          Object.assign(current, updated);
+          return;
+        }
+        current[field] = String(value);
+        if (field === "search") {
+          current.search = current.search && current.search !== "?" ? current.search : "";
+          if (current._searchParams) {
+            current._searchParams._pairs = new globalThis.URLSearchParams(current.search)._pairs;
+          }
+        }
+        if (field === "pathname" && current.pathname === "") current.pathname = "/";
+        current.href = serialize(current);
+        if (field === "searchParams") throw new TypeError("Cannot set property searchParams of [object URL] which has only a getter");
+      },
     });
   }
   return URL;
