@@ -17,6 +17,14 @@ assert.strictEqual(
   'https://example.test/search?q=node+compatibility&page=2',
 );
 
+const controller = new AbortController();
+let abortEvent;
+controller.signal.addEventListener('abort', (event) => { abortEvent = event; });
+controller.abort();
+assert.strictEqual(abortEvent.isTrusted, true);
+assert.strictEqual(controller.signal.reason.name, 'AbortError');
+assert.strictEqual(controller.signal.reason.code, 20);
+
 axios.get('https://example.test/items', { adapter })
   .then((response) => {
     assert.strictEqual(response.status, 200);
