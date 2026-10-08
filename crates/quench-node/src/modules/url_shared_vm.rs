@@ -682,7 +682,10 @@ fn format_whatwg_url(
             formatted.truncate(index);
         }
     }
-    let _unicode = option_truthy(context, options, "unicode")?;
+    let unicode = option_truthy(context, options, "unicode")?;
+    if unicode {
+        formatted = format_unicode_hostname(&formatted);
+    }
     if !option_truthy(context, options, "search")? {
         let before_hash = formatted.find('#').unwrap_or(formatted.len());
         if let Some(index) = formatted[..before_hash].find('?') {
@@ -701,6 +704,41 @@ fn format_whatwg_url(
         }
     }
     Ok(formatted)
+}
+
+fn format_unicode_hostname(href: &str) -> String {
+    let Some(scheme_end) = href.find("://") else {
+        return href.to_owned();
+    };
+    let authority_start = scheme_end + 3;
+    let authority_end = href[authority_start..]
+        .find(['/', '?', '#'])
+        .map(|index| authority_start + index)
+        .unwrap_or(href.len());
+    let authority = &href[authority_start..authority_end];
+    let host_start = authority
+        .rfind('@')
+        .map(|index| authority_start + index + 1)
+        .unwrap_or(authority_start);
+    let host_end = if href[host_start..authority_end].starts_with('[') {
+        href[host_start..authority_end]
+            .find(']')
+            .map(|index| host_start + index + 1)
+            .unwrap_or(authority_end)
+    } else {
+        href[host_start..authority_end]
+            .find(':')
+            .map(|index| host_start + index)
+            .unwrap_or(authority_end)
+    };
+    let hostname = &href[host_start..host_end];
+    let (unicode, result) = idna::domain_to_unicode(hostname);
+    if result.is_err() || unicode == hostname {
+        return href.to_owned();
+    }
+    let mut formatted = href.to_owned();
+    formatted.replace_range(host_start..host_end, &unicode);
+    formatted
 }
 
 fn option_truthy(
