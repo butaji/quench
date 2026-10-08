@@ -54,8 +54,24 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     }
     offset ??= 0;
     length ??= buffer.byteLength - offset;
-    if (offset < 0 || offset > buffer.byteLength || length < 0 || length > buffer.byteLength - offset) {
-      const error = new RangeError('The value of "offset" or "length" is out of range.');
+    if (!Number.isInteger(offset)) {
+      const error = new RangeError(`The value of "offset" is out of range. It must be an integer. Received ${String(offset)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (offset < 0 || offset > buffer.byteLength) {
+      const error = new RangeError(offset > buffer.byteLength
+        ? `The value of "offset" is out of range. It must be <= ${buffer.byteLength}. Received ${offset}`
+        : `The value of "offset" is out of range. Received ${offset}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(length) || length < 0 || length > buffer.byteLength - offset) {
+      const error = new RangeError(length < 0
+        ? `The value of "length" is out of range. It must be >= 0. Received ${length}`
+        : length > buffer.byteLength - offset
+          ? `The value of "length" is out of range. It must be <= ${buffer.byteLength - offset}. Received ${length}`
+        : `The value of "length" is out of range. Received ${String(length)}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
@@ -84,6 +100,25 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     },
     readSync(fd, buffer, offset = 0, length, position = null) {
       validateFd(fd);
+      if (typeof position === "bigint") {
+        if (position > BigInt(Number.MAX_SAFE_INTEGER)) {
+          const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        position = Number(position);
+      }
+      if (position != null && typeof position !== "number") {
+        const error = new TypeError('The "position" argument must be of type number or bigint.');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (typeof position === "number" &&
+          (!Number.isInteger(position) || position < 0 || position > Number.MAX_SAFE_INTEGER)) {
+        const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
       if (offset && typeof offset === "object") {
         const options = offset;
         offset = options.offset ?? 0;
@@ -91,7 +126,12 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
         position = options.position ?? null;
       }
       if (!ArrayBuffer.isView(buffer)) {
-        const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView');
+        const received = buffer === null || buffer === undefined
+          ? ` Received ${buffer}`
+          : typeof buffer === "number" || typeof buffer === "boolean" || typeof buffer === "string"
+            ? ` Received type ${typeof buffer} (${typeof buffer === "string" ? `'${buffer}'` : String(buffer)})`
+            : ` Received an instance of ${Array.isArray(buffer) ? "Array" : "Object"}`;
+        const error = new TypeError(`The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.${received}`);
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }

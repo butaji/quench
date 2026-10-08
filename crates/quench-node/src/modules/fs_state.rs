@@ -85,7 +85,13 @@ impl FsState {
             None
         };
         if let Some(position) = position {
-            descriptor.file.seek(SeekFrom::Start(position))?;
+            if let Err(error) = descriptor.file.seek(SeekFrom::Start(position)) {
+                return Err(if position > i32::MAX as u64 {
+                    std::io::Error::from_raw_os_error(libc::EFBIG)
+                } else {
+                    error
+                });
+            }
         }
         let result = descriptor.file.write_all(bytes).map(|()| bytes.len());
         if let Some(original) = original {
@@ -111,13 +117,25 @@ impl FsState {
             None
         };
         if let Some(position) = position {
-            descriptor.file.seek(SeekFrom::Start(position))?;
+            if let Err(error) = descriptor.file.seek(SeekFrom::Start(position)) {
+                return Err(if position > i32::MAX as u64 {
+                    std::io::Error::from_raw_os_error(libc::EFBIG)
+                } else {
+                    error
+                });
+            }
         }
         let mut bytes = vec![0; size];
         let result = descriptor.file.read(&mut bytes).map(|read| {
             bytes.truncate(read);
             bytes
         });
+        let result = match (result, position) {
+            (Err(_), Some(position)) if position > i32::MAX as u64 => {
+                Err(std::io::Error::from_raw_os_error(libc::EFBIG))
+            }
+            (result, _) => result,
+        };
         if let Some(original) = original {
             descriptor.file.seek(SeekFrom::Start(original))?;
         }
