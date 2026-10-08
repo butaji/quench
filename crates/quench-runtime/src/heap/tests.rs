@@ -18,7 +18,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         function: 0,
         slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
         dynamic_bindings: Vec::new().into(),
-        with_objects: Vec::new(),
+        with_objects: Box::default(),
     });
     let slots = heap.clone_environment_slots(owner, &[0]).unwrap();
     let view = heap.alloc(Cell::Environment {
@@ -29,7 +29,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         function: 0,
         slots,
         dynamic_bindings: Vec::new().into(),
-        with_objects: Vec::new(),
+        with_objects: Box::default(),
     });
     *heap.environment_slot_mut(view, 0).unwrap() = Value::number(2.0);
     let reference = heap.alloc(Cell::BindingReference {
@@ -351,7 +351,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let constructor = heap.alloc(Cell::Object(plain_object()));
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
-            object: plain_object(),
+            object: Box::new(plain_object()),
             source: "a".into(),
             flags: String::new(),
             matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
@@ -379,7 +379,7 @@ fn resolved_binding_reference_keeps_its_slot_owner_alive() {
         function: 0,
         slots: vec![value].into_boxed_slice().into(),
         dynamic_bindings: Vec::new().into(),
-        with_objects: Vec::new(),
+        with_objects: Box::default(),
     });
     let reference = heap.alloc(Cell::BindingReference {
         environment,

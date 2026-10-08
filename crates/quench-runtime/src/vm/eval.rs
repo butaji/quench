@@ -474,7 +474,7 @@ impl<H: Host> Vm<H> {
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
                     dynamic_bindings: dynamic_bindings.into(),
-                    with_objects: Vec::new(),
+                    with_objects: Box::default(),
                 })
             } else {
                 parent
@@ -941,7 +941,7 @@ impl<H: Host> Vm<H> {
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
                     dynamic_bindings: Vec::new().into(),
-                    with_objects: Vec::new(),
+                    with_objects: Box::default(),
                 })
             } else {
                 parent
@@ -966,7 +966,7 @@ impl<H: Host> Vm<H> {
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
                 dynamic_bindings: bindings.into(),
-                with_objects: Vec::new(),
+                with_objects: Box::default(),
             });
         }
         let active_program = std::mem::replace(&mut self.active_program, program_id);
