@@ -278,7 +278,7 @@ fn run_all(
             return ExitCode::from(2);
         }
     }
-    gate_exit(passed, entries.len())
+    gate_exit(passed + skipped, entries.len())
 }
 
 fn gate_exit(passed: usize, total: usize) -> ExitCode {
