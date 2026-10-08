@@ -60,6 +60,30 @@ try { Module.findPackageJSON('./package.json', repoRoot); } catch (caught) { dir
 if (!dirnameBaseError || dirnameBaseError.code !== 'ERR_MODULE_NOT_FOUND') {
   throw new Error('findPackageJSON treated a path base as a directory without a trailing separator');
 }
+const urlModule = require('node:url');
+if (urlModule.URL !== URL || urlModule.pathToFileURL.name !== 'pathToFileURL' ||
+  urlModule.pathToFileURL.length !== 2 || urlModule.fileURLToPath.name !== 'fileURLToPath' ||
+  urlModule.fileURLToPath.length !== 1) {
+  throw new Error('node:url function shape or URL identity');
+}
+const specialPath = path.resolve('a b#c%.js');
+const specialUrl = urlModule.pathToFileURL(specialPath);
+if (!(specialUrl instanceof URL) || !specialUrl.href.endsWith('/a%20b%23c%25.js') ||
+  urlModule.fileURLToPath(specialUrl) !== specialPath ||
+  urlModule.fileURLToPath(specialUrl.href) !== specialPath) {
+  throw new Error('node:url file path conversion');
+}
+for (const [input, code] of [
+  ['https://example.com/file', 'ERR_INVALID_URL_SCHEME'],
+  ['file://example.com/file', 'ERR_INVALID_FILE_URL_HOST'],
+  ['file:///tmp/a%2fb', 'ERR_INVALID_FILE_URL_PATH'],
+]) {
+  let error;
+  try { urlModule.fileURLToPath(input); } catch (caught) { error = caught; }
+  if (!(error instanceof TypeError) || error.code !== code) {
+    throw new Error('fileURLToPath error for ' + input + ': ' + (error && error.code));
+  }
+}
 for (const [specifier, base, code, type] of [
   ['node:fs', __filename, 'ERR_INVALID_URL_SCHEME', TypeError],
   ['missing-quench-package', __filename, 'ERR_MODULE_NOT_FOUND', Error],
