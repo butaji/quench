@@ -15,6 +15,7 @@ mod annex_b_targets;
 mod arrow;
 mod ast;
 mod binding_time;
+mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
 mod class;
@@ -2124,6 +2125,7 @@ impl<'a> Compiler<'a> {
             return Err(self.errors);
         }
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        capture_layout::apply(&mut functions, &self.atoms);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2150,21 +2152,20 @@ impl<'a> Compiler<'a> {
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
-            } else {
-                Self::specialize_plain_local_operations(function, &self.atoms);
-                if function
-                    .code
-                    .iter()
-                    .any(|instruction| instruction.op() == Op::StoreLocalPlain)
-                {
-                    let live = liveness::analyze(
-                        function,
-                        &self.method_sites,
-                        &self.field_sites,
-                        &self.superinstructions,
-                    );
-                    numeric::apply_plain_local_stores(function, live.as_deref());
-                }
+            }
+            Self::specialize_plain_local_operations(function, &self.atoms);
+            if function
+                .code
+                .iter()
+                .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+            {
+                let live = liveness::analyze(
+                    function,
+                    &self.method_sites,
+                    &self.field_sites,
+                    &self.superinstructions,
+                );
+                numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
         let register_roots = liveness::derive(
@@ -2627,24 +2628,6 @@ impl<'a> Compiler<'a> {
                         && instruction.local_slot() == usize::from(*slot)
                 })
         });
-        if captures_locals {
-            for instruction in &mut function.code {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-            for instruction in &mut function.wide {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-        }
         let simple_parameters = !options.rest_override
             && options.defaults.is_none_or(|formal| {
                 formal.rest.is_none()
@@ -2693,6 +2676,8 @@ impl<'a> Compiler<'a> {
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
             environment_atoms,
+            selective_capture_slots: None,
+            inherited_with_scope: options.with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),

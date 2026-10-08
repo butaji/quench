@@ -100,7 +100,7 @@ impl<H: Host> Vm<H> {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
                 }
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)
@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
                 {
                     self.realm.global_lexical_bindings.insert(atom, value);
                 }
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)
@@ -533,7 +533,7 @@ impl<H: Host> Vm<H> {
             }
             Op::InitializeTdz => {
                 let slot = i.local_slot();
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)

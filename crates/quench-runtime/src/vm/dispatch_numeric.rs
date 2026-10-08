@@ -303,7 +303,7 @@ impl<H: Host> Vm<H> {
                         let value = error
                             .thrown_value()
                             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                        self.initialize_handler_binding(frame, slot, value)?;
+                        self.initialize_handler_binding(p, frame, slot, value)?;
                     }
                     pc = handler.target as usize;
                 }
