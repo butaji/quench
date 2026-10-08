@@ -6,7 +6,7 @@
 
 use std::{cell::RefCell, ops::Range};
 
-use oxc::regular_expression::{ast, LiteralParser, Options};
+use oxc::regular_expression::{LiteralParser, Options, ast};
 
 mod stack;
 
@@ -149,6 +149,9 @@ enum Expr {
 enum Assertion {
     Start,
     End,
+    StartBuffer,
+    EndBuffer,
+    EndBufferOptionalNewline,
     Boundary,
     NonBoundary,
 }
@@ -247,7 +250,8 @@ pub struct Regex {
 
 impl std::fmt::Debug for Regex {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Regex")
+        formatter
+            .debug_struct("Regex")
             .field("capture_names", &self.capture_names)
             .field("has_named_groups", &self.has_named_groups)
             .finish_non_exhaustive()
@@ -834,6 +838,11 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
         ast::Term::BoundaryAssertion(assertion) => Expr::Assertion(match assertion.kind {
             ast::BoundaryAssertionKind::Start => Assertion::Start,
             ast::BoundaryAssertionKind::End => Assertion::End,
+            ast::BoundaryAssertionKind::StartBuffer => Assertion::StartBuffer,
+            ast::BoundaryAssertionKind::EndBuffer => Assertion::EndBuffer,
+            ast::BoundaryAssertionKind::EndBufferOptionalNewline => {
+                Assertion::EndBufferOptionalNewline
+            }
             ast::BoundaryAssertionKind::Boundary => Assertion::Boundary,
             ast::BoundaryAssertionKind::NegativeBoundary => Assertion::NonBoundary,
         }),
@@ -886,19 +895,19 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
                 .as_ref()
                 .map_or(ModeFlags::default(), |modifiers| ModeFlags {
                     ignore_case: modifier_mode(
-                        modifiers.enabling.as_ref(),
-                        modifiers.disabling.as_ref(),
-                        |modifier| modifier.ignore_case,
+                        modifiers.enabling,
+                        modifiers.disabling,
+                        ast::Modifier::I,
                     ),
                     multiline: modifier_mode(
-                        modifiers.enabling.as_ref(),
-                        modifiers.disabling.as_ref(),
-                        |modifier| modifier.multiline,
+                        modifiers.enabling,
+                        modifiers.disabling,
+                        ast::Modifier::M,
                     ),
                     dot_all: modifier_mode(
-                        modifiers.enabling.as_ref(),
-                        modifiers.disabling.as_ref(),
-                        |modifier| modifier.sticky,
+                        modifiers.enabling,
+                        modifiers.disabling,
+                        ast::Modifier::S,
                     ),
                 });
             Expr::Mode {
@@ -1017,13 +1026,13 @@ fn decode_identifier_escapes(name: &str) -> Option<String> {
 }
 
 fn modifier_mode(
-    enabling: Option<&ast::Modifier>,
-    disabling: Option<&ast::Modifier>,
-    enabled: impl Fn(&ast::Modifier) -> bool,
+    enabling: ast::Modifier,
+    disabling: ast::Modifier,
+    flag: ast::Modifier,
 ) -> Option<bool> {
-    if enabling.is_some_and(&enabled) {
+    if enabling.contains(flag) {
         Some(true)
-    } else if disabling.is_some_and(enabled) {
+    } else if disabling.contains(flag) {
         Some(false)
     } else {
         None
@@ -1451,6 +1460,22 @@ fn assertion_matches(assertion: Assertion, input: &[Unit], position: usize, flag
                     && input
                         .get(position)
                         .is_some_and(|unit| is_line_terminator(unit.value)))
+        }
+        Assertion::StartBuffer => position == 0,
+        Assertion::EndBuffer => position == input.len(),
+        Assertion::EndBufferOptionalNewline => {
+            position == input.len()
+                || (position + 1 == input.len()
+                    && input
+                        .get(position)
+                        .is_some_and(|unit| is_line_terminator(unit.value)))
+                || (position + 2 == input.len()
+                    && input
+                        .get(position)
+                        .is_some_and(|unit| unit.value == '\r' as u32)
+                    && input
+                        .get(position + 1)
+                        .is_some_and(|unit| unit.value == '\n' as u32))
         }
         Assertion::Boundary | Assertion::NonBoundary => {
             let left = position
@@ -1997,11 +2022,7 @@ fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool
                 && !class.items.iter().skip(1).any(item_matches)
         }
     };
-    if class.negative {
-        !matches
-    } else {
-        matches
-    }
+    if class.negative { !matches } else { matches }
 }
 
 fn escape_matches(
@@ -2102,7 +2123,7 @@ enum PropertyMatcherKind {
 
 impl PropertyMatcher {
     pub fn matches(self, character: char) -> bool {
-        use icu_properties::{props, CodePointMapData};
+        use icu_properties::{CodePointMapData, props};
         match self.kind {
             PropertyMatcherKind::Any => true,
             PropertyMatcherKind::Assigned => {
@@ -2134,7 +2155,7 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
 }
 
 pub fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
-    use icu_properties::{props, PropertyParser};
+    use icu_properties::{PropertyParser, props};
     let new_script_ranges = value.and_then(|value| {
         NEW_UNICODE_SCRIPTS
             .iter()

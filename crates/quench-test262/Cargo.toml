@@ -6,14 +6,14 @@ description = "ECMA-262 test262 runner for a host JavaScript engine"
 license = "MIT"
 
 [features]
-profile-aggregate = ["quench-runtime-next/profile-aggregate"]
-profile-memory = ["quench-runtime-next/profile-memory"]
+profile-aggregate = ["quench-runtime/profile-aggregate"]
+profile-memory = ["quench-runtime/profile-memory"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 
 [dependencies]
-quench-runtime-next = { path = "../quench-runtime-next" }
+quench-runtime = { path = "../quench-runtime" }
 serde_json = "1"
 wait-timeout = "0.2.1"

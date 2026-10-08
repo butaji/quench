@@ -18,8 +18,8 @@ use quench_test262::ratchet::{
     RATCHET_SCHEMA_VERSION,
 };
 use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeNextHost, StageReport,
-    Test262Runner, TestOutcome,
+    discover_js_files, resolve_stages, HarnessCache, ResolvedStage, StageReport, Test262Runner,
+    Test262RuntimeHost, TestOutcome,
 };
 use wait_timeout::ChildExt;
 
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
     if env::args().nth(1).as_deref() == Some("--case") {
         return match thread::Builder::new()
             .name("test262-case".into())
-            .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_case_entry)
         {
             Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
@@ -52,7 +52,7 @@ fn main() -> ExitCode {
     }
     let handle = thread::Builder::new()
         .name("run-all-main".into())
-        .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run)
         .unwrap_or_else(|error| panic!("run-all thread: {error}"));
     handle.join().unwrap_or(ExitCode::from(1))
@@ -220,7 +220,7 @@ fn run_case_entry() -> ExitCode {
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let mut runner = Test262Runner::new(RuntimeNextHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     match runner.run_file_with_cache(path, &mut harness) {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
@@ -398,7 +398,7 @@ fn write_report(
     let (source_revision, source_dirty) = source_provenance();
     let value = serde_json::json!({
         "schema": 1,
-        "engine": "next",
+        "engine": RATCHET_ENGINE,
         "provenance": {
             "source_revision": source_revision,
             "source_dirty": source_dirty,
@@ -638,7 +638,7 @@ mod tests {
             classify_outcome("case process exited with signal: 11"),
             "crashed"
         );
-        assert_eq!(classify_outcome("next runtime: TypeError"), "failed");
+        assert_eq!(classify_outcome("quench runtime: TypeError"), "failed");
     }
 
     #[cfg(unix)]

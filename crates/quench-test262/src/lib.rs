@@ -8,13 +8,13 @@
 use std::path::Path;
 
 mod harness_cache;
-pub mod next_host;
 pub mod ratchet;
 pub mod reporting;
 mod runner_support;
+pub mod runtime_host;
 mod stages;
 pub use harness_cache::HarnessCache;
-pub use next_host::RuntimeNextHost;
+pub use runtime_host::Test262RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
 
 /// Engine-facing execution contract for an external conformance runner.

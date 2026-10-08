@@ -7,6 +7,7 @@ use oxc::regular_expression::{
 #[derive(Default)]
 struct Validator {
     exhausted: bool,
+    node_unsupported_escape: bool,
 }
 
 impl Validator {
@@ -24,6 +25,18 @@ impl Validator {
 
 impl<'a> Visit<'a> for Validator {
     fn visit_term(&mut self, term: &Term<'a>) {
+        if matches!(
+            term,
+            Term::BoundaryAssertion(assertion)
+                if matches!(
+                    assertion.kind,
+                    oxc::regular_expression::ast::BoundaryAssertionKind::StartBuffer
+                        | oxc::regular_expression::ast::BoundaryAssertionKind::EndBuffer
+                        | oxc::regular_expression::ast::BoundaryAssertionKind::EndBufferOptionalNewline
+                )
+        ) {
+            self.node_unsupported_escape = true;
+        }
         self.descend(|this| walk::walk_term(this, term));
     }
 
@@ -37,6 +50,8 @@ pub(crate) fn validate(pattern: &Pattern<'_>) -> Result<(), String> {
     validator.visit_pattern(pattern);
     if validator.exhausted {
         Err(quench_stack::STACK_EXHAUSTED_MESSAGE.into())
+    } else if validator.node_unsupported_escape {
+        Err("Invalid escape".into())
     } else {
         Ok(())
     }
