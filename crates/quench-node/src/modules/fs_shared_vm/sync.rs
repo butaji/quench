@@ -44,6 +44,23 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   };
+  const validateReadWriteRange = (buffer, offset, length) => {
+    for (const [name, value] of [["offset", offset], ["length", length]]) {
+      if (value != null && typeof value !== "number") {
+        const error = new TypeError(`The "${name}" argument must be of type number.`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    }
+    offset ??= 0;
+    length ??= buffer.byteLength - offset;
+    if (offset < 0 || offset > buffer.byteLength || length < 0 || length > buffer.byteLength - offset) {
+      const error = new RangeError('The value of "offset" or "length" is out of range.');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return [offset, length];
+  };
   return {
     mkdirSync(path, options) {
       return mkdirSync(normalizePath(path), options);
@@ -67,11 +84,18 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     },
     readSync(fd, buffer, offset = 0, length, position = null) {
       validateFd(fd);
+      if (offset && typeof offset === "object") {
+        const options = offset;
+        offset = options.offset ?? 0;
+        length = options.length;
+        position = options.position ?? null;
+      }
       if (!ArrayBuffer.isView(buffer)) {
         const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView');
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
+      offset ??= 0;
       length ??= buffer.byteLength - offset;
       if (buffer.byteLength === 0 && length > 0) {
         const name = buffer.constructor?.name || "TypedArray";
@@ -79,6 +103,7 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
         error.code = "ERR_INVALID_ARG_VALUE";
         throw error;
       }
+      [offset, length] = validateReadWriteRange(buffer, offset, length);
       const bytes = readDescriptor(fd, length, position);
       const target = buffer instanceof DataView
         ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
@@ -94,8 +119,13 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
         return writeDescriptor(fd, bytes, offset == null ? null : offset);
       }
       const bytes = writeBytes(data, undefined);
-      offset ??= 0;
-      length ??= bytes.byteLength - offset;
+      if (offset && typeof offset === "object") {
+        const options = offset;
+        offset = options.offset ?? 0;
+        length = options.length;
+        position = options.position;
+      }
+      [offset, length] = validateReadWriteRange(bytes, offset, length);
       return writeDescriptor(fd, bytes.subarray(offset, offset + length), position);
     },
   };
