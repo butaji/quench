@@ -87,6 +87,18 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
                 register_in_bounds(value, bounds.registers, 0)
             }
+            FieldLayout::RegisterWindowBase => {
+                let window = instruction.register_window();
+                (instruction.op() != super::Op::WasmAtomicAccess
+                    || crate::wasm::atomic::AtomicOperator::from_tag(instruction.imm())
+                        .is_some_and(|operator| window.count == operator.input_count()))
+                    && (instruction.op() != super::Op::WasmExceptionNew
+                        || window.count >= crate::wasm::tag::ExceptionInput::MIN_COUNT)
+                    && crate::wasm::gc::StructConstruction::from_op(instruction.op())
+                        .is_none_or(|mode| window.count >= u16::from(mode.described()))
+                    && register_window_in_bounds(value, u32::from(window.count), bounds.registers)
+            }
+            FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
@@ -165,6 +177,18 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::MultiplicationOperator => {
             instruction.binary_operator() == oxc_ast::ast::BinaryOperator::Multiplication as u32
         }
+        super::ImmediateRole::WasmSimdOperator => {
+            crate::wasm::simd::SimdOperator::from_selector(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmAtomicOperator => {
+            crate::wasm::atomic::AtomicOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmMemoryLoadOperator => {
+            crate::wasm::memory::MemoryLoad::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmMemoryStoreOperator => {
+            crate::wasm::memory::MemoryStore::from_tag(instruction.imm()).is_some()
+        }
         super::ImmediateRole::WasmI32BinaryOperator => {
             crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm()).is_some()
         }
@@ -188,6 +212,22 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::WasmI64UnaryOperator => {
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmStructFieldIndex => true, // The live struct owns field bounds.
+        super::ImmediateRole::WasmGcTypeIndex | super::ImmediateRole::WasmExceptionFieldIndex => {
+            true
+        } // The attached graph owns this index domain.
+        super::ImmediateRole::WasmNonNullCheck => {
+            crate::wasm::reference::NonNullCheck::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmReferenceTarget => {
+            crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmExternalConversion => {
+            crate::wasm::reference::ExternalConversion::from_tag(instruction.imm()).is_some()
+        }
+        super::ImmediateRole::WasmI31Operator => {
+            crate::wasm::i31::I31Operator::from_tag(instruction.imm()).is_some()
         }
         super::ImmediateRole::WasmI32UnaryOperator => {
             crate::wasm::integer::I32UnaryOperator::from_tag(instruction.imm()).is_some()
@@ -213,6 +253,8 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
         super::ImmediateRole::FieldLookup
+        | super::ImmediateRole::WasmSignatureIndex
+        | super::ImmediateRole::WasmFunctionIndex
         | super::ImmediateRole::LayoutEncoded
         | super::ImmediateRole::TemplateSiteIndex
         | super::ImmediateRole::Unused
@@ -261,7 +303,7 @@ fn packed_layout_domains_in_bounds(
 impl ResidualProgram {
     /// Validate all cross-table references before a VM can observe the program.
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if self.functions.is_empty() {
+        if self.functions.is_empty() && self.kind != super::ProgramKind::Wasm {
             return Err("program has no entry function".into());
         }
         if self.register_roots.len() > u32::MAX as usize {
@@ -273,6 +315,27 @@ impl ResidualProgram {
             }
             if function.registers > REGISTER_MASK {
                 return Err(format!("function {index} has too many registers"));
+            }
+            if function
+                .self_binding_slot
+                .is_some_and(|slot| slot >= function.locals)
+            {
+                return Err(format!("function {index} has an invalid self-binding slot"));
+            }
+            if let Some(slot) = function.self_binding_slot
+                && !function.name_bindings.iter().any(|binding| {
+                    binding.kind == super::LexicalBindingKind::FunctionName
+                        && matches!(
+                            binding.location,
+                            super::EvalBindingLocation::Local(binding_slot)
+                                if binding_slot == slot
+                        )
+                })
+            {
+                return Err(format!("function {index} has an unbound self-binding slot"));
+            }
+            if function.is_arrow && (function.constructible || function.is_class_constructor) {
+                return Err(format!("function {index} has invalid arrow-function facts"));
             }
             if function
                 .global_var_atoms
@@ -334,22 +397,14 @@ impl ResidualProgram {
                             .any(|pair| pair[0].atom >= pair[1].atom)
                 })
             {
-                return Err(format!(
-                    "function {index} has invalid binding-site metadata"
-                ));
+                return Err(format!("function {index} has invalid binding sites"));
             }
-            for (domain, binding) in function
-                .name_bindings
-                .iter()
-                .map(|binding| ("name binding", binding))
-                .chain(
-                    function
-                        .binding_sites
-                        .iter()
-                        .flat_map(|site| site.bindings.iter())
-                        .map(|binding| ("binding-site metadata", binding)),
-                )
-            {
+            for binding in function.name_bindings.iter().chain(
+                function
+                    .binding_sites
+                    .iter()
+                    .flat_map(|site| site.bindings.iter()),
+            ) {
                 let target = match binding.location {
                     super::EvalBindingLocation::Local(_) => Some(function),
                     super::EvalBindingLocation::Capture { depth, .. } => {
@@ -372,10 +427,33 @@ impl ResidualProgram {
                             || usize::from(binding.with_depth) > function.code.len()
                     })
                 {
-                    return Err(format!("function {index} has invalid {domain}"));
+                    return Err(format!("function {index} has an invalid name binding"));
                 }
             }
             let code_len = function.code.len() as u32;
+            if function
+                .source_positions
+                .windows(2)
+                .any(|pair| pair[0].pc >= pair[1].pc)
+                || function.source_positions.iter().any(|position| {
+                    position.pc >= code_len || position.line == 0 || position.column == 0
+                })
+            {
+                return Err(format!("function {index} has invalid source positions"));
+            }
+            if function.binding_sites.windows(2).any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+                || function.binding_sites.iter().any(|site| {
+                    site.resume_pc == 0 || site.resume_pc > code_len
+                        || site.bindings.windows(2).any(|pair| pair[0].atom >= pair[1].atom)
+                        || site.bindings.iter().any(|binding| {
+                            !atom_in_bounds(binding.atom, self.atoms.len())
+                                || matches!(binding.location, super::EvalBindingLocation::Local(slot) if slot >= function.locals)
+                        })
+                })
+            {
+                return Err(format!("function {index} has invalid binding-site metadata"));
+            }
+
             if function.environment_clones.iter().any(|slots| {
                 slots.iter().any(|slot| *slot >= function.locals)
                     || slots.windows(2).any(|pair| pair[0] >= pair[1])
@@ -460,6 +538,21 @@ impl ResidualProgram {
                         "function {index} {:?} has an out-of-domain operand",
                         instruction.op()
                     ));
+                }
+                if instruction.op() == super::Op::WasmMemoryAddress
+                    && !matches!(
+                        self.constants.get(instruction.constant_index()),
+                        Some(super::Constant::WasmBits64(_))
+                    )
+                {
+                    return Err(format!(
+                        "function {index} has an invalid Wasm memory offset constant"
+                    ));
+                }
+                if instruction.op() == super::Op::WasmSimdShuffle
+                    && !matches!(self.constants.get(instruction.constant_index()), Some(super::Constant::WasmV128(indices)) if crate::wasm::simd::shuffle_indices_valid(indices))
+                {
+                    return Err(format!("function {index} has invalid SIMD shuffle indices"));
                 }
             }
             for handler in &function.handlers {
@@ -631,6 +724,8 @@ mod tests {
         Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -660,6 +755,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: vec![],
             binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code,
             wide: vec![],
@@ -717,11 +813,147 @@ mod tests {
 
     #[test]
     fn table_and_operand_references_are_checked_before_execution() {
+        for (op, minimum) in [
+            (
+                Op::WasmExceptionNew,
+                crate::wasm::tag::ExceptionInput::MIN_COUNT,
+            ),
+            (
+                Op::WasmStructNewDesc,
+                u16::from(crate::wasm::gc::StructConstruction::Described.described()),
+            ),
+            (
+                Op::WasmStructNewDefaultDesc,
+                u16::from(crate::wasm::gc::StructConstruction::DefaultDescribed.described()),
+            ),
+        ] {
+            for count in [0, minimum] {
+                let constructor = program(
+                    function(
+                        vec![
+                            Instr::new(op, 0, 0, count, 0),
+                            Instr::new(Op::Return, 0, 0, 0, 0),
+                        ],
+                        1,
+                        u32::MAX,
+                    ),
+                    vec![],
+                );
+                assert_eq!(constructor.validate().is_ok(), count != 0);
+            }
+        }
+        for operator in [
+            crate::wasm::atomic::AtomicOperator::I32AtomicLoad,
+            crate::wasm::atomic::AtomicOperator::I64AtomicStore,
+            crate::wasm::atomic::AtomicOperator::I32AtomicRmwAdd,
+            crate::wasm::atomic::AtomicOperator::I64AtomicRmw32CmpxchgU,
+            crate::wasm::atomic::AtomicOperator::MemoryAtomicNotify,
+            crate::wasm::atomic::AtomicOperator::MemoryAtomicWait32,
+            crate::wasm::atomic::AtomicOperator::MemoryAtomicWait64,
+        ] {
+            let expected = operator.input_count();
+            for count in [0, expected - 1, expected, expected + 1] {
+                let access = program(
+                    function(
+                        vec![
+                            Instr::new(Op::WasmAtomicAccess, 0, 0, count, operator as u32),
+                            Instr::new(Op::Return, 0, 0, 0, 0),
+                        ],
+                        expected + 1,
+                        u32::MAX,
+                    ),
+                    vec![],
+                );
+                assert_eq!(access.validate().is_ok(), count == expected);
+            }
+        }
+        let invalid_atomic = program(
+            function(
+                vec![
+                    Instr::new(Op::WasmAtomicAccess, 0, 0, 2, u32::from(u8::MAX)),
+                    Instr::new(Op::Return, 0, 0, 0, 0),
+                ],
+                4,
+                u32::MAX,
+            ),
+            vec![],
+        );
+        assert!(invalid_atomic.validate().is_err());
         let invalid_constant = program(
             function(vec![Instr::new(Op::LoadConst, 0, 0, 0, 0)], 1, u32::MAX),
             vec![],
         );
         assert!(invalid_constant.validate().is_err());
+
+        let mut invalid_shuffle = program(
+            function(
+                vec![
+                    Instr::new(Op::WasmSimdShuffle, 0, 0, 0, 0),
+                    Instr::new(Op::Return, 0, 0, 0, 0),
+                ],
+                1,
+                u32::MAX,
+            ),
+            vec![],
+        );
+        invalid_shuffle
+            .constants
+            .push(super::super::Constant::WasmV128(
+                [u8::MAX; crate::wasm::V128_BYTES],
+            ));
+        assert!(invalid_shuffle.validate().is_err());
+        invalid_shuffle.constants[0] =
+            super::super::Constant::WasmV128([0; crate::wasm::V128_BYTES]);
+        assert!(invalid_shuffle.validate().is_ok());
+        let mut invalid_selector = program(
+            function(
+                vec![
+                    Instr::new(Op::WasmSimd, 0, 0, 0, u32::from(u8::MAX)),
+                    Instr::new(Op::Return, 0, 0, 0, 0),
+                ],
+                1,
+                u32::MAX,
+            ),
+            vec![],
+        );
+        assert!(invalid_selector.validate().is_err());
+        invalid_selector.functions[0].code[0] =
+            Instr::new(Op::WasmI31, 0, 0, 0, u32::from(u8::MAX));
+        assert!(invalid_selector.validate().is_err());
+        invalid_selector.functions[0].code[0] = Instr::new(
+            Op::WasmI31,
+            0,
+            0,
+            0,
+            crate::wasm::i31::I31Operator::New as u32,
+        );
+        assert!(invalid_selector.validate().is_ok());
+        invalid_selector.functions[0].code[0] =
+            Instr::new(Op::WasmRefAsNonNull, 0, 0, 0, u32::from(u8::MAX));
+        assert!(invalid_selector.validate().is_err());
+        for check in [
+            crate::wasm::reference::NonNullCheck::Reference,
+            crate::wasm::reference::NonNullCheck::Function,
+        ] {
+            invalid_selector.functions[0].code[0] =
+                Instr::new(Op::WasmRefAsNonNull, 0, 0, 0, check as u32);
+            assert!(invalid_selector.validate().is_ok());
+        }
+        invalid_selector.functions[0].code[0] =
+            Instr::new(Op::WasmRefCast, 0, 0, 0, crate::wasm::reference::EXACT);
+        assert!(invalid_selector.validate().is_err());
+        invalid_selector.functions[0].code[0] = Instr::new(
+            Op::WasmRefCast,
+            0,
+            0,
+            0,
+            crate::wasm::reference::ReferenceTarget::from_type(wasmparser::RefType::I31REF)
+                .unwrap()
+                .tag(),
+        );
+        assert!(invalid_selector.validate().is_ok());
+        invalid_selector.functions[0].code[0] = Instr::new(Op::WasmSimd, 0, 0, 0, 0);
+        assert!(invalid_selector.validate().is_ok());
 
         let invalid_field = program(
             function(vec![Instr::new(Op::GetField, 0, 0, 0, 0)], 1, u32::MAX),

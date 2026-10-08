@@ -1,9 +1,8 @@
 //! The checked-in Node `test/parallel` manifest is the profile selection authority.
 
-use crate::case_process::{RunResult, observe_parallel_case};
+use crate::case_process::{observe_parallel_case, RunResult, NODE_PARALLEL_DIR};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
-const PARALLEL_DIR: &str = "tests/node/test/parallel";
 const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
 struct Entry {
@@ -22,27 +21,32 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut counts = [0usize; RunResult::COUNT];
     for fixture in &fixtures {
-        let (result, reason) =
-            match observe_parallel_case(&executable, fixture, Duration::from_secs(timeout_secs)) {
-                Ok(observation) => {
-                    let reason = match observation.worker.as_ref() {
-                        Some(crate::NodeOutcome::Fail { reason }) => Some(reason.clone()),
-                        Some(crate::NodeOutcome::GuestExit { code }) => Some(format!(
-                            "guest exit status {code} requires harness classification"
-                        )),
-                        _ => observation.signal.map(|signal| {
-                            let stderr = String::from_utf8_lossy(&observation.stderr);
-                            format!(
-                                "worker terminated by signal {}; stderr: {}",
-                                signal,
-                                stderr.trim()
-                            )
-                        }),
-                    };
-                    (observation.outcome(), reason)
+        let observation =
+            observe_parallel_case(&executable, fixture, Duration::from_secs(timeout_secs));
+        let (result, reason) = match observation {
+            Ok(observation) => {
+                let reason = match observation.worker.as_ref() {
+                    Some(crate::NodeOutcome::Fail { reason }) => Some(reason.clone()),
+                    Some(crate::NodeOutcome::GuestExit { code }) => Some(format!(
+                        "guest exit status {code} requires harness classification"
+                    )),
+                    _ => observation.signal.map(|signal| {
+                        let stderr = String::from_utf8_lossy(&observation.stderr);
+                        format!(
+                            "worker terminated by signal {}; stderr: {}",
+                            signal,
+                            stderr.trim()
+                        )
+                    }),
+                };
+                let result = observation.outcome();
+                if result != RunResult::Pass {
+                    print_failure_output(&observation.stdout, &observation.stderr);
                 }
-                Err(error) => (RunResult::Unclassified, Some(error)),
-            };
+                (result, reason)
+            }
+            Err(error) => (RunResult::Unclassified, Some(error)),
+        };
         counts[result as usize] += 1;
         match reason {
             Some(reason) => println!(
@@ -70,12 +74,21 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
     }
 }
 
+fn print_failure_output(stdout: &[u8], stderr: &[u8]) {
+    if !stdout.is_empty() {
+        eprintln!("  stdout:\n{}", String::from_utf8_lossy(stdout));
+    }
+    if !stderr.is_empty() {
+        eprintln!("  stderr:\n{}", String::from_utf8_lossy(stderr));
+    }
+}
+
 fn select(profile: Option<&str>, filter: Option<&str>) -> Result<Vec<PathBuf>, String> {
     let root = std::env::current_dir().map_err(|error| format!("repository directory: {error}"))?;
-    let parallel_root = root.join(PARALLEL_DIR);
+    let parallel_root = root.join(NODE_PARALLEL_DIR);
     if !parallel_root.is_dir() {
         return Err(format!(
-            "upstream Node fixture directory is missing: {PARALLEL_DIR}; initialize the tests/node submodule"
+            "upstream Node fixture directory is missing: {NODE_PARALLEL_DIR}; initialize the tests/node submodule"
         ));
     }
     let entries = read_manifest()?;

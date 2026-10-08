@@ -144,6 +144,10 @@ pub(super) fn uses(
 fn field_uses(instruction: Instr, field: InstructionField, fields: &[FieldSite]) -> u64 {
     let layout = instruction.op().field_layout(field);
     match layout {
+        FieldLayout::RegisterWindowBase => {
+            let window = instruction.register_window();
+            range(window.base, window.count)
+        }
         layout if layout.reads_register() => bit(field_register(instruction, field)),
         layout if layout.is_operand_field() => {
             let input_operand = match field {
@@ -270,6 +274,8 @@ mod tests {
         let function = Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -297,8 +303,9 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            binding_sites: vec![],
             name_bindings: vec![],
+            binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code: vec![
                 Instr::new(Op::LoadConst, 0, 0, 0, 0),
@@ -316,6 +323,25 @@ mod tests {
         assert_eq!(roots[3], bit(1));
         assert_eq!(roots[1], bit(1));
         assert_eq!(roots[1] & bit(0), 0);
+    }
+
+    #[test]
+    fn operand_windows_root_every_pending_input() {
+        for op in [
+            Op::WasmStructNew,
+            Op::WasmStructNewDesc,
+            Op::WasmStructNewDefaultDesc,
+            Op::WasmArrayNewFixed,
+            Op::WasmArrayNewData,
+            Op::WasmArrayNewElem,
+            Op::WasmExceptionNew,
+            Op::WasmAtomicAccess,
+        ] {
+            let instruction = Instr::new(op, 0, 1, 3, 0);
+            assert_eq!(uses(instruction, &[], &[], &[]), bit(1) | bit(2) | bit(3));
+            assert_eq!(definitions(instruction, &[]), bit(0));
+            assert_eq!(uses(Instr::new(op, 0, 0, 0, 0), &[], &[], &[]), 0);
+        }
     }
 
     #[test]

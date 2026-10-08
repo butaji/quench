@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use rqj::{
+use quench_runtime_next::{
     CapabilityId, Engine, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime, SourceKind,
     SystemHost,
 };

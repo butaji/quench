@@ -191,6 +191,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "constructor requires new".into()))
             }
             native if native.is_host_control_native() => self.call_host(p, native, args),
+            Native::WasmHost => self.call_wasm_host(args),
             Native::HostFunction => self.call_host_function(this, args),
             Native::Print => {
                 let v = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -640,7 +641,7 @@ impl<H: Host> Vm<H> {
                         "Function.prototype.toString called on incompatible receiver".into(),
                     ));
                 }
-                let source_atom = self.intern_atom("\0rqj:function-source");
+                let source_atom = self.intern_atom("\0quench:function-source");
                 if let Some(source) = self.own_property(this, source_atom) {
                     return Ok(source);
                 }
@@ -945,13 +946,14 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Constructor FinalizationRegistry requires 'new'".into()))
             }
             Native::FunctionCaller => {
-                if this == self.function_proto || self.function_caller_is_restricted(this) {
+                if self.function_caller_is_restricted(this) {
                     Err(self.type_error(p, "restricted function caller access".into()))
                 } else {
                     Ok(self.function_caller(this))
                 }
             }
             Native::ErrorToString => self.error_to_string(p, this),
+            Native::ErrorCaptureStackTrace => self.error_capture_stack_trace(p, args),
             Native::ErrorIsError => Ok(
                 if self.error_is_error(args.first().copied().unwrap_or(Value::UNDEFINED)) {
                     Value::TRUE
@@ -961,6 +963,18 @@ impl<H: Host> Vm<H> {
             ),
             Native::ErrorStackGetter => self.error_stack_getter(p, this),
             Native::ErrorStackSetter => self.error_stack_setter(p, this, args),
+            Native::CallSiteGetFileName
+            | Native::CallSiteGetThis
+            | Native::CallSiteGetFunctionName
+            | Native::CallSiteGetLineNumber
+            | Native::CallSiteGetColumnNumber
+            | Native::CallSiteGetTypeName
+            | Native::CallSiteGetMethodName
+            | Native::CallSiteIsEval
+            | Native::CallSiteGetEvalOrigin
+            | Native::CallSiteIsConstructor
+            | Native::CallSiteIsNative
+            | Native::CallSiteToString => self.call_site_native(p, native, this),
             Native::ArrayBufferSpecies => Ok(this),
             Native::NumberExponential => self.number_exponential(p, this, args),
             native if native.is_error_constructor() => {

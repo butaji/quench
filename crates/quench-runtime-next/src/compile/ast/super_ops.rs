@@ -8,7 +8,7 @@ impl FunctionCompiler<'_, '_> {
         receiver: Register,
     ) -> Register {
         self.emit(Op::RequireObjectCoercible, 0, base, 0, 0);
-        let callee = self.load_name("\0rqj:super-get");
+        let callee = self.load_name("\0quench:super-get");
         let this = self.literal(Constant::Undefined);
         let start = self.next_reg;
         for argument in [base, key, receiver] {
@@ -33,7 +33,7 @@ impl FunctionCompiler<'_, '_> {
         value: Register,
         receiver: Register,
     ) {
-        let callee = self.load_name("\0rqj:super-set");
+        let callee = self.load_name("\0quench:super-set");
         let this = self.literal(Constant::Undefined);
         let strict = self.literal(Constant::Boolean(self.strict));
         let start = self.next_reg;
@@ -59,12 +59,12 @@ impl FunctionCompiler<'_, '_> {
         let home = if let Some(atom) = self.super_home_atom {
             self.load_atom(atom)
         } else {
-            self.load_name("\0rqj:super")
+            self.load_name("\0quench:super")
         };
         if !self.super_home {
             return home;
         }
-        let getter = self.load_name("\0rqj:super-base");
+        let getter = self.load_name("\0quench:super-base");
         let this = self.literal(Constant::Undefined);
         let start = self.next_reg;
         let arg = self.reg();

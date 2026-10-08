@@ -1,6 +1,24 @@
 use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Opaque operation index owned by the embedding's host-function table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WasmHostFunctionId(pub u32);
+
+/// Bit-exact scalars and generation-checked references at the host boundary.
+/// Reference handles borrowed for a call expire when that call returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WasmHostValue {
+    I32(i32),
+    I64(i64),
+    F32(u32),
+    F64(u64),
+    V128(u128),
+    FuncRef(Option<crate::RootId>),
+    ExternRef(Option<crate::RootId>),
+    GcRef(Option<crate::RootId>),
+}
+
 /// Stable capability identifiers used at the VM/host boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u16)]
@@ -27,6 +45,12 @@ pub struct ModuleSource {
     pub bytes: Vec<u8>,
 }
 
+/// An opaque host execution context captured by a Promise reaction or
+/// thenable-assimilation job. The VM carries it through the job lifecycle but
+/// never interprets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct HostExecutionContext(pub u64);
+
 pub trait Host {
     fn write_line(&mut self, text: &str);
     fn clock_millis(&mut self) -> f64;
@@ -47,6 +71,39 @@ pub trait Host {
         Self: Sized,
     {
         Ok(())
+    }
+
+    /// Capture the host context when the VM creates a Promise or thenable job.
+    /// The returned token remains owned by that job until it runs or the VM
+    /// collects it.
+    fn capture_job_context(&mut self) -> Option<HostExecutionContext> {
+        None
+    }
+
+    /// Enter a captured host context around one queued Promise or thenable job
+    /// and return the context to restore after the job completes.
+    fn enter_job_context(
+        &mut self,
+        _context: HostExecutionContext,
+    ) -> Option<HostExecutionContext> {
+        None
+    }
+
+    /// Restore the host context returned by `enter_job_context`.
+    fn restore_job_context(&mut self, _previous: Option<HostExecutionContext>) {}
+
+    /// Release a completed or collected context snapshot. Returned roots are
+    /// released by the runtime that owns them.
+    fn release_job_context(&mut self, _context: HostExecutionContext) -> Vec<crate::RootId> {
+        Vec::new()
+    }
+
+    fn call_wasm(
+        &mut self,
+        _function: WasmHostFunctionId,
+        _args: &[WasmHostValue],
+    ) -> Result<Vec<WasmHostValue>, String> {
+        Err("host does not provide Wasm functions".into())
     }
 
     /// Optional host-owned globals. The evaluator installs these only when

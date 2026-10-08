@@ -32,6 +32,13 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    pub(super) fn suspended_continuation(&self, id: ContinuationId) -> Option<&Continuation> {
+        let entry = self.suspended.get(id.slot as usize)?;
+        (entry.generation == id.generation)
+            .then_some(entry.continuation.as_ref())
+            .flatten()
+    }
+
     pub(crate) fn resume_continuation(&mut self, id: ContinuationId) -> Option<Continuation> {
         let entry = self.suspended.get_mut(id.slot as usize)?;
         if entry.generation != id.generation {

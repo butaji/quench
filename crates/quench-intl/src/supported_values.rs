@@ -100,8 +100,8 @@ pub const UNITS: &[&str] = &[
 
 pub fn currency_fraction_digits(currency: &str) -> usize {
     match currency {
-        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG"
-        | "RWF" | "UGX" | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
+        "BIF" | "CLP" | "DJF" | "GNF" | "ISK" | "JPY" | "KMF" | "KRW" | "PYG" | "RWF" | "UGX"
+        | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" => 0,
         "CLF" => 4,
         "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
         _ => 2,

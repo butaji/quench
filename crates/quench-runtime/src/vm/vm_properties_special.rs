@@ -389,7 +389,7 @@ fn bound_function_fallback(
     shadow_wrapper: bool,
     key: &str,
 ) -> Value {
-    let receiver = Value::BoundFunction(Rc::new(bound.clone()));
+    let receiver = Value::BoundFunction(crate::value::BoundFunctionValue::allocate(bound.clone()));
     if shadow_wrapper {
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
@@ -490,13 +490,15 @@ pub(crate) fn bind_method(receiver: &Value, property: Value) -> Value {
         Value::BoundFunction(bound) => bound.realm,
         _ => crate::vm::current_context_or_default().realm(),
     };
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm,
-        target: Value::Builtin(builtin),
-        receiver: receiver.clone(),
-        arguments: Vec::new(),
-        properties,
-    }))
+    Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+        crate::value::BoundFunctionValue {
+            realm,
+            target: Value::Builtin(builtin),
+            receiver: receiver.clone(),
+            arguments: Vec::new(),
+            properties,
+        },
+    ))
 }
 
 fn append_bound_function_metadata(properties: &RefCell<Vec<(String, Value)>>, builtin: Builtin) {

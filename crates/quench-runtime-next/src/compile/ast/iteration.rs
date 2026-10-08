@@ -91,10 +91,10 @@ impl FunctionCompiler<'_, '_> {
             }
         }
         let object = self.expression(&item.right);
-        let object_atom = self.hidden_local("\0rqj:for-in:source");
+        let object_atom = self.hidden_local("\0quench:for-in:source");
         self.store_atom(object_atom, object);
         let object = self.load_atom(object_atom);
-        let keys = self.load_name("\0rqj:for-in-keys");
+        let keys = self.load_name("\0quench:for-in-keys");
         let this = self.literal(Constant::Undefined);
         let base = self.next_reg;
         let argument = self.reg();
@@ -132,7 +132,7 @@ impl FunctionCompiler<'_, '_> {
         clone_environment: bool,
         label: Option<Atom>,
     ) {
-        let iterator_atom = self.hidden_local("\0rqj:for-of:iterator");
+        let iterator_atom = self.hidden_local("\0quench:for-of:iterator");
         let iterator = self.reg();
         self.emit(
             if await_values {
@@ -157,7 +157,7 @@ impl FunctionCompiler<'_, '_> {
             next_cache,
             next_atom,
         );
-        let next_method_atom = self.hidden_local("\0rqj:for-of:next-method");
+        let next_method_atom = self.hidden_local("\0quench:for-of:next-method");
         self.store_atom(next_method_atom, next_method);
         let head = self.code.len() as u32;
         let iterator = self.load_atom(iterator_atom);
@@ -194,7 +194,7 @@ impl FunctionCompiler<'_, '_> {
             value_atom,
         );
         let invalid_for_in_key = for_in_source.map(|object_atom| {
-            let validate = self.load_name("\0rqj:for-in-key-is-enumerable");
+            let validate = self.load_name("\0quench:for-in-key-is-enumerable");
             let object = self.load_atom(object_atom);
             let base = self.next_reg;
             let object_arg = self.reg();
@@ -236,7 +236,7 @@ impl FunctionCompiler<'_, '_> {
         let disposal_error = using_iteration.map(|_| {
             self.push_disposal_scope();
             self.push_disposal_context();
-            self.hidden_local("\0rqj:for-of-using-error")
+            self.hidden_local("\0quench:for-of-using-error")
         });
         if clone_environment
             && matches!(
@@ -289,7 +289,7 @@ impl FunctionCompiler<'_, '_> {
         let close = self.code.len() as u32;
         self.patch_instruction(break_close, close);
         let iterator = self.load_atom(iterator_atom);
-        let close_fn = self.load_name("\0rqj:iterator-close");
+        let close_fn = self.load_name("\0quench:iterator-close");
         let ignored = self.reg();
         self.emit(Op::Call, ignored, close_fn, iterator, 0);
         let end = self.code.len() as u32;
@@ -303,7 +303,7 @@ impl FunctionCompiler<'_, '_> {
         end: u32,
         tracks_iterator_cleanup: bool,
     ) {
-        let error = self.hidden_local("\0rqj:for-of-body-error");
+        let error = self.hidden_local("\0quench:for-of-body-error");
         let skip_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
         let cleanup = self.code.len() as u32;
         let exclusions = self
@@ -336,7 +336,7 @@ impl FunctionCompiler<'_, '_> {
         let close_end = self.code.len() as u32;
         let close_ok = self.emit(Op::Jump, 0, 0, 0, 0);
         let close_error = self.code.len() as u32;
-        let ignored_error = self.hidden_local("\0rqj:for-of-close-error");
+        let ignored_error = self.hidden_local("\0quench:for-of-close-error");
         self.handlers.push(crate::bytecode::Handler {
             start: cleanup,
             end: close_end,

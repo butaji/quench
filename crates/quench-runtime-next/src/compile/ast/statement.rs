@@ -23,6 +23,15 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn statement(&mut self, statement: &Statement<'_>) {
+        let position = self.owner.source_position(statement.span().start);
+        let previous = self
+            .current_source_position
+            .replace((position.line, position.column));
+        self.statement_at_current_position(statement);
+        self.current_source_position = previous;
+    }
+
+    fn statement_at_current_position(&mut self, statement: &Statement<'_>) {
         match statement {
             Statement::EmptyStatement(_) => {}
             Statement::FunctionDeclaration(function) => {
@@ -141,7 +150,7 @@ impl FunctionCompiler<'_, '_> {
     fn with_statement(&mut self, item: &WithStatement<'_>) {
         self.clear_statement_completion();
         let object = self.expression(&item.object);
-        let enter = self.load_name("\0rqj:with-enter");
+        let enter = self.load_name("\0quench:with-enter");
         let argument = self.reg();
         self.emit(Op::Move, argument, object, 0, 0);
         let ignored = self.reg();
@@ -159,7 +168,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn emit_with_exit(&mut self) {
-        let exit = self.load_name("\0rqj:with-exit");
+        let exit = self.load_name("\0quench:with-exit");
         let ignored = self.reg();
         self.emit(Op::Call, ignored, exit, exit, 0);
     }
@@ -183,7 +192,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         let start = self.code.len() as u32;
-        let close_fn = self.load_name("\0rqj:iterator-close");
+        let close_fn = self.load_name("\0quench:iterator-close");
         let iterators = self.iterator_closures[target_depth..].to_vec();
         for closure in iterators.into_iter().rev() {
             let iterator = self.load_atom(closure.iterator);
@@ -206,7 +215,7 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         let start = self.code.len() as u32;
-        let close_fn = self.load_name("\0rqj:iterator-close");
+        let close_fn = self.load_name("\0quench:iterator-close");
         for closure in closures {
             let iterator = self.load_atom(closure.iterator);
             let ignored = self.reg();
@@ -463,7 +472,7 @@ impl FunctionCompiler<'_, '_> {
                     VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing
                 )
         )
-        .then(|| self.hidden_local("\0rqj:for-using-error"));
+        .then(|| self.hidden_local("\0quench:for-using-error"));
         if disposal_error.is_some() {
             self.push_disposal_scope();
             self.push_disposal_context();
@@ -528,7 +537,7 @@ impl FunctionCompiler<'_, '_> {
 
     fn switch_statement(&mut self, item: &SwitchStatement<'_>) {
         self.clear_statement_completion();
-        let discriminant_binding = self.hidden_local("\0rqj:switch-discriminant");
+        let discriminant_binding = self.hidden_local("\0quench:switch-discriminant");
         let discriminant = self.expression(&item.discriminant);
         self.store_atom(discriminant_binding, discriminant);
         self.push_switch_lexical_scope(&item.cases);

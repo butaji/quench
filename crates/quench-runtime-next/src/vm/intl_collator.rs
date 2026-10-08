@@ -1,14 +1,14 @@
 use super::*;
 
 const DEFAULT_COLLATOR_LOCALE: &str = "en";
-const COLLATOR_LOCALE_SLOT: &str = "\0rqj:intl-collator-locale";
-const COLLATOR_USAGE_SLOT: &str = "\0rqj:intl-collator-usage";
-const COLLATOR_SENSITIVITY_SLOT: &str = "\0rqj:intl-collator-sensitivity";
-const COLLATOR_IGNORE_PUNCTUATION_SLOT: &str = "\0rqj:intl-collator-ignore-punctuation";
-const COLLATOR_NUMERIC_SLOT: &str = "\0rqj:intl-collator-numeric";
-const COLLATOR_CASE_FIRST_SLOT: &str = "\0rqj:intl-collator-case-first";
-const COLLATOR_COLLATION_SLOT: &str = "\0rqj:intl-collator-collation";
-const COLLATOR_BOUND_COMPARE_SLOT: &str = "\0rqj:intl-collator-bound-compare";
+const COLLATOR_LOCALE_SLOT: &str = "\0quench:intl-collator-locale";
+const COLLATOR_USAGE_SLOT: &str = "\0quench:intl-collator-usage";
+const COLLATOR_SENSITIVITY_SLOT: &str = "\0quench:intl-collator-sensitivity";
+const COLLATOR_IGNORE_PUNCTUATION_SLOT: &str = "\0quench:intl-collator-ignore-punctuation";
+const COLLATOR_NUMERIC_SLOT: &str = "\0quench:intl-collator-numeric";
+const COLLATOR_CASE_FIRST_SLOT: &str = "\0quench:intl-collator-case-first";
+const COLLATOR_COLLATION_SLOT: &str = "\0quench:intl-collator-collation";
+const COLLATOR_BOUND_COMPARE_SLOT: &str = "\0quench:intl-collator-bound-compare";
 const UNICODE_KEY_LENGTH: usize = 2;
 
 #[derive(Default)]
@@ -27,12 +27,18 @@ impl<H: Host> Vm<H> {
         object_prototype: Value,
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlCollator, global, global);
-        self.realm.intrinsics.intl_collator_constructors.insert(global, constructor);
+        self.realm
+            .intrinsics
+            .intl_collator_constructors
+            .insert(global, constructor);
         self.set_builtin_function_name(constructor, "Collator")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_collator_prototypes.insert(global, prototype);
+        self.realm
+            .intrinsics
+            .intl_collator_prototypes
+            .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_non_writable_property(constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -91,42 +97,47 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(args.iter().copied().chain([new_target]), |self_| {
             let prototype = self_.intl_instance_prototype(p, new_target, Native::IntlCollator)?;
             self_.with_call_roots([prototype], |vm| {
-            let requested_locale = vm.collator_locale(p, args.first().copied())?;
-            let (usage, sensitivity, ignore_punctuation, numeric, case_first, collation, overrides) =
-                vm.collator_options(p, args.get(1).copied())?;
-            let (locale, collation, numeric, case_first, ignore_punctuation) =
-                normalize_collator_locale(
-                    &requested_locale,
-                    collation,
+                let requested_locale = vm.collator_locale(p, args.first().copied())?;
+                let (
+                    usage,
+                    sensitivity,
+                    ignore_punctuation,
                     numeric,
                     case_first,
-                    ignore_punctuation,
+                    collation,
                     overrides,
-                );
+                ) = vm.collator_options(p, args.get(1).copied())?;
+                let (locale, collation, numeric, case_first, ignore_punctuation) =
+                    normalize_collator_locale(
+                        &requested_locale,
+                        collation,
+                        numeric,
+                        case_first,
+                        ignore_punctuation,
+                        overrides,
+                    );
 
-            let collator = vm
-                .heap
-                .alloc(Cell::Object(Self::empty_object(prototype)));
-            vm.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
-            vm.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
-            vm.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
-            vm.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
-            vm.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
-            vm.set_collator_value(
-                collator,
-                COLLATOR_IGNORE_PUNCTUATION_SLOT,
-                if ignore_punctuation {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            )?;
-            vm.set_collator_value(
-                collator,
-                COLLATOR_NUMERIC_SLOT,
-                if numeric { Value::TRUE } else { Value::FALSE },
-            )?;
-            Ok(collator)
+                let collator = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                vm.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
+                vm.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
+                vm.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
+                vm.set_collator_string(collator, COLLATOR_CASE_FIRST_SLOT, &case_first)?;
+                vm.set_collator_string(collator, COLLATOR_COLLATION_SLOT, &collation)?;
+                vm.set_collator_value(
+                    collator,
+                    COLLATOR_IGNORE_PUNCTUATION_SLOT,
+                    if ignore_punctuation {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                )?;
+                vm.set_collator_value(
+                    collator,
+                    COLLATOR_NUMERIC_SLOT,
+                    if numeric { Value::TRUE } else { Value::FALSE },
+                )?;
+                Ok(collator)
             })
         })
     }
@@ -261,7 +272,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match native {
             Native::IntlCollator => {
-                let constructor = self.realm.intrinsics.intl_collator_constructors
+                let constructor = self
+                    .realm
+                    .intrinsics
+                    .intl_collator_constructors
                     .get(&self.realm.globals)
                     .copied()
                     .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
@@ -277,7 +291,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn collator_compare_getter(&mut self, p: &ResidualProgram, this: Value) -> Result<Value, JsError> {
+    fn collator_compare_getter(
+        &mut self,
+        p: &ResidualProgram,
+        this: Value,
+    ) -> Result<Value, JsError> {
         self.with_call_roots([this], |self_| {
             if self_.collator_locale_slot(this).is_none() {
                 return Err(self_.type_error(p, "not an Intl object".into()));
@@ -337,7 +355,8 @@ impl<H: Host> Vm<H> {
             let left = self_.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
             let right = self_.to_string(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
             let options = quench_intl::CollatorOptions {
-                ignore_punctuation: self_.collator_bool_slot(this, COLLATOR_IGNORE_PUNCTUATION_SLOT),
+                ignore_punctuation: self_
+                    .collator_bool_slot(this, COLLATOR_IGNORE_PUNCTUATION_SLOT),
                 sensitivity: &self_
                     .collator_string_slot(this, COLLATOR_SENSITIVITY_SLOT)
                     .unwrap_or_else(|| "variant".into()),

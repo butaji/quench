@@ -103,6 +103,8 @@ fn compact_binary_stores(function: &mut Function, live: &[u64]) {
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
+        &mut function.source_positions,
+        &old,
     );
     function.code = code;
 }
@@ -195,6 +197,8 @@ mod tests {
         let make_function = || Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -224,6 +228,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: vec![],
             binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code: code.clone(),
             wide: vec![],
@@ -253,6 +258,8 @@ mod tests {
         let make_function = || Function {
             parent: None,
             name: None,
+            is_arrow: false,
+            self_binding_slot: None,
             source_text: None,
             params: 0,
             length: 0,
@@ -282,6 +289,7 @@ mod tests {
             global_immutable_atoms: vec![],
             name_bindings: vec![],
             binding_sites: vec![],
+            source_positions: vec![],
             environment_clones: vec![],
             code: code.clone(),
             wide: vec![],

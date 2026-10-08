@@ -1,5 +1,5 @@
 use super::Runtime;
-use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
+use crate::{vm::Vm, Host, JsError, RootId, RootedError, Value};
 
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,6 +74,18 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Check whether a live rooted value is a JavaScript Symbol primitive.
+    pub fn is_symbol_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_is_symbol(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Check whether a live rooted value has the ECMAScript Promise internal slots.
+    pub fn is_promise_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_is_promise(root);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply the realm's ordinary ToString operation at a host boundary.
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);
@@ -88,22 +100,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Compare with SameValue: NaN equals itself and signed zeros differ.
-    pub fn same_value_rooted(
-        &mut self,
-        left: RootId,
-        right: RootId,
-    ) -> Result<bool, RootedError> {
+    pub fn same_value_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
         self.vm
             .embedding_same_value(left, right)
             .map_err(|error| self.error(error))
     }
 
     /// Apply JavaScript abstract equality, preserving coercion effects and throws.
-    pub fn equal_rooted(
-        &mut self,
-        left: RootId,
-        right: RootId,
-    ) -> Result<bool, RootedError> {
+    pub fn equal_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
         self.vm
             .embedding_equal(left, right)
             .map_err(|error| self.error(error))
@@ -117,6 +121,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_script(source, name);
+        self.completion(result)
+    }
+
+    /// Compile and evaluate host-owned Script source through the specializer.
+    /// Dynamic eval remains on `evaluate_script_rooted`.
+    pub fn evaluate_specialized_script_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script(source, name);
         self.completion(result)
     }
 
@@ -144,6 +159,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.scoped_value(if value { Value::TRUE } else { Value::FALSE })
     }
 
+    pub fn symbol_rooted(&mut self, description: Option<&str>) -> RootId {
+        let description = description.map(str::to_owned);
+        let symbol = self.vm.embedding_symbol(description);
+        self.scoped_value(symbol)
+    }
+
+    pub fn null(&mut self) -> RootId {
+        self.scoped_value(Value::NULL)
+    }
+
     pub fn error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
         let result = self
             .vm
@@ -155,6 +180,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         let result = self
             .vm
             .create_embedding_exception(crate::heap::Native::TypeError, message);
+        self.completion(result)
+    }
+
+    pub fn range_error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .create_embedding_exception(crate::heap::Native::RangeError, message);
         self.completion(result)
     }
 
@@ -198,6 +230,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Check whether a rooted value has JavaScript `typeof value === "object"`.
+    pub fn is_object_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_object(root)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn number(&mut self, value: f64) -> RootId {
         self.scoped_value(Value::number(value))
     }
@@ -222,6 +261,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Create an ordinary object with the active realm's intrinsic prototype.
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();
+        self.completion(result)
+    }
+
+    /// Create a plain object whose `[[Prototype]]` is null.
+    pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_null_object();
         self.completion(result)
     }
 
@@ -260,6 +305,30 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    pub fn define_data_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        value: RootId,
+        writable: bool,
+        enumerable: bool,
+        configurable: bool,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .define_data_property_rooted(object, key, value, writable, enumerable, configurable)
+            .map_err(|error| self.error(error))
+    }
+
+    pub fn set_prototype_rooted(
+        &mut self,
+        object: RootId,
+        prototype: RootId,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .set_prototype_rooted(object, prototype)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn call_rooted(
         &mut self,
         callee: RootId,
@@ -268,6 +337,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
     ) -> Result<RootId, RootedError> {
         let result = self.vm.call_rooted(callee, receiver, args);
         self.completion(result)
+    }
+
+    /// Enqueue a callable in the realm's ECMAScript job queue.
+    pub fn queue_microtask_rooted(
+        &mut self,
+        callback: RootId,
+        args: &[RootId],
+    ) -> Result<(), RootedError> {
+        self.vm
+            .embedding_enqueue_job(callback, args)
+            .map_err(|error| self.error(error))
     }
 
     pub fn retain(&mut self, root: RootId) -> Result<RootId, RootedError> {

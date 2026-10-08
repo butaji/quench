@@ -4,7 +4,7 @@ use super::{
 };
 
 const PACKED_PAIR_LOW_BITS: u32 = 8;
-const PACKED_PAIR_HIGH_BITS: u32 = 7;
+const PACKED_PAIR_HIGH_BITS: u32 = Instr::NARROW_IMMEDIATE_BITS - PACKED_PAIR_LOW_BITS;
 const PACKED_PAIR_SOURCE_SHIFT: u32 = u16::BITS;
 const PACKED_PAIR_SOURCE_MASK: u32 = u16::MAX as u32;
 const PACKED_PAIR_LOW_MASK: u32 = (1 << PACKED_PAIR_LOW_BITS) - 1;
@@ -405,6 +405,21 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn register_window(self) -> RegisterWindow {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::B),
+                    FieldLayout::RegisterWindowBase
+                );
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::C),
+                    FieldLayout::RegisterCount
+                );
+                RegisterWindow {
+                    base: self.b(),
+                    count: self.c(),
+                }
+            }
+
             pub(crate) fn element_count(self) -> u16 {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -663,7 +678,7 @@ impl Instr {
     // Keep the packed instruction at 64 bits while allowing the opcode set to
     // grow. The explicit Wide form carries full-width operands when this
     // slightly smaller narrow immediate is insufficient.
-    const OP_BITS: u32 = 7;
+    const OP_BITS: u32 = Op::COUNT.next_power_of_two().trailing_zeros();
     const FIELD_BITS: u32 = 14;
     const FIELD_MASK: u64 = (1 << Self::FIELD_BITS) - 1;
     const FIELD_TAG_BITS: u32 = 2;
@@ -957,7 +972,10 @@ mod tests {
 
     #[test]
     fn wide_marker_round_trips_the_full_side_table_index() {
-        let index = (1_usize << 56) | (0x1234 << 28) | (0x2345 << 14) | 0x3456;
+        let index = (1_usize << (u64::BITS - Instr::OP_BITS - 1))
+            | (0x1234 << (Instr::FIELD_BITS * 2))
+            | (0x2345 << Instr::FIELD_BITS)
+            | 0x3456;
         let instruction = Instr::wide(index).unwrap();
         assert!(instruction.is_wide());
         assert_eq!(instruction.wide_index(), index);

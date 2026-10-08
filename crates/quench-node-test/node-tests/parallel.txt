@@ -31,6 +31,7 @@ test-fs-truncate-clear-file-zero.js
 test-fs-truncate-sync.js
 test-fs-unlink-type-check.js
 test-fs-write-file-buffer.js
+test-fs-write-stream-end.js # profile=fs-write-stream
 test-http-methods.js # profile=framework-core
 test-regression-object-prototype.js
 test-stream-end-paused.js
@@ -91,6 +92,7 @@ test-timers-this.js
 test-timers-throw-when-cb-not-function.js
 test-timers-timeout-with-non-integer.js
 test-timers-timeout-to-interval.js
+test-timers-unref.js
 test-timers-uncaught-exception.js
 test-timers-unref-throw-then-ref.js
 test-timers-unenroll-unref-interval.js
@@ -266,6 +268,8 @@ test-process-umask.js
 test-process-uid-gid.js
 test-process-versions.js
 test-process-next-tick.js
+test-process-chdir.js
+test-process-chdir-errormessage.js
 test-os-eol.js
 test-os-checked-function.js
 test-os-homedir-no-envvar.js
@@ -307,7 +311,7 @@ test-whatwg-events-add-event-listener-options-passive.js
 test-whatwg-events-add-event-listener-options-signal.js
 test-whatwg-events-customevent.js
 test-whatwg-events-event-constructors.js
-test-event-emitter-add-listeners.js
+test-event-emitter-add-listeners.js # profile=framework-core
 test-event-emitter-emit-context.js
 test-event-emitter-error-monitor.js
 test-event-emitter-errors.js
@@ -317,8 +321,8 @@ test-event-emitter-listener-count.js
 test-event-emitter-listeners-side-effects.js
 test-event-emitter-listeners.js
 test-event-emitter-max-listeners.js
-test-event-emitter-method-names.js
-test-event-emitter-modify-in-emit.js
+test-event-emitter-method-names.js # profile=framework-core
+test-event-emitter-modify-in-emit.js # profile=framework-core
 test-event-emitter-num-args.js
 test-event-emitter-once.js # profile=framework-core
 test-event-emitter-prepend.js
@@ -489,9 +493,16 @@ test-timers-process-tampering.js
 test-console-formatTime.js
 test-diagnostics-channel-has-subscribers.js # profile=framework-core
 test-diagnostics-channel-object-channel-pub-sub.js # profile=framework-core
-test-diagnostics-channel-tracing-channel-callback-run-stores.js
+test-diagnostics-channel-tracing-channel-promise.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-error.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-early-exit.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-non-thenable.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-thenable.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-promise-spoofed-constructor.js # profile=framework-core
+test-diagnostics-channel-tracing-channel-callback-run-stores.js # profile=framework-core
 test-diagnostics-channel-tracing-channel-sync-run-stores.js # profile=framework-core
-test-diagnostics-channel-tracing-channel-promise-run-stores.js
+test-diagnostics-channel-tracing-channel-promise-run-stores.js # profile=framework-core
+test-async-local-storage-enter-with.js # profile=framework-core
 test-process-euid-egid.js
 test-stream-finished.js
 test-stream-construct.js
@@ -694,17 +705,36 @@ test-buffer-bytelength.js
 test-http-request-end.js # profile=framework-core
 test-stream-readable-async-iterators.js
 test-http-response-readable.js # profile=framework-core
+test-http-response-close.js # profile=framework-core
+test-http-head-response-has-no-body.js # profile=framework-core
+test-http-head-response-has-no-body-end.js # profile=framework-core
+test-http-head-response-has-no-body-end-implicit-headers.js # profile=framework-core
 test-stream-pipeline-async-iterator.js
+test-stream-pipeline.js
+test-stream-pipeline-duplex.js
+test-stream-pipeline-listeners.js
 test-http-allow-content-length-304.js # profile=framework-core
 test-http-listening.js # profile=framework-core
 test-global-webstreams.js # profile=framework-core
+test-webstreams-pipeline.js # profile=framework-core
 test-queue-microtask.js
 test-stream-duplex.js # profile=web-stream-bridge
 test-stream-readable-to-web-byob.js # profile=web-stream-bridge
 test-stream-readable-strategy-option.js # profile=web-stream-bridge
-test-stream-readable-to-web-termination.js
+test-stream-readable-to-web-termination.js # profile=web-stream-bridge
 test-stream-readable-to-web-termination-byob.js # profile=web-stream-bridge
 test-readable-from-web-enqueue-then-close.js # profile=web-stream-bridge
 test-stream-toWeb-allows-server-response.js # profile=web-stream-bridge
 test-webstreams-abort-controller.js # profile=web-stream-bridge
 test-webstreams-finished.js # profile=web-stream-bridge
+test-webstreams-queue-wraparound.js # profile=web-stream-bridge
+test-promise-unhandled-silent.js # profile=promise-rejections
+test-promise-unhandled-silent-no-hook.js # profile=promise-rejections
+test-promise-unhandled-default.js # profile=promise-rejections
+test-promise-unhandled-throw-handler.js # profile=promise-rejections
+test-promise-unhandled-error.js # profile=promise-rejections
+test-promise-unhandled-warn-no-hook.js # profile=promise-rejections
+test-promise-unhandled-warn.js # profile=promise-rejections
+test-promises-warning-on-unhandled-rejection.js # profile=promise-rejections
+test-promises-unhandled-symbol-rejections.js # profile=promise-rejections
+test-promises-unhandled-proxy-rejections.js # profile=promise-rejections

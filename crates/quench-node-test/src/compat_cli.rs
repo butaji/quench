@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use crate::case_process::{observe_case, RunResult, DEFAULT_CASE_TIMEOUT_SECS};
+use crate::case_process::{RunResult, DEFAULT_CASE_TIMEOUT_SECS};
 use crate::stages::discover_fixtures;
 
 pub fn run(arguments: impl IntoIterator<Item = String>) -> ExitCode {
@@ -206,7 +206,7 @@ fn run_with_options(options: Options) -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    let summary = match run_suite(&fixtures, options.quiet) {
+    let summary = match run_suite(&fixtures, options.quiet, &repository) {
         Ok(summary) => summary,
         Err(error) => {
             eprintln!("error: {error}");
@@ -241,7 +241,11 @@ struct SuiteSummary {
     failed_names: Vec<String>,
 }
 
-fn run_suite(fixtures: &[PathBuf], quiet: bool) -> Result<SuiteSummary, String> {
+fn run_suite(
+    fixtures: &[PathBuf],
+    quiet: bool,
+    repository: &std::path::Path,
+) -> Result<SuiteSummary, String> {
     use std::io::Write;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let mut summary = SuiteSummary {
@@ -251,9 +255,10 @@ fn run_suite(fixtures: &[PathBuf], quiet: bool) -> Result<SuiteSummary, String> 
         failed_names: Vec::new(),
     };
     for fixture in fixtures {
-        let observation = observe_case(
+        let observation = crate::case_process::observe_inventory_case(
             &executable,
             fixture,
+            repository,
             std::time::Duration::from_secs(DEFAULT_CASE_TIMEOUT_SECS),
         )?;
         std::io::stdout()

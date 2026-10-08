@@ -114,6 +114,7 @@ pub use promise::{
     has_pending_unhandled_rejections, new_promise, promise_resolve, promise_then, reject_promise,
     resolve_promise, take_unhandled_rejections,
 };
+mod compiler_stack;
 mod properties;
 mod property_define;
 pub mod protocol;
@@ -121,7 +122,6 @@ mod proxy;
 pub mod quickening;
 pub mod reduce;
 mod reduce_support;
-mod compiler_stack;
 mod reflect;
 pub mod regexp;
 pub(crate) use quench_regexp as regexp_backend;

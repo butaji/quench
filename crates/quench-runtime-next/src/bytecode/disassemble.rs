@@ -80,6 +80,8 @@ fn write_field(
     }
     match layout {
         FieldLayout::Register
+        | FieldLayout::RegisterWindowBase
+        | FieldLayout::RegisterCount
         | FieldLayout::ResultRegister
         | FieldLayout::WriteRegister
         | FieldLayout::ReadWriteRegister
@@ -215,9 +217,9 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         ImmediateRole::Unused => Ok(()),
         ImmediateRole::LayoutEncoded => write!(output, " imm={}", instruction.imm()),
         ImmediateRole::FieldLookup => write!(output, " lookup={:?}", instruction.field_lookup()),
-        ImmediateRole::EnvironmentCloneIndex
-        | ImmediateRole::ConstantIndex
+        ImmediateRole::ConstantIndex
         | ImmediateRole::ClosureFunctionIndex
+        | ImmediateRole::EnvironmentCloneIndex
         | ImmediateRole::AtomIndex
         | ImmediateRole::LocalSlot
         | ImmediateRole::TemplateSiteIndex
@@ -234,7 +236,20 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::AdditionOperator
         | ImmediateRole::MultiplicationOperator
         | ImmediateRole::UnaryOperator
+        | ImmediateRole::WasmSignatureIndex
+        | ImmediateRole::WasmFunctionIndex
+        | ImmediateRole::WasmSimdOperator
+        | ImmediateRole::WasmMemoryLoadOperator
+        | ImmediateRole::WasmMemoryStoreOperator
+        | ImmediateRole::WasmAtomicOperator
         | ImmediateRole::WasmI32BinaryOperator
+        | ImmediateRole::WasmStructFieldIndex
+        | ImmediateRole::WasmExceptionFieldIndex
+        | ImmediateRole::WasmGcTypeIndex
+        | ImmediateRole::WasmNonNullCheck
+        | ImmediateRole::WasmReferenceTarget
+        | ImmediateRole::WasmExternalConversion
+        | ImmediateRole::WasmI31Operator
         | ImmediateRole::WasmI32UnaryOperator
         | ImmediateRole::WasmI64BinaryOperator
         | ImmediateRole::WasmI64UnaryOperator
@@ -252,6 +267,11 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
         ImmediateRole::ConstantIndex => {
             write!(output, " constant={}", instruction.constant_index())
         }
+        ImmediateRole::EnvironmentCloneIndex => write!(
+            output,
+            " environment-clone={}",
+            instruction.environment_clone_index()
+        ),
         ImmediateRole::ClosureFunctionIndex => {
             write!(output, " function={}", instruction.closure_function_index())
         }
@@ -303,6 +323,26 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
         | ImmediateRole::MultiplicationOperator => {
             write!(output, " operator={}", instruction.binary_operator())
         }
+        ImmediateRole::WasmSimdOperator => write!(
+            output,
+            " operator={:?}",
+            crate::wasm::simd::SimdOperator::from_selector(instruction.imm())
+        ),
+        ImmediateRole::WasmAtomicOperator => write!(
+            output,
+            " operator={:?}",
+            crate::wasm::atomic::AtomicOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmMemoryLoadOperator => write!(
+            output,
+            " operator={:?}",
+            crate::wasm::memory::MemoryLoad::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmMemoryStoreOperator => write!(
+            output,
+            " operator={:?}",
+            crate::wasm::memory::MemoryStore::from_tag(instruction.imm())
+        ),
         ImmediateRole::WasmI32BinaryOperator => write!(
             output,
             " operator={:?}",
@@ -342,6 +382,30 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             output,
             " operator={:?}",
             crate::wasm::integer::I64UnaryOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmStructFieldIndex => write!(output, " field={}", instruction.imm()),
+        ImmediateRole::WasmExceptionFieldIndex => write!(output, " payload={}", instruction.imm()),
+        ImmediateRole::WasmGcTypeIndex => write!(output, " type={}", instruction.imm()),
+        ImmediateRole::WasmNonNullCheck => write!(
+            output,
+            " check={:?}",
+            crate::wasm::reference::NonNullCheck::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmReferenceTarget => write!(
+            output,
+            " target={:?}",
+            crate::wasm::reference::ReferenceTarget::from_tag(instruction.imm())
+                .and_then(|target| target.reference_type())
+        ),
+        ImmediateRole::WasmExternalConversion => write!(
+            output,
+            " conversion={:?}",
+            crate::wasm::reference::ExternalConversion::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmI31Operator => write!(
+            output,
+            "{:?}",
+            crate::wasm::i31::I31Operator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI32UnaryOperator => write!(
             output,

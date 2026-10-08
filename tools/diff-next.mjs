@@ -6,6 +6,22 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
+const engineRoles = {
+  oracle: "node-oracle",
+  specialized: "next-quench",
+  generic: "next-quench-generic",
+};
+
+function completed({ status, signal, timed_out, spawn_error }) {
+  return Number.isInteger(status) && signal === null && timed_out === false &&
+    spawn_error === null;
+}
+
+function matches(left, right) {
+  return completed(left) && completed(right) &&
+    semanticObservable(left) === semanticObservable(right);
+}
+
 function observable(
   { status, signal, timed_out, stdout, stderr, spawn_error },
 ) {
@@ -27,7 +43,7 @@ function semanticStderr(stderr) {
       try {
         const record = JSON.parse(line);
         return !(typeof record.kind === "string" &&
-          record.kind.startsWith("rqj-"));
+          record.kind.startsWith("quench-"));
       } catch {
         return true;
       }
@@ -60,14 +76,31 @@ if (selfTest) {
     signal: null,
     timed_out: false,
     stdout: "42\n",
-    stderr: '{"kind":"rqj-profile"}\n',
+    stderr: '{"kind":"quench-profile"}\n',
     spawn_error: null,
   };
   const clean = { ...measured, stderr: "" };
   assert(
-    semanticObservable(measured) === semanticObservable(clean),
+    matches(measured, clean),
     "measurement stderr is non-semantic",
   );
+  assert(!matches(timeout, timeout), "matching timeouts are not verification");
+  for (
+    const invalid of [
+      { ...clean, status: null, signal: "SIGABRT" },
+      { ...clean, status: null, spawn_error: "missing executable" },
+      { ...clean, status: null },
+      { ...clean, timed_out: undefined },
+    ]
+  ) {
+    assert(!matches(invalid, invalid), "incomplete observations never match");
+  }
+  const expectedExit = { ...clean, status: 7 };
+  assert(
+    matches(expectedExit, expectedExit),
+    "observed nonzero exits still compare",
+  );
+  assert(!matches(expectedExit, clean), "different exit statuses do not match");
   const values = [timeout, crash].map(observable);
   assert(
     values[0] !== values[1],
@@ -81,7 +114,9 @@ if (!source) {
   process.exit(2);
 }
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
-  console.error("DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds");
+  console.error(
+    "DIFF_TIMEOUT_MS must be set to a positive timeout in milliseconds",
+  );
   process.exit(2);
 }
 
@@ -101,17 +136,17 @@ const entries = [
     args: () => [absoluteSource],
   },
   {
-    label: "next-quench",
+    label: engineRoles.specialized,
     command: process.env.NEXT_QUENCH_BIN ?? "target/debug/quench-next",
     args: () => [absoluteSource],
   },
   {
-    label: "next-quench-generic",
+    label: engineRoles.generic,
     command: process.env.NEXT_QUENCH_BIN ?? "target/debug/quench-next",
     args: () => ["--generic", absoluteSource],
   },
   {
-    label: "node-oracle",
+    label: engineRoles.oracle,
     command: process.env.NODE_BIN ?? process.execPath,
     args: () => [absoluteSource],
   },
@@ -149,8 +184,11 @@ function execute(
 const results = entries.map((entry) =>
   execute(entry.label, entry.command, entry.args())
 );
-const reference = semanticObservable(results[3]);
-const optimized = semanticObservable(results[1]);
+const reference = results.find((result) => result.label === engineRoles.oracle);
+const optimized = results.find((result) =>
+  result.label === engineRoles.specialized
+);
+const generic = results.find((result) => result.label === engineRoles.generic);
 
 console.log(
   JSON.stringify(
@@ -160,10 +198,12 @@ console.log(
       source_sha256: sourceSha256,
       timeout_ms: timeoutMs,
       results,
-      matches_node: results.slice(0, 3).map((result) =>
-        semanticObservable(result) === reference
-      ),
-      matches_next: semanticObservable(results[2]) === optimized,
+      observation_complete: results.every(completed),
+      matches_node: results.filter((result) =>
+        result.label !== engineRoles.oracle
+      )
+        .map((result) => matches(result, reference)),
+      matches_next: matches(generic, optimized),
     },
     null,
     2,

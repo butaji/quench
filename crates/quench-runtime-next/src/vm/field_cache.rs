@@ -18,7 +18,9 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value)? {
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if super::object_static::array_index(self.atom_name(atom)).is_some() => {
+            Cell::Array { .. }
+                if super::object_static::array_index(self.atom_name(atom)).is_some() =>
+            {
                 return None;
             }
             Cell::TypedArray { .. }
@@ -33,26 +35,5 @@ impl<H: Host> Vm<H> {
             _ => {}
         }
         Some(object)
-    }
-
-    pub(super) fn field_cache_owner(&self, object: Value, cache: FieldCache) -> Option<Value> {
-        let mut owner = object;
-        for depth in 0..=cache.depth {
-            let current = self.shape_property_lookup(owner, cache.atom)?;
-            if depth == cache.depth {
-                return (owner == cache.owner && current.shape() == cache.owner_shape).then_some(owner);
-            }
-            if self
-                .shape_slot(current.shape(), cache.atom)
-                .is_some_and(|slot| self.heap.property_get(current, slot).is_some())
-            {
-                return None;
-            }
-            owner = current.proto;
-            if owner.is_null() {
-                return None;
-            }
-        }
-        None
     }
 }

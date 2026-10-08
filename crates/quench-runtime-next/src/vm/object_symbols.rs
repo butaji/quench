@@ -2,7 +2,7 @@ use super::operations::ArrayLikeElementKind;
 use super::property_key::PropertyKey;
 use super::*;
 
-const INTERNAL_PROPERTY_PREFIX: &str = "\0rqj:";
+const INTERNAL_PROPERTY_PREFIX: &str = "\0quench:";
 
 pub(super) enum PropertyCopyKind {
     Set,
@@ -118,7 +118,8 @@ impl<H: Host> Vm<H> {
                     );
                 }
             }
-            let extensible = self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+            let extensible =
+                self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
             let extensible = self.truthy(extensible);
             target_keys = self
                 .object_own_key_values(p, self.heap.root_value(target).unwrap())?
@@ -135,7 +136,8 @@ impl<H: Host> Vm<H> {
                     ],
                 )?;
                 if !extensible
-                    || (!descriptor.is_undefined() && !self.descriptor_flag(descriptor, "configurable"))
+                    || (!descriptor.is_undefined()
+                        && !self.descriptor_flag(descriptor, "configurable"))
                 {
                     required.push(*key);
                 }
@@ -147,7 +149,9 @@ impl<H: Host> Vm<H> {
                         self.heap.root_value(key).unwrap(),
                     )
                 }) {
-                    return Err(self.type_error(p, "proxy ownKeys trap omitted a required key".into()));
+                    return Err(
+                        self.type_error(p, "proxy ownKeys trap omitted a required key".into())
+                    );
                 }
             }
             if !extensible && keys.len() != target_keys.len() {
@@ -182,7 +186,7 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .copied()
                 .filter(|key| {
-                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0rqj:"))
+                    !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0quench:"))
                 })
                 .collect(),
             _ => Vec::new(),

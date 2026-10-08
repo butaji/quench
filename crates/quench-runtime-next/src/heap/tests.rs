@@ -304,16 +304,42 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
 }
 
 #[test]
-fn wasm_bits64_follow_the_shared_strong_root_lifecycle() {
+fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let mut heap = Heap::new();
     let bits = 0x7ffc_1234_5678_9abc;
     let value = heap.alloc(Cell::WasmBits64(bits));
-    let root = heap.root(value);
+    // This allocator test checks edges; module admission owns declaration validity.
+    let declarations = crate::WasmTypes::default();
+    let external = heap.alloc(Cell::WasmExtern(value));
+    let descriptor = heap.alloc(Cell::WasmBits64(!bits));
+    let owner = heap.alloc(Cell::WasmGc {
+        declarations,
+        ty: 0,
+        fields: vec![external],
+        descriptor: Some(descriptor),
+    });
+    let tag = heap.alloc(Cell::WasmTag {
+        declarations: crate::WasmTypes::default(),
+        ty: 0,
+    });
+    let exception = heap.alloc(Cell::WasmException {
+        tag,
+        payload: vec![owner],
+    });
+    let root = heap.root(exception);
     heap.collect([]);
+    assert!(heap.get(tag).is_some());
+    assert!(heap.get(owner).is_some());
+    assert!(heap.get(descriptor).is_some());
     assert!(matches!(heap.get(value), Some(Cell::WasmBits64(actual)) if *actual == bits));
     assert!(heap.release_root(root));
     heap.collect([]);
     assert!(heap.get(value).is_none());
+    assert!(heap.get(owner).is_none());
+    assert!(heap.get(external).is_none());
+    assert!(heap.get(descriptor).is_none());
+    assert!(heap.get(tag).is_none());
+    assert!(heap.get(exception).is_none());
 }
 
 #[test]
@@ -339,6 +365,34 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         assert!(heap.weak_value(weak_constructor).is_none());
         assert!(heap.get(regexp).is_none());
     }
+}
+
+#[test]
+fn resolved_binding_reference_keeps_its_slot_owner_alive() {
+    let mut heap = Heap::new();
+    let value = heap.alloc(Cell::String("kept".into()));
+    let environment = heap.alloc(Cell::Environment {
+        parent: Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        binding_site_pc: None,
+        function: 0,
+        slots: vec![value].into_boxed_slice().into(),
+        dynamic_bindings: Vec::new().into(),
+        with_objects: Vec::new(),
+    });
+    let reference = heap.alloc(Cell::BindingReference {
+        environment,
+        slot: 0,
+        kind: crate::bytecode::LexicalBindingKind::Mutable,
+    });
+    heap.collect([reference]);
+    assert!(heap.get(environment).is_some());
+    assert!(heap.get(value).is_some());
+    heap.collect([]);
+    assert!(heap.get(reference).is_none());
+    assert!(heap.get(environment).is_none());
+    assert!(heap.get(value).is_none());
 }
 
 #[test]

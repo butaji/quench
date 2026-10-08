@@ -5,7 +5,7 @@
 
 # Performance reference points
 
-The required parity gate is QuickJS, measured by `rqj-lab` with eleven
+The required parity gate is QuickJS, measured by `Quench lab` with eleven
 interleaved runs. Node/V8 is an architectural reference, not a completion gate:
 this project intentionally emits no native guest code.
 
@@ -34,7 +34,7 @@ the eleven-run acceptance gate:
 | V8 14.6 (Node 26.7.0) | `node --no-sparkplug --no-maglev --no-turbofan` | 2,761 | 2,916 |
 | JavaScriptCore (Bun 1.3.14) | `BUN_JSC_useJIT=0 bun` | 2,743 | 2,155 |
 | QuickJS (sibling checkout) | `../quickjs/qjs` | 2,091 | 1,962 |
-| rqj (this checkout) | `target/release/rqj` | 2,087 | 2,234 |
+| Quench (this checkout) | `target/release/quench-next` | 2,087 | 2,234 |
 
 The de-JITed engines therefore occupy the same small performance band on
 these workloads. V8/JSC are useful aspirational ceilings, but QuickJS remains

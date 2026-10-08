@@ -48,9 +48,48 @@ impl<H: Host> Runtime<H> {
         self.vm.string_rooted(text)
     }
 
+    /// Read the contents of a rooted string without applying guest coercion.
+    pub fn string_text_rooted(&mut self, value: RootId) -> Result<Option<String>, RootedError> {
+        self.vm
+            .embedding_string_text(value)
+            .map_err(|error| self.retain_error(error))
+    }
+
+    /// Produce a diagnostic description without running guest code.
+    /// This is not ECMAScript string conversion and never calls guest hooks.
+    pub fn detail_string_rooted(&mut self, value: RootId) -> Result<String, RootedError> {
+        self.vm
+            .embedding_detail_string(value)
+            .map_err(|error| self.retain_error(error))
+    }
+
+    /// Check an own property without invoking accessors or Proxy traps.
+    pub fn has_own_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_has_own_property(object, name)
+            .map_err(|error| self.retain_error(error))
+    }
+
+    /// Check the VM's unforgeable Error brand without guest property access.
+    pub fn is_error_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_error(value)
+            .map_err(|error| self.retain_error(error))
+    }
+
     /// Create and retain an ordinary object using the realm's intrinsic prototype.
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();
+        self.retain_completion(result)
+    }
+
+    /// Create a plain object whose `[[Prototype]]` is null.
+    pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_null_object();
         self.retain_completion(result)
     }
 
@@ -113,7 +152,7 @@ impl<H: Host> Runtime<H> {
         }
     }
 
-    fn retain_error(&mut self, error: JsError) -> RootedError {
+    pub(super) fn retain_error(&mut self, error: JsError) -> RootedError {
         RootedError::retain(&mut self.vm, error)
     }
 }

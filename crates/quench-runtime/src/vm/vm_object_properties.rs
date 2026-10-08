@@ -108,9 +108,7 @@ pub(crate) fn object_property(
     // checking real own properties (which must continue to shadow it).
     if is_global {
         if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
-                binding,
-            )));
+            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
         }
     }
     let inherited = object_prototype_property(receiver, &properties, key);
@@ -146,7 +144,7 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                     crate::ops::Builtin::IntlDateTimeFormatFormat
                         | crate::ops::Builtin::IntlNumberFormatFormat,
                 )
-        )
+            )
         {
             return Some(crate::vm::bind_receiver_property(
                 value.clone(),
@@ -268,11 +266,13 @@ fn global_property(
     if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
         let token = Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
         if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
-            return Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue::new(
-                binding.realm,
-                Value::Builtin(Builtin::HostCapability(binding.kind)),
-                token,
-            )));
+            return Value::BoundFunction(crate::value::BoundFunctionValue::allocate(
+                crate::value::BoundFunctionValue::new(
+                    binding.realm,
+                    Value::Builtin(Builtin::HostCapability(binding.kind)),
+                    token,
+                ),
+            ));
         }
         return token;
     }

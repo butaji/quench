@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
             let text = self.to_string(p, this)?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
-        for marker in ["\0rqj:number-value", "\0rqj:bigint-value"] {
+        for marker in ["\0quench:number-value", "\0quench:bigint-value"] {
             if let Some(value) = self
                 .lookup_atom(marker)
                 .and_then(|atom| self.own_property(this, atom))
@@ -120,9 +120,9 @@ impl<H: Host> Vm<H> {
         let proxy_array =
             matches!(self.heap.get(value), Some(Cell::Proxy { .. })) && self.is_array(p, value)?;
         let boxed_brand = [
-            ("\0rqj:string-value", "String"),
-            ("\0rqj:boolean-value", "Boolean"),
-            ("\0rqj:number-value", "Number"),
+            ("\0quench:string-value", "String"),
+            ("\0quench:boolean-value", "Boolean"),
+            ("\0quench:number-value", "Number"),
         ]
         .into_iter()
         .find_map(|(marker, brand)| {
@@ -284,7 +284,8 @@ impl<H: Host> Vm<H> {
                     .map(|key| self.heap.root(key))
                     .collect();
                 for key in &own_keys {
-                    let Some(Cell::String(name)) = self.heap.get(self.heap.root_value(*key).unwrap())
+                    let Some(Cell::String(name)) =
+                        self.heap.get(self.heap.root_value(*key).unwrap())
                     else {
                         continue;
                     };
@@ -773,7 +774,6 @@ impl<H: Host> Vm<H> {
         self.set_property_attributes(target, key, attributes);
         Ok(true)
     }
-
 }
 
 pub(super) fn array_index(name: &str) -> Option<u32> {

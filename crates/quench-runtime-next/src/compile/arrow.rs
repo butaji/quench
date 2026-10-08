@@ -25,7 +25,6 @@ impl Compiler<'_> {
             Vec::new()
         };
         let lexical_atoms: Vec<_> = body_lexicals.iter().map(|(atom, _)| *atom).collect();
-        let arrow_marker = self.atom("\0rqj:arrow");
         let params = FunctionCompiler::params_from_formals(&value.params, self);
         let params: Vec<Atom> = params.iter().map(|name| self.atom(name)).collect();
         let mut locals = params.clone();
@@ -69,7 +68,6 @@ impl Compiler<'_> {
             (false, false),
             value.r#async,
             false,
-            None,
             None,
             parameter_local_count,
             with_depth,
@@ -139,10 +137,9 @@ impl Compiler<'_> {
         let name_bindings = function.name_bindings();
         let result = BcFunction {
             parent,
-            // Keep the arrow/non-constructor invariant in the residual
-            // function table without adding a second callable representation.
-            // The marker is VM-internal and never materialized as `.name`.
-            name: Some(arrow_marker),
+            name: None,
+            is_arrow: true,
+            self_binding_slot: None,
             source_text,
             params: params.len() as u16,
             length: value
@@ -177,6 +174,7 @@ impl Compiler<'_> {
             global_immutable_atoms: Vec::new(),
             name_bindings,
             binding_sites: function.binding_sites,
+            source_positions: function.source_positions,
             environment_clones: function.environment_clones,
             code: function.code,
             wide: function.wide,

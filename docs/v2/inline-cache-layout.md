@@ -1,6 +1,6 @@
 # Inline-cache layout audit
 
-rqj's inline caches are runtime state while its residual bytecode is immutable,
+Quench's inline caches are runtime state while its residual bytecode is immutable,
 serializable data. Any claim that moving state “next to” an instruction removes
 an indirection must account for that ownership boundary and the actual release
 fast path.

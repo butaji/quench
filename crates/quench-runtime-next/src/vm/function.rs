@@ -6,7 +6,7 @@ impl<H: Host> Vm<H> {
         function: Value,
         source: &str,
     ) -> Result<(), JsError> {
-        let source_atom = self.intern_atom("\0rqj:function-source");
+        let source_atom = self.intern_atom("\0quench:function-source");
         let source_value = self.heap.alloc(Cell::String(source.into()));
         self.set_property(function, source_atom, source_value)
     }
@@ -113,9 +113,9 @@ impl<H: Host> Vm<H> {
             return Err(JsError("value is not callable".into()));
         }
         let env = self.object();
-        let target_atom = self.intern_atom("\0rqj:bound-target");
-        let this_atom = self.intern_atom("\0rqj:bound-this");
-        let args_atom = self.intern_atom("\0rqj:bound-args");
+        let target_atom = self.intern_atom("\0quench:bound-target");
+        let this_atom = self.intern_atom("\0quench:bound-this");
+        let args_atom = self.intern_atom("\0quench:bound-args");
         self.set_property(env, target_atom, target)?;
         self.set_property(
             env,
@@ -231,9 +231,9 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("invalid bound function".into()))?;
-        let target_atom = self.intern_atom("\0rqj:bound-target");
-        let this_atom = self.intern_atom("\0rqj:bound-this");
-        let args_atom = self.intern_atom("\0rqj:bound-args");
+        let target_atom = self.intern_atom("\0quench:bound-target");
+        let this_atom = self.intern_atom("\0quench:bound-this");
+        let args_atom = self.intern_atom("\0quench:bound-args");
         let target = self
             .own_property(env, target_atom)
             .ok_or_else(|| JsError("invalid bound function".into()))?;

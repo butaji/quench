@@ -198,7 +198,7 @@ impl<H: Host> Vm<H> {
                 _ => None,
             };
             if let Some(env) = bound_env {
-                let target_atom = vm.intern_atom("\0rqj:bound-target");
+                let target_atom = vm.intern_atom("\0quench:bound-target");
                 let target = vm
                     .own_property(env, target_atom)
                     .unwrap_or(Value::UNDEFINED);

@@ -251,7 +251,7 @@ impl EngineSpec {
             version: self.version.clone(),
             argv: self.argv.clone(),
             environment: self.env.clone(),
-            inherits_environment: true,
+            inherits_environment: false,
             jit_mode: self.jit_mode,
             jit_proof_command: self.jit_proof_command.clone(),
             jit_proof: self.jit_proof.clone(),

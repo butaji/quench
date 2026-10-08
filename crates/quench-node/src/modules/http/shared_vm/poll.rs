@@ -1,7 +1,7 @@
 use super::state::{Response, ServerConnection};
-use crate::host::{HostState, NodeHost};
+use crate::host::{HostState, NodeHost, SharedNodeState};
 use crate::modules::net;
-use rqj::{RootId, Runtime, Value};
+use quench_runtime_next::{RootId, Runtime, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -10,28 +10,28 @@ const RESPONSE_HEAD_LIMIT: usize = 64 * 1024;
 
 pub(crate) fn poll(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime_next::ResidualProgram,
     state: &Rc<RefCell<HostState>>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let events = {
-        let mut host = state.borrow_mut();
-        net::shared_vm::poll(&mut host.net)
+        let mut host = shared_state.borrow_mut();
+        net::shared_vm::poll(&mut host.tcp)
     };
     let mut progressed = false;
-    progressed |= emit_listening(runtime, program, state)?;
+    progressed |= emit_listening(runtime, program, shared_state)?;
     for event in events {
         match event {
             net::shared_vm::TransportEvent::Accepted { listener, socket } => {
-                let server_id = state
+                let server_id = shared_state
                     .borrow()
                     .http
-                    .shared
                     .servers
                     .iter()
                     .find_map(|(id, server)| (server.listener == Some(listener)).then_some(*id));
                 if let Some(server_id) = server_id {
-                    let mut host = state.borrow_mut();
-                    host.http.shared.connections.insert(
+                    let mut host = shared_state.borrow_mut();
+                    host.http.connections.insert(
                         socket,
                         ServerConnection {
                             server: server_id,
@@ -39,260 +39,739 @@ pub(crate) fn poll(
                             request_dispatched: false,
                         },
                     );
-                    if let Some(server) = host.http.shared.servers.get_mut(&server_id) {
+                    if let Some(server) = host.http.servers.get_mut(&server_id) {
                         server.connections.insert(socket);
                     }
                     progressed = true;
                 } else {
-                    net::shared_vm::close_socket(&mut state.borrow_mut().net, socket);
+                    net::shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                 }
             }
             net::shared_vm::TransportEvent::Connected { socket } => {
-                let request = state
+                let request = shared_state
                     .borrow()
                     .http
-                    .shared
                     .clients
                     .get(&socket)
                     .map(|client| client.request.clone());
                 if let Some(request) = request {
-                    net::shared_vm::write(&mut state.borrow_mut().net, socket, &request)
+                    net::shared_vm::write(&mut shared_state.borrow_mut().tcp, socket, &request)
                         .map_err(|error| format!("HTTP client write failed: {error}"))?;
                     progressed = true;
                 }
             }
             net::shared_vm::TransportEvent::ConnectError { socket, message } => {
-                let callback = state
-                    .borrow_mut()
-                    .http
-                    .shared
-                    .clients
-                    .remove(&socket)
-                    .map(|client| client.callback);
-                if let Some(callback) = callback {
-                    runtime.release_root(callback);
+                let client = shared_state.borrow_mut().http.clients.remove(&socket);
+                if let Some(client) = client {
+                    fail_client_exchange(runtime, program, client, &message)?;
                 }
-                return Err(format!("HTTP client connection failed: {message}"));
+                progressed = true;
             }
             net::shared_vm::TransportEvent::Data { socket, bytes } => {
-                if state.borrow().http.shared.connections.contains_key(&socket) {
+                if shared_state.borrow().http.connections.contains_key(&socket) {
                     let dispatch = {
-                        let mut host = state.borrow_mut();
-                        let Some(connection) = host.http.shared.connections.get_mut(&socket) else {
+                        let mut host = shared_state.borrow_mut();
+                        let Some(connection) = host.http.connections.get_mut(&socket) else {
                             continue;
                         };
                         if connection.request_dispatched {
                             None
                         } else {
                             connection.received.extend_from_slice(&bytes);
-                            if connection.received.len() > REQUEST_HEAD_LIMIT {
+                            let head_end = super::protocol::head_size(&connection.received);
+                            if head_end.is_none() && connection.received.len() > REQUEST_HEAD_LIMIT
+                                || head_end.is_some_and(|end| end > REQUEST_HEAD_LIMIT)
+                            {
                                 return Err(
                                     "HTTP request head exceeds the shared parser limit".into()
                                 );
                             }
-                            parse_head(&connection.received).filter(|(_, _, _, _, body_start)| {
-                                let content_length =
-                                    content_length(&connection.received[..*body_start]);
-                                connection.received.len() >= *body_start + content_length
-                            })
+                            super::protocol::request(&connection.received)
                         }
                     };
-                    if let Some((method, path, version, headers, body_start)) = dispatch {
-                        let (server_root, response_id, response_factory) = {
-                            let mut host = state.borrow_mut();
-                            let server_id = host.http.shared.connections[&socket].server;
+                    if let Some(message) = dispatch {
+                        let request_async_id =
+                            crate::modules::async_hooks::shared_vm::create_context(state);
+                        let (server_root, response_id, response_factory, incoming_factory) = {
+                            let mut host = shared_state.borrow_mut();
+                            let server_id = host.http.connections[&socket].server;
                             let server_root = host
                                 .http
-                                .shared
                                 .servers
                                 .get(&server_id)
                                 .map(|server| server.root)
                                 .ok_or_else(|| "HTTP server root was released early".to_owned())?;
-                            let response_id = host
+                            let response_id =
+                                host.http.response_id().map_err(|error| error.to_owned())?;
+                            let response_factory = host
                                 .http
-                                .shared
-                                .response_id()
-                                .map_err(|error| error.to_owned())?;
-                            let response_factory =
-                                host.http.shared.response_factory.ok_or_else(|| {
-                                    "HTTP response factory is unavailable".to_owned()
-                                })?;
+                                .response_factory
+                                .ok_or_else(|| "HTTP response factory is unavailable".to_owned())?;
+                            let incoming_factory = host.http.incoming_factory.ok_or_else(|| {
+                                "HTTP incoming-message factory is unavailable".to_owned()
+                            })?;
                             host.http
-                                .shared
                                 .connections
                                 .get_mut(&socket)
                                 .unwrap()
                                 .request_dispatched = true;
-                            host.http
-                                .shared
-                                .connections
-                                .get_mut(&socket)
-                                .unwrap()
-                                .received
-                                .drain(..body_start);
-                            host.http.shared.responses.insert(
+                            host.http.responses.insert(
                                 response_id,
                                 Response {
                                     socket,
+                                    async_id: request_async_id,
                                     headers: Vec::new(),
-                                    ended: false,
+                                    body: Default::default(),
+                                    send_date: true,
+                                    lifecycle: super::state::ResponseLifecycle::Open,
                                 },
                             );
-                            (server_root, response_id, response_factory)
+                            (server_root, response_id, response_factory, incoming_factory)
                         };
-                        let request = request_object(runtime, method, path, version, headers)?;
+                        let socket_object =
+                            runtime.object_rooted().map_err(|error| error.to_string())?;
+                        let request = match request_object(
+                            runtime,
+                            message.method,
+                            message.target,
+                            message.version,
+                            message.headers,
+                            message.raw_headers,
+                            socket_object,
+                        ) {
+                            Ok(request) => request,
+                            Err(error) => {
+                                runtime.release_root(socket_object);
+                                return Err(error);
+                            }
+                        };
+                        let body_text = latin1_text(&message.body);
+                        let body = runtime.string_rooted(&body_text);
+                        let undefined = runtime.root(Value::UNDEFINED);
+                        let readable = match runtime.call_rooted(
+                            incoming_factory,
+                            undefined,
+                            &[request, body],
+                        ) {
+                            Ok(readable) => readable,
+                            Err(error) => {
+                                let message = runtime.format_error(program, &error.error);
+                                if let Some(exception) = error.exception {
+                                    runtime.release_root(exception);
+                                }
+                                runtime.release_root(request);
+                                runtime.release_root(body);
+                                runtime.release_root(undefined);
+                                runtime.release_root(socket_object);
+                                return Err(message);
+                            }
+                        };
+                        runtime.release_root(request);
+                        runtime.release_root(body);
+                        runtime.release_root(undefined);
                         let id = runtime.root(Value::number(response_id as f64));
                         let status = runtime.root(Value::number(200.0));
                         let undefined = runtime.root(Value::UNDEFINED);
-                        let response =
-                            match runtime.call_rooted(response_factory, undefined, &[id, status]) {
-                                Ok(response) => response,
-                                Err(error) => {
-                                    runtime.release_root(request);
-                                    runtime.release_root(id);
-                                    runtime.release_root(status);
-                                    runtime.release_root(undefined);
-                                    return Err(runtime.format_error(program, &error.error));
+                        let response = match runtime.call_rooted(
+                            response_factory,
+                            undefined,
+                            &[id, status, readable, server_root, socket_object],
+                        ) {
+                            Ok(response) => response,
+                            Err(error) => {
+                                runtime.release_root(readable);
+                                runtime.release_root(id);
+                                runtime.release_root(status);
+                                runtime.release_root(undefined);
+                                runtime.release_root(socket_object);
+                                let message = runtime.format_error(program, &error.error);
+                                if let Some(exception) = error.exception {
+                                    runtime.release_root(exception);
                                 }
-                            };
-                        let emitted = emit_event(
+                                return Err(message);
+                            }
+                        };
+                        let diagnostic_message = match diagnostics_message(
                             runtime,
-                            program,
+                            readable,
+                            response,
                             server_root,
-                            "request",
-                            &[request, response],
-                        );
-                        runtime.release_root(request);
+                            socket_object,
+                        ) {
+                            Ok(message) => message,
+                            Err(error) => {
+                                runtime.release_root(readable);
+                                runtime.release_root(response);
+                                runtime.release_root(id);
+                                runtime.release_root(status);
+                                runtime.release_root(undefined);
+                                runtime.release_root(socket_object);
+                                return Err(error);
+                            }
+                        };
+                        let delivered = {
+                            let _scope = crate::modules::async_hooks::shared_vm::enter_context(
+                                state,
+                                request_async_id,
+                            );
+                            let diagnostic_result = crate::modules::diagnostics_channel::shared_vm::publish_named_runtime(
+                                runtime,
+                                program,
+                                "http.server.request.start",
+                                diagnostic_message,
+                            );
+                            match diagnostic_result {
+                                Ok(()) => emit_event(
+                                    runtime,
+                                    program,
+                                    server_root,
+                                    "request",
+                                    &[readable, response],
+                                ),
+                                Err(error) => Err(error),
+                            }
+                        };
+                        runtime.release_root(diagnostic_message);
+                        runtime.release_root(readable);
                         runtime.release_root(response);
                         runtime.release_root(id);
                         runtime.release_root(status);
                         runtime.release_root(undefined);
-                        emitted?;
+                        runtime.release_root(socket_object);
+                        delivered?;
                         progressed = true;
                     }
-                } else if state.borrow().http.shared.clients.contains_key(&socket) {
-                    let response = {
-                        let mut host = state.borrow_mut();
-                        let client = host.http.shared.clients.get_mut(&socket).unwrap();
-                        client.received.extend_from_slice(&bytes);
-                        if client.received.len() > RESPONSE_HEAD_LIMIT {
+                } else if shared_state.borrow().http.clients.contains_key(&socket) {
+                    let (progress, request_id, request_root, response_root) = {
+                        let mut host = shared_state.borrow_mut();
+                        let client = host.http.clients.get_mut(&socket).unwrap();
+                        let progress = client.response_parser.push(&bytes)?;
+                        if client.response_parser.pending_head_len() > RESPONSE_HEAD_LIMIT {
                             return Err("HTTP response head exceeds the shared parser limit".into());
                         }
-                        parse_response(&client.received)
+                        (
+                            progress,
+                            client.request_id,
+                            client.request_root,
+                            client.response_root,
+                        )
                     };
-                    if let Some((status, message, headers, raw_headers)) = response {
-                        let client = state
-                            .borrow_mut()
-                            .http
-                            .shared
-                            .clients
-                            .remove(&socket)
-                            .ok_or_else(|| {
-                                "HTTP client completion was already consumed".to_owned()
-                            })?;
-                        let response =
-                            match response_object(runtime, status, message, headers, raw_headers) {
-                                Ok(response) => response,
-                                Err(error) => {
-                                    runtime.release_root(client.callback);
-                                    return Err(error);
-                                }
-                            };
-                        let undefined = runtime.root(Value::UNDEFINED);
-                        let result = runtime.call_rooted(client.callback, undefined, &[response]);
-                        runtime.release_root(undefined);
-                        runtime.release_root(response);
-                        let callback_error = result.err().map(|error| {
-                            let message = runtime.format_error(program, &error.error);
-                            if let Some(exception) = error.exception {
-                                runtime.release_root(exception);
+                    let progressed_response =
+                        progress.head.is_some() || !progress.body_chunks.is_empty();
+                    let response_root = match (response_root, progress.head) {
+                        (Some(response_root), _) => Some(response_root),
+                        (None, Some(message)) => {
+                            let response_root = deliver_client_response_head(
+                                runtime,
+                                program,
+                                shared_state,
+                                request_id,
+                                request_root,
+                                message,
+                            )?;
+                            let mut host = shared_state.borrow_mut();
+                            if let Some(client) = host.http.clients.get_mut(&socket) {
+                                client.response_root = Some(response_root);
+                                Some(response_root)
+                            } else {
+                                runtime.release_root(response_root);
+                                None
                             }
-                            message
-                        });
-                        runtime.release_root(client.callback);
-                        if let Some(error) = callback_error {
-                            return Err(error);
                         }
-                        let agent_owns_socket = state
-                            .borrow()
-                            .http
-                            .shared
-                            .agents
-                            .values()
-                            .any(|sockets| sockets.contains(&socket));
-                        if !agent_owns_socket {
-                            net::shared_vm::close_socket(&mut state.borrow_mut().net, socket);
+                        (None, None) => None,
+                    };
+                    if let Some(response_root) = response_root {
+                        deliver_client_body(
+                            runtime,
+                            program,
+                            response_root,
+                            &progress.body_chunks,
+                        )?;
+                    }
+                    if progress.complete {
+                        // Delivering the response head can run guest callbacks. A
+                        // callback may destroy the agent and consume this exchange
+                        // before the parser reports completion. Removal is the
+                        // exchange's terminal transition, so a missing record here
+                        // means another transition already owns its cleanup.
+                        let client = {
+                            let mut host = shared_state.borrow_mut();
+                            host.http.clients.remove(&socket)
+                        };
+                        if let Some(client) = client {
+                            let finish_result = if let Some(response_root) = client.response_root {
+                                let result =
+                                    finish_client_response(runtime, program, response_root);
+                                runtime.release_root(response_root);
+                                result
+                            } else {
+                                Ok(())
+                            };
+                            runtime.release_root(client.request_root);
+                            let agent_owns_socket = shared_state
+                                .borrow()
+                                .http
+                                .agents
+                                .values()
+                                .any(|sockets| sockets.contains(&socket));
+                            if !agent_owns_socket {
+                                net::shared_vm::close_socket(
+                                    &mut shared_state.borrow_mut().tcp,
+                                    socket,
+                                );
+                            }
+                            finish_result?;
                         }
+                        progressed = true;
+                    } else if progressed_response {
                         progressed = true;
                     }
                 }
             }
             net::shared_vm::TransportEvent::End { socket } => {
-                let server_id = state
-                    .borrow_mut()
-                    .http
-                    .shared
-                    .connections
-                    .remove(&socket)
-                    .map(|connection| connection.server);
-                if let Some(server_id) = server_id {
-                    let mut host = state.borrow_mut();
-                    if let Some(server) = host.http.shared.servers.get_mut(&server_id) {
-                        server.connections.remove(&socket);
+                let client = shared_state.borrow_mut().http.clients.remove(&socket);
+                if let Some(mut client) = client {
+                    match client.response_parser.finish() {
+                        Ok(progress) => {
+                            let mut response_root = client.response_root;
+                            let result: Result<(), String> = (|| {
+                                if response_root.is_none() {
+                                    if let Some(message) = progress.head {
+                                        response_root = Some(deliver_client_response_head(
+                                            runtime,
+                                            program,
+                                            shared_state,
+                                            client.request_id,
+                                            client.request_root,
+                                            message,
+                                        )?);
+                                    }
+                                }
+                                if let Some(response_root) = response_root {
+                                    deliver_client_body(
+                                        runtime,
+                                        program,
+                                        response_root,
+                                        &progress.body_chunks,
+                                    )?;
+                                    if progress.complete {
+                                        finish_client_response(runtime, program, response_root)?;
+                                    }
+                                }
+                                Ok(())
+                            })();
+                            if let Some(response_root) = response_root {
+                                runtime.release_root(response_root);
+                            }
+                            runtime.release_root(client.request_root);
+                            result?;
+                        }
+                        Err(_) => {
+                            fail_client_exchange(runtime, program, client, "socket hang up")?;
+                        }
                     }
-                    host.http
-                        .shared
+                    progressed = true;
+                }
+                let (server_id, contexts) = {
+                    let mut host = shared_state.borrow_mut();
+                    let server_id = host
+                        .http
+                        .connections
+                        .remove(&socket)
+                        .map(|connection| connection.server);
+                    let contexts = host
+                        .http
                         .responses
-                        .retain(|_, response| response.socket != socket);
+                        .iter()
+                        .filter_map(|(id, response)| {
+                            (response.socket == socket).then_some((*id, response.async_id))
+                        })
+                        .collect::<Vec<_>>();
+                    for (id, _) in &contexts {
+                        host.http.responses.remove(id);
+                    }
+                    if let Some(server_id) = server_id {
+                        if let Some(server) = host.http.servers.get_mut(&server_id) {
+                            server.connections.remove(&socket);
+                        }
+                    }
+                    (server_id, contexts)
+                };
+                for (_, async_id) in contexts {
+                    crate::modules::async_hooks::shared_vm::clear_context(
+                        runtime,
+                        shared_state,
+                        async_id,
+                    );
+                }
+                if server_id.is_some() {
                     progressed = true;
                 }
             }
             net::shared_vm::TransportEvent::Error { socket, message } => {
-                state.borrow_mut().http.shared.connections.remove(&socket);
-                if let Some(client) = state.borrow_mut().http.shared.clients.remove(&socket) {
-                    runtime.release_root(client.callback);
+                let (client, server_id, contexts) = {
+                    let mut host = shared_state.borrow_mut();
+                    let server_id = host
+                        .http
+                        .connections
+                        .remove(&socket)
+                        .map(|connection| connection.server);
+                    let client = host.http.clients.remove(&socket);
+                    let contexts = host
+                        .http
+                        .responses
+                        .iter()
+                        .filter_map(|(id, response)| {
+                            (response.socket == socket).then_some((*id, response.async_id))
+                        })
+                        .collect::<Vec<_>>();
+                    for (id, _) in &contexts {
+                        host.http.responses.remove(id);
+                    }
+                    if let Some(server_id) = server_id {
+                        if let Some(server) = host.http.servers.get_mut(&server_id) {
+                            server.connections.remove(&socket);
+                        }
+                    }
+                    (client, server_id, contexts)
+                };
+                let client_was_present = client.is_some();
+                if let Some(client) = client {
+                    fail_client_exchange(runtime, program, client, &message)?;
                 }
-                return Err(format!("shared HTTP socket failed: {message}"));
+                for (_, async_id) in contexts {
+                    crate::modules::async_hooks::shared_vm::clear_context(
+                        runtime,
+                        shared_state,
+                        async_id,
+                    );
+                }
+                if server_id.is_some() {
+                    progressed = true;
+                } else if client_was_present {
+                    progressed = true;
+                } else {
+                    return Err(format!("shared HTTP socket failed: {message}"));
+                }
             }
         }
     }
-    progressed |= finish_closed_servers(runtime, program, state)?;
+    progressed |= finish_closed_servers(runtime, program, shared_state)?;
     Ok(progressed)
 }
 
-pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>, state: &Rc<RefCell<HostState>>) {
-    let roots = {
-        let mut host = state.borrow_mut();
-        let shared = std::mem::take(&mut host.http.shared);
-        let mut roots = Vec::new();
-        roots.extend(shared.servers.into_values().map(|server| server.root));
-        roots.extend(shared.clients.into_values().map(|client| client.callback));
-        roots.extend(shared.response_factory);
-        net::shared_vm::cleanup(&mut host.net);
-        roots
+fn deliver_client_response_head(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    request_id: u64,
+    request_root: RootId,
+    message: super::protocol::ResponseMessage,
+) -> Result<RootId, String> {
+    let response = response_object(
+        runtime,
+        message.status,
+        message.message,
+        message.headers,
+        message.raw_headers,
+        false,
+    )?;
+    let body = runtime.string_rooted("");
+    let open = runtime.root(Value::TRUE);
+    let exchange_id = runtime.root(Value::number(request_id as f64));
+    let undefined = runtime.root(Value::UNDEFINED);
+    let incoming_factory = shared_state
+        .borrow()
+        .http
+        .incoming_factory
+        .ok_or_else(|| "HTTP incoming-message factory is unavailable".to_owned())?;
+    let readable = match runtime.call_rooted(
+        incoming_factory,
+        undefined,
+        &[response, body, open, exchange_id],
+    ) {
+        Ok(readable) => readable,
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            runtime.release_root(response);
+            runtime.release_root(body);
+            runtime.release_root(open);
+            runtime.release_root(exchange_id);
+            runtime.release_root(undefined);
+            return Err(message);
+        }
     };
+    let emitted = emit_event(runtime, program, request_root, "response", &[readable]);
+    runtime.release_root(response);
+    runtime.release_root(body);
+    runtime.release_root(open);
+    runtime.release_root(exchange_id);
+    runtime.release_root(undefined);
+    if let Err(error) = emitted {
+        runtime.release_root(readable);
+        return Err(error);
+    }
+    Ok(readable)
+}
+
+fn deliver_client_body(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    readable: RootId,
+    chunks: &[Vec<u8>],
+) -> Result<(), String> {
+    for bytes in chunks {
+        deliver_client_body_chunk(runtime, program, readable, bytes)?;
+    }
+    Ok(())
+}
+
+fn deliver_client_body_chunk(
+    runtime: &mut Runtime<NodeHost>,
+    _program: &quench_runtime_next::ResidualProgram,
+    readable: RootId,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let global = runtime.global_root().map_err(|error| error.to_string())?;
+    let buffer_key = runtime.string_rooted("Buffer");
+    let buffer = runtime.get_property_rooted(global, buffer_key);
+    let buffer = match buffer {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            runtime.release_root(buffer_key);
+            runtime.release_root(global);
+            return Err(error.to_string());
+        }
+    };
+    let from_key = runtime.string_rooted("from");
+    let from = runtime.get_property_rooted(buffer, from_key);
+    let from = match from {
+        Ok(from) => from,
+        Err(error) => {
+            runtime.release_root(from_key);
+            runtime.release_root(buffer);
+            runtime.release_root(buffer_key);
+            runtime.release_root(global);
+            return Err(error.to_string());
+        }
+    };
+    let body = runtime.string_rooted(&latin1_text(bytes));
+    let encoding = runtime.string_rooted("latin1");
+    let chunk = runtime.call_rooted(from, buffer, &[body, encoding]);
+    let chunk = match chunk {
+        Ok(chunk) => chunk,
+        Err(error) => {
+            runtime.release_root(body);
+            runtime.release_root(encoding);
+            runtime.release_root(from);
+            runtime.release_root(from_key);
+            runtime.release_root(buffer);
+            runtime.release_root(buffer_key);
+            runtime.release_root(global);
+            return Err(error.to_string());
+        }
+    };
+    let push_key = runtime.string_rooted("push");
+    let result = match runtime.get_property_rooted(readable, push_key) {
+        Ok(push) => {
+            let result = runtime.call_rooted(push, readable, &[chunk]);
+            runtime.release_root(push);
+            result
+        }
+        Err(error) => Err(error),
+    };
+    runtime.release_root(push_key);
+    runtime.release_root(chunk);
+    runtime.release_root(body);
+    runtime.release_root(encoding);
+    runtime.release_root(from);
+    runtime.release_root(from_key);
+    runtime.release_root(buffer);
+    runtime.release_root(buffer_key);
+    runtime.release_root(global);
+    result
+        .map(|value| runtime.release_root(value))
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn finish_client_response(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    readable: RootId,
+) -> Result<(), String> {
+    set_bool(runtime, readable, "complete", true)?;
+    let key = runtime.string_rooted("push");
+    let push = runtime
+        .get_property_rooted(readable, key)
+        .map_err(|error| error.to_string())?;
+    let end = runtime.root(Value::NULL);
+    let result = runtime.call_rooted(push, readable, &[end]);
+    runtime.release_root(end);
+    runtime.release_root(push);
+    runtime.release_root(key);
+    result
+        .map(|value| runtime.release_root(value))
+        .map(|_| ())
+        .map_err(|error| {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            message
+        })
+}
+
+fn fail_client_exchange(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    client: super::state::Client,
+    message: &str,
+) -> Result<(), String> {
+    let error = match client_exchange_error(runtime, program, message) {
+        Ok(error) => error,
+        Err(message) => {
+            if let Some(response) = client.response_root {
+                runtime.release_root(response);
+            }
+            runtime.release_root(client.request_root);
+            return Err(message);
+        }
+    };
+    let stream = client.response_root.unwrap_or(client.request_root);
+    let result = destroy_stream_with_error(runtime, program, stream, error);
+    runtime.release_root(error);
+    if let Some(response) = client.response_root {
+        runtime.release_root(response);
+    }
+    runtime.release_root(client.request_root);
+    result
+}
+
+fn client_exchange_error(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    message: &str,
+) -> Result<RootId, String> {
+    let global = runtime.global_root().map_err(|error| error.to_string())?;
+    let error_key = runtime.string_rooted("Error");
+    let error_constructor = match runtime.get_property_rooted(global, error_key) {
+        Ok(value) => value,
+        Err(error) => {
+            runtime.release_root(error_key);
+            runtime.release_root(global);
+            return Err(runtime.format_error(program, &error.error));
+        }
+    };
+    let message_root = runtime.string_rooted(message);
+    let error =
+        match runtime.construct_rooted(error_constructor, error_constructor, &[message_root]) {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(exception) = error.exception {
+                    runtime.release_root(exception);
+                }
+                runtime.release_root(message_root);
+                runtime.release_root(error_constructor);
+                runtime.release_root(error_key);
+                runtime.release_root(global);
+                return Err(runtime.format_error(program, &error.error));
+            }
+        };
+    let set_code = set_text(runtime, error, "code", "ECONNRESET");
+    runtime.release_root(message_root);
+    runtime.release_root(error_constructor);
+    runtime.release_root(error_key);
+    runtime.release_root(global);
+    if let Err(failure) = set_code {
+        runtime.release_root(error);
+        return Err(failure);
+    }
+    Ok(error)
+}
+
+fn destroy_stream_with_error(
+    runtime: &mut Runtime<NodeHost>,
+    program: &quench_runtime_next::ResidualProgram,
+    stream: RootId,
+    error: RootId,
+) -> Result<(), String> {
+    let destroy_key = runtime.string_rooted("destroy");
+    let destroy = match runtime.get_property_rooted(stream, destroy_key) {
+        Ok(value) => value,
+        Err(error) => {
+            runtime.release_root(destroy_key);
+            return Err(runtime.format_error(program, &error.error));
+        }
+    };
+    let result = runtime.call_rooted(destroy, stream, &[error]);
+    runtime.release_root(destroy);
+    runtime.release_root(destroy_key);
+    result
+        .map(|value| runtime.release_root(value))
+        .map(|_| ())
+        .map_err(|error| {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            message
+        })
+}
+
+pub(crate) fn cleanup(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) {
+    let (roots, async_ids) =
+        {
+            let mut host = shared_state.borrow_mut();
+            let shared = std::mem::take(&mut host.http);
+            let mut roots = Vec::new();
+            roots.extend(shared.servers.into_values().map(|server| server.root));
+            roots.extend(shared.clients.into_values().flat_map(|client| {
+                std::iter::once(client.request_root).chain(client.response_root)
+            }));
+            let async_ids = shared
+                .responses
+                .into_values()
+                .map(|response| response.async_id)
+                .collect::<Vec<_>>();
+            roots.extend(shared.response_factory);
+            roots.extend(shared.incoming_factory);
+            net::shared_vm::cleanup(&mut host.tcp);
+            (roots, async_ids)
+        };
     for root in roots {
         runtime.release_root(root);
+    }
+    for async_id in async_ids {
+        crate::modules::async_hooks::shared_vm::clear_context(runtime, shared_state, async_id);
     }
 }
 
 fn emit_listening(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
-    state: &Rc<RefCell<HostState>>,
+    program: &quench_runtime_next::ResidualProgram,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let pending = {
-        let mut host = state.borrow_mut();
+        let mut host = shared_state.borrow_mut();
         let ids = host
             .http
-            .shared
             .servers
             .iter()
             .filter_map(|(id, server)| server.listening_pending.then_some(*id))
             .collect::<Vec<_>>();
         ids.into_iter()
             .filter_map(|id| {
-                let server = host.http.shared.servers.get_mut(&id)?;
+                let server = host.http.servers.get_mut(&id)?;
                 server.listening_pending = false;
                 Some(server.root)
             })
@@ -312,14 +791,13 @@ fn emit_listening(
 
 fn finish_closed_servers(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
-    state: &Rc<RefCell<HostState>>,
+    program: &quench_runtime_next::ResidualProgram,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let closed = {
-        let mut host = state.borrow_mut();
+        let mut host = shared_state.borrow_mut();
         let ids = host
             .http
-            .shared
             .servers
             .iter()
             .filter_map(|(id, server)| {
@@ -327,13 +805,7 @@ fn finish_closed_servers(
             })
             .collect::<Vec<_>>();
         ids.into_iter()
-            .filter_map(|id| {
-                host.http
-                    .shared
-                    .servers
-                    .remove(&id)
-                    .map(|server| server.root)
-            })
+            .filter_map(|id| host.http.servers.remove(&id).map(|server| server.root))
             .collect::<Vec<_>>()
     };
     let mut first_error = None;
@@ -351,7 +823,7 @@ fn finish_closed_servers(
 
 fn emit_event(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime_next::ResidualProgram,
     receiver: RootId,
     name: &str,
     args: &[RootId],
@@ -364,7 +836,7 @@ fn emit_event(
 
 fn emit(
     runtime: &mut Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    program: &quench_runtime_next::ResidualProgram,
     receiver: RootId,
     event: RootId,
     args: &[RootId],
@@ -408,6 +880,8 @@ fn request_object(
     path: String,
     version: String,
     headers: Vec<(String, String)>,
+    raw_headers: Vec<(String, String)>,
+    socket: RootId,
 ) -> Result<RootId, String> {
     let request = runtime.object_rooted().map_err(|error| error.to_string())?;
     set_text(runtime, request, "method", &method)?;
@@ -419,14 +893,62 @@ fn request_object(
         .unwrap_or((1, 1));
     set_number(runtime, request, "httpVersionMajor", major as f64)?;
     set_number(runtime, request, "httpVersionMinor", minor as f64)?;
-    let headers_object = runtime.object_rooted().map_err(|error| error.to_string())?;
+    let headers_object = runtime
+        .null_object_rooted()
+        .map_err(|error| error.to_string())?;
     for (name, value) in headers {
         set_text(runtime, headers_object, &name, &value)?;
     }
     set_named(runtime, request, "headers", headers_object)?;
+    let raw_headers = raw_header_array(runtime, raw_headers)?;
+    set_named(runtime, request, "rawHeaders", raw_headers)?;
+    // IncomingMessage consumers use socket.readable to distinguish a fully
+    // received message from a finished socket. This connection remains
+    // readable after the request framing has completed, just as Node's
+    // keep-alive socket does.
+    set_bool(runtime, socket, "readable", true)?;
+    set_bool(runtime, socket, "writable", true)?;
+    let socket = duplicate_root(runtime, socket)?;
+    set_named(runtime, request, "socket", socket)?;
     set_bool(runtime, request, "complete", true)?;
     set_bool(runtime, request, "readable", true)?;
     Ok(request)
+}
+
+fn diagnostics_message(
+    runtime: &mut Runtime<NodeHost>,
+    request: RootId,
+    response: RootId,
+    server: RootId,
+    socket: RootId,
+) -> Result<RootId, String> {
+    let message = runtime.object_rooted().map_err(|error| error.to_string())?;
+    for (name, value) in [
+        ("request", request),
+        ("response", response),
+        ("server", server),
+        ("socket", socket),
+    ] {
+        let retained = match duplicate_root(runtime, value) {
+            Ok(retained) => retained,
+            Err(error) => {
+                runtime.release_root(message);
+                return Err(error);
+            }
+        };
+        if let Err(error) = set_named(runtime, message, name, retained) {
+            runtime.release_root(message);
+            return Err(error);
+        }
+    }
+    Ok(message)
+}
+
+fn duplicate_root(runtime: &mut Runtime<NodeHost>, root: RootId) -> Result<RootId, String> {
+    let value = runtime
+        .rooted_value(root)
+        .ok_or_else(|| "shared HTTP value root is no longer live".to_owned())?;
+    Ok(runtime.root(value))
 }
 
 fn response_object(
@@ -435,16 +957,29 @@ fn response_object(
     message: String,
     headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
+    complete: bool,
 ) -> Result<RootId, String> {
     let response = runtime.object_rooted().map_err(|error| error.to_string())?;
     set_number(runtime, response, "statusCode", status as f64)?;
     set_text(runtime, response, "statusMessage", &message)?;
     set_text(runtime, response, "httpVersion", "1.1")?;
-    let headers_object = runtime.object_rooted().map_err(|error| error.to_string())?;
+    let headers_object = runtime
+        .null_object_rooted()
+        .map_err(|error| error.to_string())?;
     for (name, value) in headers {
         set_text(runtime, headers_object, &name, &value)?;
     }
     set_named(runtime, response, "headers", headers_object)?;
+    let raw_headers = raw_header_array(runtime, raw_headers)?;
+    set_named(runtime, response, "rawHeaders", raw_headers)?;
+    set_bool(runtime, response, "complete", complete)?;
+    Ok(response)
+}
+
+fn raw_header_array(
+    runtime: &mut Runtime<NodeHost>,
+    raw_headers: Vec<(String, String)>,
+) -> Result<RootId, String> {
     let mut raw = Vec::with_capacity(raw_headers.len() * 2);
     for (name, value) in raw_headers {
         raw.push(runtime.string_rooted(&name));
@@ -452,21 +987,25 @@ fn response_object(
     }
     let global = runtime.global_root().map_err(|error| error.to_string())?;
     let array_key = runtime.string_rooted("Array");
-    let array = runtime
-        .get_property_rooted(global, array_key)
-        .map_err(|error| error.to_string())?;
-    let raw_headers = runtime
-        .construct_rooted(array, array, &raw)
-        .map_err(|error| error.to_string())?;
+    let array = runtime.get_property_rooted(global, array_key);
+    let result = match array {
+        Ok(array) => {
+            let result = runtime.construct_rooted(array, array, &raw);
+            runtime.release_root(array);
+            result
+        }
+        Err(error) => Err(error),
+    };
     for value in raw {
         runtime.release_root(value);
     }
-    runtime.release_root(array);
     runtime.release_root(array_key);
     runtime.release_root(global);
-    set_named(runtime, response, "rawHeaders", raw_headers)?;
-    set_bool(runtime, response, "complete", true)?;
-    Ok(response)
+    result.map_err(|error| error.to_string())
+}
+
+fn latin1_text(bytes: &[u8]) -> String {
+    bytes.iter().copied().map(char::from).collect()
 }
 
 fn set_text(
@@ -524,82 +1063,4 @@ fn set(
     } else {
         Err("shared HTTP object rejected a required property".into())
     }
-}
-
-fn parse_head(bytes: &[u8]) -> Option<(String, String, String, Vec<(String, String)>, usize)> {
-    let boundary = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n")?;
-    let body_start = boundary + 4;
-    let text = String::from_utf8_lossy(&bytes[..boundary]);
-    let mut lines = text.split("\r\n");
-    let mut request = lines.next()?.split_whitespace();
-    let method = request.next()?.to_owned();
-    let path = request.next()?.to_owned();
-    let version = request.next()?.strip_prefix("HTTP/")?.to_owned();
-    let headers = parse_headers(lines);
-    Some((method, path, version, headers, body_start))
-}
-
-fn parse_response(
-    bytes: &[u8],
-) -> Option<(u16, String, Vec<(String, String)>, Vec<(String, String)>)> {
-    let boundary = bytes.windows(4).position(|bytes| bytes == b"\r\n\r\n")?;
-    let text = String::from_utf8_lossy(&bytes[..boundary]);
-    let mut lines = text.split("\r\n");
-    let mut status_line = lines.next()?.split_whitespace();
-    let _version = status_line.next()?;
-    let status = status_line.next()?.parse().ok()?;
-    let message = status_line.collect::<Vec<_>>().join(" ");
-    let lines = lines.collect::<Vec<_>>();
-    let raw_headers = lines
-        .iter()
-        .filter_map(|line| {
-            let colon = line.find(':')?;
-            Some((
-                line[..colon].trim().to_owned(),
-                line[colon + 1..].trim().to_owned(),
-            ))
-        })
-        .collect::<Vec<_>>();
-    let mut headers = Vec::<(String, String)>::new();
-    for (name, value) in &raw_headers {
-        let name = name.to_ascii_lowercase();
-        if let Some((_, current)) = headers.iter_mut().find(|(key, _)| *key == name) {
-            current.push_str(", ");
-            current.push_str(value);
-        } else {
-            headers.push((name, value.clone()));
-        }
-    }
-    Some((status, message, headers, raw_headers))
-}
-
-fn parse_headers<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<(String, String)> {
-    let mut headers = Vec::<(String, String)>::new();
-    for line in lines {
-        let Some(colon) = line.find(':') else {
-            continue;
-        };
-        let name = line[..colon].trim().to_ascii_lowercase();
-        let value = line[colon + 1..].trim();
-        if let Some((_, current)) = headers.iter_mut().find(|(key, _)| *key == name) {
-            current.push_str(if name == "cookie" { "; " } else { ", " });
-            current.push_str(value);
-        } else {
-            headers.push((name, value.to_owned()));
-        }
-    }
-    headers
-}
-
-fn content_length(head: &[u8]) -> usize {
-    let text = String::from_utf8_lossy(head);
-    text.split("\r\n")
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse().ok())
-                .flatten()
-        })
-        .next()
-        .unwrap_or(0)
 }

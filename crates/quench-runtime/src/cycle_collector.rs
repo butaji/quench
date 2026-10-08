@@ -12,7 +12,9 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use crate::value::{FunctionValue, ObjectData, PrivateSlot, PromiseData, Value};
+use crate::value::{
+    BoundFunctionValue, FunctionValue, ObjectData, PrivateSlot, PromiseData, Value,
+};
 
 // Keep the trigger in the same order of magnitude as QuickJS's allocation
 // budget while allowing for Rust's larger per-node metadata.  The threshold
@@ -137,6 +139,7 @@ impl Drop for RootGuard {
 struct State {
     objects: HashMap<usize, Weak<ObjectData>>,
     functions: HashMap<usize, Weak<FunctionValue>>,
+    bound_functions: HashMap<usize, Weak<BoundFunctionValue>>,
     generators: HashMap<usize, Weak<crate::value::GeneratorData>>,
     promises: HashMap<usize, Weak<PromiseData>>,
     bytes_since_gc: usize,
@@ -147,6 +150,7 @@ struct State {
 enum Node {
     Object(Rc<ObjectData>),
     Function(Rc<FunctionValue>),
+    BoundFunction(Rc<BoundFunctionValue>),
     Generator(Rc<crate::value::GeneratorData>),
     Promise(Rc<PromiseData>),
 }
@@ -156,6 +160,7 @@ impl Node {
         match self {
             Self::Object(value) => Rc::as_ptr(value) as usize,
             Self::Function(value) => Rc::as_ptr(value) as usize,
+            Self::BoundFunction(value) => Rc::as_ptr(value) as usize,
             Self::Generator(value) => Rc::as_ptr(value) as usize,
             Self::Promise(value) => Rc::as_ptr(value) as usize,
         }
@@ -189,6 +194,22 @@ pub(crate) fn track_function(value: &Rc<FunctionValue>) {
             .is_none_or(|entry| entry.strong_count() == 0);
         if needs_insert {
             state.functions.insert(key, Rc::downgrade(value));
+            state.bytes_since_gc = state.bytes_since_gc.saturating_add(256);
+        }
+    });
+}
+
+/// Record a bound function because its mutable properties can own graph edges.
+pub(crate) fn track_bound_function(value: &Rc<BoundFunctionValue>) {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let key = Rc::as_ptr(value) as usize;
+        let needs_insert = state
+            .bound_functions
+            .get(&key)
+            .is_none_or(|entry| entry.strong_count() == 0);
+        if needs_insert {
+            state.bound_functions.insert(key, Rc::downgrade(value));
             state.bytes_since_gc = state.bytes_since_gc.saturating_add(256);
         }
     });
@@ -234,6 +255,7 @@ pub(crate) fn track_value(value: &Value) {
                 track_function(&function);
             }
         }
+        Value::BoundFunction(function) => track_bound_function(function),
         Value::Generator(generator) => track_generator(generator),
         Value::Promise(promise) => track_promise(promise),
         _ => {}
@@ -262,10 +284,10 @@ pub(crate) fn collect_cycles() {
     if let Value::Object(global) = crate::vm::current_global_object() {
         track_object(&global);
     }
-    let (objects, functions, generators, promises) = STATE.with(|state| {
+    let (objects, functions, bound_functions, generators, promises) = STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.collecting {
-            return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         }
         state.collecting = true;
         state.bytes_since_gc = 0;
@@ -277,6 +299,11 @@ pub(crate) fn collect_cycles() {
                 .collect::<Vec<_>>(),
             state
                 .functions
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>(),
+            state
+                .bound_functions
                 .values()
                 .filter_map(Weak::upgrade)
                 .collect::<Vec<_>>(),
@@ -293,10 +320,12 @@ pub(crate) fn collect_cycles() {
         )
     });
 
-    let mut nodes =
-        Vec::with_capacity(objects.len() + functions.len() + generators.len() + promises.len());
+    let mut nodes = Vec::with_capacity(
+        objects.len() + functions.len() + bound_functions.len() + generators.len() + promises.len(),
+    );
     nodes.extend(objects.into_iter().map(Node::Object));
     nodes.extend(functions.into_iter().map(Node::Function));
+    nodes.extend(bound_functions.into_iter().map(Node::BoundFunction));
     nodes.extend(generators.into_iter().map(Node::Generator));
     nodes.extend(promises.into_iter().map(Node::Promise));
     let mut ids = HashMap::with_capacity(nodes.len());
@@ -320,6 +349,16 @@ pub(crate) fn collect_cycles() {
                     append_edges(&value, &ids, &mut edges[index]);
                 }
             }
+            Node::BoundFunction(function) => {
+                append_edges(&function.target, &ids, &mut edges[index]);
+                append_edges(&function.receiver, &ids, &mut edges[index]);
+                for value in &function.arguments {
+                    append_edges(value, &ids, &mut edges[index]);
+                }
+                for (_, value) in function.properties.borrow().iter() {
+                    append_edges(value, &ids, &mut edges[index]);
+                }
+            }
             Node::Generator(generator) => {
                 append_generator_edges(generator, &ids, &mut edges[index]);
             }
@@ -340,6 +379,7 @@ pub(crate) fn collect_cycles() {
         let strong = match node {
             Node::Object(value) => Rc::strong_count(value),
             Node::Function(value) => Rc::strong_count(value),
+            Node::BoundFunction(value) => Rc::strong_count(value),
             Node::Generator(value) => Rc::strong_count(value),
             Node::Promise(value) => Rc::strong_count(value),
         };
@@ -414,6 +454,9 @@ pub(crate) fn collect_cycles() {
             match node {
                 Node::Object(object) => clear_object_edges(object, &doomed, &ids),
                 Node::Function(function) => clear_function_edges(function, &doomed, &ids),
+                Node::BoundFunction(function) => {
+                    clear_bound_function_edges(function, &doomed, &ids)
+                }
                 Node::Generator(_) => {}
                 Node::Promise(promise) => clear_promise_edges(promise),
             }
@@ -428,6 +471,9 @@ pub(crate) fn collect_cycles() {
         let mut state = state.borrow_mut();
         state.objects.retain(|_, entry| entry.strong_count() > 0);
         state.functions.retain(|_, entry| entry.strong_count() > 0);
+        state
+            .bound_functions
+            .retain(|_, entry| entry.strong_count() > 0);
         state.generators.retain(|_, entry| entry.strong_count() > 0);
         state.promises.retain(|_, entry| entry.strong_count() > 0);
         // QuickJS adapts its next pass to the surviving allocation volume.
@@ -461,13 +507,8 @@ fn append_edges(value: &Value, ids: &HashMap<usize, usize>, output: &mut Vec<usi
             append_edges(&proxy.handler, ids, output);
         }
         Value::BoundFunction(function) => {
-            append_edges(&function.target, ids, output);
-            append_edges(&function.receiver, ids, output);
-            for value in &function.arguments {
-                append_edges(value, ids, output);
-            }
-            for (_, value) in function.properties.borrow().iter() {
-                append_edges(value, ids, output);
+            if let Some(&id) = ids.get(&(Rc::as_ptr(function) as usize)) {
+                output.push(id);
             }
         }
         Value::Generator(generator) => {
@@ -599,7 +640,15 @@ fn mark_direct_root_value(value: &Value, ids: &HashMap<usize, usize>, external: 
                     visit(&Value::Object(object), ids, external, seen);
                 }
             }
-            Value::Proxy(_) | Value::BoundFunction(_) => {}
+            Value::BoundFunction(function) => {
+                let key = Rc::as_ptr(function) as usize;
+                if seen.insert(key) {
+                    if let Some(&id) = ids.get(&key) {
+                        external[id] = true;
+                    }
+                }
+            }
+            Value::Proxy(_) => {}
             Value::WeakFunction(_)
             | Value::HostCapability(_)
             | Value::Builtin(_)
@@ -642,6 +691,9 @@ pub(crate) fn value_points_to_doomed(
             .get(&(Rc::as_ptr(object) as usize))
             .is_some_and(|id| doomed.contains(id)),
         Value::Function(function) => ids
+            .get(&(Rc::as_ptr(function) as usize))
+            .is_some_and(|id| doomed.contains(id)),
+        Value::BoundFunction(function) => ids
             .get(&(Rc::as_ptr(function) as usize))
             .is_some_and(|id| doomed.contains(id)),
         // Weak references are not cleared by trial deletion: once their
@@ -756,6 +808,18 @@ fn clear_function_edges(
                     *set = None;
                 }
             }
+        }
+    }
+}
+
+fn clear_bound_function_edges(
+    function: &Rc<BoundFunctionValue>,
+    doomed: &HashSet<usize>,
+    ids: &HashMap<usize, usize>,
+) {
+    for (_, value) in function.properties.borrow_mut().iter_mut() {
+        if value_points_to_doomed(value, doomed, ids) {
+            *value = Value::Undefined;
         }
     }
 }

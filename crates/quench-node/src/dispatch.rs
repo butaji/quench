@@ -48,7 +48,6 @@ const CAP_UTIL_TRANSFERABLE_ABORT_CONTROLLER: u16 =
     crate::registry::SPEC_UTIL_TRANSFERABLE_ABORT_CONTROLLER.cap;
 const CAP_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE: u16 =
     crate::registry::SPEC_STREAM_ADD_ABORT_SIGNAL_NO_VALIDATE.cap;
-const CAP_STREAM_READABLE_BUFFER: u16 = crate::registry::SPEC_STREAM_READABLE_BUFFER.cap;
 const CAP_UTIL_ABORTED: u16 = 0x0310;
 const CAP_UTIL_ABORTED_RESOLVE: u16 = 0x0311;
 const CAP_UTIL_TO_USV_STRING: u16 = 0x0309;
@@ -1223,7 +1222,6 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PROMISES_FINISHED => stream_promises_finished,
         CAP_STREAM_PROMISES_CALLBACK => stream_promises_callback,
         CAP_STREAM_WRITABLE_WRITE_ADAPTER => crate::modules::stream::writable_write_adapter,
-        CAP_STREAM_READABLE_BUFFER => crate::modules::stream::readable_buffer,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,

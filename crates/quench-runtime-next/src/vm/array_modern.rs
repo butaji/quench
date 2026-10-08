@@ -388,11 +388,13 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let promise = self.promise_object();
-        if let Err(error) = self.array_from_async_start(p, promise, this, args) {
-            let reason = self.thrown_value_for(p, error);
-            self.promise_settle(p, promise, super::promise::PromiseState::Rejected, reason)?;
-        }
-        Ok(promise)
+        self.with_call_roots([promise], |vm| {
+            if let Err(error) = vm.array_from_async_start(p, promise, this, args) {
+                let reason = vm.thrown_value_for(p, error);
+                vm.promise_settle(p, promise, super::promise::PromiseState::Rejected, reason)?;
+            }
+            Ok(promise)
+        })
     }
 
     fn array_from_async_start(
@@ -550,15 +552,17 @@ impl<H: Host> Vm<H> {
         }
         let result = (|| {
             let promise = self.promise_object();
-            self.promise_resolve_value(p, promise, value)?;
-            let state_value = self
-                .heap
-                .root_value(state_root)
-                .expect("rooted Array.fromAsync continuation remains live");
-            let fulfilled = self.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
-            let rejected = self.native_with_env(Native::ArrayFromAsyncRejected, state_value);
-            self.promise_then(p, promise, fulfilled, rejected)?;
-            Ok(())
+            self.with_call_roots([promise], |vm| {
+                vm.promise_resolve_value(p, promise, value)?;
+                let state_value = vm
+                    .heap
+                    .root_value(state_root)
+                    .expect("rooted Array.fromAsync continuation remains live");
+                let fulfilled = vm.native_with_env(Native::ArrayFromAsyncFulfilled, state_value);
+                let rejected = vm.native_with_env(Native::ArrayFromAsyncRejected, state_value);
+                vm.promise_then(p, promise, fulfilled, rejected)?;
+                Ok(())
+            })
         })();
         self.heap.release_root(state_root);
         result

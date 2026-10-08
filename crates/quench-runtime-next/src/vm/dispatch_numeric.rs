@@ -84,74 +84,12 @@ macro_rules! execute_specialized_numeric {
 }
 
 impl<H: Host> Vm<H> {
-    #[inline(never)]
-    pub(super) fn call_user_numeric(
-        &mut self,
-        p: &ResidualProgram,
-        id: u32,
-        parent: Value,
-        this: Value,
-        args: &[Value],
-        context: CallContext,
-    ) -> Result<Value, JsError> {
-        let _stack = self.enter_stack()?;
-        self.profile.function(id as usize);
-        let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-        });
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
-        for index in 0..fixed {
-            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
-        }
-        if function.rest {
-            let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
-        }
-        self.initialize_frame_invocation(&mut frame, context, args);
-        frame.function = id;
-        frame.program = self.active_program;
-        frame.pc = 0;
-        frame.binding_site_pc = None;
-        frame.env = parent;
-        frame.this = self.call_this_value(this, function.strict)?;
-        frame.captured = false;
-        frame.with_base = self.with_stack.len();
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
-        self.frames.push(frame);
-        let result = self.run_frame_numeric(p, self.frames.len() - 1);
-        let frame = self.frames.pop().unwrap();
-        self.frame_pool.push(Self::recycle_frame(frame));
-        result
-    }
-
     pub(super) fn run_frame_numeric(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
+        let _stack = self.enter_stack()?;
         let function = self.frames[frame].function as usize;
         let code = &p.functions[function].code;
         let mut pc = self.frames[frame].pc;

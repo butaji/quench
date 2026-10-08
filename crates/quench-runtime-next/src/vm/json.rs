@@ -166,8 +166,8 @@ impl<'a> JsonParser<'a> {
     }
 
     fn value(&mut self) -> Result<JsonValue, JsonParseError> {
-        let _stack = crate::stack::StackGuard::enter()
-            .map_err(|()| JsonParseError::StackExhausted)?;
+        let _stack =
+            crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)?;
         self.whitespace();
         let start = self.index;
         let value = match self.peek() {
@@ -457,7 +457,11 @@ impl<H: Host> Vm<H> {
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
-    pub(super) fn json_parse(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+    pub(super) fn json_parse(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let parsed = match JsonParser::new(text.units()).parse() {
             Ok(parsed) => parsed,
@@ -740,7 +744,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_boxed_string_or_number(&self, value: Value) -> Option<Value> {
-        for marker in ["\0rqj:string-value", "\0rqj:number-value"] {
+        for marker in ["\0quench:string-value", "\0quench:number-value"] {
             let Some(atom) = self.lookup_atom(marker) else {
                 continue;
             };
@@ -752,8 +756,12 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_gap(&mut self, p: &ResidualProgram, value: Value) -> Result<String, JsError> {
-        let number_box = self.json_boxed_value(value, "\0rqj:number-value").is_some();
-        let string_box = self.json_boxed_value(value, "\0rqj:string-value").is_some();
+        let number_box = self
+            .json_boxed_value(value, "\0quench:number-value")
+            .is_some();
+        let string_box = self
+            .json_boxed_value(value, "\0quench:string-value")
+            .is_some();
         let value = if number_box {
             Value::number(self.to_number(p, value)?)
         } else if string_box {
@@ -913,27 +921,43 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalInstant { .. }) => {
                 self.json_serialize_object(p, value, state).map(Some)
             }
-            Some(Cell::BindingReference { .. })
-            | Some(Cell::Environment { .. })
+            Some(Cell::Environment { .. })
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::PromiseResolvingState { .. })
-            | Some(Cell::WasmBits64(_)) => Ok(None),
+            | Some(Cell::WasmElements(_))
+            | Some(Cell::WasmGlobal { .. })
+            | Some(Cell::WasmMemory { .. })
+            | Some(Cell::WasmTable { .. })
+            | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmGc { .. })
+            | Some(Cell::WasmExtern(_))
+            | Some(Cell::WasmTag { .. })
+            | Some(Cell::WasmException { .. })
+            | Some(Cell::WasmV128(_))
+            | Some(Cell::BindingReference { .. })
+            | Some(Cell::WasmHostFunction { .. }) => Ok(None),
         }
     }
 
     fn json_unbox(&mut self, p: &ResidualProgram, value: Value) -> Result<Value, JsError> {
-        if self.json_boxed_value(value, "\0rqj:string-value").is_some() {
+        if self
+            .json_boxed_value(value, "\0quench:string-value")
+            .is_some()
+        {
             let text = self.to_string(p, value)?;
             return Ok(self.heap.alloc(Cell::String(text.into())));
         }
-        if self.json_boxed_value(value, "\0rqj:number-value").is_some() {
+        if self
+            .json_boxed_value(value, "\0quench:number-value")
+            .is_some()
+        {
             return Ok(Value::number(self.to_number(p, value)?));
         }
-        if let Some(value) = self.json_boxed_value(value, "\0rqj:boolean-value") {
+        if let Some(value) = self.json_boxed_value(value, "\0quench:boolean-value") {
             return Ok(value);
         }
-        if let Some(value) = self.json_boxed_value(value, "\0rqj:bigint-value") {
+        if let Some(value) = self.json_boxed_value(value, "\0quench:bigint-value") {
             return Ok(value);
         }
         Ok(value)
@@ -1073,8 +1097,6 @@ impl<H: Host> Vm<H> {
         }
         result
     }
-
-
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
 pub(crate) fn structured_clone(
     context: &mut NativeContext<'_, NodeHost>,

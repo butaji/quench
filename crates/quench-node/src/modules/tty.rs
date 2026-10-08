@@ -13,13 +13,26 @@ pub fn isatty(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let fd = args.first().map(value_to_i32).unwrap_or(0);
-    let result = match fd {
-        0 => atty_stdout(),
-        1 => atty_stdout(),
-        2 => atty_stderr(),
-        _ => false,
-    };
-    Ok(Value::Boolean(result))
+    Ok(Value::Boolean(is_terminal_fd(fd)))
+}
+
+pub(crate) mod shared_vm;
+
+/// Return whether this process currently has a terminal attached to `fd`.
+/// Both runtime entry paths use this OS fact as the authority for tty.isatty.
+pub(crate) fn is_terminal_fd(fd: i32) -> bool {
+    #[cfg(unix)]
+    {
+        if fd < 0 {
+            return false;
+        }
+        unsafe { libc_isatty(fd) }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = fd;
+        false
+    }
 }
 
 pub fn value_to_i32(value: &Value) -> i32 {
@@ -31,28 +44,11 @@ pub fn value_to_i32(value: &Value) -> i32 {
 }
 
 #[cfg(unix)]
-fn atty_stdout() -> bool {
-    unsafe { libc_isatty(1) }
-}
-#[cfg(unix)]
-fn atty_stderr() -> bool {
-    unsafe { libc_isatty(2) }
-}
-#[cfg(unix)]
 unsafe fn libc_isatty(fd: i32) -> bool {
     extern "C" {
         fn isatty(fd: i32) -> i32;
     }
     unsafe { isatty(fd) != 0 }
-}
-
-#[cfg(not(unix))]
-fn atty_stdout() -> bool {
-    false
-}
-#[cfg(not(unix))]
-fn atty_stderr() -> bool {
-    false
 }
 
 pub fn build() -> Value {
