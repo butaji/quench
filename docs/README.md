@@ -230,7 +230,7 @@ WASM_FILE_TIMEOUT_MS=60000 \
 
 Reports preserve every parsed directive with a file/ordinal identity, expected
 and actual results, input hashes, binary hash, command and worker outcomes.
-The `next` report schema is shared with saved Test262 outcome comparisons:
+The canonical report schema is shared with saved Test262 outcome comparisons:
 
 ```sh
 target/debug/compare-runs --reports \

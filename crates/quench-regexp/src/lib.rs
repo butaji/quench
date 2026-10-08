@@ -1133,12 +1133,8 @@ fn lower_class(class: &ast::CharacterClass<'_>, source: &str) -> ClassExpr {
 }
 
 fn legacy_class_control(contents: &[ast::CharacterClassContents<'_>], source: &str) -> Option<u32> {
-    let [
-        ast::CharacterClassContents::Character(backslash),
-        ast::CharacterClassContents::Character(control),
-        ast::CharacterClassContents::Character(letter),
-        ..,
-    ] = contents
+    let [ast::CharacterClassContents::Character(backslash), ast::CharacterClassContents::Character(control), ast::CharacterClassContents::Character(letter), ..] =
+        contents
     else {
         return None;
     };
