@@ -388,6 +388,10 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    PushFrame {
+        destination: Register,
+        stack_guard: crate::stack::StackGuard,
+    },
     Return(Value),
     Await {
         value: Value,
@@ -417,6 +421,16 @@ pub(super) enum FrameOutcome {
         delegated_result: Option<Value>,
         frame: Option<Frame>,
     },
+}
+enum UserFrameStart {
+    Outcome(FrameOutcome),
+    Pushed(crate::stack::StackGuard),
+}
+struct PendingGeneralCall {
+    caller: usize,
+    call_pc: u32,
+    destination: Register,
+    stack_guard: crate::stack::StackGuard,
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
