@@ -16,6 +16,9 @@ if (Module.isBuiltin.name !== 'isBuiltin' || Module.isBuiltin.length !== 1) {
 if (Module.createRequire.name !== 'createRequire' || Module.createRequire.length !== 1) {
   throw new Error('createRequire function shape');
 }
+if (Module.findPackageJSON.name !== 'findPackageJSON' || Module.findPackageJSON.length !== 1) {
+  throw new Error('findPackageJSON function shape');
+}
 for (const name of ['fs', 'fs/promises', 'path/posix', 'assert/strict', 'module']) {
   if (!Module.builtinModules.includes(name)) throw new Error('missing builtin: ' + name);
   if (!Module.isBuiltin(name)) throw new Error('isBuiltin(' + name + ')');
@@ -32,6 +35,44 @@ const packageRequire = Module.createRequire(require.resolve('./test-modules.js')
 const add = packageRequire('quench-fixture');
 if (typeof add !== 'function' || add(2, 3) !== 5 || add.depLabel !== 'quench-dep') {
   throw new Error('createRequire did not resolve the fixture package');
+}
+const fixtureManifest = require.resolve('quench-fixture/package.json');
+if (Module.findPackageJSON('quench-fixture', __filename) !== fixtureManifest) {
+  throw new Error('findPackageJSON did not resolve a bare package');
+}
+if (Module.findPackageJSON('./node_modules/quench-fixture/index.js', __filename) !== fixtureManifest) {
+  throw new Error('findPackageJSON did not resolve a relative module');
+}
+const fixtureUrl = new URL('file://' + require.resolve('quench-fixture/index.js'));
+if (Module.findPackageJSON(fixtureUrl) !== fixtureManifest) {
+  throw new Error('findPackageJSON did not accept a URL specifier');
+}
+if (Module.findPackageJSON('./node_modules/quench-fixture/index.js', new URL('file://' + __filename)) !== fixtureManifest) {
+  throw new Error('findPackageJSON did not accept a URL base');
+}
+const path = require('node:path');
+const repoRoot = path.resolve(__dirname, '../../..');
+if (Module.findPackageJSON('./package.json', repoRoot + path.sep) !== require.resolve('../../../package.json')) {
+  throw new Error('findPackageJSON did not resolve a directory base');
+}
+let dirnameBaseError;
+try { Module.findPackageJSON('./package.json', repoRoot); } catch (caught) { dirnameBaseError = caught; }
+if (!dirnameBaseError || dirnameBaseError.code !== 'ERR_MODULE_NOT_FOUND') {
+  throw new Error('findPackageJSON treated a path base as a directory without a trailing separator');
+}
+for (const [specifier, base, code, type] of [
+  ['node:fs', __filename, 'ERR_INVALID_URL_SCHEME', TypeError],
+  ['missing-quench-package', __filename, 'ERR_MODULE_NOT_FOUND', Error],
+  ['./missing-quench-module.js', __filename, 'ERR_MODULE_NOT_FOUND', Error],
+  ['./relative.js', undefined, 'ERR_UNSUPPORTED_RESOLVE_REQUEST', TypeError],
+  ['./relative.js', 'https://example.com/entry.js', 'ERR_INVALID_URL_SCHEME', TypeError],
+  ['file:///tmp/quench-module-that-does-not-exist.js', undefined, 'ERR_MODULE_NOT_FOUND', Error],
+]) {
+  let error;
+  try { Module.findPackageJSON(specifier, base); } catch (caught) { error = caught; }
+  if (!(error instanceof type) || error.code !== code) {
+    throw new Error('findPackageJSON error for ' + specifier + ': ' + (error && error.code));
+  }
 }
 for (const filename of [undefined, 'relative/file.js', null]) {
   let error;
