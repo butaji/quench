@@ -50,6 +50,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "parse", parse)?;
     set(context, module, "URL", constructor)?;
     set(context, module, "Url", legacy_constructor)?;
+    let format = context.host_function(crate::host::shared_vm::operation("urlFormat"))?;
+    set(context, module, "format", format)?;
     let path_to_file_url = context.host_function(
         crate::host::shared_vm::operation("pathToFileURL"),
     )?;
@@ -442,6 +444,262 @@ pub(crate) fn parse(
         set(context, instance, name, value)?;
     }
     Ok(instance)
+}
+
+pub(crate) fn format(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(input) = args.first().copied() else {
+        return Err(invalid_format_argument(context));
+    };
+    if let Some(input) = context.string_text(input)? {
+        let parts = match url_legacy::parse_legacy_parts(&input) {
+            Ok(parts) => parts,
+            Err(LegacyUrlParseError::Invalid { code, input }) => {
+                return Err(coded_type_error(context, &code, &input));
+            }
+            Err(LegacyUrlParseError::MalformedUri) => return Err(uri_error(context)),
+        };
+        let mut fields = LegacyFormatFields::default();
+        for (name, value) in parts.fields {
+            match (name, value) {
+                ("slashes", LegacyUrlField::Boolean(value)) => fields.slashes = value,
+                (_, LegacyUrlField::Text(value)) => fields.set(name, value),
+                _ => {}
+            }
+        }
+        let formatted = format_legacy_fields(fields);
+        return Ok(context.string_rooted(&formatted));
+    }
+
+    if !context.is_object_rooted(input)? {
+        return Err(invalid_format_argument(context));
+    }
+    if let Some(href) = url_argument_text(context, input)? {
+        let formatted = format_whatwg_url(context, &href, args.get(1).copied())?;
+        return Ok(context.string_rooted(&formatted));
+    }
+
+    let mut fields = LegacyFormatFields::default();
+    fields.auth = truthy_property_string(context, input, "auth")?;
+    fields.auth_encoded = fields
+        .auth
+        .as_deref()
+        .filter(|auth| !auth.is_empty())
+        .map(encode_auth);
+    fields.protocol = truthy_property_string(context, input, "protocol")?;
+    fields.pathname = truthy_property_string(context, input, "pathname")?;
+    fields.hash = truthy_property_string(context, input, "hash")?;
+    fields.host = truthy_property_string(context, input, "host")?;
+    fields.hostname = truthy_property_string(context, input, "hostname")?;
+    fields.port = truthy_property_string(context, input, "port")?;
+    let query = get(context, input, "query")?;
+    if context.is_object_rooted(query)? {
+        let query_module = crate::modules::querystring_shared_vm::module(context)?;
+        let stringify = get(context, query_module, "stringify")?;
+        let undefined = context.undefined();
+        let stringified = context.call_rooted(stringify, undefined, &[query])?;
+        fields.query = context.string_text(stringified)?;
+    }
+    fields.search = truthy_property_string(context, input, "search")?;
+    let slashes = get(context, input, "slashes")?;
+    fields.slashes = context.truthy_rooted(slashes)?;
+    let formatted = format_legacy_fields(fields);
+    Ok(context.string_rooted(&formatted))
+}
+
+#[derive(Default)]
+struct LegacyFormatFields {
+    protocol: Option<String>,
+    auth: Option<String>,
+    auth_encoded: Option<String>,
+    host: Option<String>,
+    hostname: Option<String>,
+    port: Option<String>,
+    pathname: Option<String>,
+    search: Option<String>,
+    hash: Option<String>,
+    query: Option<String>,
+    slashes: bool,
+}
+
+impl LegacyFormatFields {
+    fn set(&mut self, name: &str, value: String) {
+        match name {
+            "protocol" => self.protocol = Some(value),
+            "auth" => self.auth = Some(value),
+            "host" => self.host = Some(value),
+            "hostname" => self.hostname = Some(value),
+            "port" => self.port = Some(value),
+            "pathname" => self.pathname = Some(value),
+            "search" => self.search = Some(value),
+            "hash" => self.hash = Some(value),
+            _ => {}
+        }
+    }
+}
+
+fn format_legacy_fields(fields: LegacyFormatFields) -> String {
+    let mut protocol = fields.protocol.unwrap_or_default();
+    if !protocol.is_empty() && !protocol.ends_with(':') {
+        protocol.push(':');
+    }
+    let mut host = fields.host.unwrap_or_default();
+    if host.is_empty() {
+        if let Some(hostname) = fields.hostname {
+            host = if hostname.contains(':') && !hostname.starts_with('[') {
+                format!("[{hostname}]")
+            } else {
+                hostname
+            };
+            if let Some(port) = fields.port {
+                if !port.is_empty() {
+                    host.push(':');
+                    host.push_str(&port);
+                }
+            }
+        }
+    }
+    if let Some(auth) = fields.auth_encoded {
+        host = format!("{auth}@{host}");
+    } else if let Some(auth) = fields.auth.filter(|auth| !auth.is_empty()) {
+        host = format!("{}@{host}", encode_auth(&auth));
+    }
+
+    let mut pathname = fields.pathname.unwrap_or_default();
+    pathname = pathname.replace('#', "%23").replace('?', "%3F");
+    let mut search = fields
+        .search
+        .filter(|search| !search.is_empty())
+        .or_else(|| fields.query.filter(|query| !query.is_empty()).map(|query| format!("?{query}")))
+        .unwrap_or_default();
+    if search.contains('#') {
+        search = search.replace('#', "%23");
+    }
+    let mut hash = fields.hash.unwrap_or_default();
+    if !hash.is_empty() && !hash.starts_with('#') {
+        hash.insert(0, '#');
+    }
+
+    if fields.slashes || is_slashed_protocol(&protocol) {
+        if fields.slashes || !host.is_empty() {
+            if !pathname.is_empty() && !pathname.starts_with('/') {
+                pathname.insert(0, '/');
+            }
+            host.insert_str(0, "//");
+        } else if protocol.starts_with("file") {
+            host.push_str("//");
+        }
+    }
+    if !search.is_empty() && !search.starts_with('?') {
+        search.insert(0, '?');
+    }
+    format!("{protocol}{host}{pathname}{search}{hash}")
+}
+
+fn is_slashed_protocol(protocol: &str) -> bool {
+    matches!(protocol, "http:" | "https:" | "ftp:" | "gopher:" | "file:" | "ws:" | "wss:")
+}
+
+fn encode_auth(auth: &str) -> String {
+    let mut encoded = String::with_capacity(auth.len());
+    for byte in auth.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'():".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte >> 4) as usize]));
+            encoded.push(char::from(b"0123456789ABCDEF"[(byte & 0x0f) as usize]));
+        }
+    }
+    encoded
+}
+
+fn format_whatwg_url(
+    context: &mut NativeContext<'_, NodeHost>,
+    href: &str,
+    options: Option<RootId>,
+) -> Result<String, RootedError> {
+    let mut formatted = href.to_owned();
+    let Some(options) = options else {
+        return Ok(formatted);
+    };
+    if context
+        .rooted_value(options)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+        || !context.truthy_rooted(options)?
+    {
+        return Ok(formatted);
+    }
+    if !context.is_object_rooted(options)? {
+        return Err(invalid_format_options(context));
+    }
+    if !option_truthy(context, options, "fragment")? {
+        if let Some(index) = formatted.find('#') {
+            formatted.truncate(index);
+        }
+    }
+    let _unicode = option_truthy(context, options, "unicode")?;
+    if !option_truthy(context, options, "search")? {
+        let before_hash = formatted.find('#').unwrap_or(formatted.len());
+        if let Some(index) = formatted[..before_hash].find('?') {
+            formatted.replace_range(index..before_hash, "");
+        }
+    }
+    if !option_truthy(context, options, "auth")? {
+        if let Some(authority_start) = formatted.find("//").map(|index| index + 2) {
+            let authority_end = formatted[authority_start..]
+                .find(['/', '?', '#'])
+                .map(|index| authority_start + index)
+                .unwrap_or(formatted.len());
+            if let Some(auth_end) = formatted[authority_start..authority_end].rfind('@') {
+                formatted.replace_range(authority_start..authority_start + auth_end + 1, "");
+            }
+        }
+    }
+    Ok(formatted)
+}
+
+fn option_truthy(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    name: &str,
+) -> Result<bool, RootedError> {
+    let value = get(context, options, name)?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(true);
+    }
+    context.truthy_rooted(value)
+}
+
+fn truthy_property_string(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<Option<String>, RootedError> {
+    let value = get(context, object, name)?;
+    if context.truthy_rooted(value)? {
+        Ok(Some(context.to_string(value)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn invalid_format_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
+    coded_url_type_error(
+        context,
+        "ERR_INVALID_ARG_TYPE",
+        "The \"urlObject\" argument must be of type object or string",
+    )
+}
+
+fn invalid_format_options(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
+    coded_url_type_error(context, "ERR_INVALID_ARG_TYPE", "The \"options\" argument must be of type object")
 }
 
 fn parse_whatwg(
