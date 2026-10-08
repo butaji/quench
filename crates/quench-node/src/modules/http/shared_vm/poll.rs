@@ -1,5 +1,5 @@
 use super::state::{Response, ServerConnection};
-use crate::host::{HostState, NodeHost, SharedNodeState};
+use crate::host::{NodeHost, SharedNodeState};
 use crate::modules::net;
 use quench_runtime_next::{RootId, Runtime, Value};
 use std::cell::RefCell;
@@ -11,7 +11,6 @@ const RESPONSE_HEAD_LIMIT: usize = 64 * 1024;
 pub(crate) fn poll(
     runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime_next::ResidualProgram,
-    state: &Rc<RefCell<HostState>>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let events = {
@@ -91,7 +90,7 @@ pub(crate) fn poll(
                     };
                     if let Some(message) = dispatch {
                         let request_async_id =
-                            crate::modules::async_hooks::shared_vm::create_context(state);
+                            crate::modules::async_hooks::shared_vm::create_context(shared_state);
                         let (server_root, response_id, response_factory, incoming_factory) = {
                             let mut host = shared_state.borrow_mut();
                             let server_id = host.http.connections[&socket].server;
@@ -211,7 +210,7 @@ pub(crate) fn poll(
                         };
                         let delivered = {
                             let _scope = crate::modules::async_hooks::shared_vm::enter_context(
-                                state,
+                                shared_state,
                                 request_async_id,
                             );
                             let diagnostic_result = crate::modules::diagnostics_channel::shared_vm::publish_named_runtime(

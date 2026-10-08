@@ -6,7 +6,7 @@
 
 pub(crate) mod shared_vm;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -30,6 +30,53 @@ const SCOPE_PREVIOUS: &str = "\0quench:async_hooks:scope:previous";
 const SCOPE_HAD_PREVIOUS: &str = "\0quench:async_hooks:scope:had_previous";
 const SCOPE_ACTIVE: &str = "\0quench:async_hooks:scope:active";
 const TRACE_PROMISE_CLEAR_STORE: &str = "\0quench:diagnostics:trace-promise-clear-store";
+
+const ROOT_ASYNC_ID: u64 = 1;
+const NO_TRIGGER_ID: u64 = 0;
+const FIRST_ASYNC_ID: u64 = ROOT_ASYNC_ID + 1;
+const FIRST_LOCAL_STORAGE_ID: u64 = 1;
+
+/// Identity counters shared by the legacy callback adapter and shared VM.
+/// Runtime values and callback state remain owned by their respective adapters.
+#[derive(Clone, Debug)]
+pub(crate) struct AsyncIdentity(Rc<AsyncIdentityCells>);
+
+#[derive(Debug)]
+struct AsyncIdentityCells {
+    next_async_id: Cell<u64>,
+    current_async_id: Cell<u64>,
+    next_local_storage_id: Cell<u64>,
+}
+
+impl AsyncIdentity {
+    pub(crate) fn new() -> Self {
+        Self(Rc::new(AsyncIdentityCells {
+            next_async_id: Cell::new(FIRST_ASYNC_ID),
+            current_async_id: Cell::new(ROOT_ASYNC_ID),
+            next_local_storage_id: Cell::new(FIRST_LOCAL_STORAGE_ID),
+        }))
+    }
+
+    pub(crate) fn allocate_async_id(&self) -> u64 {
+        let id = self.0.next_async_id.get();
+        self.0.next_async_id.set(id + 1);
+        id
+    }
+
+    pub(crate) fn current_async_id(&self) -> u64 {
+        self.0.current_async_id.get()
+    }
+
+    pub(crate) fn replace_current_async_id(&self, id: u64) -> u64 {
+        self.0.current_async_id.replace(id)
+    }
+
+    pub(crate) fn allocate_local_storage_id(&self) -> u64 {
+        let id = self.0.next_local_storage_id.get();
+        self.0.next_local_storage_id.set(id + 1);
+        id
+    }
+}
 
 #[derive(Clone, Debug)]
 struct Hook {
@@ -55,16 +102,23 @@ use crate::registry::{
 };
 
 /// Rooted state owned exclusively by the shared-VM async-hooks adapter.
-/// Async identity counters remain in `AsyncHooksState` so legacy and shared
-/// adapters continue to use one ID sequence during the cutover.
-#[derive(Default)]
 pub(crate) struct SharedAsyncHooksState {
+    identity: AsyncIdentity,
     module: Option<RootId>,
     local_stores: HashMap<(u64, u64), RootId>,
     store_references: HashMap<RootId, usize>,
 }
 
 impl SharedAsyncHooksState {
+    pub(crate) fn new(identity: AsyncIdentity) -> Self {
+        Self {
+            identity,
+            module: None,
+            local_stores: HashMap::new(),
+            store_references: HashMap::new(),
+        }
+    }
+
     pub(crate) fn retain_store(&mut self, store: RootId) {
         let references = self.store_references.entry(store).or_default();
         *references = references
@@ -87,9 +141,8 @@ impl SharedAsyncHooksState {
 
 #[derive(Debug)]
 pub struct AsyncHooksState {
-    next_id: u64,
+    identity: AsyncIdentity,
     next_hook_id: u64,
-    current_id: u64,
     current_resource: Option<Value>,
     root_resource: Value,
     hooks: Vec<Hook>,
@@ -98,7 +151,6 @@ pub struct AsyncHooksState {
     // keeps context propagation in the host state machine instead of relying
     // on a second JS-only context registry.
     local_stores: HashMap<(u64, u64), Value>,
-    next_local_id: u64,
     resource_stack: Vec<(u64, Option<Value>)>,
     destroyed_resources: HashSet<u64>,
     tracked_resources: HashMap<u64, (Value, bool)>,
@@ -108,20 +160,22 @@ pub struct AsyncHooksState {
 
 impl AsyncHooksState {
     pub fn new() -> Self {
+        Self::with_identity(AsyncIdentity::new())
+    }
+
+    pub(crate) fn with_identity(identity: AsyncIdentity) -> Self {
         let root_resource = host_api::object(vec![
-            (ASYNC_ID.into(), Value::Number(1.0)),
-            (TRIGGER_ID.into(), Value::Number(0.0)),
+            (ASYNC_ID.into(), Value::Number(ROOT_ASYNC_ID as f64)),
+            (TRIGGER_ID.into(), Value::Number(NO_TRIGGER_ID as f64)),
         ]);
         Self {
-            next_id: 2,
+            identity,
             next_hook_id: 1,
-            current_id: 1,
             current_resource: Some(root_resource.clone()),
             root_resource,
             hooks: Vec::new(),
             promise_resources: HashMap::new(),
             local_stores: HashMap::new(),
-            next_local_id: 1,
             resource_stack: Vec::new(),
             destroyed_resources: HashSet::new(),
             tracked_resources: HashMap::new(),
@@ -131,8 +185,7 @@ impl AsyncHooksState {
     }
 
     fn allocate(&mut self, trigger: u64) -> (u64, u64) {
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = self.identity.allocate_async_id();
         (id, trigger)
     }
 
@@ -248,7 +301,13 @@ pub fn execution_id(
     _: Option<&Value>,
     _: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Number(state.borrow().async_hooks.current_id as f64))
+    Ok(Value::Number(
+        state
+            .borrow()
+            .async_hooks
+            .identity
+            .current_async_id() as f64,
+    ))
 }
 
 pub fn new_async_local_storage(
@@ -258,9 +317,11 @@ pub fn new_async_local_storage(
     // Keep the complete state machine in the Rust host. The bootstrap class
     // is only a compatibility fallback for older profiles; using it here
     // would make missing properties inherit the execution global.
-    let mut host = state.borrow_mut();
-    let id = host.async_hooks.next_local_id;
-    host.async_hooks.next_local_id += 1;
+    let id = state
+        .borrow()
+        .async_hooks
+        .identity
+        .allocate_local_storage_id();
     let has_default = args.first().is_some_and(|options| {
         execute::get_own_property_descriptor(options, "defaultValue")
             .ok()
@@ -324,7 +385,7 @@ pub(crate) fn legacy_store_for_resource(state: &Rc<RefCell<HostState>>, resource
 }
 
 pub(crate) fn current_resource_id(state: &Rc<RefCell<HostState>>) -> u64 {
-    state.borrow().async_hooks.current_id
+    state.borrow().async_hooks.identity.current_async_id()
 }
 
 fn local_id(receiver: Option<&Value>) -> Option<u64> {
@@ -343,7 +404,7 @@ pub fn local_get_store(
     _: &[Value],
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
-    let resource_id = state.borrow().async_hooks.current_id;
+    let resource_id = state.borrow().async_hooks.identity.current_async_id();
     let store = state
         .borrow()
         .async_hooks
@@ -370,7 +431,7 @@ pub fn local_enter_with(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
-    let resource_id = state.borrow().async_hooks.current_id;
+    let resource_id = state.borrow().async_hooks.identity.current_async_id();
     state.borrow_mut().async_hooks.local_stores.insert(
         (resource_id, id),
         args.first().cloned().unwrap_or(Value::Undefined),
@@ -408,7 +469,7 @@ pub fn local_exit(
         return Err(VmError::NotCallable);
     }
     let id = local_id(receiver).unwrap_or_default();
-    let resource_id = state.borrow().async_hooks.current_id;
+    let resource_id = state.borrow().async_hooks.identity.current_async_id();
     let previous = state
         .borrow_mut()
         .async_hooks
@@ -431,7 +492,7 @@ pub fn local_scope(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let id = local_id(receiver).unwrap_or_default();
-    let resource = state.borrow().async_hooks.current_id;
+    let resource = state.borrow().async_hooks.identity.current_async_id();
     let previous = state.borrow_mut().async_hooks.local_stores.insert(
         (resource, id),
         args.first().cloned().unwrap_or(Value::Undefined),
@@ -468,7 +529,7 @@ pub fn local_scope_dispose(
     ) {
         return Ok(Value::Undefined);
     }
-    let resource = number(execute::get_property(scope, SCOPE_RESOURCE)).unwrap_or(1);
+    let resource = number(execute::get_property(scope, SCOPE_RESOURCE)).unwrap_or(ROOT_ASYNC_ID);
     let id = number(execute::get_property(scope, SCOPE_ID)).unwrap_or_default();
     let previous = execute::get_property(scope, SCOPE_PREVIOUS);
     let had_previous = matches!(
@@ -561,7 +622,7 @@ pub fn local_snapshot_call(
 
 fn capture_local_context(state: &Rc<RefCell<HostState>>) -> Value {
     let host = state.borrow();
-    let resource = host.async_hooks.current_id;
+    let resource = host.async_hooks.identity.current_async_id();
     let values = host
         .async_hooks
         .local_stores
@@ -577,7 +638,7 @@ fn with_local_context<T>(
     context: &Value,
     callback: impl FnOnce() -> Result<T, VmError>,
 ) -> Result<T, VmError> {
-    let resource = state.borrow().async_hooks.current_id;
+    let resource = state.borrow().async_hooks.identity.current_async_id();
     let captured = match context {
         Value::Array(values) => values.to_vec(),
         _ => Vec::new(),
@@ -664,7 +725,7 @@ pub fn local_run(
         return Err(VmError::Thrown(host_api::object(vec![])));
     }
     let id = local_id(receiver).unwrap_or_default();
-    let resource_id = state.borrow().async_hooks.current_id;
+    let resource_id = state.borrow().async_hooks.identity.current_async_id();
     let previous = state
         .borrow()
         .async_hooks
@@ -704,7 +765,7 @@ pub fn trigger_id(
     Ok(resource
         .as_ref()
         .and_then(|v| id_property(v, TRIGGER_ID))
-        .unwrap_or(Value::Number(0.0)))
+        .unwrap_or(Value::Number(NO_TRIGGER_ID as f64)))
 }
 
 pub fn execution_resource(
@@ -732,7 +793,7 @@ pub fn execution_resource(
 }
 
 pub fn new_resource(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let parent_id = state.borrow().async_hooks.current_id;
+    let parent_id = state.borrow().async_hooks.identity.current_async_id();
     let public_constructor = matches!(args.first(), Some(Value::String(_)));
     if args.is_empty() {
         return Err(VmError::Thrown(host_api::object(vec![
@@ -907,7 +968,7 @@ pub fn attach_resource(
     resource: Value,
     resource_type: &str,
 ) -> Result<Value, VmError> {
-    let parent_id = state.borrow().async_hooks.current_id;
+    let parent_id = state.borrow().async_hooks.identity.current_async_id();
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(parent_id);
     let inherited: Vec<(u64, Value)> = state
         .borrow()
@@ -975,7 +1036,7 @@ pub fn worker_resource(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let resource = args.first().cloned().unwrap_or(Value::Undefined);
-    let trigger = state.borrow().async_hooks.current_id;
+    let trigger = state.borrow().async_hooks.identity.current_async_id();
     let (id, trigger) = state.borrow_mut().async_hooks.allocate(trigger);
     let resource = execute::set_property(resource, ASYNC_ID, Value::Number(id as f64));
     let resource = execute::set_property(resource, TRIGGER_ID, Value::Number(trigger as f64));
@@ -1013,7 +1074,7 @@ pub fn resource_trigger(
 ) -> Result<Value, VmError> {
     Ok(receiver
         .and_then(|v| id_property(v, TRIGGER_ID))
-        .unwrap_or(Value::Number(0.0)))
+        .unwrap_or(Value::Number(NO_TRIGGER_ID as f64)))
 }
 
 pub fn resource_before(
@@ -1026,14 +1087,14 @@ pub fn resource_before(
     };
     let id = id_property(&resource, ASYNC_ID)
         .and_then(number)
-        .unwrap_or(1);
+        .unwrap_or(ROOT_ASYNC_ID);
     let mut host = state.borrow_mut();
-    let previous_id = host.async_hooks.current_id;
+    let previous_id = host.async_hooks.identity.current_async_id();
     let previous_resource = host.async_hooks.current_resource.clone();
     host.async_hooks
         .resource_stack
         .push((previous_id, previous_resource));
-    host.async_hooks.current_id = id;
+    host.async_hooks.identity.replace_current_async_id(id);
     host.async_hooks.current_resource = Some(resource);
     let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::Before);
     drop(host);
@@ -1049,10 +1110,10 @@ pub fn resource_after(
     _: &[Value],
 ) -> Result<Value, VmError> {
     let mut host = state.borrow_mut();
-    let id = host.async_hooks.current_id;
+    let id = host.async_hooks.identity.current_async_id();
     let callbacks = active_callbacks_from(&host.async_hooks, HookEvent::After);
     if let Some((id, resource)) = host.async_hooks.resource_stack.pop() {
-        host.async_hooks.current_id = id;
+        host.async_hooks.identity.replace_current_async_id(id);
         host.async_hooks.current_resource = resource;
     }
     drop(host);
@@ -1070,9 +1131,7 @@ pub fn resource_destroy(
     let Some(resource) = receiver else {
         return Err(VmError::NotCallable);
     };
-    let id = id_property(resource, ASYNC_ID)
-        .and_then(number)
-        .unwrap_or(0);
+    let id = id_property(resource, ASYNC_ID).and_then(number).unwrap_or(0);
     let callbacks = {
         let mut host = state.borrow_mut();
         host.async_hooks.tracked_resources.remove(&id);
@@ -1314,9 +1373,9 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         if let Some(resource) = resource {
             let id = id_property(&resource, ASYNC_ID)
                 .and_then(number)
-                .unwrap_or(1);
+                .unwrap_or(ROOT_ASYNC_ID);
             let mut host = state.borrow_mut();
-            host.async_hooks.current_id = id;
+            host.async_hooks.identity.replace_current_async_id(id);
             host.async_hooks.current_resource = Some(resource);
             drop(host);
             for (callback, receiver) in callbacks {
@@ -1339,7 +1398,9 @@ pub fn promise_hook(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
             call_hook(state, &callback, &receiver, &[id.clone()]);
         }
         let mut host = state.borrow_mut();
-        host.async_hooks.current_id = 1;
+        host.async_hooks
+            .identity
+            .replace_current_async_id(ROOT_ASYNC_ID);
         host.async_hooks.current_resource = Some(host.async_hooks.root_resource.clone());
     } else if event == "resolve" {
         let (resource, callbacks) = {
@@ -1394,10 +1455,10 @@ fn promise_context(
     let id = id_property(&resource, ASYNC_ID).and_then(number)?;
     let mut host = state.borrow_mut();
     let previous = (
-        host.async_hooks.current_id,
+        host.async_hooks.identity.current_async_id(),
         host.async_hooks.current_resource.clone(),
     );
-    host.async_hooks.current_id = id;
+    host.async_hooks.identity.replace_current_async_id(id);
     host.async_hooks.current_resource = Some(resource);
     Some(previous)
 }
@@ -1405,7 +1466,7 @@ fn promise_context(
 fn restore_promise_context(state: &Rc<RefCell<HostState>>, previous: Option<(u64, Option<Value>)>) {
     if let Some((id, resource)) = previous {
         let mut host = state.borrow_mut();
-        host.async_hooks.current_id = id;
+        host.async_hooks.identity.replace_current_async_id(id);
         host.async_hooks.current_resource = resource;
     }
 }

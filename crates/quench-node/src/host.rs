@@ -76,9 +76,10 @@ impl SharedNodeState {
         fs: crate::modules::fs::FsState,
         cwd: crate::modules::process::ProcessCwd,
         process_argv: crate::modules::process::ProcessArgs,
+        async_identity: crate::modules::async_hooks::AsyncIdentity,
     ) -> Self {
         Self {
-            async_hooks: crate::modules::async_hooks::SharedAsyncHooksState::default(),
+            async_hooks: crate::modules::async_hooks::SharedAsyncHooksState::new(async_identity),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             cwd,
@@ -204,10 +205,13 @@ impl NodeHost {
         let _ = std::fs::create_dir_all(tmp);
         let fs = crate::modules::fs::FsState::new();
         let argv = crate::modules::process::ProcessArgs::new(argv);
+        let async_identity = crate::modules::async_hooks::AsyncIdentity::new();
         let process = crate::modules::process::ProcessState::with_shared_argv(argv.clone());
         let cwd = process.cwd.clone();
         let state = HostState {
-            async_hooks: crate::modules::async_hooks::AsyncHooksState::new(),
+            async_hooks: crate::modules::async_hooks::AsyncHooksState::with_identity(
+                async_identity.clone(),
+            ),
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
             process,
@@ -258,7 +262,12 @@ impl NodeHost {
         };
         Self {
             state: Rc::new(RefCell::new(state)),
-            shared_state: Rc::new(RefCell::new(SharedNodeState::new(fs, cwd, argv))),
+            shared_state: Rc::new(RefCell::new(SharedNodeState::new(
+                fs,
+                cwd,
+                argv,
+                async_identity,
+            ))),
             commonjs_entry: None,
         }
     }

@@ -159,7 +159,7 @@ impl quench_runtime_next::Host for NodeHost {
     }
 
     fn capture_job_context(&mut self) -> Option<quench_runtime_next::HostExecutionContext> {
-        crate::modules::async_hooks::shared_vm::capture_job_context(&self.state, &self.shared_state)
+        crate::modules::async_hooks::shared_vm::capture_job_context(&self.shared_state)
             .map(quench_runtime_next::HostExecutionContext)
     }
 
@@ -167,14 +167,19 @@ impl quench_runtime_next::Host for NodeHost {
         &mut self,
         context: quench_runtime_next::HostExecutionContext,
     ) -> Option<quench_runtime_next::HostExecutionContext> {
-        let previous =
-            crate::modules::async_hooks::shared_vm::enter_job_context(&self.state, context.0);
+        let previous = crate::modules::async_hooks::shared_vm::enter_job_context(
+            &self.shared_state,
+            context.0,
+        );
         Some(quench_runtime_next::HostExecutionContext(previous))
     }
 
     fn restore_job_context(&mut self, previous: Option<quench_runtime_next::HostExecutionContext>) {
         if let Some(previous) = previous {
-            crate::modules::async_hooks::shared_vm::restore_job_context(&self.state, previous.0);
+            crate::modules::async_hooks::shared_vm::restore_job_context(
+                &self.shared_state,
+                previous.0,
+            );
         }
     }
 

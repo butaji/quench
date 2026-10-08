@@ -616,7 +616,7 @@ fn drain_checkpoint(
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
-        if crate::modules::http::shared_vm::poll(runtime, program, state, &shared_state)? {
+        if crate::modules::http::shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
 
