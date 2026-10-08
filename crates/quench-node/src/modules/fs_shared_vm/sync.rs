@@ -2,7 +2,7 @@ use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
-const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync) => {
+const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync) => {
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path;
   const writeBytes = (data, options) => {
@@ -27,6 +27,12 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync) => {
     writeFileSync(path, data, options) {
       return writeFileSync(normalizePath(path), writeBytes(data, options), options);
     },
+    openSync(path, flags, mode) {
+      return openSync(normalizePath(path), flags, mode);
+    },
+    closeSync(fd) {
+      return closeSync(fd);
+    },
   };
 }"#;
 
@@ -37,19 +43,100 @@ pub(crate) fn install(
     let mkdir = context.host_function(crate::host::shared_vm::operation("fsMkdirSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
+    let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
+    let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
     let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &[mkdir, rm, write])?;
+    let api = context.call_rooted(factory, undefined, &[mkdir, rm, write, open, close])?;
     for (name, method) in [
         ("mkdirSync", "mkdirSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
+        ("openSync", "openSync"),
+        ("closeSync", "closeSync"),
     ] {
         let key = context.string_rooted(method);
         let function = context.get_property_rooted(api, key)?;
         shared_vm::set(context, module, name, function)?;
     }
     Ok(())
+}
+
+pub(crate) fn open_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = path_argument(context, args.first().copied())?;
+    let flags = args.get(1).copied();
+    let mode = args
+        .get(2)
+        .copied()
+        .and_then(|value| context.rooted_value(value))
+        .and_then(Value::as_number)
+        .map(|value| value as u32);
+    let opened = match flags {
+        Some(value) if context.string_text(value)?.is_some() => {
+            let flag = context.string_text(value)?.unwrap_or_default();
+            ops::open(&path, Some(&flag), mode)
+        }
+        Some(value)
+            if context
+                .rooted_value(value)
+                .and_then(Value::as_number)
+                .is_some() =>
+        {
+            let flag = context
+                .rooted_value(value)
+                .and_then(Value::as_number)
+                .unwrap_or_default() as i32;
+            ops::open_numeric(&path, flag, mode)
+        }
+        None => ops::open(&path, None, mode),
+        Some(_) => Err(std::io::Error::from(std::io::ErrorKind::InvalidInput)),
+    };
+    let file = match opened {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+            let exception =
+                context.type_error_rooted("The \"flags\" argument must be a valid string")?;
+            let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
+            set(context, exception, "code", code)?;
+            return Err(context.throw(exception));
+        }
+        Err(error) => {
+            return Err(super::stream_io_error(context, error, "open", &path)?);
+        }
+    };
+    let fd = match context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .insert_descriptor(file, path.clone())
+    {
+        Ok(fd) => fd,
+        Err(error) => return Err(super::stream_io_error(context, error, "open", &path)?),
+    };
+    Ok(context.number(fd as f64))
+}
+
+pub(crate) fn close_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let result = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .close_stream(fd);
+    match result {
+        Ok(_) => Ok(context.undefined()),
+        Err(error) => Err(super::stream_io_error(context, error, "close", "")?),
+    }
 }
 
 pub(crate) fn mkdir_sync(
