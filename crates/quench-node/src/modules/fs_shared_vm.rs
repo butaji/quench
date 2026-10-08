@@ -578,6 +578,26 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   };
 }"#;
 
+const EXISTS_API: &str = r#"(statSync) => {
+  function existsSync(path) {
+    try {
+      statSync(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function exists(path, callback) {
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => callback(existsSync(path)));
+  }
+  return { exists, existsSync };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -730,6 +750,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "readFile", read_file_async)?;
     let stat_sync = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     set(context, module, "statSync", stat_sync)?;
+    let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
+    let undefined = context.undefined();
+    let exists_api = context.call_rooted(exists_factory, undefined, &[stat_sync])?;
+    let exists = get(context, exists_api, "exists")?;
+    let exists_sync = get(context, exists_api, "existsSync")?;
+    set(context, module, "exists", exists)?;
+    set(context, module, "existsSync", exists_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
     let readdir_sync = make_readdir_sync(context)?;
