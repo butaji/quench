@@ -1,4 +1,4 @@
-//! Legacy Node compatibility runner entry point.
+//! Canonical Node compatibility runner entry point.
 
 use quench_node_test::{case_process::worker_entry, compat_cli};
 use std::process::ExitCode;
