@@ -948,6 +948,96 @@ const CP_API: &str = r#"(existsSync, statSync, readdirSync, mkdirSync, copyFileS
   return { cp, cpSync, cpPromise };
 }"#;
 
+const ASYNC_SYMLINK_API: &str = r#"(symlinkSync) => {
+  const validatePath = (value, name) => {
+    if (typeof value === 'string' || Buffer.isBuffer(value) || value instanceof URL) return;
+    const received = value === null || value === undefined
+      ? ` Received ${value}`
+      : typeof value === 'object'
+        ? ` Received an instance of ${Array.isArray(value) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof value} (${String(value)})`;
+    const error = new TypeError(`The "${name}" argument must be of type string, Buffer, or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  };
+  return function symlink(target, path, type, callback) {
+    if (typeof type === 'function') {
+      callback = type;
+      type = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    validatePath(target, 'target');
+    validatePath(path, 'path');
+    if (type !== undefined && type !== 'file' && type !== 'dir' && type !== 'junction') {
+      const error = new TypeError('The "type" argument must be one of: "dir", "file", "junction".');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { symlinkSync(target, path, type); Reflect.apply(callback, undefined, [null]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
+const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
+  return function lstat(path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, lstatSync(path)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
+const ASYNC_STAT_API: &str = r#"(statSync) => {
+  return function stat(path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, statSync(path)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
+const ASYNC_READLINK_API: &str = r#"(readlinkSync) => {
+  return function readlink(path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, readlinkSync(path)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -1128,12 +1218,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "fchmodSync", fchmod_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
+    let lstat_factory = context.evaluate_script_rooted(
+        ASYNC_LSTAT_API,
+        "node:fs/shared-async-lstat.js",
+    )?;
+    let lstat = context.call_rooted(lstat_factory, undefined, &[lstat_sync])?;
+    set(context, module, "lstat", lstat)?;
     let readdir_sync = make_readdir_sync(context)?;
     set(context, module, "readdirSync", readdir_sync)?;
     let readdir = make_readdir_async(context, readdir_sync)?;
     set(context, module, "readdir", readdir)?;
     let readlink_sync = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     set(context, module, "readlinkSync", readlink_sync)?;
+    let readlink_factory = context.evaluate_script_rooted(
+        ASYNC_READLINK_API,
+        "node:fs/shared-async-readlink.js",
+    )?;
+    let readlink = context.call_rooted(readlink_factory, undefined, &[readlink_sync])?;
+    set(context, module, "readlink", readlink)?;
     let realpath_sync = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     set(context, module, "realpathSync", realpath_sync)?;
     let native = context.string_rooted("native");
@@ -1148,6 +1250,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
+    let stat_factory = context.evaluate_script_rooted(
+        ASYNC_STAT_API,
+        "node:fs/shared-async-stat.js",
+    )?;
+    let undefined = context.undefined();
+    let stat = context.call_rooted(stat_factory, undefined, &[stat_sync])?;
+    set(context, module, "stat", stat)?;
     let mkdir_sync = get(context, module, "mkdirSync")?;
     let mkdir_factory = context.evaluate_script_rooted(
         ASYNC_MKDIR_API,
@@ -1188,6 +1297,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let cp_promise = get(context, cp_api, "cpPromise")?;
     set(context, module, "cpSync", cp_sync)?;
     set(context, module, "cp", cp)?;
+    let symlink_sync = get(context, module, "symlinkSync")?;
+    let symlink_factory = context.evaluate_script_rooted(
+        ASYNC_SYMLINK_API,
+        "node:fs/shared-async-symlink.js",
+    )?;
+    let symlink = context.call_rooted(symlink_factory, undefined, &[symlink_sync])?;
+    set(context, module, "symlink", symlink)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -1228,6 +1344,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         copy_file_sync,
     )?;
     set(context, promises, "cp", cp_promise)?;
+    let symlink_promise_factory = context.evaluate_script_rooted(
+        "(symlinkSync) => (...args) => Promise.resolve().then(() => symlinkSync(...args))",
+        "node:fs/promises/shared-symlink.js",
+    )?;
+    let symlink_promise =
+        context.call_rooted(symlink_promise_factory, undefined, &[symlink_sync])?;
+    set(context, promises, "symlink", symlink_promise)?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
         "node:fs/shared-access-promise.js",
