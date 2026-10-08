@@ -54,9 +54,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "emit", emit)?;
     let exiting = context.boolean(false);
     install(context, process, "_exiting", exiting)?;
-    let state = context.host_mut().state();
     let shared_state = context.host_mut().shared_state();
-    let argv = state.borrow().process.argv.clone();
+    let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
@@ -67,7 +66,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
     }
     install(context, process, "env", env)?;
-    for (name, values) in [("argv", argv), ("execArgv", exec_argv)] {
+    for (name, values) in [
+        ("argv", argv.as_slice()),
+        ("execArgv", exec_argv.as_slice()),
+    ] {
         let values = values
             .iter()
             .map(|value| context.string_rooted(value))

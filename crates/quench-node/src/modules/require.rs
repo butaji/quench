@@ -2106,7 +2106,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             let process = state.borrow();
             process.process_module.clone().or_else(|| {
                 Some(crate::modules::process::build_with_title(
-                    &process.process.argv,
+                    process.process.argv.as_slice(),
                     &process.process.exec_path,
                     &process.process.title,
                 ))
