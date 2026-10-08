@@ -36,4 +36,20 @@ if (url.format({ protocol: 'https:', auth: 'u:p a', hostname: 'x', pathname: '?x
   'https://u:p%20a@x/%3Fx%23y') {
   throw new Error('format auth and path escaping');
 }
+if (url.urlToHttpOptions.name !== 'urlToHttpOptions' || url.urlToHttpOptions.length !== 1) {
+  throw new Error('urlToHttpOptions function shape');
+}
+const httpOptions = url.urlToHttpOptions(new url.URL('https://user:pass@example.com:444/a?b#c'));
+if (Object.getPrototypeOf(httpOptions) !== null || httpOptions.protocol !== 'https:' ||
+  httpOptions.hostname !== 'example.com' || httpOptions.pathname !== '/a' ||
+  httpOptions.search !== '?b' || httpOptions.hash !== '#c' || httpOptions.path !== '/a?b' ||
+  httpOptions.href !== 'https://user:pass@example.com:444/a?b#c' || httpOptions.port !== 444 ||
+  httpOptions.auth !== 'user:pass') {
+  throw new Error('urlToHttpOptions fields');
+}
+const emptyHttpOptions = url.urlToHttpOptions({});
+if (Object.getPrototypeOf(emptyHttpOptions) !== null || emptyHttpOptions.path !== '' ||
+  !Number.isNaN(emptyHttpOptions.port) || emptyHttpOptions.href !== undefined) {
+  throw new Error('urlToHttpOptions plain object handling');
+}
 console.log('url: %s', parsed.query);
