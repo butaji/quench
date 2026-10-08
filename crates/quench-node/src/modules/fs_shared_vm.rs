@@ -595,19 +595,51 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
   const normalizeMode = (mode) => {
     if (typeof mode === 'string') {
       const parsed = Number.parseInt(mode, 8);
-      if (Number.isNaN(parsed)) {
+      if (Number.isNaN(parsed) || !/^[0-7]+$/.test(mode)) {
         const error = new TypeError('The "mode" argument must be a valid integer');
         error.code = 'ERR_INVALID_ARG_VALUE';
         throw error;
       }
-      return parsed;
+      mode = parsed;
     }
     if (typeof mode !== 'number') {
       const error = new TypeError('The "mode" argument must be of type number.');
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (!Number.isInteger(mode) || !Number.isFinite(mode)) {
+      const error = new RangeError(`The value of "mode" is out of range. It must be an integer. Received ${String(mode)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (mode < 0 || mode > 0xFFFFFFFF) {
+      const error = new RangeError(`The value of "mode" is out of range. It must be >= 0 && <= 4294967295. Received ${mode}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
     return mode;
+  };
+  const validateFd = (fd) => {
+    if (typeof fd !== 'number') {
+      const received = fd === null || fd === undefined
+        ? ` Received ${fd}`
+        : typeof fd === 'object'
+          ? ` Received an instance of ${Array.isArray(fd) ? 'Array' : 'Object'}`
+          : ` Received type ${typeof fd} (${typeof fd === 'string' ? `'${fd}'` : String(fd)})`;
+      const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(fd) || !Number.isFinite(fd)) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be an integer. Received ${String(fd)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (fd < 0 || fd > 0x7FFFFFFF) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${fd}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
   };
   function chmodSync(path, mode) {
     validatePath(path);
@@ -631,25 +663,17 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
     });
   }
   function fchmodSync(fd, mode) {
-    if (typeof fd !== 'number') {
-      const error = new TypeError('The "fd" argument must be of type number.');
-      error.code = 'ERR_INVALID_ARG_TYPE';
-      throw error;
-    }
+    validateFd(fd);
     return fchmodHost(fd, normalizeMode(mode));
   }
   function fchmod(fd, mode, callback) {
+    validateFd(fd);
+    const normalizedMode = normalizeMode(mode);
     if (typeof callback !== 'function') {
       const error = new TypeError('The "cb" argument must be of type function');
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (typeof fd !== 'number') {
-      const error = new TypeError('The "fd" argument must be of type number.');
-      error.code = 'ERR_INVALID_ARG_TYPE';
-      throw error;
-    }
-    const normalizedMode = normalizeMode(mode);
     queueMicrotask(() => {
       try {
         fchmodHost(fd, normalizedMode);
