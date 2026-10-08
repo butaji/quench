@@ -37,6 +37,19 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
     }
     toString() { return data(this).href; }
     toJSON() { return data(this).href; }
+    static canParse(input, base) {
+      if (arguments.length === 0) {
+        throw Object.assign(new TypeError("The \"input\" argument must be specified"), {
+          code: "ERR_MISSING_ARGS",
+        });
+      }
+      try {
+        parse(String(input), base === undefined ? undefined : String(base));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
     get searchParams() {
       const value = data(this);
       if (!value._searchParams) {
@@ -80,6 +93,7 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
       },
     });
   }
+  Object.defineProperty(URL.prototype, Symbol.toStringTag, { value: "URL" });
   return URL;
 }"#
 );
