@@ -56,9 +56,8 @@ TEST262_TEST_TIMEOUT_MS=30000 \
   cargo run --release -p quench-test262 --bin run-stages -- 0 0
 ```
 
-The canonical `run-stages` and `run-all` runners use the shared VM. The
-`run-test` binary retains legacy execution for now and is not evidence for the
-Stage A gate. Every Test262 execution runner/tool (`run-test`, `run-all`,
+The canonical `run-stages`, `run-all`, and `run-test` runners use the shared VM.
+Every Test262 execution runner/tool (`run-test`, `run-all`,
 `run-stages`, `triage`, and execution modes of `compare-runs`)
 requires a positive `TEST262_TEST_TIMEOUT_MS`; the batch wrapper has the same
 requirement. `run-all` and `run-stages` run case processes concurrently

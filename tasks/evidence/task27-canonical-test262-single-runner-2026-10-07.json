@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "canonical_test262_single_case_runner",
+  "recorded_on": "2026-10-07",
+  "source": {
+    "revision": "2da7886f1c4335e863561a61b6ef2ba378a61a72",
+    "worktree_dirty": true,
+    "host": "macOS-26.5-arm64-arm-64bit",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "runner_source_sha256": "881e161697be08313011c42e0f3323be0a3ce316213cd222a3429cea182e8166",
+    "binary": "target/iteration/run-test",
+    "binary_sha256": "0b994de615532475a51ab7741fa1e8ecf1fed39854f75635fdc6898d525aa135"
+  },
+  "verification": {
+    "command": "TEST262_TEST_TIMEOUT_MS=30000 cargo run --profile iteration -p quench-test262 --bin run-test -- tests/test262/test/language/eval-code/direct/lex-env-heritage.js",
+    "exit_code": 0,
+    "stage": 8,
+    "selected_cases": 1,
+    "full_test262_run": false
+  },
+  "result": "The single-test CLI now runs the shared Test262 host and passed its selected Stage 8 fixture. No other Test262 cases were run."
+}
