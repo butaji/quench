@@ -18,7 +18,9 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_relative_time_format_prototypes
+        self.realm
+            .intrinsics
+            .intl_relative_time_format_prototypes
             .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -196,8 +198,13 @@ impl<H: Host> Vm<H> {
                             .split_once("-u-")
                             .map_or(locale.clone(), |(base, _)| base.into());
                     }
-                    let style =
-                        vm.string_option(p, options, "style", "long", &["long", "short", "narrow"])?;
+                    let style = vm.string_option(
+                        p,
+                        options,
+                        "style",
+                        "long",
+                        &["long", "short", "narrow"],
+                    )?;
                     let numeric =
                         vm.string_option(p, options, "numeric", "always", &["always", "auto"])?;
 
@@ -205,7 +212,11 @@ impl<H: Host> Vm<H> {
                     vm.set_hidden_string(instance, RELATIVE_LOCALE_SLOT, &locale)?;
                     vm.set_hidden_string(instance, RELATIVE_STYLE_SLOT, &style)?;
                     vm.set_hidden_string(instance, RELATIVE_NUMERIC_SLOT, &numeric)?;
-                    vm.set_hidden_string(instance, RELATIVE_NUMBERING_SYSTEM_SLOT, &numbering_system)?;
+                    vm.set_hidden_string(
+                        instance,
+                        RELATIVE_NUMBERING_SYSTEM_SLOT,
+                        &numbering_system,
+                    )?;
                     let _ = locale_matcher;
                     Ok(instance)
                 })

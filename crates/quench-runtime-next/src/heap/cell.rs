@@ -1275,6 +1275,11 @@ pub(crate) enum Cell {
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
+    WasmMultiValue(Vec<Value>),
+    WasmExceptionRef {
+        tag: crate::WasmTagId,
+        payload: Vec<Value>,
+    },
     String(JsString), BigInt(String),
     Symbol(Option<String>),
     Date { milliseconds: f64, object: Box<Object> },

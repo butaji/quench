@@ -57,11 +57,6 @@ impl CaseObservation {
     }
 }
 
-/// Both runner binaries consume this private mode before parsing public options.
-pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
-    worker_entry_with(arguments, crate::runner::run_file)
-}
-
 /// Compiled worker entry for a runner binary with a statically selected engine.
 pub fn worker_entry_with(
     arguments: &[String],
@@ -113,7 +108,7 @@ pub fn observe_parallel_case(
 ) -> Result<CaseObservation, String> {
     let source = fs::read_to_string(fixture)
         .map_err(|error| format!("read {}: {error}", fixture.display()))?;
-    let metadata = crate::reader::fixture_metadata(&source);
+    let metadata = crate::fixture_metadata::fixture_metadata(&source);
     observe_case_with_environment(executable, fixture, timeout, &metadata.env, true)
 }
 

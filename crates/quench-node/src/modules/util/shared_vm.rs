@@ -131,6 +131,46 @@ const UTIL: &str = quench_js_check::checked_js!(
       columnNumber: 0,
     }));
   };
+  const deprecate = (fn) => function(...args) {
+    return Reflect.apply(fn, this, args);
+  };
+  const debuglog = () => function() {};
+  const format = (...args) => {
+    if (args.length === 0) return "";
+    if (typeof args[0] !== "string") return args.map((value) => inspect(value)).join(" ");
+    let index = 1;
+    const text = args[0].replace(/%[sdifjoOc%]/g, (token) => {
+      if (token === "%%") return "%";
+      if (index >= args.length) return token;
+      const value = args[index++];
+      if (token === "%s") return String(value);
+      if (token === "%d" || token === "%i" || token === "%f") return String(Number(value));
+      if (token === "%j") {
+        try { return JSON.stringify(value); } catch { return "[Circular]"; }
+      }
+      return inspect(value, token === "%o" ? { showHidden: true, depth: 4 } : {});
+    });
+    return index < args.length ? text + " " + args.slice(index).map((value) => inspect(value)).join(" ") : text;
+  };
+  const formatWithOptions = (options, ...args) => {
+    if (args.length === 1 && typeof args[0] !== "string") return inspect(args[0], options);
+    if (typeof args[0] !== "string") return args.map((value) => inspect(value, options)).join(" ");
+    let index = 1;
+    const text = args[0].replace(/%[sdifjoOc%]/g, (token) => {
+      if (token === "%%") return "%";
+      if (index >= args.length) return token;
+      const value = args[index++];
+      if (token === "%s") return String(value);
+      if (token === "%d" || token === "%i" || token === "%f") return String(Number(value));
+      if (token === "%j") {
+        try { return JSON.stringify(value); } catch { return "[Circular]"; }
+      }
+      return inspect(value, options);
+    });
+    return index < args.length
+      ? text + " " + args.slice(index).map((value) => inspect(value, options)).join(" ")
+      : text;
+  };
   const inherits = (ctor, superCtor) => {
     const invalidType = (kind, name, expected, received) => {
       const error = new TypeError(
@@ -160,7 +200,7 @@ const UTIL: &str = quench_js_check::checked_js!(
     });
     Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
   };
-  return { inspect, getCallSites, inherits };
+  return { inspect, getCallSites, inherits, deprecate, debuglog, format, formatWithOptions };
 })()"#
 );
 

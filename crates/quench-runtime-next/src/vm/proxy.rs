@@ -81,7 +81,8 @@ impl<H: Host> Vm<H> {
                         object: Self::empty_object(vm.array_proto),
                         elements: Rc::new(args.to_vec()),
                     });
-                    let result = vm.call_value(p, trap, handler, &[target, arguments, new_target])?;
+                    let result =
+                        vm.call_value(p, trap, handler, &[target, arguments, new_target])?;
                     if !vm.is_object_like(result) {
                         return Err(
                             vm.type_error(p, "proxy construct trap must return an object".into())

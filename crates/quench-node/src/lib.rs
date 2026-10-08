@@ -28,7 +28,7 @@ pub mod run;
 pub mod shared_run;
 
 pub use envelope::{NodeObject, NodeShared};
-pub use host::{NodeHost, install};
+pub use host::{install, NodeHost};
 pub use registry::{NodeSpec, NodeSymbol};
 
 use quench_runtime::value::Value;

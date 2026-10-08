@@ -2,8 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::reader::NodeFixture;
-
 const STAGE_SPEC: &str = include_str!("../../../STAGES.md");
 
 /// One canonical stage entry.
@@ -111,12 +109,6 @@ fn is_fixture(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| matches!(extension, "js" | "mjs" | "cjs"))
-}
-
-/// Trampoline adapter so `NodeTestRunner::run_fixture` can work
-/// on `NodeFixture` directly.
-pub fn adapter(fixture: &NodeFixture) -> &Path {
-    fixture.path()
 }
 
 #[cfg(test)]

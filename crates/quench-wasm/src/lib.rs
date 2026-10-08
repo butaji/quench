@@ -57,12 +57,24 @@ impl Engine {
     }
 
     pub fn compile_wat(&self, source: &str) -> Result<Module, Error> {
+        self.compile_wat_with_features(source, core_features())
+    }
+
+    pub fn compile_wat_with_features(
+        &self,
+        source: &str,
+        features: wasmparser::WasmFeatures,
+    ) -> Result<Module, Error> {
         let buf =
             wast::parser::ParseBuffer::new(source).map_err(|e| Error::Parse(e.to_string()))?;
         let mut wat: wast::Wat<'_> =
             wast::parser::parse(&buf).map_err(|e| Error::Parse(e.to_string()))?;
         let bytes = wat.encode().map_err(|e| Error::Parse(e.to_string()))?;
-        self.compile(&bytes)
+        match inspect_binary_with(&bytes, features) {
+            ModuleStatus::Valid => Ok(Module { bytes }),
+            ModuleStatus::ParseError(message) => Err(Error::Parse(message)),
+            ModuleStatus::ValidateError(message) => Err(Error::Validate(message)),
+        }
     }
 
     /// Score every directive in a wast script using features implied by `filename`.

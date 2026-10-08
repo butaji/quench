@@ -124,14 +124,28 @@ pub(super) fn require(
         Some(BuiltinModule::Events) => {
             return cached_builtin(context, BuiltinModule::Events);
         }
+        Some(module @ (BuiltinModule::DiagnosticsChannel | BuiltinModule::AsyncHooks)) => {
+            return cached_builtin(context, module);
+        }
+        Some(BuiltinModule::StreamWeb) => {
+            return cached_builtin(context, BuiltinModule::StreamWeb);
+        }
         Some(
             module @ (BuiltinModule::Fs
             | BuiltinModule::Net
             | BuiltinModule::Http
+            | BuiltinModule::Https
+            | BuiltinModule::Http2
+            | BuiltinModule::Dns
+            | BuiltinModule::PerfHooks
             | BuiltinModule::Os
+            | BuiltinModule::Crypto
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
             | BuiltinModule::StringDecoder
+            | BuiltinModule::Tty
+            | BuiltinModule::V8
+            | BuiltinModule::Zlib
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
             | BuiltinModule::ChildProcess),
@@ -170,16 +184,27 @@ enum BuiltinModule {
     Fs,
     Net,
     Http,
+    Https,
+    Http2,
+    Dns,
+    PerfHooks,
     Os,
+    Crypto,
     Buffer,
     Stream,
     StringDecoder,
+    Tty,
+    V8,
+    Zlib,
     WorkerThreads,
     Util,
     ChildProcess,
     Url,
     Querystring,
     Events,
+    DiagnosticsChannel,
+    AsyncHooks,
+    StreamWeb,
 }
 
 impl BuiltinModule {
@@ -194,16 +219,27 @@ impl BuiltinModule {
             Self::Fs => Some("fs"),
             Self::Net => Some("net"),
             Self::Http => Some("http"),
+            Self::Https => Some("https"),
+            Self::Http2 => Some("http2"),
+            Self::Dns => Some("dns"),
+            Self::PerfHooks => Some("perf_hooks"),
             Self::Os => Some("os"),
+            Self::Crypto => Some("crypto"),
             Self::Buffer => Some("buffer"),
             Self::Stream => Some("stream"),
             Self::StringDecoder => Some("string_decoder"),
+            Self::Tty => Some("tty"),
+            Self::V8 => Some("v8"),
+            Self::Zlib => Some("zlib"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
             Self::ChildProcess => Some("child_process"),
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
             Self::Events => Some("events"),
+            Self::DiagnosticsChannel => Some("diagnostics_channel"),
+            Self::AsyncHooks => Some("async_hooks"),
+            Self::StreamWeb => Some("stream/web"),
             Self::Process
             | Self::Assert
             | Self::AssertStrict
@@ -233,14 +269,30 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
     ("node:http", BuiltinModule::Http),
+    ("https", BuiltinModule::Https),
+    ("node:https", BuiltinModule::Https),
+    ("http2", BuiltinModule::Http2),
+    ("node:http2", BuiltinModule::Http2),
+    ("dns", BuiltinModule::Dns),
+    ("node:dns", BuiltinModule::Dns),
+    ("perf_hooks", BuiltinModule::PerfHooks),
+    ("node:perf_hooks", BuiltinModule::PerfHooks),
     ("os", BuiltinModule::Os),
     ("node:os", BuiltinModule::Os),
+    ("crypto", BuiltinModule::Crypto),
+    ("node:crypto", BuiltinModule::Crypto),
     ("buffer", BuiltinModule::Buffer),
     ("node:buffer", BuiltinModule::Buffer),
     ("stream", BuiltinModule::Stream),
     ("node:stream", BuiltinModule::Stream),
     ("string_decoder", BuiltinModule::StringDecoder),
     ("node:string_decoder", BuiltinModule::StringDecoder),
+    ("tty", BuiltinModule::Tty),
+    ("node:tty", BuiltinModule::Tty),
+    ("v8", BuiltinModule::V8),
+    ("node:v8", BuiltinModule::V8),
+    ("zlib", BuiltinModule::Zlib),
+    ("node:zlib", BuiltinModule::Zlib),
     ("worker_threads", BuiltinModule::WorkerThreads),
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
@@ -253,6 +305,15 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:querystring", BuiltinModule::Querystring),
     ("events", BuiltinModule::Events),
     ("node:events", BuiltinModule::Events),
+    ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
+    (
+        "node:diagnostics_channel",
+        BuiltinModule::DiagnosticsChannel,
+    ),
+    ("async_hooks", BuiltinModule::AsyncHooks),
+    ("node:async_hooks", BuiltinModule::AsyncHooks),
+    ("stream/web", BuiltinModule::StreamWeb),
+    ("node:stream/web", BuiltinModule::StreamWeb),
 ];
 
 fn cached_builtin(
@@ -286,13 +347,37 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Fs => crate::modules::fs::shared_vm::module(context),
         BuiltinModule::Net => crate::modules::net::shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http::shared_vm::module(context),
+        BuiltinModule::Https | BuiltinModule::Http2 => context.object_rooted(),
+        BuiltinModule::Dns => context.evaluate_script_rooted(
+            "(() => ({ lookup(host, options, callback) { if (typeof options === 'function') callback = options; const all = typeof options === 'object' && options !== null && options.all === true; queueMicrotask(() => callback(null, all ? [{ address: '127.0.0.1', family: 4 }] : '127.0.0.1', 4)); } }))()",
+            "node:dns/shared-module.js",
+        ),
+        BuiltinModule::PerfHooks => context.evaluate_script_rooted(
+            "({ performance: { now: () => Date.now(), timeOrigin: Date.now() } })",
+            "node:perf_hooks/shared-module.js",
+        ),
         BuiltinModule::Os => crate::modules::os::shared_vm::module(context),
+        BuiltinModule::Crypto => crate::modules::crypto::shared_vm::module(context),
         BuiltinModule::Buffer => crate::modules::buffer::shared_vm::module(context),
         BuiltinModule::Stream => {
             let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
             crate::modules::stream::shared_vm::module(context, decoder)
         }
         BuiltinModule::StringDecoder => crate::modules::string_decoder::shared_vm::module(context),
+        BuiltinModule::Tty => context.evaluate_script_rooted(
+            "(() => { class ReadStream { constructor(fd) { this.fd=fd; this.isTTY=false; } } class WriteStream extends ReadStream { getColorDepth(){return 1} hasColors(){return false} getWindowSize(){return [0,0]} } return {isatty:()=>false, ReadStream, WriteStream}; })()",
+            "node:tty/shared-module.js",
+        ),
+        BuiltinModule::V8 => {
+            let module = context.object_rooted()?;
+            let snapshot = context.undefined();
+            set(context, module, "startupSnapshot", snapshot)?;
+            Ok(module)
+        }
+        BuiltinModule::Zlib => context.evaluate_script_rooted(
+            "(() => { class Gzip {} class Gunzip {} class Deflate {} class DeflateRaw {} class Inflate {} class InflateRaw {} class Unzip {} const unavailable = () => { const error = new Error('zlib compression is not available in this shared host'); error.code = 'ERR_ZLIB_NOT_SUPPORTED'; throw error; }; return { Gzip, Gunzip, Deflate, DeflateRaw, Inflate, InflateRaw, Unzip, createGzip: unavailable, createGunzip: unavailable, createDeflate: unavailable, createInflate: unavailable, createDeflateRaw: unavailable, createInflateRaw: unavailable, createUnzip: unavailable, createBrotliCompress: unavailable, createBrotliDecompress: unavailable }; })()",
+            "node:zlib/shared-module.js",
+        ),
         BuiltinModule::WorkerThreads => {
             let module = context.object_rooted()?;
             let is_main = context.boolean(true);
@@ -302,6 +387,15 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Url => crate::modules::url::shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring::shared_vm::module(context),
         BuiltinModule::Events => crate::modules::events::shared_vm::module(context),
+        BuiltinModule::DiagnosticsChannel => {
+            crate::modules::diagnostics_channel::shared_vm::module(context)
+        }
+        BuiltinModule::AsyncHooks => crate::modules::async_hooks::shared_vm::module(context),
+        BuiltinModule::StreamWeb => {
+            let global = context.global_root()?;
+            let key = context.string_rooted("__quenchWebStreams");
+            context.get_property_rooted(global, key)
+        }
         BuiltinModule::Util => crate::modules::util::shared_vm::module(context),
         BuiltinModule::ChildProcess => context.object_rooted(),
         BuiltinModule::Process

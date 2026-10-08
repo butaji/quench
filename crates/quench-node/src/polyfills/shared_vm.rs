@@ -1,6 +1,7 @@
 //! Guest bootstrap source shared by the Node host adapters.
 
-pub const ABORT: &str = quench_js_check::checked_js!(r#"
+pub const ABORT: &str = quench_js_check::checked_js!(
+    r#"
 (() => {
   const signalStates = new WeakMap();
   const controllerSignals = new WeakMap();
@@ -194,9 +195,74 @@ pub const ABORT: &str = quench_js_check::checked_js!(r#"
     configurable: true,
   });
 })();
-"#);
+"#
+);
 
-pub const EVENT_TARGET: &str = quench_js_check::checked_js!(r#"
+/// Node packages use V8's captureStackTrace hook when constructing errors.
+/// Node dependencies inspect CallSite-like frames on plain targets. Error
+/// instances instead need a string stack because the shared Error accessor
+/// enforces that representation.
+pub const ERROR_STACK_TRACE: &str = quench_js_check::checked_js!(
+    r#"(() => {
+  if (typeof Error.captureStackTrace !== "function") {
+    Error.stackTraceLimit = 10;
+    Error.captureStackTrace = (target) => {
+      if (target instanceof Error) {
+        Object.defineProperty(target, "stack", {
+          value: "Error: <shared-vm>",
+          writable: true,
+          configurable: true,
+        });
+        return;
+      }
+      const frame = {
+        getFileName: () => "<shared-vm>",
+        getLineNumber: () => 0,
+        getColumnNumber: () => 0,
+        getFunctionName: () => null,
+        isEval: () => false,
+      };
+      target.stack = Array.from({ length: 12 }, () => frame);
+    };
+  }
+})()"#
+);
+
+pub const TEXT_DECODER: &str = quench_js_check::checked_js!(
+    r#"if (typeof globalThis.TextDecoder !== "function") {
+  Object.defineProperty(globalThis, "TextDecoder", {
+    value: class TextDecoder {
+      constructor(encoding = "utf-8", options = {}) {
+        this.encoding = String(encoding).toLowerCase();
+        this.fatal = Boolean(options?.fatal);
+        this.ignoreBOM = Boolean(options?.ignoreBOM);
+      }
+      decode(input = new Uint8Array()) {
+        if (typeof input === "string") return input;
+        return globalThis.Buffer.from(input).toString(this.encoding);
+      }
+    },
+    writable: true,
+    configurable: true,
+  });
+}"#
+);
+
+pub const BLOB: &str = quench_js_check::checked_js!(
+    r#"if (typeof globalThis.Blob !== "function") {
+  Object.defineProperty(globalThis, "Blob", {
+    value: class Blob {}, writable: true, configurable: true,
+  });
+}
+if (typeof globalThis.Response !== "function") {
+  Object.defineProperty(globalThis, "Response", {
+    value: class Response {}, writable: true, configurable: true,
+  });
+}"#
+);
+
+pub const EVENT_TARGET: &str = quench_js_check::checked_js!(
+    r#"
 if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   value: class Event {
   constructor(type, options = {}) {
@@ -248,4 +314,5 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   writable: true,
   configurable: true,
 });
-"#);
+"#
+);

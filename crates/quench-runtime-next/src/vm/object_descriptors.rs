@@ -1,6 +1,6 @@
 use super::property_key::PropertyKey;
-use crate::bytecode::PropertyDefinitionMode;
 use super::*;
+use crate::bytecode::PropertyDefinitionMode;
 
 pub(super) enum TypedArrayIndexKey {
     NotCanonical,
@@ -314,7 +314,8 @@ impl<H: Host> Vm<H> {
         &mut self,
         record: PropertyDescriptorRecord,
     ) -> Result<Value, JsError> {
-        let record = super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record);
+        let record =
+            super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record);
         let prototype = self
             .realm
             .intrinsics
@@ -642,7 +643,8 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(Value::UNDEFINED);
             }
-            let extensible = self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
+            let extensible =
+                self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()])?;
             let extensible = self.truthy(extensible);
             let record = self.to_property_descriptor(p, self.heap.root_value(result).unwrap())?;
             let normalized = self.complete_property_descriptor(record)?;
@@ -659,7 +661,8 @@ impl<H: Host> Vm<H> {
             {
                 return Err(self.type_error(
                     p,
-                    "proxy getOwnPropertyDescriptor trap returned an incompatible descriptor".into(),
+                    "proxy getOwnPropertyDescriptor trap returned an incompatible descriptor"
+                        .into(),
                 ));
             }
             Ok(normalized)

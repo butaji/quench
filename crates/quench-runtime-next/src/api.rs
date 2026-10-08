@@ -94,10 +94,7 @@ impl<H: Host> Runtime<H> {
     }
 
     /// Finish profiling and execution reporting after deferred host work.
-    pub fn finish_deferred_execution(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<(), JsError> {
+    pub fn finish_deferred_execution(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.finish_deferred_execution(program);
         Ok(())
@@ -123,6 +120,127 @@ impl<H: Host> Runtime<H> {
         args: &[crate::WasmValue],
     ) -> Result<Option<crate::WasmValue>, JsError> {
         self.vm.execute_wasm(function, args)
+    }
+
+    /// Retain a lowered Wasm module in this runtime without resetting its heap
+    /// or program store. Modules installed here execute through the same VM as
+    /// JavaScript and remain available for later function invocations.
+    pub fn install_wasm_module(
+        &mut self,
+        module: &crate::WasmModule,
+    ) -> Result<crate::WasmModuleId, JsError> {
+        self.vm.install_wasm_module(module)
+    }
+
+    /// Install a module with global imports bound to globals in this runtime.
+    pub fn install_wasm_module_with_global_imports(
+        &mut self,
+        module: &crate::WasmModule,
+        imported_globals: &[Option<crate::WasmGlobalId>],
+    ) -> Result<crate::WasmModuleId, JsError> {
+        self.vm
+            .install_wasm_module_with_imports(module, imported_globals)
+    }
+
+    /// Install a module with global and table imports bound to retained runtime state.
+    pub fn install_wasm_module_with_imports(
+        &mut self,
+        module: &crate::WasmModule,
+        imported_globals: &[Option<crate::WasmGlobalId>],
+        imported_tables: &[Option<crate::WasmTableId>],
+    ) -> Result<crate::WasmModuleId, JsError> {
+        self.vm.install_wasm_module_with_imports_and_tables(
+            module,
+            imported_globals,
+            imported_tables,
+        )
+    }
+
+    /// Install a module with global, table, and memory imports bound to runtime state.
+    pub fn install_wasm_module_with_full_imports(
+        &mut self,
+        module: &crate::WasmModule,
+        imported_globals: &[Option<crate::WasmGlobalId>],
+        imported_tables: &[Option<crate::WasmTableId>],
+        imported_memories: &[Option<crate::WasmMemoryId>],
+    ) -> Result<crate::WasmModuleId, JsError> {
+        self.vm.install_wasm_module_with_imports_tables_memories(
+            module,
+            imported_globals,
+            imported_tables,
+            imported_memories,
+        )
+    }
+
+    /// Invoke one function from a retained shared-VM Wasm module.
+    pub fn invoke_wasm_function(
+        &mut self,
+        module: crate::WasmModuleId,
+        function_index: u32,
+        args: &[crate::WasmValue],
+    ) -> Result<Vec<crate::WasmValue>, JsError> {
+        self.vm.invoke_wasm_function(module, function_index, args)
+    }
+
+    /// Read the current value of one retained Wasm module global.
+    pub fn wasm_global(
+        &self,
+        module: crate::WasmModuleId,
+        global_index: u32,
+    ) -> Option<crate::WasmValue> {
+        self.vm.wasm_global(module, global_index)
+    }
+
+    /// Resolve a module global to its runtime-owned identity for linking.
+    pub fn wasm_global_id(
+        &self,
+        module: crate::WasmModuleId,
+        global_index: u32,
+    ) -> Option<crate::WasmGlobalId> {
+        self.vm.wasm_global_id(module, global_index)
+    }
+
+    /// Return the stable identity of one exported or imported table.
+    pub fn wasm_table_id(
+        &self,
+        module: crate::WasmModuleId,
+        table_index: u32,
+    ) -> Option<crate::WasmTableId> {
+        self.vm.wasm_table_id(module, table_index)
+    }
+
+    /// Resolve a module exception tag to its linked runtime identity.
+    pub fn wasm_tag_id(
+        &self,
+        module: crate::WasmModuleId,
+        tag_index: u32,
+    ) -> Option<crate::WasmTagId> {
+        self.vm.wasm_tag_id(module, tag_index)
+    }
+
+    /// Read a retained table's element type, current size and maximum size.
+    pub fn wasm_table_info(
+        &self,
+        table: crate::WasmTableId,
+    ) -> Option<(crate::WasmType, bool, u64, Option<u64>)> {
+        self.vm.wasm_table_info(table)
+    }
+
+    /// Resolve an exported or imported memory to its retained runtime identity.
+    pub fn wasm_memory_id(
+        &self,
+        module: crate::WasmModuleId,
+        memory_index: u32,
+    ) -> Option<crate::WasmMemoryId> {
+        self.vm.wasm_memory_id(module, memory_index)
+    }
+
+    /// Read a retained memory's address width, current page count, maximum, page size, and sharedness.
+    pub fn wasm_memory_info(
+        &self,
+        memory: crate::WasmMemoryId,
+    ) -> Option<(bool, u64, Option<u64>, u32, bool)> {
+        self.vm.wasm_memory_info(memory)
     }
 
     pub fn execute_wasm_i32(
@@ -571,8 +689,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "function", "true", "true", "1", "function", "true", "true", "1", "function", "true",
-                "true", "1", "function", "true", "true", "1",
+                "function", "true", "true", "1", "function", "true", "true", "1", "function",
+                "true", "true", "1", "function", "true", "true", "1",
             ],
         );
     }
@@ -611,7 +729,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "1", "true", "1", "true", "1", "true", "1", "0", "true", "true", "true", "true",
+                "true", "1", "true", "1", "true", "1", "true", "1", "0", "true", "true", "true",
+                "true",
             ],
         );
     }
@@ -898,8 +1017,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "0", "true", "0", "true", "0", "true", "0", "true", "1", "true", "1", "true",
-                "1", "true", "1",
+                "true", "0", "true", "0", "true", "0", "true", "0", "true", "1", "true", "1",
+                "true", "1", "true", "1",
             ],
         );
     }
@@ -1038,8 +1157,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             Engine::specialize_unspecialized,
         ] {
             let program = compile(source, "definition-modes.js").unwrap();
-            let path =
-                std::env::temp_dir().join(format!("quench-definition-modes-{}", std::process::id()));
+            let path = std::env::temp_dir()
+                .join(format!("quench-definition-modes-{}", std::process::id()));
             program.write_binary(&path).unwrap();
             let decoded = ResidualProgram::read_binary(&path);
             std::fs::remove_file(path).unwrap();
@@ -1051,8 +1170,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             assert_eq!(
                 output.0.borrow().as_slice(),
                 &[
-                    "0", "42", "43", "44", "true", "false", "true", "function", "function", "false",
-                    "function", "function", "true"
+                    "0", "42", "43", "44", "true", "false", "true", "function", "function",
+                    "false", "function", "function", "true"
                 ]
             );
         }
@@ -2255,8 +2374,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true",
             ],
         );
     }
@@ -2326,10 +2445,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Array.from(new Intl.Segmenter().segment('')).length===0);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true",
             ],
         );
     }
@@ -2426,9 +2545,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getPrototypeOf(parts)===Array.prototype && parts.every(part=>Object.getPrototypeOf(part)===Object.prototype));
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
                 "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true",
             ],
         );
     }
@@ -2471,16 +2591,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getPrototypeOf(foreign.Intl.getCanonicalLocales(['en']))===foreign.Array.prototype);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
             ],
         );
     }
@@ -2602,10 +2722,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Object.getOwnPropertyDescriptor(Intl.DurationFormat.prototype,'format').value===first.format);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "false", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "false", "true",
             ],
         );
     }
@@ -2634,10 +2754,11 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(new Intl.NumberFormat([,'EN','en']).resolvedOptions().locale);
             "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "0",
-                "true", "true", "true", "true", "true", "true", "true", "true", "en", "en",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "0", "true", "true", "true", "true", "true", "true", "true",
+                "true", "en", "en",
             ],
         );
     }
@@ -3051,10 +3172,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
         "#,
             &[
-                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                "true", "true", "0", "true", "0", "true", "true", "true", "true", "true", "true",
-                "true", "true", "true", "true", "true", "true", "true", "true", "0", "true", "0",
-                "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "true",
+                "true", "true", "true", "0", "true", "0", "true", "true", "true", "true", "true",
+                "true", "true", "true", "true", "true", "true", "true", "true", "true", "0",
+                "true", "0", "true",
             ],
         );
     }
@@ -3321,7 +3442,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "true", "1", "true", "2", "true", "true", "0", "true", "0,1:1", "0,2:1", "0,2:1", "0:0",
+                "true", "1", "true", "2", "true", "true", "0", "true", "0,1:1", "0,2:1", "0,2:1",
+                "0:0",
             ],
         );
     }
@@ -3959,8 +4081,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(({...{first:46}}).first);print(Object.keys({...null,...undefined}).length);
             "#,
             &[
-                "1", "42", "43", "44", "42", "43", "44", "42", "false", "43", "44", "42", "true", "0",
-                "45", "1", "46", "0",
+                "1", "42", "43", "44", "42", "43", "44", "42", "false", "43", "44", "42", "true",
+                "0", "45", "1", "46", "0",
             ],
         );
     }
@@ -4432,13 +4554,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             &[
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
                 "7,8",
                 "get0,convert0,get1,convert1",
-                "0", "true",
+                "0",
+                "true",
             ],
         );
     }
@@ -4555,7 +4680,9 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 }
             }
             "#,
-            &["1,2,3", "true", "1,2,3", "true", "1,2,3", "false", "1,2,3", "false"],
+            &[
+                "1,2,3", "true", "1,2,3", "true", "1,2,3", "false", "1,2,3", "false",
+            ],
         );
     }
 
@@ -4584,9 +4711,8 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             print(Array.prototype.toSpliced.call('abc', {valueOf() {$262.gc(); return 1;}}, 1, 'z').join(','));
             "#,
             &[
-                "40,99,42", "0,2", "true",
-                "42,41,40", "2,1,0", "true",
-                "40,99,42", "0,2", "true", "a,z,c", "a,z,c",
+                "40,99,42", "0,2", "true", "42,41,40", "2,1,0", "true", "40,99,42", "0,2", "true",
+                "a,z,c", "a,z,c",
             ],
         );
     }
@@ -4664,7 +4790,12 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                 print(result[0] + ',' + result[1]);
             }
             "#,
-            &["get0,write0,get1,write1", "1,2", "get0,map1,write0,get1,map2,write1", "1,2"],
+            &[
+                "get0,write0,get1,write1",
+                "1,2",
+                "get0,map1,write0,get1,map2,write1",
+                "1,2",
+            ],
         );
     }
 
@@ -4719,8 +4850,15 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             }
             "#,
             &[
-                "length", "name", "bound target", "1", "42",
-                "false,false,true", "false,false,true", "true", "true",
+                "length",
+                "name",
+                "bound target",
+                "1",
+                "42",
+                "false,false,true",
+                "false,false,true",
+                "true",
+                "true",
             ],
         );
     }
@@ -4946,8 +5084,10 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
         drop(guards);
         for (runtime, error) in runtimes.iter_mut().zip(errors) {
             assert!(error.thrown_value().is_some());
-            assert_eq!(runtime.format_error(&program, &error),
-                format!("RangeError: {}", quench_stack::STACK_EXHAUSTED_MESSAGE));
+            assert_eq!(
+                runtime.format_error(&program, &error),
+                format!("RangeError: {}", quench_stack::STACK_EXHAUSTED_MESSAGE)
+            );
             runtime.execute(&program).unwrap();
         }
     }
@@ -4996,13 +5136,27 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
                     });
                     "#,
                     &[
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
-                        "true", "Maximum call stack size exceeded", "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
+                        "true",
+                        "Maximum call stack size exceeded",
+                        "42",
                     ],
                 );
             })
@@ -5096,7 +5250,16 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             var start = { valueOf: function () { buffer.resize(2); return 0; } };
             print(new Uint8Array(buffer.slice(start)).join(','));
             "#,
-            &["true", "start,end,species", "0", "true", "start,end,species", "0", "9,8,3", "1,2,0,0"],
+            &[
+                "true",
+                "start,end,species",
+                "0",
+                "true",
+                "start,end,species",
+                "0",
+                "9,8,3",
+                "1,2,0,0",
+            ],
         );
     }
 
@@ -5683,20 +5846,13 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             var replacements = ["", "x-foo", "de-u-co", "en-US"];
             for (var index = 0; index < replacements.length; index++) {
                 String.prototype[Symbol.split] = function() { return [replacements[index]]; };
-                var formatted = Intl.DateTimeFormat("de", {}).format(86400000);
+                var formatted = Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(86400000);
                 print(formatted);
                 print(possibleAnswers.includes(formatted));
             }
             "#,
             &[
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
-                "1.1.1970",
-                "true",
+                "2.1.1970", "true", "2.1.1970", "true", "2.1.1970", "true", "2.1.1970", "true",
             ],
         );
     }
@@ -5720,7 +5876,6 @@ var x="outer";async function asyncRun(){with({x:"inner"}){await 0;$262.gc();prin
             &["0", "3", "4", "42"],
         );
     }
-
 }
 
 #[cfg(test)]

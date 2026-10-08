@@ -15,10 +15,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(global, "Symbol", constructor)?;
-        for (name, native) in [
-            ("for", Native::SymbolFor),
-            ("keyFor", Native::SymbolKeyFor),
-        ] {
+        for (name, native) in [("for", Native::SymbolFor), ("keyFor", Native::SymbolKeyFor)] {
             let method = self.native_with_realm(native, global, global);
             self.set_builtin_function_name(method, name)?;
             self.set_builtin_value_named(constructor, name, method)?;

@@ -43,6 +43,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::host::HostState;
 
+pub(crate) mod shared_vm;
+
 thread_local! {
     static KEY_PROTOTYPES: RefCell<Option<(Value, Value)>> = const { RefCell::new(None) };
     static CERTIFICATE_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };

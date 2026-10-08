@@ -247,7 +247,8 @@ pub struct Regex {
 
 impl std::fmt::Debug for Regex {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Regex")
+        formatter
+            .debug_struct("Regex")
             .field("capture_names", &self.capture_names)
             .field("has_named_groups", &self.has_named_groups)
             .finish_non_exhaustive()
@@ -1124,12 +1125,8 @@ fn lower_class(class: &ast::CharacterClass<'_>, source: &str) -> ClassExpr {
 }
 
 fn legacy_class_control(contents: &[ast::CharacterClassContents<'_>], source: &str) -> Option<u32> {
-    let [
-        ast::CharacterClassContents::Character(backslash),
-        ast::CharacterClassContents::Character(control),
-        ast::CharacterClassContents::Character(letter),
-        ..,
-    ] = contents
+    let [ast::CharacterClassContents::Character(backslash), ast::CharacterClassContents::Character(control), ast::CharacterClassContents::Character(letter), ..] =
+        contents
     else {
         return None;
     };

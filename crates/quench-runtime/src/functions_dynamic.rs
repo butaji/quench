@@ -59,8 +59,11 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     }
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
-    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors) {
-        return Err(crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE));
+    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors)
+    {
+        return Err(crate::value::error::throw_range_error(
+            quench_stack::STACK_EXHAUSTED_MESSAGE,
+        ));
     }
     if parsed.panicked || !parsed.errors.is_empty() {
         return Err(syntax_error("Invalid function source"));

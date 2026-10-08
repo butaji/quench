@@ -873,7 +873,9 @@ mod classification_tests {
         assert!(!crate::conversion::is_html_dda(&proxy));
         let cell = crate::value::BindingCell::new(Value::Undefined);
         *cell.borrow_mut() = Value::BindingCell(cell.clone());
-        assert!(!crate::conversion::is_html_dda(&Value::BindingCell(cell.clone())));
+        assert!(!crate::conversion::is_html_dda(&Value::BindingCell(
+            cell.clone()
+        )));
         *cell.borrow_mut() = Value::Undefined;
     }
 

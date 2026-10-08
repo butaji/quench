@@ -42,9 +42,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpServerClose" (0) => crate::modules::http::shared_vm::server_close,
         method "httpAgentCreate" (1) => crate::modules::http::shared_vm::agent_create,
         method "httpAgentDestroy" (1) => crate::modules::http::shared_vm::agent_destroy,
-        method "httpGet" (2) => crate::modules::http::shared_vm::get,
+        method "httpGet" (5) => crate::modules::http::shared_vm::get,
         method "httpResponseSetHeader" (3) => crate::modules::http::shared_vm::response_set_header,
+        method "httpResponseRemoveHeader" (2) => crate::modules::http::shared_vm::response_remove_header,
         method "httpResponseEnd" (3) => crate::modules::http::shared_vm::response_end,
+        method "cryptoHashDigest" (3) => crate::modules::crypto::shared_vm::hash_digest,
+        method "fsStat" (2) => crate::modules::fs::shared_vm::stat,
         method "fsReadFileSync" (2) => crate::modules::fs::shared_vm::read_file_sync,
         method "bufferEncode" (2) => crate::modules::buffer::shared_vm::encode,
         method "bufferDecode" (2) => crate::modules::buffer::shared_vm::decode,
@@ -95,6 +98,11 @@ impl rqj::Host for NodeHost {
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
         crate::modules::process::shared_vm::initialize(context)?;
+        let error_stack = context.evaluate_script_rooted(
+            crate::polyfills::shared_vm::ERROR_STACK_TRACE,
+            "node:bootstrap/shared-vm/error-stack-trace.js",
+        )?;
+        context.release_root(error_stack);
         let abort = context.evaluate_script_rooted(
             crate::polyfills::shared_vm::ABORT,
             "node:bootstrap/shared-vm/abort.js",
@@ -110,6 +118,21 @@ impl rqj::Host for NodeHost {
             "node:bootstrap/event-emitter.js",
         )?;
         context.release_root(event_emitter);
+        let web_streams_source = crate::polyfills::bootstrap::lookup("web-streams")
+            .ok_or_else(|| RootedError::host("Node web-stream bootstrap is unavailable"))?;
+        let web_streams =
+            context.evaluate_script_rooted(web_streams_source, "node:bootstrap/web-streams.js")?;
+        context.release_root(web_streams);
+        let text_decoder = context.evaluate_script_rooted(
+            crate::polyfills::shared_vm::TEXT_DECODER,
+            "node:bootstrap/shared-vm/text-decoder.js",
+        )?;
+        context.release_root(text_decoder);
+        let blob = context.evaluate_script_rooted(
+            crate::polyfills::shared_vm::BLOB,
+            "node:bootstrap/shared-vm/blob.js",
+        )?;
+        context.release_root(blob);
         commonjs::initialize(context)
     }
 }

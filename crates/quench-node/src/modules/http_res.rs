@@ -1246,6 +1246,7 @@ pub(crate) fn compose(
     out.extend_from_slice(b"\r\n");
     if chunked {
         out.extend_from_slice(&chunk_frame(body));
+        out.extend_from_slice(&chunk_terminator(&[]));
     } else {
         out.extend_from_slice(body);
     }
