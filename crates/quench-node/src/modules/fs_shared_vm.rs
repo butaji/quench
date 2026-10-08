@@ -736,6 +736,60 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
   return { access, accessSync, chmod, chmodSync, exists, existsSync, fchmod, fchmodSync };
 }"#;
 
+const ASYNC_MKDIR_API: &str = r#"(mkdirSync) => {
+  const normalizePath = (path) =>
+    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
+  const validatePath = (path) => {
+    if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
+    const received = path === null || path === undefined
+      ? ` Received ${path}`
+      : typeof path === 'object'
+        ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof path} (${String(path)})`;
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  };
+  const validateOptions = (options) => {
+    if (options == null || typeof options === 'number' || typeof options === 'string') return;
+    if (typeof options !== 'object') {
+      const error = new TypeError('The "options" argument must be of type object or number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (options.recursive !== undefined && typeof options.recursive !== 'boolean') {
+      const value = options.recursive;
+      const received = value === null ? ' Received null' : typeof value === 'object'
+        ? ` Received an instance of ${Array.isArray(value) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof value} (${String(value)})`;
+      const error = new TypeError(`The "options.recursive" property must be of type boolean.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  };
+  return function mkdir(path, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    validatePath(path);
+    validateOptions(options);
+    queueMicrotask(() => {
+      try {
+        const createdPath = mkdirSync(normalizePath(path), options);
+        Reflect.apply(callback, undefined, [null, createdPath]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -936,6 +990,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
+    let mkdir_sync = get(context, module, "mkdirSync")?;
+    let mkdir_factory = context.evaluate_script_rooted(
+        ASYNC_MKDIR_API,
+        "node:fs/shared-async-mkdir.js",
+    )?;
+    let undefined = context.undefined();
+    let mkdir = context.call_rooted(mkdir_factory, undefined, &[mkdir_sync])?;
+    set(context, module, "mkdir", mkdir)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -970,6 +1032,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         read_sync,
         write_file_sync,
         append_file_sync,
+        mkdir_sync,
     )?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
@@ -1019,6 +1082,7 @@ pub(crate) fn promises_module(
     read_sync: RootId,
     write_file_sync: RootId,
     append_file_sync: RootId,
+    mkdir_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -1046,6 +1110,12 @@ pub(crate) fn promises_module(
         ],
     )?;
     set(context, promises, "constants", constants)?;
+    let mkdir_factory = context.evaluate_script_rooted(
+        "(mkdirSync) => (...args) => Promise.resolve().then(() => mkdirSync(...args))",
+        "node:fs/promises/shared-mkdir.js",
+    )?;
+    let mkdir = context.call_rooted(mkdir_factory, undefined, &[mkdir_sync])?;
+    set(context, promises, "mkdir", mkdir)?;
     Ok(promises)
 }
 
