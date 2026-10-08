@@ -10,7 +10,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeFileSync, appendFileSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, fstatSync, fchmodSync, writeFileSync, appendFileSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
@@ -55,6 +55,8 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         const bytesRead = readSync(fd, buffer, offset, length, position);
         return { bytesRead, buffer };
       }),
+      stat: (...statArgs) => Promise.resolve().then(() => fstatSync(fd, ...statArgs)),
+      chmod: (...chmodArgs) => Promise.resolve().then(() => fchmodSync(fd, ...chmodArgs)),
     };
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
@@ -62,7 +64,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
   }),
 })"#);
 
-const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync) => {
+const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync, fstatSync) => {
   const assertBuffer = (buffer) => {
     if (ArrayBuffer.isView(buffer)) return;
     const received = buffer === null || buffer === undefined
@@ -200,6 +202,22 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
         closeSync(fd);
         Reflect.apply(callback, undefined, [null]);
       } catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  },
+  fstat(fd, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    validateFd(fd);
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, fstatSync(fd)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
   },
   read(fd, bufferOrOptions, offsetOrOptions, length, position, callback) {
@@ -1306,16 +1324,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "symlink", symlink)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
+    let fstat_sync = get(context, module, "fstatSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
     let undefined = context.undefined();
     let read_sync = get(context, module, "readSync")?;
-    let open_close = context.call_rooted(factory, undefined, &[open_sync, close_sync, read_sync])?;
+    let open_close =
+        context.call_rooted(factory, undefined, &[open_sync, close_sync, read_sync, fstat_sync])?;
     let open = get(context, open_close, "open")?;
     let close = get(context, open_close, "close")?;
     let read = get(context, open_close, "read")?;
+    let fstat = get(context, open_close, "fstat")?;
     set(context, module, "open", open)?;
     set(context, module, "close", close)?;
     set(context, module, "read", read)?;
+    set(context, module, "fstat", fstat)?;
     let write_file_sync = get(context, module, "writeFileSync")?;
     let write_file_factory = context.evaluate_script_rooted(
         ASYNC_WRITE_FILE_FACTORY,
@@ -1336,6 +1358,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         open_sync,
         close_sync,
         read_sync,
+        fstat_sync,
+        fchmod_sync,
         write_file_sync,
         append_file_sync,
         mkdir_sync,
@@ -1397,6 +1421,8 @@ pub(crate) fn promises_module(
     open_sync: RootId,
     close_sync: RootId,
     read_sync: RootId,
+    fstat_sync: RootId,
+    fchmod_sync: RootId,
     write_file_sync: RootId,
     append_file_sync: RootId,
     mkdir_sync: RootId,
@@ -1425,6 +1451,8 @@ pub(crate) fn promises_module(
             open_sync,
             close_sync,
             read_sync,
+            fstat_sync,
+            fchmod_sync,
             write_file_sync,
             append_file_sync,
         ],
