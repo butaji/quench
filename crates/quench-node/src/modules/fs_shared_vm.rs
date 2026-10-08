@@ -806,6 +806,16 @@ const ASYNC_RMDIR_API: &str = r#"(rmdirSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (options?.recursive === true) {
+      const error = new TypeError('The recursive option is no longer supported.');
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
     queueMicrotask(() => {
       try {
         rmdirSync(path);
