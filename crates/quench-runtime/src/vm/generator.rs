@@ -158,7 +158,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.with_objects = self.captured_with_objects(parent);
+        frame.with_objects = self.captured_with_objects_for_function(parent, function, p.kind);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))

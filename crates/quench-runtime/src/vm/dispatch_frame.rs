@@ -177,7 +177,8 @@ impl<H: Host> Vm<H> {
             frame.captured = true;
         }
         frame.with_base = self.with_stack.len();
-        self.with_stack.extend(self.captured_with_objects(parent));
+        self.with_stack
+            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         if id == super::ROOT_FUNCTION_ID {
             for &(slot, import) in self.programs.module_imports(frame.program) {
                 let value = match import {
@@ -364,7 +365,8 @@ impl<H: Host> Vm<H> {
         };
         frame.captured = false;
         frame.with_base = self.with_stack.len();
-        self.with_stack.extend(self.captured_with_objects(parent));
+        self.with_stack
+            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
@@ -787,6 +789,18 @@ impl<H: Host> Vm<H> {
         }
         layers.reverse();
         layers.into_iter().flatten().collect()
+    }
+
+    pub(super) fn captured_with_objects_for_function(
+        &self,
+        env: Value,
+        function: &crate::bytecode::Function,
+        program_kind: crate::bytecode::ProgramKind,
+    ) -> Vec<Value> {
+        if !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval {
+            return Vec::new();
+        }
+        self.captured_with_objects(env)
     }
 
     #[inline(always)]
