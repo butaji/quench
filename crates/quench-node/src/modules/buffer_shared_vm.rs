@@ -269,6 +269,71 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return true;
     }
 
+    fill(value = 0, offset = 0, end = this.length, encoding = "utf8") {
+      if (typeof offset === "string") {
+        encoding = offset;
+        offset = 0;
+        end = this.length;
+      } else if (typeof end === "string") {
+        encoding = end;
+        end = this.length;
+      }
+      offset = Math.trunc(Number(offset));
+      end = Math.trunc(Number(end));
+      if (Number.isNaN(offset) || Number.isNaN(end)) {
+        throw codedTypeError('The "offset" and "end" arguments must be numbers', "ERR_INVALID_ARG_TYPE");
+      }
+      if (offset < 0 || offset > this.length || end < 0 || end > this.length) {
+        const error = new RangeError("The value of \"offset\" or \"end\" is out of range");
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      if (end <= offset) return this;
+      let bytes;
+      if (typeof value === "string") bytes = encode(value, normalizeEncoding(encoding));
+      else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+        bytes = value instanceof ArrayBuffer
+          ? Array.from(new Uint8Array(value))
+          : Array.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      } else {
+        return Uint8Array.prototype.fill.call(this, value, offset, end);
+      }
+      if (bytes.length === 0) return Uint8Array.prototype.fill.call(this, 0, offset, end);
+      for (let index = offset; index < end; index++) this[index] = bytes[(index - offset) % bytes.length];
+      return this;
+    }
+
+    copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
+      if (!(this instanceof Uint8Array)) {
+        throw codedTypeError('The "this" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
+      }
+      if (!ArrayBuffer.isView(target) || target instanceof DataView) {
+        throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
+      }
+      targetStart = Math.floor(Number(targetStart));
+      sourceStart = Math.floor(Number(sourceStart));
+      sourceEnd = Math.floor(Number(sourceEnd));
+      if (Number.isNaN(targetStart)) targetStart = 0;
+      if (Number.isNaN(sourceStart)) sourceStart = 0;
+      if (Number.isNaN(sourceEnd)) sourceEnd = this.length;
+      const rangeError = (name, value, message) => {
+        const error = new RangeError(message || `The value of "${name}" is out of range. It must be >= 0. Received ${value}`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      };
+      if (targetStart < 0) rangeError("targetStart", targetStart);
+      if (sourceStart < 0 || sourceStart > this.length) rangeError("sourceStart", sourceStart);
+      if (sourceEnd < 0) {
+        rangeError("sourceEnd", sourceEnd, `The value of "sourceEnd" is out of range. It must be >= 0. Received ${sourceEnd}`);
+      }
+      sourceEnd = Math.min(sourceEnd, this.length);
+      const targetBytes = new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
+      if (sourceEnd <= sourceStart || targetStart >= targetBytes.length) return 0;
+      const length = Math.min(sourceEnd - sourceStart, targetBytes.length - targetStart);
+      targetBytes.set(new Uint8Array(this.buffer, this.byteOffset + sourceStart, length), targetStart);
+      return length;
+    }
+
     compare(target, targetStart = 0, targetEnd = target?.length ?? 0, thisStart = 0, thisEnd = this.length) {
       if (!(target instanceof Uint8Array)) {
         throw codedTypeError('The "target" argument must be an instance of Buffer or Uint8Array', "ERR_INVALID_ARG_TYPE");
