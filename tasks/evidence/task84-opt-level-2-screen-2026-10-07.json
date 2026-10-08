@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "task": "84",
+  "kind": "pre_gate_opt_level_2_screen",
+  "recorded_at": "2026-10-07",
+  "qualification_ready": false,
+  "source": {
+    "revision": "fb9a1fdc6452084d7dcabcfcfe2559d55ef72c5c",
+    "dirty": true,
+    "note": "The runtime source was unchanged between the opt-level-3 control and opt-level-2 build; only task/evidence files changed after the control build."
+  },
+  "corpus": {
+    "revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture_set_matches": true,
+    "rounds": 1
+  },
+  "builds": {
+    "control": {
+      "profile": "production opt-level 3, fat LTO",
+      "binary_sha256": "bc2fb1ab794c12a0200d9ca55f87a7a141cc0ce0095b095ee6ff9ac2e675c39e",
+      "binary_size_bytes": 17608224,
+      "report": "target/iteration/stageb-pilots/all-after-regexp-lazy-2026-10-07.json",
+      "report_sha256": "e1a26af6defcc2b8b5bb60ff5158f1a36fc1b60c55a2408b661b8cbd56765fc5"
+    },
+    "candidate": {
+      "profile": "production opt-level 2, fat LTO",
+      "binary_sha256": "52c58a68496468b4d58611d8fe8ba6391b1c9b1478e4f301af21d1d6fb9154cb",
+      "binary_size_bytes": 16800160,
+      "binary_size_change_bytes": -808064,
+      "binary_size_change_percent": -4.588,
+      "report": "target/iteration/stageb-opt2-2026-10-07/all-opt2-2026-10-07.json",
+      "report_sha256": "95aaa14862c204722f38e18fe7389309b068226fd1ccd654a3d9ca93726be8e1",
+      "complete": true,
+      "all_fixture_rows_valid": true
+    }
+  },
+  "quench_samples": [
+    {"fixture":"crypto.js","opt3_score":134.0,"opt2_score":129.0,"opt3_rss_bytes":25608192,"opt2_rss_bytes":25001984},
+    {"fixture":"deltablue.js","opt3_score":63.5,"opt2_score":63.0,"opt3_rss_bytes":26525696,"opt2_rss_bytes":26542080},
+    {"fixture":"earley-boyer.js","opt3_score":203.0,"opt2_score":199.0,"opt3_rss_bytes":68337664,"opt2_rss_bytes":70975488},
+    {"fixture":"navier-stokes.js","opt3_score":50.7,"opt2_score":53.7,"opt3_rss_bytes":34570240,"opt2_rss_bytes":31817728},
+    {"fixture":"raytrace.js","opt3_score":193.0,"opt2_score":164.0,"opt3_rss_bytes":25657344,"opt2_rss_bytes":35717120},
+    {"fixture":"regexp.js","opt3_score":32.8,"opt2_score":30.8,"opt3_rss_bytes":64765952,"opt2_rss_bytes":64929792},
+    {"fixture":"richards.js","opt3_score":66.6,"opt2_score":66.2,"opt3_rss_bytes":22511616,"opt2_rss_bytes":22429696},
+    {"fixture":"splay.js","opt3_score":1017.0,"opt2_score":1007.0,"opt3_rss_bytes":307609600,"opt2_rss_bytes":307494912}
+  ],
+  "interpretation": "Opt-level 2 alone scored lower on seven of eight fixtures, with the largest screen regressions on RayTrace (-15.0%) and RegExp (-6.1%). RSS fell on four fixtures and rose on four; RayTrace rose by 10,059,776 bytes. The smaller executable does not establish lower runtime RSS.",
+  "decision": "Do not promote opt-level 2 alone. This single round is a rejection screen, not paired qualification. It does not evaluate v2's PGO+opt-level-2 composition; that remains untested because the Quench-linked PGO runtime currently emits unreadable profiles. Production opt-level 3 remains unchanged.",
+  "verification": "All eight benchmark rows completed. No Test262, Wasm, Node suite, or unit tests were run for this discarded build-setting screen."
+}
