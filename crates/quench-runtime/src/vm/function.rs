@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program.functions.get(*id as usize).is_some_and(|function| {
-                    function.strict || !function.constructible || function.is_class_constructor
+                    function.has_restricted_legacy_caller_access()
                 })
             }),
             Some(Cell::Function {

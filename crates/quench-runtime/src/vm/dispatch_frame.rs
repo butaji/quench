@@ -148,7 +148,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, context, args);
+        self.initialize_frame_invocation(&mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -341,7 +341,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, context, args);
+        self.initialize_frame_invocation(&mut frame, function, context, args);
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -378,15 +378,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn initialize_frame_invocation(
         &self,
         frame: &mut Frame,
+        function: &crate::bytecode::Function,
         context: CallContext,
         args: &[Value],
     ) {
         frame.context = context;
         frame.original_arguments.clear();
-        if context
-            .callable()
-            .is_some_and(|function| !self.function_caller_is_restricted(function))
-        {
+        if context.callable().is_some() && !function.has_restricted_legacy_caller_access() {
             frame.original_arguments.extend_from_slice(args);
         }
     }
