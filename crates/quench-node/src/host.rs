@@ -61,6 +61,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) path_module: Option<quench_runtime_next::RootId>,
     pub(crate) url_constructor: Option<quench_runtime_next::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers::shared_vm::TimerHandleApi>,
+    /// Invocation flags supplied by the embedder for this logical process.
+    pub(crate) exec_argv: Vec<String>,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
     pub(crate) diagnostics: crate::modules::diagnostics_channel::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http::shared_vm::State,
@@ -80,6 +82,7 @@ impl SharedNodeState {
             path_module: None,
             url_constructor: None,
             timer_handle_api: None,
+            exec_argv: Vec::new(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics: crate::modules::diagnostics_channel::SharedDiagnosticsState::default(),
             http: crate::modules::http::shared_vm::State::new(),
@@ -93,8 +96,6 @@ pub struct HostState {
     pub timers: crate::modules::timers::TimerRegistry,
     pub event_loop: crate::modules::event_loop::EventLoop,
     pub process: crate::modules::process::ProcessState,
-    /// Invocation flags supplied by the embedder for this logical process.
-    pub exec_argv: Vec<String>,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
     pub http: crate::modules::http::HttpState,
@@ -202,7 +203,6 @@ impl NodeHost {
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
             process,
-            exec_argv: Vec::new(),
             fs: fs.clone(),
             net: crate::modules::net::NetState::new(),
             http: crate::modules::http::HttpState::new(),
@@ -277,11 +277,8 @@ impl NodeHost {
     /// Retain the Node invocation flags supplied by the fixture adapter.
     pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
         let mode = crate::modules::process::UnhandledRejectionMode::from_exec_argv(&exec_argv)?;
-        {
-            let mut state = self.state.borrow_mut();
-            state.exec_argv = exec_argv;
-            state.process.unhandled_rejection_mode = mode;
-        }
+        self.shared_state.borrow_mut().exec_argv = exec_argv;
+        self.state.borrow_mut().process.unhandled_rejection_mode = mode;
         Ok(self)
     }
 
