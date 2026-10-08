@@ -5,7 +5,6 @@
 
 use std::io::Write;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use quench_runtime::execute::{self, VmError};
@@ -222,152 +221,6 @@ pub fn spawn_sync(
                 host_api::array(vec![Value::Null, stdout, stderr]),
             ),
         ]));
-    }
-
-    if command == state.borrow().process.exec_path
-        && child_args.iter().any(|value| {
-            value.contains("warning_node_modules/new-buffer-cjs.js")
-                || value.contains("warning_node_modules/new-buffer-esm.mjs")
-        })
-    {
-        let stderr = if child_args
-            .iter()
-            .any(|value| value == "--pending-deprecation")
-        {
-            "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
-        } else {
-            ""
-        };
-        return Ok(host_api::object(vec![
-            ("pid".to_string(), Value::Number(0.0)),
-            ("status".to_string(), Value::Number(0.0)),
-            ("signal".to_string(), Value::Null),
-            ("stdout".to_string(), Value::String(String::new())),
-            ("stderr".to_string(), Value::String(stderr.to_string())),
-            (
-                "output".to_string(),
-                host_api::array(vec![
-                    Value::Null,
-                    Value::String(String::new()),
-                    Value::String(stderr.to_string()),
-                ]),
-            ),
-        ]));
-    }
-
-    // `process.execPath -p <source>` is Node's print/evaluate entry point.
-    // The compatibility runner is not a shell executable, so model this
-    // bounded Node contract before handing ordinary commands to the OS.
-    if command == state.borrow().process.exec_path
-        && child_args.first().is_some_and(|flag| flag == "-p")
-        && child_args
-            .get(1)
-            .is_some_and(|source| source.contains("new Buffer"))
-    {
-        let source = child_args.get(1).map(String::as_str).unwrap_or_default();
-        let call_site = source
-            .split("vm.runInNewContext")
-            .nth(1)
-            .unwrap_or(source)
-            .split("filename:")
-            .nth(1)
-            .and_then(|tail| tail.split('"').nth(1))
-            .unwrap_or_default();
-        let warns = source.contains("new Buffer") && !call_site.contains("node_modules");
-        let stderr = if warns {
-            "[DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues.\n"
-        } else {
-            ""
-        };
-        return Ok(host_api::object(vec![
-            ("pid".to_string(), Value::Number(0.0)),
-            ("status".to_string(), Value::Number(0.0)),
-            ("signal".to_string(), Value::Null),
-            ("stdout".to_string(), Value::String(String::new())),
-            ("stderr".to_string(), Value::String(stderr.to_string())),
-            (
-                "output".to_string(),
-                host_api::array(vec![
-                    Value::Null,
-                    Value::String(String::new()),
-                    Value::String(stderr.to_string()),
-                ]),
-            ),
-        ]));
-    }
-
-    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-p") {
-        let print_index = child_args.iter().position(|flag| flag == "-p").unwrap_or(0);
-        let source = child_args
-            .get(print_index + 1)
-            .map(String::as_str)
-            .unwrap_or_default();
-        if source.contains("builtinModules.includes(\"node:vfs\")") {
-            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
-            let value = if enabled { "true\n" } else { "false\n" };
-            let stdout = output_value(value.as_bytes(), options);
-            let stderr = output_value(&[], options);
-            return Ok(host_api::object(vec![
-                ("pid".into(), Value::Number(0.0)),
-                ("status".into(), Value::Number(0.0)),
-                ("signal".into(), Value::Null),
-                ("stdout".into(), stdout.clone()),
-                ("stderr".into(), stderr.clone()),
-                (
-                    "output".into(),
-                    host_api::array(vec![Value::Null, stdout, stderr]),
-                ),
-            ]));
-        }
-        return run_print_eval(source);
-    }
-
-    if command == state.borrow().process.exec_path && child_args.iter().any(|flag| flag == "-e") {
-        let eval_index = child_args.iter().position(|flag| flag == "-e").unwrap_or(0);
-        let source = child_args
-            .get(eval_index + 1)
-            .map(String::as_str)
-            .unwrap_or_default();
-        let node_vfs = source.contains("require(\"node:vfs\")")
-            || source.contains("require('node:vfs')")
-            || source.contains("import(\"node:vfs\")")
-            || source.contains("import('node:vfs')");
-        let bare_vfs = source.contains("require(\"vfs\")") || source.contains("require('vfs')");
-        if node_vfs || bare_vfs {
-            let enabled = child_args.iter().any(|arg| arg == "--experimental-vfs");
-            let (status, stdout, stderr) = if node_vfs && enabled {
-                (
-                    0.0,
-                    if source.contains("readFileSync") {
-                        "hi\n"
-                    } else {
-                        ""
-                    },
-                    "",
-                )
-            } else if bare_vfs {
-                (1.0, "", "Error: Cannot find module 'vfs'\n")
-            } else {
-                (
-                    1.0,
-                    "",
-                    "Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: vfs\n",
-                )
-            };
-            let stdout = output_value(stdout.as_bytes(), options);
-            let stderr = output_value(stderr.as_bytes(), options);
-            return Ok(host_api::object(vec![
-                ("pid".into(), Value::Number(0.0)),
-                ("status".into(), Value::Number(status)),
-                ("signal".into(), Value::Null),
-                ("stdout".into(), stdout.clone()),
-                ("stderr".into(), stderr.clone()),
-                (
-                    "output".into(),
-                    host_api::array(vec![Value::Null, stdout, stderr]),
-                ),
-            ]));
-        }
     }
 
     // Node rejects an invocation whose protocol bounds are contradictory
@@ -1151,40 +1004,6 @@ fn value_to_string(value: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => String::new(),
     }
-}
-
-fn run_print_eval(source: &str) -> Result<Value, VmError> {
-    let lines = Arc::new(Mutex::new(Vec::<String>::new()));
-    let sink_lines = Arc::clone(&lines);
-    let sink: quench_runtime::vm::OutputSink = Arc::new(move |line| {
-        if let Ok(mut lines) = sink_lines.lock() {
-            lines.push(line.to_string());
-        }
-    });
-    let outcome = crate::run::eval_script(&format!("console.log({source});"), sink);
-    let output = lines
-        .lock()
-        .map(|lines| {
-            lines.iter().fold(String::new(), |mut output, line| {
-                output.push_str(line);
-                if !line.ends_with('\n') {
-                    output.push('\n');
-                }
-                output
-            })
-        })
-        .unwrap_or_default();
-    let (status, stderr) = match outcome.error {
-        Some(error) => (1.0, error),
-        None => (0.0, String::new()),
-    };
-    Ok(host_api::object(vec![
-        ("pid".into(), Value::Number(0.0)),
-        ("status".into(), Value::Number(status)),
-        ("signal".into(), Value::Null),
-        ("stdout".into(), Value::String(output)),
-        ("stderr".into(), Value::String(stderr)),
-    ]))
 }
 
 fn string_args(value: &Value) -> Option<Vec<String>> {

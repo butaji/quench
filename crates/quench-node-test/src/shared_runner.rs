@@ -2,8 +2,8 @@
 
 use crate::NodeOutcome;
 use quench_node::{
-    host::EntryGoal,
     shared_run::{execute_shared, SharedCompletion, SharedInput},
+    EntryGoal,
 };
 use std::path::Path;
 
