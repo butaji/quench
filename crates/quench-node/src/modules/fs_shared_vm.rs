@@ -1,5 +1,7 @@
 use crate::host::NodeHost;
+use crate::modules::fs_ops as fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::io::Read;
 
 #[path = "fs_shared_vm/stat.rs"]
 pub(crate) mod stat;
@@ -818,19 +820,27 @@ pub(crate) fn read_file_sync(
         .transpose()?
         .unwrap_or_else(|| "undefined".to_owned());
     let path = resolve_shared_path(context, path);
-    match std::fs::read(&path) {
+    let (encoding, flag) = if let Some(options) = args.get(1).copied() {
+        if let Some(encoding) = context.string_text(options)? {
+            (Some(encoding), None)
+        } else {
+            let encoding_key = context.string_rooted("encoding");
+            let encoding = context.get_property_rooted(options, encoding_key)?;
+            let encoding = context.string_text(encoding)?;
+            let flag_key = context.string_rooted("flag");
+            let flag = context.get_property_rooted(options, flag_key)?;
+            let flag = context.string_text(flag)?;
+            (encoding, flag)
+        }
+    } else {
+        (None, None)
+    };
+    let bytes = fs_ops::open(&path, flag.as_deref(), None).and_then(|mut file| {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    match bytes {
         Ok(bytes) => {
-            let encoding = if let Some(options) = args.get(1).copied() {
-                if let Some(encoding) = context.string_text(options)? {
-                    Some(encoding)
-                } else {
-                    let key = context.string_rooted("encoding");
-                    let encoding = context.get_property_rooted(options, key)?;
-                    context.string_text(encoding)?
-                }
-            } else {
-                None
-            };
             match encoding.as_deref() {
                 None | Some("buffer") => buffer_from_bytes(context, &bytes),
                 Some(encoding) => {
