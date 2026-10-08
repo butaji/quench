@@ -6878,7 +6878,7 @@ fn finalized_error() -> VmError {
 pub(crate) fn digest_bytes(algorithm: &str, input: &[u8]) -> Result<Vec<u8>, VmError> {
     Ok(match algorithm {
         "md5" => Md5::digest(input).to_vec(),
-        "sha1" => sha1_digest(input),
+        "sha1" => super::crypto_sha1::digest(input),
         "sha224" => Sha224::digest(input).to_vec(),
         "sha256" => Sha256::digest(input).to_vec(),
         "sha384" => Sha384::digest(input).to_vec(),
@@ -6888,10 +6888,6 @@ pub(crate) fn digest_bytes(algorithm: &str, input: &[u8]) -> Result<Vec<u8>, VmE
         "sha3-512" => Sha3_512::digest(input).to_vec(),
         _ => return Err(execute::type_error("Unsupported digest")),
     })
-}
-
-pub(crate) fn sha1_digest(input: &[u8]) -> Vec<u8> {
-    Sha1::digest(input).to_vec()
 }
 
 pub(crate) fn shake_digest(

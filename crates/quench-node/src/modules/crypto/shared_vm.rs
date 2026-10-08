@@ -110,7 +110,7 @@ pub(crate) fn sha1(
         bytes.push(byte as u8);
     }
 
-    let digest = crate::modules::crypto::sha1_digest(&bytes);
+    let digest = crate::modules::crypto_sha1::digest(&bytes);
     let values = digest
         .iter()
         .map(|byte| context.number(f64::from(*byte)))
