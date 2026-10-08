@@ -1,7 +1,7 @@
 //! Shared-VM async context needed by Node host APIs.
 //!
-//! Async resource IDs stay in `AsyncHooksState`; shared roots and the exported
-//! classes live on the shared-VM side of the host boundary.
+//! Async identity counters are shared by both adapters; shared roots and the
+//! exported classes live on the shared-VM side of the host boundary.
 
 use crate::host::NodeHost;
 use quench_runtime_next::{NativeContext, RootId, RootedError, Runtime};
@@ -29,27 +29,21 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
 /// Allocate an async identity for a host-created request context.
 ///
 /// HTTP enters this identity around request delivery and response diagnostics;
-/// AsyncLocalStorage remains keyed by the same `current_id` authority used by
-/// AsyncResource.
-pub(crate) fn create_context(state: &Rc<RefCell<crate::host::HostState>>) -> u64 {
-    let mut host = state.borrow_mut();
-    let trigger = host.async_hooks.current_id;
-    host.async_hooks.allocate(trigger).0
+/// AsyncLocalStorage is keyed by the shared identity owner used by AsyncResource.
+pub(crate) fn create_context(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> u64 {
+    let identity = shared_state.borrow().async_hooks.identity.clone();
+    identity.allocate_async_id()
 }
 
 /// Snapshot the currently visible stores under a fresh identity for one
 /// Promise job. Even an empty snapshot needs an identity so a later
 /// `enterWith` cannot mutate the context of the job that registered it.
 pub(crate) fn capture_job_context(
-    state: &Rc<RefCell<crate::host::HostState>>,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) -> Option<u64> {
-    let (parent_id, context_id) = {
-        let mut host = state.borrow_mut();
-        let parent_id = host.async_hooks.current_id;
-        let context_id = host.async_hooks.allocate(parent_id).0;
-        (parent_id, context_id)
-    };
+    let identity = shared_state.borrow().async_hooks.identity.clone();
+    let parent_id = identity.current_async_id();
+    let context_id = identity.allocate_async_id();
     inherit_stores(
         &mut shared_state.borrow_mut().async_hooks,
         parent_id,
@@ -60,15 +54,25 @@ pub(crate) fn capture_job_context(
 
 /// Switch the current Node async identity while a Promise reaction executes.
 pub(crate) fn enter_job_context(
-    state: &Rc<RefCell<crate::host::HostState>>,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     context_id: u64,
 ) -> u64 {
-    let mut host = state.borrow_mut();
-    std::mem::replace(&mut host.async_hooks.current_id, context_id)
+    shared_state
+        .borrow()
+        .async_hooks
+        .identity
+        .replace_current_async_id(context_id)
 }
 
-pub(crate) fn restore_job_context(state: &Rc<RefCell<crate::host::HostState>>, previous_id: u64) {
-    state.borrow_mut().async_hooks.current_id = previous_id;
+pub(crate) fn restore_job_context(
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
+    previous_id: u64,
+) {
+    shared_state
+        .borrow()
+        .async_hooks
+        .identity
+        .replace_current_async_id(previous_id);
 }
 
 /// Remove the per-reaction store snapshot and return roots that have no other
@@ -83,17 +87,13 @@ pub(crate) fn release_job_context(
 /// Enter a named async identity and restore the previous identity on every
 /// return path, including a thrown guest callback.
 pub(crate) fn enter_context(
-    state: &Rc<RefCell<crate::host::HostState>>,
+    shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
     async_id: u64,
 ) -> ContextScope {
-    let previous_id = {
-        let mut host = state.borrow_mut();
-        let previous_id = host.async_hooks.current_id;
-        host.async_hooks.current_id = async_id;
-        previous_id
-    };
+    let identity = shared_state.borrow().async_hooks.identity.clone();
+    let previous_id = identity.replace_current_async_id(async_id);
     ContextScope {
-        state: Rc::clone(state),
+        identity,
         previous_id,
     }
 }
@@ -152,13 +152,13 @@ fn inherit_stores(
 }
 
 pub(crate) struct ContextScope {
-    state: Rc<RefCell<crate::host::HostState>>,
+    identity: crate::modules::async_hooks::AsyncIdentity,
     previous_id: u64,
 }
 
 impl Drop for ContextScope {
     fn drop(&mut self) {
-        self.state.borrow_mut().async_hooks.current_id = self.previous_id;
+        self.identity.replace_current_async_id(self.previous_id);
     }
 }
 
@@ -203,10 +203,10 @@ pub(crate) fn initialize_resource(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let (id, trigger) = {
-        let state = context.host_mut().state();
-        let mut host = state.borrow_mut();
-        let trigger = host.async_hooks.current_id;
-        host.async_hooks.allocate(trigger)
+        let shared_state = context.host_mut().shared_state();
+        let identity = shared_state.borrow().async_hooks.identity.clone();
+        let trigger = identity.current_async_id();
+        (identity.allocate_async_id(), trigger)
     };
     set_number(context, receiver, ASYNC_ID, id)?;
     set_number(context, receiver, "\0quench:async_hooks:trigger", trigger)?;
@@ -229,21 +229,17 @@ pub(crate) fn run_in_async_scope(
     }
     let resource_id = number_property(context, receiver, ASYNC_ID)?
         .ok_or_else(|| RootedError::host("AsyncResource has no async ID"))?;
-    let previous_id = {
-        let state = context.host_mut().state();
-        let mut host = state.borrow_mut();
-        let previous_id = host.async_hooks.current_id;
-        host.async_hooks.current_id = resource_id;
-        previous_id
-    };
+    let identity = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .identity
+        .clone();
+    let previous_id = identity.replace_current_async_id(resource_id);
     let this_arg = args.get(1).copied().unwrap_or(receiver);
     let result = context.call_rooted(callback, this_arg, args.get(2..).unwrap_or_default());
-    context
-        .host_mut()
-        .state()
-        .borrow_mut()
-        .async_hooks
-        .current_id = previous_id;
+    identity.replace_current_async_id(previous_id);
     result
 }
 
@@ -275,13 +271,14 @@ pub(crate) fn initialize_storage(
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let id = {
-        let state = context.host_mut().state();
-        let mut host = state.borrow_mut();
-        let id = host.async_hooks.next_local_id;
-        host.async_hooks.next_local_id += 1;
-        id
-    };
+    let identity = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .async_hooks
+        .identity
+        .clone();
+    let id = identity.allocate_local_storage_id();
     set_number(context, receiver, LOCAL_ID, id)?;
     Ok(receiver)
 }
@@ -298,8 +295,12 @@ pub(crate) fn enter_with(
         .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
     let store = context.retain(store)?;
     let released = {
-        let async_id = context.host_mut().state().borrow().async_hooks.current_id;
         let shared_state = context.host_mut().shared_state();
+        let async_id = shared_state
+            .borrow()
+            .async_hooks
+            .identity
+            .current_async_id();
         let mut shared = shared_state.borrow_mut();
         let previous = shared
             .async_hooks
@@ -321,15 +322,16 @@ pub(crate) fn get_store(
 ) -> Result<RootId, RootedError> {
     let local_id = number_property(context, receiver, LOCAL_ID)?
         .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let current_id = context.host_mut().state().borrow().async_hooks.current_id;
-    let store = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .async_hooks
-        .local_stores
-        .get(&(current_id, local_id))
-        .copied();
+    let store = {
+        let shared = context.host_mut().shared_state();
+        let shared = shared.borrow();
+        let current_id = shared.async_hooks.identity.current_async_id();
+        shared
+            .async_hooks
+            .local_stores
+            .get(&(current_id, local_id))
+            .copied()
+    };
     Ok(store.unwrap_or_else(|| context.undefined()))
 }
 

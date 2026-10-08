@@ -31,10 +31,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 pub(crate) fn poll(
     runtime: &mut quench_runtime_next::Runtime<NodeHost>,
     program: &quench_runtime_next::ResidualProgram,
-    state: &Rc<RefCell<crate::host::HostState>>,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) -> Result<bool, String> {
-    poll::poll(runtime, program, state, shared_state)
+    poll::poll(runtime, program, shared_state)
 }
 
 pub(crate) fn has_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
