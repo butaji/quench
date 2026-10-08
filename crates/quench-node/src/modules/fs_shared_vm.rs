@@ -591,7 +591,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
     throw error;
   };
   const normalizePath = (path) =>
-    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
+    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
   const normalizeMode = (mode) => {
     if (typeof mode === 'string') {
       const parsed = Number.parseInt(mode, 8);
@@ -827,6 +827,33 @@ const ASYNC_RMDIR_API: &str = r#"(rmdirSync) => {
   };
 }"#;
 
+const ASYNC_MKDTEMP_API: &str = r#"(mkdtempSync) => {
+  return function mkdtemp(prefix, options, callback) {
+    if (typeof options === 'function') {
+      callback = options;
+      options = undefined;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (typeof prefix !== 'string' && !Buffer.isBuffer(prefix) &&
+        !(ArrayBuffer.isView(prefix) && !(prefix instanceof DataView))) {
+      const error = new TypeError('The "prefix" argument must be of type string, Buffer, or Uint8Array.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        Reflect.apply(callback, undefined, [null, mkdtempSync(prefix)]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -1042,6 +1069,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, module, "rmdir", rmdir)?;
+    let mkdtemp_sync = get(context, module, "mkdtempSync")?;
+    let mkdtemp_factory = context.evaluate_script_rooted(
+        ASYNC_MKDTEMP_API,
+        "node:fs/shared-async-mkdtemp.js",
+    )?;
+    let mkdtemp = context.call_rooted(mkdtemp_factory, undefined, &[mkdtemp_sync])?;
+    set(context, module, "mkdtemp", mkdtemp)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -1078,6 +1112,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         append_file_sync,
         mkdir_sync,
         rmdir_sync,
+        mkdtemp_sync,
     )?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
@@ -1129,6 +1164,7 @@ pub(crate) fn promises_module(
     append_file_sync: RootId,
     mkdir_sync: RootId,
     rmdir_sync: RootId,
+    mkdtemp_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -1168,6 +1204,12 @@ pub(crate) fn promises_module(
     )?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, promises, "rmdir", rmdir)?;
+    let mkdtemp_factory = context.evaluate_script_rooted(
+        "(mkdtempSync) => (...args) => Promise.resolve().then(() => mkdtempSync(...args))",
+        "node:fs/promises/shared-mkdtemp.js",
+    )?;
+    let mkdtemp = context.call_rooted(mkdtemp_factory, undefined, &[mkdtemp_sync])?;
+    set(context, promises, "mkdtemp", mkdtemp)?;
     Ok(promises)
 }
 
