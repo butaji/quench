@@ -23,6 +23,8 @@ fs.writeFileSync(chmodTarget, 'x');
 fs.writeFileSync(chmodPromiseTarget, 'x');
 fs.chmodSync(chmodTarget, 0o600);
 assert.equal(fs.statSync(chmodTarget).mode & 0o777, 0o600);
+const chmodFd = fs.openSync(chmodTarget, 'r+');
+fs.fchmodSync(chmodFd, 0o600);
 
 let callbacks = 0;
 fs.exists(manifest, (exists) => {
@@ -44,6 +46,12 @@ fs.chmod(chmodTarget, '640', (error) => {
   assert.ifError(error);
   assert.equal(fs.statSync(chmodTarget).mode & 0o777, 0o640);
   callbacks++;
+  fs.fchmod(chmodFd, '620', (fdError) => {
+    assert.ifError(fdError);
+    assert.equal(fs.fstatSync(chmodFd).mode & 0o777, 0o620);
+    fs.closeSync(chmodFd);
+    callbacks++;
+  });
 });
 fs.promises.chmod(chmodPromiseTarget, 0o604).then(() => {
   assert.equal(fs.statSync(chmodPromiseTarget).mode & 0o777, 0o604);
@@ -51,4 +59,4 @@ fs.promises.chmod(chmodPromiseTarget, 0o604).then(() => {
   fs.rmSync(chmodTarget);
   fs.rmSync(chmodPromiseTarget);
 });
-setImmediate(() => assert.equal(callbacks, 6));
+setTimeout(() => assert.equal(callbacks, 7), 25);
