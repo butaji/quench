@@ -57,6 +57,7 @@ impl CaseObservation {
                 RunResult::Skip
             }
             (Some(NodeOutcome::GuestExit { code: 0 }), true) => RunResult::Pass,
+            (Some(NodeOutcome::GuestExit { code }), true) if *code != 0 => RunResult::Fail,
             (Some(NodeOutcome::Skip { .. }), true) => RunResult::Skip,
             (Some(NodeOutcome::Fail { .. }), false) => RunResult::Fail,
             (Some(NodeOutcome::GuestExit { .. }), false) => RunResult::Fail,
