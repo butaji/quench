@@ -1,5 +1,5 @@
 use super::*;
-use quench_runtime_next::{Host, Runtime, WasmTrap};
+use quench_runtime::{Host, Runtime, WasmTrap};
 
 struct TestHost;
 impl Host for TestHost {

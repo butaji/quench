@@ -1,4 +1,4 @@
-//! Shared SHA-1 digest primitive for the legacy and shared Node crypto adapters.
+//! SHA-1 digest primitive used by the shared Node crypto adapter.
 
 use sha1::{Digest, Sha1};
 

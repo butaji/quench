@@ -1,5 +1,5 @@
 use super::*;
-use quench_runtime_next::{Engine, Runtime};
+use quench_runtime::{Engine, Runtime};
 
 #[test]
 fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() {

@@ -8,7 +8,7 @@ use proc_macro::TokenStream;
 use oxc_allocator::Allocator;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
-use syn::{parse_macro_input, LitStr};
+use syn::{LitStr, parse_macro_input};
 
 #[proc_macro]
 pub fn checked_js(input: TokenStream) -> TokenStream {
@@ -18,9 +18,9 @@ pub fn checked_js(input: TokenStream) -> TokenStream {
 
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, &source, SourceType::cjs()).parse();
-    if !parsed.errors.is_empty() {
+    if !parsed.diagnostics.is_empty() {
         let messages = parsed
-            .errors
+            .diagnostics
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>()

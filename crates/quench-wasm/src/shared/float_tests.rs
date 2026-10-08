@@ -1,4 +1,4 @@
-use quench_runtime_next::WasmValue;
+use quench_runtime::WasmValue;
 
 #[test]
 fn nan_predicates_require_float_types_and_quiet_payloads() {

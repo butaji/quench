@@ -64,7 +64,7 @@ requirement. `run-all` and `run-stages` run case processes concurrently
 (configurable with
 `TEST262_JOBS`, defaulting to available parallelism), preserve discovery-order
 reports, and keep stage batches capped at 100. The fixture comparison scripts
-`tools/diff-next.mjs` and `tools/run-all-next.mjs` require positive
+`tools/diff.mjs` and `tools/run-all.mjs` require positive
 `DIFF_TIMEOUT_MS` values. Their differential agreement requires completed
 observations on both sides: signals, timeouts, failed launches and missing
 statuses fail verification even if their outputs match. Completed nonzero exits
@@ -93,7 +93,7 @@ case results.
 
 `run-all` writes its full per-test report to
 `target/test262-report.json` and compares a full-inventory run against
-`target/test262-next-ratchet.json`. A first complete all-pass run freezes the
+`target/test262-quench-ratchet.json`. A first complete all-pass run freezes the
 baseline; a later lost pass is reported as a regression and fails the command.
 Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
 `TEST262_BATCH_SIZE` subset still writes its report but does not update or
@@ -143,7 +143,7 @@ discovery order. Reserve `run-all` for explicit whole-inventory qualification.
 
 ## Shared runtime host roots
 
-The development `quench_runtime_next::Runtime` exposes `global_root`, `string_rooted`,
+The development `quench_runtime::Runtime` exposes `global_root`, `string_rooted`,
 `get_property_rooted`, `set_property_rooted` and `call_rooted`. These use the
 existing VM semantics and derive program context from its owned program store.
 All inputs are live roots belonging to that runtime; validation precedes guest

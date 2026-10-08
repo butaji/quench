@@ -143,39 +143,6 @@ for (
     writable: false,
   });
 }
-if (!globalThis.navigator) {
-  const platform = globalThis.__quench_platform === "macos"
-    ? "MacIntel"
-    : globalThis.__quench_platform === "linux"
-    ? "Linux x86_64"
-    : globalThis.__quench_platform === "windows"
-    ? "Win32"
-    : String(globalThis.__quench_platform || "");
-  const navigator = {};
-  for (
-    const [name, value] of [
-      ["userAgent", "Node.js/20"],
-      ["language", "en-US"],
-      ["languages", ["en-US"]],
-      ["hardwareConcurrency", 1],
-      ["platform", platform],
-    ]
-  ) {
-    Object.defineProperty(navigator, name, {
-      configurable: true,
-      enumerable: true,
-      value: Array.isArray(value) ? Object.freeze(value) : value,
-      writable: false,
-    });
-  }
-  Object.defineProperty(navigator, "locks", {
-    configurable: true,
-    enumerable: true,
-    value: globalThis.__quenchNavigatorLocks,
-    writable: false,
-  });
-  globalThis.navigator = Object.freeze(navigator);
-}
 /* quench:web-api:start */
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {

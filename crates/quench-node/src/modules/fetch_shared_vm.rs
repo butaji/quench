@@ -5,7 +5,7 @@
 //! shared event-loop checkpoint.
 
 use crate::host::{NodeHost, SharedNodeState};
-use quench_runtime_next::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
@@ -303,8 +303,8 @@ pub(crate) fn executor(
 }
 
 pub(crate) fn poll(
-    runtime: &mut quench_runtime_next::Runtime<NodeHost>,
-    program: &quench_runtime_next::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &std::rc::Rc<std::cell::RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
     let mut completions = Vec::new();
@@ -336,7 +336,7 @@ pub(crate) fn poll(
         match result {
             Ok(result) => {
                 runtime.release_root(result);
-                crate::modules::process::shared_vm::run_host_jobs_with_uncaught(runtime, program)?;
+                crate::modules::process_shared_vm::run_host_jobs_with_uncaught(runtime, program)?;
             }
             Err(error) => return Err(runtime.format_error(program, &error.error)),
         }

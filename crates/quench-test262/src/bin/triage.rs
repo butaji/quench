@@ -14,7 +14,7 @@ use std::{
 use serde_json::json;
 
 use quench_test262::{
-    discover_js_files, HarnessCache, RuntimeNextHost, Test262Runner, TestMetadata, TestOutcome,
+    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
 /// Per-thread outcomes for one contiguous chunk of files.
@@ -348,7 +348,7 @@ fn run_parallel(
             let counter = Arc::clone(&counter);
             let next = Arc::clone(&next);
             thread::Builder::new()
-                .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+                .stack_size(quench_runtime::WORKER_STACK_SIZE)
                 .spawn(move || run_worker(files, root, limit, counter, next, emit_outcomes))
                 .expect("spawn triage worker")
         })
@@ -378,7 +378,7 @@ fn run_worker(
     next: Arc<AtomicUsize>,
     emit_outcomes: bool,
 ) -> RunReport {
-    let mut runner = Test262Runner::new(RuntimeNextHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     let mut report = RunReport::default();
     loop {
@@ -404,7 +404,7 @@ fn run_worker(
 }
 
 fn run_fixture_batch(
-    runner: &mut Test262Runner<RuntimeNextHost>,
+    runner: &mut Test262Runner<Test262RuntimeHost>,
     harness: &mut HarnessCache,
     batch: &[TestSource],
     limit: usize,

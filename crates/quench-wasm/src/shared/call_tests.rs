@@ -1,5 +1,5 @@
 use super::*;
-use quench_runtime_next::{Runtime, SystemHost, WasmTrap};
+use quench_runtime::{Runtime, SystemHost, WasmTrap};
 
 fn lower(wat: &str) -> WasmI32Function {
     crate::Engine::new()
@@ -33,7 +33,7 @@ fn traps_cross_call_frames_and_runtime_recovers() {
 fn ordinary_recursive_call_exhausts_instead_of_becoming_a_tail_call() {
     std::thread::Builder::new()
         .name("wasm-recursion".into())
-        .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(|| {
             let recursive = lower(r#"(module (func $loop (export "f") (result i32) call $loop))"#);
             let recovery = lower(r#"(module (func (export "f") (result i32) i32.const 42))"#);

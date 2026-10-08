@@ -1,19 +1,18 @@
-//! Shared-VM scheduler queues and callbacks, independent of legacy Values.
+//! Scheduler queues and callbacks owned by the shared Node host.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
-/// Shared-VM callbacks and scheduler state, independent of legacy Values.
+/// Callback queues and scheduler state for the shared Node host.
 pub struct SharedEventLoop {
     shared: SharedCallbacks,
 }
 
-/// Guest callbacks retained by the shared VM host between execution phases.
-/// Legacy callbacks continue to use `Value` in the legacy queues above.
+/// Guest callbacks retained by the shared Node host between execution phases.
 pub struct SharedCallback {
-    pub callback: quench_runtime_next::RootId,
-    pub receiver: quench_runtime_next::RootId,
-    pub args: Vec<quench_runtime_next::RootId>,
+    pub callback: quench_runtime::RootId,
+    pub receiver: quench_runtime::RootId,
+    pub args: Vec<quench_runtime::RootId>,
 }
 
 struct SharedCallbacks {
@@ -46,8 +45,8 @@ struct SharedProcessListener {
 pub struct SharedListenerSnapshot {
     pub id: u64,
     pub once: bool,
-    pub callback: quench_runtime_next::RootId,
-    pub receiver: quench_runtime_next::RootId,
+    pub callback: quench_runtime::RootId,
+    pub receiver: quench_runtime::RootId,
 }
 
 pub struct SharedImmediate {
@@ -75,8 +74,8 @@ pub struct SharedTimer {
 pub enum SharedEventKey {
     String(String),
     Symbol {
-        identity: quench_runtime_next::Value,
-        root: quench_runtime_next::RootId,
+        identity: quench_runtime::Value,
+        root: quench_runtime::RootId,
     },
 }
 
@@ -181,7 +180,7 @@ impl SharedEventLoop {
         });
     }
 
-    pub fn shared_guest_immediate_handles(&self) -> Vec<(u64, quench_runtime_next::RootId)> {
+    pub fn shared_guest_immediate_handles(&self) -> Vec<(u64, quench_runtime::RootId)> {
         self.shared
             .immediates
             .iter()
@@ -368,7 +367,7 @@ impl SharedEventLoop {
         id: u64,
         callback: SharedCallback,
         once: bool,
-    ) -> (bool, Option<quench_runtime_next::RootId>) {
+    ) -> (bool, Option<quench_runtime::RootId>) {
         let new_event = !self.shared.listeners.contains_key(&event);
         let duplicate_root = match (&event, new_event) {
             (SharedEventKey::Symbol { root, .. }, false) => Some(*root),
@@ -401,7 +400,7 @@ impl SharedEventLoop {
         &mut self,
         event: &SharedEventKey,
         id: u64,
-    ) -> Option<(SharedCallback, Option<quench_runtime_next::RootId>, bool)> {
+    ) -> Option<(SharedCallback, Option<quench_runtime::RootId>, bool)> {
         let listeners = self.shared.listeners.get_mut(event)?;
         let index = listeners
             .iter()
@@ -421,7 +420,7 @@ impl SharedEventLoop {
     pub fn shared_listener_roots(
         &self,
         event: &SharedEventKey,
-    ) -> Vec<(quench_runtime_next::RootId, quench_runtime_next::RootId)> {
+    ) -> Vec<(quench_runtime::RootId, quench_runtime::RootId)> {
         self.shared
             .listeners
             .get(event)

@@ -1,4 +1,5 @@
 //! Durable outcome views and comparisons; case outcomes are the report authority.
+use crate::ratchet::RATCHET_ENGINE;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -104,14 +105,17 @@ pub fn outcome_report(outcomes: &[Value], provenance: Value) -> Value {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    json!({"schema":1,"engine":"next","provenance":provenance,
+    json!({"schema":1,"engine":RATCHET_ENGINE,"provenance":provenance,
         "total":outcomes.len(),"passed":passed,"failed":outcomes.len()-passed,
         "stages":stages,"families":families,"outcomes":outcomes})
 }
 
 fn case_outcomes(report: &Value) -> Result<BTreeMap<&str, &str>, String> {
-    if report["schema"] != 1 || report["engine"] != "next" || !report["provenance"].is_object() {
-        return Err("expected a next-core outcome report with provenance".into());
+    if report["schema"] != 1
+        || report["engine"] != RATCHET_ENGINE
+        || !report["provenance"].is_object()
+    {
+        return Err("expected a quench outcome report with provenance".into());
     }
     let outcomes = report["outcomes"]
         .as_array()

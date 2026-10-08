@@ -4,11 +4,6 @@
 //! remaining fragment files are retained as source history, but are not
 //! compiled into the host until a caller adds them here.
 
-#[path = "bootstrap/cluster.rs"]
-pub mod cluster;
-#[path = "bootstrap/iterators.rs"]
-pub mod iterators;
-
 abilities!(crate::polyfills::Phase::Bootstrap;
     "globals-extra" => globals_extra,
     "fetch" => fetch,

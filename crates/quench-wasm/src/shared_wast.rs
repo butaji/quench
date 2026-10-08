@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use quench_runtime_next::{
+use quench_runtime::{
     Host, RootId, Runtime, WasmHostFunctionId, WasmHostValue, WasmInstance, WasmSignature,
     WasmType, WasmValue,
 };
@@ -149,7 +149,7 @@ impl Store {
 
     fn prepare(&mut self, module: Rc<Module>) -> Result<Instance, LinkError> {
         let mut has_instance_state = false;
-        let mut declaration_types = quench_runtime_next::WasmTypes::default();
+        let mut declaration_types = quench_runtime::WasmTypes::default();
         let mut exports = HashMap::new();
         for payload in Parser::new(0).parse_all(module.bytes()) {
             match payload.map_err(|error| LinkError::Unsupported(error.to_string()))? {
@@ -164,7 +164,7 @@ impl Store {
                 | Payload::CustomSection(_)
                 | Payload::End(_) => {}
                 Payload::TypeSection(reader) => {
-                    declaration_types = quench_runtime_next::WasmTypes::from_groups(
+                    declaration_types = quench_runtime::WasmTypes::from_groups(
                         reader
                             .into_iter()
                             .collect::<Result<Vec<_>, _>>()
@@ -228,7 +228,7 @@ impl Store {
 
     fn instantiate_definition(
         &mut self,
-        definition: &quench_runtime_next::WasmModule,
+        definition: &quench_runtime::WasmModule,
     ) -> Result<WasmInstance, LinkError> {
         let mut roots = Vec::new();
         let result = (|| {
@@ -357,7 +357,7 @@ impl Store {
         }
     }
 
-    fn host_reference(&mut self, id: u32) -> Option<quench_runtime_next::Value> {
+    fn host_reference(&mut self, id: u32) -> Option<quench_runtime::Value> {
         if let Some(&root) = self.host_references.get(&id) {
             return self.runtime.rooted_value(root);
         }
@@ -435,7 +435,7 @@ impl Store {
         self.runtime.wasm_value_matches_type(
             *got,
             WasmType::Reference {
-                kind: quench_runtime_next::WasmReferenceKind::Internal(kind),
+                kind: quench_runtime::WasmReferenceKind::Internal(kind),
                 nullable: false,
             },
         )
@@ -635,11 +635,11 @@ fn shared_arg(arg: &WastArg<'_>) -> Option<WasmValue> {
         WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
             shared: false,
             ty: AbstractHeapType::Func | AbstractHeapType::NoFunc,
-        })) => Some(WasmValue::FuncRef(quench_runtime_next::Value::NULL)),
+        })) => Some(WasmValue::FuncRef(quench_runtime::Value::NULL)),
         WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
             shared: false,
             ty: AbstractHeapType::Extern | AbstractHeapType::NoExtern,
-        })) => Some(WasmValue::ExternRef(quench_runtime_next::Value::NULL)),
+        })) => Some(WasmValue::ExternRef(quench_runtime::Value::NULL)),
         WastArg::Core(WastArgCore::RefNull(HeapType::Abstract {
             shared: false,
             ty:
@@ -649,7 +649,7 @@ fn shared_arg(arg: &WastArg<'_>) -> Option<WasmValue> {
                 | AbstractHeapType::Array
                 | AbstractHeapType::I31
                 | AbstractHeapType::None,
-        })) => Some(WasmValue::GcRef(quench_runtime_next::Value::NULL)),
+        })) => Some(WasmValue::GcRef(quench_runtime::Value::NULL)),
         _ => None,
     })
 }
