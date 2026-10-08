@@ -792,6 +792,10 @@ pub(crate) struct SourcePosition {
 }
 
 impl Function {
+    pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
+        self.strict || !self.constructible || self.is_class_constructor
+    }
+
     pub(crate) fn arguments_are_mapped(&self) -> bool {
         !self.is_arrow && !self.strict && self.simple_parameters
     }
