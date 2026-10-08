@@ -1,6 +1,6 @@
 mod analysis;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
@@ -54,21 +54,21 @@ struct EngineSpec {
     executable_sha256: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct EngineRecord {
-    name: &'static str,
+    name: String,
     executable: String,
     executable_sha256: String,
     version: String,
     argv: Vec<String>,
     environment: BTreeMap<String, String>,
     inherits_environment: bool,
-    jit_mode: &'static str,
+    jit_mode: String,
     jit_proof_command: Vec<String>,
     jit_proof: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Artifact {
     path: String,
     size_bytes: Option<u64>,
@@ -76,14 +76,14 @@ struct Artifact {
     sha256: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct EngineSummary {
     median_score: Option<f64>,
     median_max_rss_bytes: Option<u64>,
     valid_samples: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Sample {
     status: i32,
     timed_out: bool,
@@ -108,14 +108,14 @@ impl Sample {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct RoundRecord {
     round: usize,
     execution_order: Vec<String>,
     samples: BTreeMap<String, Sample>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct FixtureRecord {
     source: Artifact,
     valid: bool,
@@ -124,7 +124,7 @@ struct FixtureRecord {
     rounds: Vec<RoundRecord>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct SuiteRecord {
     schema: u32,
     created_unix_ns: u128,
@@ -141,7 +141,7 @@ struct SuiteRecord {
     qualification_ready: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct CorpusRecord {
     pinned_revision: Option<String>,
     checkout_revision: Option<String>,
@@ -149,7 +149,7 @@ struct CorpusRecord {
     fixture_set_matches: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct HostRecord {
     uname: String,
     rustc: String,
@@ -170,6 +170,8 @@ struct Options {
     rounds: usize,
     timeout_ms: u64,
     output: Option<PathBuf>,
+    checkpoint: Option<PathBuf>,
+    resume: Option<PathBuf>,
 }
 
 fn main() {
@@ -193,10 +195,53 @@ fn main() {
     }
 
     let files = selected_fixtures(&options);
-    let inputs = corpus_inputs();
-    let pinned = corpus_record(&files);
-    let mut fixture_records = BTreeMap::new();
+    let (source_revision, source_dirty) = source_identity();
+    let mut report = SuiteRecord {
+        schema: 4,
+        created_unix_ns: now_ns(),
+        rounds_requested: options.rounds,
+        timeout_ms: options.timeout_ms,
+        source_revision,
+        source_dirty,
+        corpus: corpus_record(&files),
+        host: host_identity(),
+        engines: engine_records,
+        suite_inputs: corpus_inputs(),
+        fixtures: BTreeMap::new(),
+        complete: false,
+        qualification_ready: false,
+    };
+    if let Some(path) = &options.resume {
+        let saved = read_checkpoint(path);
+        validate_resume(&saved, &report, &files);
+        report = saved;
+        eprintln!(
+            "resuming {} completed fixture records from {}",
+            report.fixtures.len(),
+            path.display()
+        );
+    } else if let Some(path) = &options.checkpoint {
+        if path.exists() {
+            fail(&format!(
+                "checkpoint already exists: {} (use --resume)",
+                path.display()
+            ));
+        }
+        write_checkpoint(path, &report);
+    }
+    let checkpoint_path = options.resume.as_ref().or(options.checkpoint.as_ref());
     for file in files {
+        let key = file.display().to_string();
+        if report.fixtures.get(&key).is_some_and(|fixture| {
+            fixture.valid && fixture.output_equal && fixture.rounds.len() == options.rounds
+        }) {
+            eprintln!(
+                "{}: resumed valid fixture ({} rounds)",
+                file.display(),
+                options.rounds
+            );
+            continue;
+        }
         let fixture = run_fixture(&file, &engines, options.rounds, options.timeout_ms);
         eprintln!(
             "{}: {} ({}/{} rounds)",
@@ -209,34 +254,29 @@ fn main() {
                 .count(),
             options.rounds
         );
-        fixture_records.insert(file.display().to_string(), fixture);
+        report.fixtures.insert(key, fixture);
+        if let Some(path) = checkpoint_path {
+            write_checkpoint(path, &report);
+            eprintln!(
+                "checkpointed {} fixtures to {}",
+                report.fixtures.len(),
+                path.display()
+            );
+        }
     }
 
     let complete =
-        !fixture_records.is_empty() && fixture_records.values().all(|fixture| fixture.valid);
-    let (revision, source_dirty) = source_identity();
-    let host = host_identity();
-    let qualification_ready = complete
+        !report.fixtures.is_empty() && report.fixtures.values().all(|fixture| fixture.valid);
+    report.complete = complete;
+    report.qualification_ready = complete
         && options.rounds >= MIN_QUALIFYING_ROUNDS
-        && pinned.fixture_set_matches
-        && pinned.checkout_clean
-        && pinned.pinned_revision == pinned.checkout_revision
-        && !source_dirty;
-    let report = SuiteRecord {
-        schema: 4,
-        created_unix_ns: now_ns(),
-        rounds_requested: options.rounds,
-        timeout_ms: options.timeout_ms,
-        source_revision: revision,
-        source_dirty,
-        corpus: pinned,
-        host,
-        engines: engine_records,
-        suite_inputs: inputs,
-        fixtures: fixture_records,
-        complete,
-        qualification_ready,
-    };
+        && report.corpus.fixture_set_matches
+        && report.corpus.checkout_clean
+        && report.corpus.pinned_revision == report.corpus.checkout_revision
+        && !report.source_dirty;
+    if let Some(path) = checkpoint_path {
+        write_checkpoint(path, &report);
+    }
     let bytes = serde_json::to_vec_pretty(&report).unwrap();
     if let Some(path) = options.output {
         let mut file = fs::OpenOptions::new()
@@ -257,18 +297,119 @@ fn main() {
 impl EngineSpec {
     fn record(&self) -> EngineRecord {
         EngineRecord {
-            name: self.name,
+            name: self.name.to_string(),
             executable: self.executable.display().to_string(),
             executable_sha256: self.executable_sha256.clone(),
             version: self.version.clone(),
             argv: self.argv.clone(),
             environment: self.env.clone(),
             inherits_environment: false,
-            jit_mode: self.jit_mode,
+            jit_mode: self.jit_mode.to_string(),
             jit_proof_command: self.jit_proof_command.clone(),
             jit_proof: self.jit_proof.clone(),
         }
     }
+}
+
+fn read_checkpoint(path: &Path) -> SuiteRecord {
+    let bytes = fs::read(path).unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot read checkpoint {}: {error}",
+            path.display()
+        ))
+    });
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| fail(&format!("invalid checkpoint {}: {error}", path.display())))
+}
+
+fn write_checkpoint(path: &Path, report: &SuiteRecord) {
+    let bytes = serde_json::to_vec_pretty(report).expect("serialize benchmark checkpoint");
+    let mut temporary_name = path.as_os_str().to_os_string();
+    temporary_name.push(format!(".tmp-{}-{}", std::process::id(), now_ns()));
+    let temporary = PathBuf::from(temporary_name);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(&temporary);
+        fail(&format!(
+            "cannot write checkpoint {}: {error}",
+            path.display()
+        ));
+    }
+}
+
+fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
+    let metadata_matches = saved.schema == expected.schema
+        && saved.rounds_requested == expected.rounds_requested
+        && saved.timeout_ms == expected.timeout_ms
+        && saved.source_revision == expected.source_revision
+        && saved.source_dirty == expected.source_dirty
+        && same_json(&saved.corpus, &expected.corpus)
+        && same_json(&saved.host, &expected.host)
+        && same_json(&saved.engines, &expected.engines)
+        && same_json(&saved.suite_inputs, &expected.suite_inputs);
+    if !metadata_matches {
+        fail("checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout");
+    }
+    if saved.source_dirty {
+        fail("cannot resume a checkpoint recorded from a dirty source tree");
+    }
+    let allowed = files
+        .iter()
+        .map(|file| file.display().to_string())
+        .collect::<BTreeSet<_>>();
+    if saved.fixtures.keys().any(|key| !allowed.contains(key)) {
+        fail("checkpoint contains fixtures outside the selected fixture set");
+    }
+    for (key, fixture) in &saved.fixtures {
+        let file = files
+            .iter()
+            .find(|file| file.display().to_string() == *key)
+            .expect("fixture key validated above");
+        if !same_json(&fixture.source, &artifact(file)) {
+            fail(&format!("checkpoint fixture input changed: {key}"));
+        }
+        if fixture.valid && fixture.output_equal {
+            let engine_names = saved
+                .engines
+                .iter()
+                .map(|engine| engine.name.as_str())
+                .collect::<Vec<_>>();
+            let invalid_completed_round = fixture.rounds.len() != saved.rounds_requested
+                || fixture.rounds.iter().enumerate().any(|(index, round)| {
+                    let expected_order = (0..engine_names.len())
+                        .map(|offset| engine_names[(offset + index) % engine_names.len()])
+                        .collect::<Vec<_>>();
+                    round.round != index
+                        || round
+                            .execution_order
+                            .iter()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            != expected_order
+                        || round.samples.len() != engine_names.len()
+                        || engine_names
+                            .iter()
+                            .any(|name| !round.samples.get(*name).is_some_and(Sample::valid))
+                });
+            if invalid_completed_round {
+                fail(&format!(
+                    "checkpoint claims invalid completed rounds for {key}"
+                ));
+            }
+        }
+    }
+}
+
+fn same_json<T: Serialize>(left: &T, right: &T) -> bool {
+    serde_json::to_value(left).ok() == serde_json::to_value(right).ok()
 }
 
 fn parse_options() -> Options {
@@ -287,6 +428,8 @@ fn parse_options() -> Options {
         rounds: MIN_QUALIFYING_ROUNDS,
         timeout_ms: DEFAULT_TIMEOUT_MS,
         output: None,
+        checkpoint: None,
+        resume: None,
     };
     if !options.all && !options.preflight_only {
         options.fixture = Some(PathBuf::from(first));
@@ -311,12 +454,31 @@ fn parse_options() -> Options {
                 }
             }
             "--out" => options.output = Some(required_path(&mut args, "--out")),
+            "--checkpoint" => options.checkpoint = Some(required_path(&mut args, "--checkpoint")),
+            "--resume" => options.resume = Some(required_path(&mut args, "--resume")),
             "--help" | "-h" => usage(""),
             _ => usage(&format!("unknown argument: {arg}")),
         }
     }
     if options.preflight_only && options.fixture.is_some() {
         usage("--preflight-only does not take a fixture");
+    }
+    if options.checkpoint.is_some() && options.resume.is_some() {
+        usage("--checkpoint and --resume are mutually exclusive");
+    }
+    if (options.checkpoint.is_some() || options.resume.is_some()) && !options.all {
+        usage("--checkpoint and --resume require --all");
+    }
+    if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
+        usage("--preflight-only cannot use checkpoints");
+    }
+    if let (Some(checkpoint), Some(output)) = (
+        options.checkpoint.as_ref().or(options.resume.as_ref()),
+        &options.output,
+    ) {
+        if checkpoint == output {
+            usage("checkpoint and final --out must use different paths");
+        }
     }
     options
 }
@@ -972,7 +1134,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -984,8 +1146,12 @@ fn fail(message: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::{peak_rss_bytes, wait_child};
+    use super::{
+        artifact, now_ns, peak_rss_bytes, read_checkpoint, validate_resume, wait_child,
+        write_checkpoint, CorpusRecord, FixtureRecord, HostRecord, SuiteRecord,
+    };
     use std::process::Command;
+    use std::{collections::BTreeMap, fs, path::PathBuf};
 
     #[test]
     fn converts_wait4_peak_rss_to_bytes() {
@@ -1021,5 +1187,62 @@ mod tests {
         let (status, timed_out, _) = wait_child(child.id(), 5).expect("wait4 child");
         assert_eq!(status, -1);
         assert!(timed_out);
+    }
+
+    #[test]
+    fn checkpoint_round_trips_and_validates_fixture_inputs() {
+        let directory = std::env::temp_dir().join(format!(
+            "quench-bench-checkpoint-{}-{}",
+            std::process::id(),
+            now_ns()
+        ));
+        fs::create_dir(&directory).expect("create checkpoint test directory");
+        let fixture_path = directory.join("fixture.js");
+        fs::write(&fixture_path, "// pinned fixture\n").expect("write fixture");
+        let report_path = directory.join("report.json");
+        let expected = SuiteRecord {
+            schema: 4,
+            created_unix_ns: now_ns(),
+            rounds_requested: 11,
+            timeout_ms: 300_000,
+            source_revision: "a".repeat(40),
+            source_dirty: false,
+            corpus: CorpusRecord {
+                pinned_revision: Some("b".repeat(40)),
+                checkout_revision: Some("b".repeat(40)),
+                checkout_clean: true,
+                fixture_set_matches: true,
+            },
+            host: HostRecord {
+                uname: "test host".into(),
+                rustc: "rustc test".into(),
+                model: Some("test model".into()),
+                memory_bytes: Some(1),
+                memory_limit_bytes: Some(1),
+                cpu_quota: Some("400000 100000".into()),
+            },
+            engines: Vec::new(),
+            suite_inputs: Vec::new(),
+            fixtures: BTreeMap::new(),
+            complete: false,
+            qualification_ready: false,
+        };
+        let mut saved = expected.clone();
+        saved.fixtures.insert(
+            fixture_path.display().to_string(),
+            FixtureRecord {
+                source: artifact(&fixture_path),
+                valid: false,
+                output_equal: false,
+                summaries: BTreeMap::new(),
+                rounds: Vec::new(),
+            },
+        );
+
+        write_checkpoint(&report_path, &saved);
+        let loaded = read_checkpoint(&report_path);
+        validate_resume(&loaded, &expected, &[PathBuf::from(&fixture_path)]);
+        assert_eq!(loaded.fixtures.len(), 1);
+        fs::remove_dir_all(directory).expect("remove checkpoint test directory");
     }
 }
