@@ -1,8 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::{host::EntryGoal, NodeHost};
-use quench_runtime::ops::RealmId;
-use rqj::{Engine, ExecutionRequest, Runtime, SourceKind};
+use quench_runtime_next::{Engine, ExecutionRequest, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
@@ -38,7 +37,7 @@ pub enum SharedInput {
 pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCompletion, String> {
     std::thread::Builder::new()
         .name("quench-node-shared-exec".into())
-        .stack_size(rqj::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
         .spawn(move || execute_shared_on_worker(input, argv))
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
@@ -79,7 +78,7 @@ fn execute_shared_on_worker(
         }
     };
 
-    let host = NodeHost::new(RealmId::ROOT, argv).with_exec_argv(exec_argv);
+    let host = NodeHost::new(argv).with_exec_argv(exec_argv);
     let host = match commonjs_entry {
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,
