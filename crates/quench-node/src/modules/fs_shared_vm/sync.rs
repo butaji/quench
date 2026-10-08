@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -111,6 +111,20 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, writeFileS
     },
     rmSync(path, options) {
       return rmSync(normalizePath(path), options);
+    },
+    copyFileSync(source, destination, mode) {
+      if (mode == null) mode = 0;
+      if (typeof mode !== 'number') {
+        const error = new TypeError('The "mode" argument must be of type number.');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+      if (!Number.isInteger(mode) || mode < 0 || mode > 7) {
+        const error = new RangeError('The "mode" argument is out of range.');
+        error.code = 'ERR_OUT_OF_RANGE';
+        throw error;
+      }
+      return copyFileSync(normalizePath(source), normalizePath(destination), mode);
     },
     writeFileSync(path, data, options) {
       const fd = descriptorArgument(path);
@@ -222,6 +236,7 @@ pub(crate) fn install(
     let mkdir = context.host_function(crate::host::shared_vm::operation("fsMkdirSync"))?;
     let rmdir = context.host_function(crate::host::shared_vm::operation("fsRmdirSync"))?;
     let mkdtemp = context.host_function(crate::host::shared_vm::operation("fsMkdtempSync"))?;
+    let copy_file = context.host_function(crate::host::shared_vm::operation("fsCopyFileSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -239,6 +254,7 @@ pub(crate) fn install(
             rmdir,
             mkdtemp,
             rm,
+            copy_file,
             write,
             open,
             close,
@@ -251,6 +267,7 @@ pub(crate) fn install(
         ("mkdirSync", "mkdirSync"),
         ("rmdirSync", "rmdirSync"),
         ("mkdtempSync", "mkdtempSync"),
+        ("copyFileSync", "copyFileSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),
@@ -493,6 +510,37 @@ pub(crate) fn mkdtemp_sync(
             error: std::io::Error::from(std::io::ErrorKind::AlreadyExists),
         },
     )
+}
+
+pub(crate) fn copy_file_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let source = path_argument(context, args.first().copied())?;
+    let destination = path_argument(context, args.get(1).copied())?;
+    let mode = args
+        .get(2)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(Value::as_number)
+        .unwrap_or(0.0) as i32;
+    let result = if mode & 1 != 0 && std::path::Path::new(&destination).exists() {
+        Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+    } else {
+        std::fs::copy(&source, &destination).map(|_| ())
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => throw_operation_error(
+            context,
+            &ops::OperationError::Io {
+                syscall: "copyfile",
+                path: destination,
+                error,
+            },
+        ),
+    }
 }
 
 pub(crate) fn rm_sync(

@@ -854,6 +854,28 @@ const ASYNC_MKDTEMP_API: &str = r#"(mkdtempSync) => {
   };
 }"#;
 
+const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
+  return function copyFile(source, destination, mode, callback) {
+    if (typeof mode === 'function') {
+      callback = mode;
+      mode = 0;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        copyFileSync(source, destination, mode);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  };
+}"#;
+
 const UV_FS_SYMLINK_DIR: i32 = 1;
 const UV_FS_SYMLINK_JUNCTION: i32 = 2;
 const UV_DIRENT_UNKNOWN: i32 = 0;
@@ -1076,6 +1098,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let mkdtemp = context.call_rooted(mkdtemp_factory, undefined, &[mkdtemp_sync])?;
     set(context, module, "mkdtemp", mkdtemp)?;
+    let copy_file_sync = get(context, module, "copyFileSync")?;
+    let copy_file_factory = context.evaluate_script_rooted(
+        ASYNC_COPYFILE_API,
+        "node:fs/shared-async-copyfile.js",
+    )?;
+    let copy_file = context.call_rooted(copy_file_factory, undefined, &[copy_file_sync])?;
+    set(context, module, "copyFile", copy_file)?;
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
@@ -1113,6 +1142,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         mkdir_sync,
         rmdir_sync,
         mkdtemp_sync,
+        copy_file_sync,
     )?;
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
@@ -1165,6 +1195,7 @@ pub(crate) fn promises_module(
     mkdir_sync: RootId,
     rmdir_sync: RootId,
     mkdtemp_sync: RootId,
+    copy_file_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -1210,6 +1241,12 @@ pub(crate) fn promises_module(
     )?;
     let mkdtemp = context.call_rooted(mkdtemp_factory, undefined, &[mkdtemp_sync])?;
     set(context, promises, "mkdtemp", mkdtemp)?;
+    let copy_file_factory = context.evaluate_script_rooted(
+        "(copyFileSync) => (...args) => Promise.resolve().then(() => copyFileSync(...args))",
+        "node:fs/promises/shared-copyfile.js",
+    )?;
+    let copy_file = context.call_rooted(copy_file_factory, undefined, &[copy_file_sync])?;
+    set(context, promises, "copyFile", copy_file)?;
     Ok(promises)
 }
 
