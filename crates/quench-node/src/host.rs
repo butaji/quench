@@ -1,9 +1,7 @@
-//! Host trait implementation. One `NodeHost` impl, one dispatch.
+//! Node host state shared by the canonical VM and transitional API adapters.
 //!
-//! Builtins return `Value::Object` they own (plain Rust objects
-//! exposed through the runtime's ordinary object semantics). The
-//! shared adapter re-enters the VM through rooted public operations; Node
-//! process and scheduling state remains in the existing Rust envelope.
+//! Shared adapters re-enter the VM through rooted public operations; legacy
+//! `Value` state remains only for API handlers that have not been migrated.
 
 pub(crate) mod shared_vm;
 
@@ -15,9 +13,9 @@ use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 use quench_runtime::value::Value;
-use quench_runtime::vm::{Host, OutputSink};
+use quench_runtime::vm::OutputSink;
 
-use crate::registry::{CapId, NodeSpec};
+use crate::registry::NodeSpec;
 use crate::shared_run::EntryGoal;
 
 pub fn scheduler_capability(kind: u16) -> Value {
@@ -309,80 +307,6 @@ impl NodeHost {
     pub fn exit_code(&self) -> Option<i32> {
         self.state.borrow().process.exit_code
     }
-}
-
-impl Host for NodeHost {
-    fn call(
-        &self,
-        capability: HostCapabilityRef,
-        receiver: Option<&Value>,
-        arguments: &[Value],
-    ) -> Result<Value, VmError> {
-        let cap = match capability.kind {
-            HostCapabilityKind::Custom(c) => c,
-            HostCapabilityKind::PromiseHook => {
-                return crate::modules::async_hooks::promise_hook(&self.state, arguments);
-            }
-            _ => return Err(VmError::NotCallable),
-        };
-        dispatch(cap, &self.state, receiver, arguments)
-    }
-
-    fn construct(
-        &self,
-        capability: HostCapabilityRef,
-        arguments: &[Value],
-    ) -> Result<Value, VmError> {
-        let cap = match capability.kind {
-            HostCapabilityKind::Custom(c) => c,
-            _ => return Err(VmError::NotCallable),
-        };
-        construct(cap, &self.state, arguments)
-    }
-
-    fn construct_with_new_target(
-        &self,
-        capability: HostCapabilityRef,
-        arguments: &[Value],
-        _new_target: &Value,
-    ) -> Result<Value, VmError> {
-        let cap = match capability.kind {
-            HostCapabilityKind::Custom(c) => c,
-            _ => return Err(VmError::NotCallable),
-        };
-        construct(cap, &self.state, arguments)
-    }
-}
-
-fn dispatch(
-    cap: CapId,
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    if let Some(handler) = crate::dispatch::lookup(cap) {
-        return handler(state, receiver, args);
-    }
-    Err(VmError::NotCallable)
-}
-
-fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    if cap == crate::registry::SPEC_BUFFER_INDEX_OF.cap
-        || cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap
-    {
-        let method = if cap == crate::registry::SPEC_BUFFER_LAST_INDEX_OF.cap {
-            "lastIndexOf"
-        } else {
-            "indexOf"
-        };
-        return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
-            "The \"buffer\" argument must be an instance of Buffer, TypedArray, or DataView. Received an instance of {method}"
-        )));
-    }
-    if let Some(handler) = crate::dispatch::lookup_construct(cap) {
-        return handler(state, args);
-    }
-    Err(VmError::NotCallable)
 }
 
 /// Whether a shell command names this host or its canonical engine sibling.
