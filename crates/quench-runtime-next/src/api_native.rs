@@ -212,6 +212,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         root
     }
 
+    /// Create a JavaScript string from UTF-16 code units without Unicode-scalar loss.
+    pub fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
+        let root = self.vm.string_units_rooted(units);
+        self.roots.push(root);
+        root
+    }
+
     /// Create an ordinary object with the active realm's intrinsic prototype.
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();

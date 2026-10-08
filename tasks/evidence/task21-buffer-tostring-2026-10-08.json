@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "task": "21",
+  "kind": "focused shared-VM Buffer.toString verification",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "391c3d116eb4c82c6ab45a84137ecae9a25c0d1e",
+    "worktree_dirty": true,
+    "host_runtime_version": "v26.10.0",
+    "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "files_sha256": {
+      "crates/quench-node/src/modules/buffer/shared_vm.rs": "451d4009a54fbb46d650822422fcb7940c94ca1d04d18e1eb8c73b6da51b3b97",
+      "crates/quench-runtime-next/src/api_native.rs": "c7c85fadfef354355daa4a6980f47a8b2cff2308a749d2010af33fd8809968e3",
+      "crates/quench-runtime-next/src/vm/embedding.rs": "4fe117518676bdd85f6c504a7d28c743f2ccdb0da7ce399f73fb965f737ba92c",
+      "crates/quench-node/src/modules/buffer_enc.rs": "0170dc10c0f7c013409b73653a78abd09eb0fe366bdda7cb764d5c60fa54e5fb",
+      "crates/quench-node-test/node-tests/parallel.txt": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca",
+      "tests/node-compat/stage-2650/buffer-tostring-range.js": "0a43b42919936854901671b82b7828cb933db218db59e521b4697b912ef656e3",
+      "tests/node/test/parallel/test-buffer-tostring.js": "bad5178a40c2718201d94973026f5f454b74794398e0ce21265d3cd902104c09",
+      "tests/node/test/parallel/test-buffer-tostring-range.js": "84de95ad801e0b43b4a6da69e61bae784e13e0d224d9f8b5a87be82ab7b70988",
+      "tasks/node-compat-inventory.json": "9e24b13b36fafc424410912b304b886f1724223b465f667186111da7c3b003c0"
+    },
+    "binaries_sha256": {
+      "target/iteration/quench-node": "542378914c002094efcc26c0445bb72784a787ff876d8b778a6644cdbdd8e728",
+      "target/iteration/run-compat": "0a512c60ed0dd6e0ba587cc9979a1d533af7a42dc974cb8da2e7c451f11b8baf",
+      "target/iteration/run-parallel": "78816d96464983364e090040623e2609495536d0a7cbbdc1902f5cf48759d9e3"
+    }
+  },
+  "changes_verified": [
+    "Shared Buffer decoding uses the codec's canonical UTF-16 units and roots them directly as the shared VM's JsString, preserving lone surrogates without converting through legacy Value.",
+    "Buffer.toString range indexes and encoding defaults now match the Node-observed negative, invalid, omitted and explicit-null cases."
+  ],
+  "oracle": {
+    "node": "v26.10.0",
+    "utf16le_cases": [
+      { "bytes": [0, 216], "code_units": [55296] },
+      { "bytes": [0, 220], "code_units": [56320] },
+      { "bytes": [61, 216, 0, 222], "code_units": [55357, 56832] },
+      { "bytes": [65, 0, 66], "code_units": [65] }
+    ],
+    "result": "Quench and Node produced the listed lengths/code units; the exact Stage 2650 CommonJS fixture also passed under Node."
+  },
+  "runs": [
+    {
+      "suite": "Node compatibility",
+      "command": "target/iteration/run-compat tests/node-compat/stage-2650",
+      "fixture": "tests/node-compat/stage-2650/buffer-tostring-range.js",
+      "result": "1 passed, 0 failed, 0 skipped"
+    },
+    {
+      "suite": "Node test/parallel",
+      "command": "target/iteration/run-parallel --all --filter test-buffer-tostring.js --results target/iteration/task21-buffer-tostring-2026-10-08.json",
+      "result": "1 passed, 0 skipped, 0 failed",
+      "report_sha256": "c5ef7aa6a14bac585f42435d05e0873dd87528d2693c3936288a1cc3dcf0e7f2"
+    },
+    {
+      "suite": "Node test/parallel",
+      "command": "target/iteration/run-parallel --all --filter test-buffer-tostring-range.js --results target/iteration/task21-buffer-tostring-range-2026-10-08.json",
+      "result": "1 passed, 0 skipped, 0 failed",
+      "report_sha256": "922d3f9ad2f944c2064c9049a6d33adfad6e0497f62e1fcd417e8eb883f8bbbe"
+    }
+  ],
+  "non_gate_diagnostic": {
+    "fixture": "tests/node/test/parallel/test-buffer-generic-methods.js",
+    "result": "failed its broad Buffer prototype inventory assertion",
+    "scope": "This optional upstream fixture is outside the framework-core profile; the changed toString checks are covered by the focused range and encoding fixtures. It remains a separate Buffer surface gap."
+  },
+  "qualification_limit": "This focused Node API result does not refresh the full framework-core, Test262 or Wasm gate and does not close task 21 or task 27."
+}

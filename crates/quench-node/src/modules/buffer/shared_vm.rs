@@ -1,8 +1,7 @@
 //! Shared-VM Buffer values are realm-owned Uint8Array views.
 
 use crate::host::NodeHost;
-use quench_runtime::value::Value as LegacyValue;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
 const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     r#"(encode, decode, canonicalEncoding) => {
@@ -12,8 +11,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     return error;
   };
   const normalizeEncoding = (encoding) => {
-    const requested = encoding || "utf8";
-    const normalized = canonicalEncoding(String(requested));
+    const normalized = canonicalEncoding(String(encoding));
     if (normalized === undefined) {
       throw codedTypeError(`Unknown encoding: ${encoding}`, "ERR_UNKNOWN_ENCODING");
     }
@@ -24,7 +22,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   class Buffer extends Uint8Array {
     static from(value, encoding, length) {
       if (typeof value === "string") {
-        return makeBuffer(encode(value, normalizeEncoding(encoding)));
+        return makeBuffer(encode(value, normalizeEncoding(encoding || "utf8")));
       }
       return new Buffer(value, encoding, length);
     }
@@ -104,10 +102,11 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       const index = (value, fallback) => {
         const number = Math.trunc(Number(value));
         if (Number.isNaN(number)) return fallback;
-        return Math.max(0, Math.min(this.length, number < 0 ? this.length + number : number));
+        if (number < 0) return 0;
+        return Math.min(this.length, number);
       };
       const first = index(start, 0);
-      const last = Math.max(first, index(end, this.length));
+      const last = Math.max(first, index(end, 0));
       return decode(Array.from(this.subarray(first, last)), normalized);
     }
 
@@ -239,12 +238,8 @@ pub(crate) fn decode(
                 .unwrap_or_default() as u8,
         );
     }
-    let text = match crate::modules::buffer_enc::decode_str(&bytes, canonical) {
-        LegacyValue::String(text) => text,
-        LegacyValue::StringUnits(units) => String::from_utf16_lossy(&units),
-        _ => unreachable!("Buffer decoding always returns a string"),
-    };
-    Ok(context.string_rooted(&text))
+    let units = crate::modules::buffer_enc::decode_units(&bytes, canonical);
+    Ok(context.string_units_rooted(&units))
 }
 
 pub(crate) fn canonical_encoding(

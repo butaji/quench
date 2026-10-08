@@ -9135,10 +9135,13 @@
           "crates/quench-node/src/dispatch_handlers.rs",
           "crates/quench-node/src/modules/buffer_proto.rs",
           "crates/quench-node/src/modules/buffer_methods.rs",
-          "crates/quench-node/src/modules/buffer_enc.rs"
+          "crates/quench-node/src/modules/buffer_enc.rs",
+          "crates/quench-node/src/modules/buffer/shared_vm.rs",
+          "crates/quench-runtime-next/src/api_native.rs",
+          "crates/quench-runtime-next/src/vm/embedding.rs"
         ],
         "obligations": [
-          "toString encoding coercion, start/end clamp and ERR_UNKNOWN_ENCODING."
+          "toString encoding coercion, start/end clamp, UTF-16 code-unit preservation and ERR_UNKNOWN_ENCODING."
         ]
       }
     },
