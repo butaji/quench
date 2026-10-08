@@ -10,8 +10,9 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeFileSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
+  writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
   lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
   readdir: (...args) => Promise.resolve().then(() => readdir(...args)),
@@ -359,6 +360,26 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(readFileS
   queueMicrotask(() => {
     try { Reflect.apply(callback, undefined, [null, readFileSync(path, options)]); }
     catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#);
+
+const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(writeFileSync) => function writeFile(path, data, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = path.pathname;
+  queueMicrotask(() => {
+    try {
+      writeFileSync(path, data, options);
+      Reflect.apply(callback, undefined, [null]);
+    } catch (error) { Reflect.apply(callback, undefined, [error]); }
   });
 }"#);
 
@@ -710,7 +731,21 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "open", open)?;
     set(context, module, "close", close)?;
     set(context, module, "read", read)?;
-    let promises = promises_module(context, constants, open_sync, close_sync, read_sync)?;
+    let write_file_sync = get(context, module, "writeFileSync")?;
+    let write_file_factory = context.evaluate_script_rooted(
+        ASYNC_WRITE_FILE_FACTORY,
+        "node:fs/shared-async-write-file.js",
+    )?;
+    let write_file = context.call_rooted(write_file_factory, undefined, &[write_file_sync])?;
+    set(context, module, "writeFile", write_file)?;
+    let promises = promises_module(
+        context,
+        constants,
+        open_sync,
+        close_sync,
+        read_sync,
+        write_file_sync,
+    )?;
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
@@ -745,6 +780,7 @@ pub(crate) fn promises_module(
     open_sync: RootId,
     close_sync: RootId,
     read_sync: RootId,
+    write_file_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -767,6 +803,7 @@ pub(crate) fn promises_module(
             open_sync,
             close_sync,
             read_sync,
+            write_file_sync,
         ],
     )?;
     set(context, promises, "constants", constants)?;
