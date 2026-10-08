@@ -19,6 +19,14 @@ assert.strictEqual(
   Buffer.concat([Uint8Array.of(1, 2), Uint8Array.of(3)], 5).toString('hex'),
   '0102030000',
 );
+assert.strictEqual(
+  JSON.stringify(Buffer.from('axios')),
+  '{"type":"Buffer","data":[97,120,105,111,115]}',
+);
+assert.strictEqual(
+  Buffer.from(JSON.parse(JSON.stringify(Buffer.from('axios')))).toString(),
+  'axios',
+);
 const numericBuffer = Buffer.alloc(8);
 assert.strictEqual(numericBuffer.writeInt32LE(-42, 0), 4);
 assert.strictEqual(numericBuffer.readInt32LE(0), -42);
