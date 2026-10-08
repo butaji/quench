@@ -936,6 +936,18 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
         }
+        if self.specialized
+            && p.specialized
+            && !self.is_private_name(atom)
+            && let Some(Cell::Object(data)) = self.heap.get(object)
+            && !data.is_module_namespace()
+            && !data.is_arguments_object()
+        {
+            let site = self.field_cache_index(site);
+            if self.try_cached_field_store(object, atom, data.shape(), value, site) {
+                return Ok(());
+            }
+        }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
@@ -1003,33 +1015,7 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .map(Object::shape)
             .unwrap_or(u32::MAX);
-        let cache = self.field_caches[site];
-        if shape != u32::MAX && cache.receiver == shape {
-            let invalidates_method = self.callable_write(object, cache.slot as usize, value);
-            // SAFETY: a matching immutable shape proves the cached slot layout.
-            unsafe {
-                self.heap
-                    .property_set_unchecked(object, cache.slot as usize, value);
-            }
-            if invalidates_method {
-                self.invalidate_method_caches_for_atom(atom);
-            }
-            self.profile.field_cache_hit(0, 0);
-            return Ok(());
-        }
-        if shape != u32::MAX
-            && let Some(cache) = self.megamorphic_field_cache(site, shape)
-        {
-            let invalidates_method = self.callable_write(object, cache.slot as usize, value);
-            // SAFETY: the megamorphic entry is keyed by this immutable shape.
-            unsafe {
-                self.heap
-                    .property_set_unchecked(object, cache.slot as usize, value);
-            }
-            if invalidates_method {
-                self.invalidate_method_caches_for_atom(atom);
-            }
-            self.profile.field_cache_hit(2, 0);
+        if shape != u32::MAX && self.try_cached_field_store(object, atom, shape, value, site) {
             return Ok(());
         }
         self.profile.field_cache(false);
@@ -1049,6 +1035,36 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    #[inline(always)]
+    fn try_cached_field_store(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        shape: u32,
+        value: Value,
+        site: usize,
+    ) -> bool {
+        let cache = self.field_caches[site];
+        let (cache, kind) = if cache.receiver == shape {
+            (cache, 0)
+        } else if let Some(cache) = self.megamorphic_field_cache(site, shape) {
+            (cache, 2)
+        } else {
+            return false;
+        };
+        let invalidates_method = self.callable_write(object, cache.slot as usize, value);
+        // SAFETY: a matching immutable shape proves the cached slot layout.
+        unsafe {
+            self.heap
+                .property_set_unchecked(object, cache.slot as usize, value);
+        }
+        if invalidates_method {
+            self.invalidate_method_caches_for_atom(atom);
+        }
+        self.profile.field_cache_hit(kind, 0);
+        true
     }
     pub(super) fn set_property_with_program(
         &mut self,
