@@ -51,6 +51,14 @@ const STAT_API: &str = r#"(readMetadata) => {
   };
 }"#;
 
+const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
+  for (const name of ["isDirectory", "isFile", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
+    const result = stats[name];
+    Object.defineProperty(stats, name, { value: () => result, configurable: true });
+  }
+  return stats;
+}"#);
+
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
@@ -81,6 +89,120 @@ pub(crate) fn metadata(
     }
 }
 
+pub(crate) fn stat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    sync_metadata(context, args, false)
+}
+
+pub(crate) fn lstat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    sync_metadata(context, args, true)
+}
+
+fn sync_metadata(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    follow_links: bool,
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let result = if follow_links {
+        std::fs::symlink_metadata(&path)
+    } else {
+        std::fs::metadata(&path)
+    };
+    match result {
+        Ok(metadata) => stats(context, &metadata),
+        Err(error) => Err(stat_error(context, error, &path)?),
+    }
+}
+
+pub(crate) fn realpath_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    match std::fs::canonicalize(&path) {
+        Ok(canonical) => Ok(context.string_rooted(&canonical.to_string_lossy())),
+        Err(error) => Err(stat_error(context, error, &path)?),
+    }
+}
+
+pub(crate) fn read_dir_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let entries = match std::fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(error) => return Err(stat_error(context, error, &path)?),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => return Err(stat_error(context, error, &path)?),
+        };
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => return Err(stat_error(context, error, &path)?),
+        };
+        let dirent = context.object_rooted()?;
+        set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
+        set_bool(context, dirent, "isFile", metadata.is_file())?;
+        set_bool(context, dirent, "isDirectory", metadata.is_dir())?;
+        set_bool(context, dirent, "isSymbolicLink", metadata.file_type().is_symlink())?;
+        for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
+            set_bool(context, dirent, name, false)?;
+        }
+        names.push(dirent);
+    }
+    context.array_rooted(&names)
+}
+
+pub(crate) fn read_link_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    match std::fs::read_link(&path) {
+        Ok(target) => Ok(context.string_rooted(&target.to_string_lossy())),
+        Err(error) => Err(stat_error(context, error, &path)?),
+    }
+}
+
 fn stats(
     context: &mut NativeContext<'_, NodeHost>,
     metadata: &std::fs::Metadata,
@@ -106,7 +228,14 @@ fn stats(
         set_number(context, result, name, value)?;
     }
     set_bool(context, result, "isDirectory", snapshot.is_directory)?;
-    Ok(result)
+    set_bool(context, result, "isFile", metadata.is_file())?;
+    set_bool(context, result, "isSymbolicLink", metadata.file_type().is_symlink())?;
+    for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
+        set_bool(context, result, name, false)?;
+    }
+    let decorator = context.evaluate_script_rooted(DECORATE_STATS, "node:fs/shared-stat-methods.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(decorator, undefined, &[result])
 }
 
 struct StatSnapshot {
