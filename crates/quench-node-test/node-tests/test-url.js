@@ -28,6 +28,10 @@ if (url.format(whatwg, { fragment: false, search: false, auth: false }) !== 'htt
   throw new Error('format WHATWG URL options');
 }
 if (url.format(whatwg, false) !== whatwg.href) throw new Error('format falsy options');
+const idnUrl = new url.URL('https://xn--maana-pta.com/');
+if (url.format(idnUrl, { unicode: true }) !== 'https://mañana.com/') {
+  throw new Error('format WHATWG URL Unicode option');
+}
 if (url.format({ protocol: 'https:', auth: 'u:p a', hostname: 'x', pathname: '?x#y' }) !==
   'https://u:p%20a@x/%3Fx%23y') {
   throw new Error('format auth and path escaping');
