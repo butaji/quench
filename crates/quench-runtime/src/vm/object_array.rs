@@ -2,6 +2,9 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
+// Three decimal digits per byte safely cover the largest `usize` value.
+const ARRAY_INDEX_TEXT_CAPACITY: usize = std::mem::size_of::<usize>() * 3;
+
 const ARRAY_LENGTH_MODULUS: f64 = u32::MAX as f64 + 1.0;
 pub(super) const ARRAY_LENGTH_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     enumerable: false,
@@ -210,10 +213,40 @@ impl<H: Host> Vm<H> {
         target: Value,
         index: usize,
     ) -> Option<PropertyAttributes> {
-        let atom = self.lookup_atom(&index.to_string())?;
-        self.descriptors
+        self.array_descriptor_entry(target, index)
+            .map(|(_, attributes)| attributes)
+    }
+
+    pub(super) fn array_descriptor_entry(
+        &self,
+        target: Value,
+        index: usize,
+    ) -> Option<(Atom, PropertyAttributes)> {
+        let atom = self.lookup_array_index_atom(index)?;
+        let attributes = self
+            .descriptors
             .get(&(target, PropertyKey::string(atom)))
-            .copied()
+            .copied()?;
+        Some((atom, attributes))
+    }
+
+    /// Finds an existing canonical index atom without allocating. An absent
+    /// atom proves that no string-keyed property for this index can exist.
+    pub(super) fn lookup_array_index_atom(&self, index: usize) -> Option<Atom> {
+        let mut bytes = [0; ARRAY_INDEX_TEXT_CAPACITY];
+        let mut start = bytes.len();
+        let mut value = index;
+        loop {
+            start -= 1;
+            bytes[start] = b'0' + (value % 10) as u8;
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        let text = std::str::from_utf8(&bytes[start..])
+            .expect("array index formatting emits only decimal digits");
+        self.lookup_atom(text)
     }
 
     pub(super) fn array_integrity_atoms(&mut self, target: Value) -> Vec<Atom> {
@@ -248,7 +281,7 @@ impl<H: Host> Vm<H> {
         !length_attributes.configurable
             && (!freeze || !length_attributes.writable)
             && self.array_present_indices(target).into_iter().all(|index| {
-                let Some(atom) = self.lookup_atom(&index.to_string()) else {
+                let Some(atom) = self.lookup_array_index_atom(index) else {
                     return false;
                 };
                 let attributes = self
@@ -345,16 +378,13 @@ impl<H: Host> Vm<H> {
                 .is_some(),
             _ => false,
         } || self.heap.sparse_get(target, index).is_some();
-        let atom = self.intern_atom(&index.to_string());
-        let key = PropertyKey::string(atom);
-        let has_descriptor = self.descriptors.contains_key(&(target, key));
+        let key = self.lookup_array_index_atom(index).map(PropertyKey::string);
+        let has_descriptor = key.is_some_and(|key| self.descriptors.contains_key(&(target, key)));
         if !present && !has_descriptor {
             return Value::TRUE;
         }
-        let attributes = self
-            .descriptors
-            .get(&(target, key))
-            .copied()
+        let attributes = key
+            .and_then(|key| self.descriptors.get(&(target, key)).copied())
             .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
         if !attributes.configurable {
             return Value::FALSE;
@@ -369,7 +399,9 @@ impl<H: Host> Vm<H> {
                 self.heap.sparse_set(target, index, Value::DELETED);
             }
         }
-        self.descriptors.remove(&(target, key));
+        if let Some(key) = key {
+            self.descriptors.remove(&(target, key));
+        }
         Value::TRUE
     }
 }
