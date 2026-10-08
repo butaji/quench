@@ -357,7 +357,38 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   function ReadStream(path, options) {
     if (!(this instanceof ReadStream)) return new ReadStream(path, options);
 
-    const autoClose = options?.autoClose !== false;
+    if (typeof options !== "string" && options != null && typeof options !== "object") {
+      const error = new TypeError('The "options" argument must be of type object or string.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof path !== "string" && typeof path !== "number" &&
+        !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const settings = typeof options === "string" ? { encoding: options } : options || {};
+    for (const name of ["start", "end"]) {
+      const value = settings[name];
+      if (value === undefined || (name === "end" && value === Infinity)) continue;
+      if (typeof value !== "number") {
+        const error = new TypeError(`The "${name}" option must be of type number.`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isSafeInteger(value) || value < 0) {
+        const error = new RangeError(`The value of "${name}" is out of range.`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+    }
+    if (settings.start !== undefined && settings.end !== undefined && settings.start > settings.end) {
+      const error = new RangeError('The value of "start" is out of range.');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const autoClose = settings.autoClose !== false;
     let phase = "idle";
     let fd = null;
     let bytesRead = 0;
@@ -406,7 +437,7 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
     };
 
     Readable.call(stream, {
-      highWaterMark: options?.highWaterMark,
+      highWaterMark: settings.highWaterMark,
       autoDestroy: autoClose,
       read(size) {
         if (phase === "open") {
@@ -451,7 +482,7 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       stream.destroy();
       return stream;
     };
-    if (options?.encoding !== undefined) stream.setEncoding(options.encoding);
+    if (settings.encoding !== undefined) stream.setEncoding(settings.encoding);
     return stream;
   }
 
