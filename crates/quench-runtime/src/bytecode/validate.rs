@@ -82,7 +82,11 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
         let value = instruction.field_value(field);
         match instruction.op().field_layout(field) {
             FieldLayout::ResultRegister => {
-                register_in_bounds(instruction.result_register(), bounds.registers, 0)
+                if let Some(local) = instruction.numeric_local_target() {
+                    local < bounds.locals
+                } else {
+                    register_in_bounds(instruction.result_register(), bounds.registers, 0)
+                }
             }
             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
                 register_in_bounds(value, bounds.registers, 0)
@@ -564,6 +568,19 @@ impl ResidualProgram {
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
+                    ));
+                }
+                if instruction.op() == super::Op::Binary
+                    && instruction.numeric_local_target().is_some_and(|slot| {
+                        function.dispatch != super::DispatchClass::Numeric
+                            && !plain_local_slots
+                                .get(usize::from(slot))
+                                .copied()
+                                .unwrap_or(false)
+                    })
+                {
+                    return Err(format!(
+                        "function {index} has an unproven plain-local binary target"
                     ));
                 }
                 if !instruction.result_flags_valid() {
