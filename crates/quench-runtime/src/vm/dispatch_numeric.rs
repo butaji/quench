@@ -281,6 +281,9 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::TailCall) => {
                     return Err(JsError("tail call is not valid in numeric dispatch".into()));
                 }
+                Ok(StepResult::PushFrame { .. }) => {
+                    unreachable!("numeric dispatch cannot push general frames")
+                }
                 Ok(StepResult::Await { .. }) => {
                     return Err(JsError("await is not valid in numeric dispatch".into()));
                 }
@@ -320,7 +323,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<StepResult, JsError> {
         let mut pc = self.frames[frame].pc;
         self.frames[frame].pc = pc - 1;
-        let result = self.step(p, frame, instruction.as_wide(), &mut pc);
+        let result = self.step(p, frame, instruction.as_wide(), &mut pc, false);
         self.frames[frame].pc = pc;
         result
     }

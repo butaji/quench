@@ -36,6 +36,7 @@ impl<H: Host> Vm<H> {
         f: usize,
         i: WideInstruction,
         pc: &mut usize,
+        allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
         self.frames[f].binding_site_pc = Some(*pc as u32);
         match i.op() {
@@ -1475,6 +1476,60 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
+                if allow_inline_calls
+                    && i.op() == Op::Call
+                    && !direct_eval
+                    && !previous_direct_eval
+                    && !previous_parameter_eval
+                    && !terminal
+                    && p.kind != crate::bytecode::ProgramKind::Wasm
+                    && f + 1 == self.frames.len()
+                    && self.frames[f].function != super::ROOT_FUNCTION_ID
+                    && p.functions
+                        .get(self.frames[f].function as usize)
+                        .is_some_and(|function| {
+                            function.dispatch == DispatchClass::General
+                        })
+                    && let Some(CallTarget::User(program_id, id, env)) =
+                        self.call_target(callee).ok()
+                    && id != super::ROOT_FUNCTION_ID
+                    && program_id == self.frames[f].program
+                    && program_id == self.active_program
+                    && self.heap.get(callee).is_some_and(|cell| {
+                        matches!(cell, Cell::Function { realm, .. } if *realm == self.realm.globals)
+                    })
+                    && p.functions.get(id as usize).is_some_and(|function| {
+                        function.dispatch == DispatchClass::General
+                            && !function.is_async
+                            && !function.is_generator
+                            && !function.is_class_constructor
+                            && !function.derived_constructor
+                            && !function.class_field_initializer
+                            && !function.parameter_eval_arguments_error
+                    })
+                {
+                    self.profile.call_target(1, args.len());
+                    let result = self.with_call_roots(
+                        [callee, this].into_iter().chain(args.iter().copied()),
+                        |vm| {
+                            vm.push_general_user_frame(
+                                p,
+                                id,
+                                env,
+                                this,
+                                args,
+                                CallContext::user_function(id, callee),
+                            )
+                        },
+                    );
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    let stack_guard = result?;
+                    return Ok(StepResult::PushFrame {
+                        destination: i.result_register(),
+                        stack_guard,
+                    });
+                }
                 if p.kind == crate::bytecode::ProgramKind::Wasm
                     && i.returns_from_frame()
                     && let Some(CallTarget::User(program_id, id, env)) =
