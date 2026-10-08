@@ -1,6 +1,5 @@
 use super::*;
-use quench_runtime::ops::RealmId;
-use rqj::{Engine, Runtime};
+use quench_runtime::{Engine, Runtime};
 
 #[test]
 fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() {
@@ -9,8 +8,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
     std::fs::create_dir_all(&directory).unwrap();
     let filename = directory.join("main.cjs");
     std::fs::write(&filename, "module.exports = { answer: 42 };").unwrap();
-    let host =
-        NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]).with_commonjs_entry(filename);
+    let host = NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);
     let state = host.state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize("", "module-root-lifecycle.js").unwrap();
@@ -20,15 +18,9 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = match &state.borrow().module_cache {
-            crate::host::ModuleCache::Shared(cache) => {
-                assert_eq!(cache.len(), 1);
-                *cache.values().next().unwrap()
-            }
-            crate::host::ModuleCache::Legacy(_) => {
-                panic!("shared execution retained a legacy cache")
-            }
-        };
+        let cache = &state.borrow().module_cache;
+        assert_eq!(cache.len(), 1);
+        let cached = *cache.values().next().unwrap();
         runtime.collect(&program).unwrap();
         let key = runtime.string_rooted("exports");
         let exports = runtime.get_property_rooted(cached, key).unwrap();
@@ -47,7 +39,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
 
 #[test]
 fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm() {
-    let host = NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]);
+    let host = NodeHost::new(vec!["quench-node".into()]);
     let state = host.state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize(
@@ -61,10 +53,7 @@ fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm(
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = match state.borrow().process_module.as_ref().unwrap() {
-            ProcessModule::Shared(root) => *root,
-            ProcessModule::Legacy(_) => panic!("shared initialization retained a legacy value"),
-        };
+        let cached = state.borrow().process_module.expect("process module is cached");
         runtime.collect(&program).unwrap();
         assert!(runtime.root_is_live(cached));
         let global = runtime.global_root().unwrap();

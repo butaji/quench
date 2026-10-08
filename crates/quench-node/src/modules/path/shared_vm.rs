@@ -1,7 +1,7 @@
 //! Shared-VM adapter for the canonical Node Path string algorithms.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 #[derive(Clone, Copy)]
 enum Flavor {
@@ -242,51 +242,47 @@ fn apply(
     };
 
     let result = match (flavor, method) {
-        (Flavor::Posix, Method::Join) => crate::modules::path_posix::join_strings(&paths),
-        (Flavor::Win32, Method::Join) => crate::modules::path_win32_extra::join_strings(&paths),
+        (Flavor::Posix, Method::Join) => crate::modules::path_algorithms::posix_join(&paths),
+        (Flavor::Win32, Method::Join) => crate::modules::path_algorithms::win32_join(&paths),
         (Flavor::Posix, Method::Resolve) => {
             let cwd = process_cwd(context)?;
-            crate::modules::path_posix::resolve_strings(&paths, &cwd)
+            crate::modules::path_algorithms::posix_resolve(&paths, &cwd)
         }
         (Flavor::Win32, Method::Resolve) => {
             let cwd = process_cwd(context)?;
-            crate::modules::path_win32::resolve_strings(&paths, &cwd, |device| {
-                process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone())
-            })
+            crate::modules::path_algorithms::win32_resolve(&paths, &cwd)
         }
         (Flavor::Posix, Method::Relative) => {
             let cwd = process_cwd(context)?;
             let from = paths.first().map(String::as_str).unwrap_or("undefined");
             let to = paths.get(1).map(String::as_str).unwrap_or("undefined");
-            crate::modules::path_posix::relative_strings(from, to, &cwd)
+            crate::modules::path_algorithms::posix_relative(from, to, &cwd)
         }
         (Flavor::Win32, Method::Relative) => {
             let cwd = process_cwd(context)?;
             let from = paths.first().map(String::as_str).unwrap_or("undefined");
             let to = paths.get(1).map(String::as_str).unwrap_or("undefined");
-            crate::modules::path_win32_extra::relative_strings(from, to, &cwd, |device| {
-                process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone())
-            })
+            crate::modules::path_algorithms::win32_relative(from, to, &cwd)
         }
         (Flavor::Posix, Method::Basename) => {
-            crate::modules::path_parts::basename_str(&paths[0], suffix.as_deref(), false)
+            crate::modules::path_algorithms::basename(&paths[0], suffix.as_deref(), false)
         }
         (Flavor::Win32, Method::Basename) => {
-            crate::modules::path_parts::basename_str(&paths[0], suffix.as_deref(), true)
+            crate::modules::path_algorithms::basename(&paths[0], suffix.as_deref(), true)
         }
-        (Flavor::Posix, Method::Dirname) => crate::modules::path_posix::dirname_str(&paths[0]),
+        (Flavor::Posix, Method::Dirname) => crate::modules::path_algorithms::posix_dirname(&paths[0]),
         (Flavor::Win32, Method::Dirname) => {
-            crate::modules::path_win32_extra::dirname_str(&paths[0])
+            crate::modules::path_algorithms::win32_dirname(&paths[0])
         }
         (Flavor::Posix, Method::Extname) => {
-            crate::modules::path_parts::extname_str(&paths[0], false)
+            crate::modules::path_algorithms::extname(&paths[0], false)
         }
         (Flavor::Win32, Method::Extname) => {
-            crate::modules::path_parts::extname_str(&paths[0], true)
+            crate::modules::path_algorithms::extname(&paths[0], true)
         }
-        (Flavor::Posix, Method::Normalize) => crate::modules::path_posix::normalize_str(&paths[0]),
+        (Flavor::Posix, Method::Normalize) => crate::modules::path_algorithms::posix_normalize(&paths[0]),
         (Flavor::Win32, Method::Normalize) => {
-            crate::modules::path_win32_normalize::normalize_str(&paths[0])
+            crate::modules::path_algorithms::win32_normalize(&paths[0])
         }
     };
     Ok(context.string_rooted(&result))
@@ -351,31 +347,6 @@ fn process_cwd(context: &mut NativeContext<'_, NodeHost>) -> Result<String, Root
         .cwd
         .to_string_lossy()
         .into_owned())
-}
-
-fn process_drive_cwd(
-    context: &mut NativeContext<'_, NodeHost>,
-    device: &str,
-    fallback: &str,
-) -> Result<String, RootedError> {
-    let global = context.global_root()?;
-    let process = get(context, global, "process")?;
-    let env = get(context, process, "env")?;
-    let key = context.string_rooted(&format!("={device}"));
-    let value = context.get_property_rooted(env, key)?;
-    let path = context
-        .string_text(value)?
-        .unwrap_or_else(|| fallback.to_owned());
-    let chars: Vec<char> = path.chars().collect();
-    let drive_matches = chars.len() >= 2
-        && chars[..2]
-            .iter()
-            .collect::<String>()
-            .eq_ignore_ascii_case(device);
-    if !drive_matches && chars.get(2) == Some(&'\\') {
-        return Ok(format!("{device}\\"));
-    }
-    Ok(path)
 }
 
 fn set_text(

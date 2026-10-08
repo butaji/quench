@@ -1,7 +1,7 @@
 //! Shared-VM bindings for the existing process state, extended as APIs migrate.
 
-use crate::host::{NodeHost, ProcessModule};
-use rqj::{NativeContext, RootId, RootedError};
+use crate::host::NodeHost;
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -91,8 +91,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .state()
         .borrow_mut()
         .process_module
-        .replace(ProcessModule::Shared(retained));
-    if let Some(ProcessModule::Shared(previous)) = previous {
+        .replace(retained);
+    if let Some(previous) = previous {
         context.release_root(previous);
     }
     Ok(())
@@ -270,8 +270,8 @@ pub(crate) fn umask(
 /// Run shared-host nextTick callbacks before VM jobs, then emit process exit
 /// without restarting the VM or invalidating callback roots.
 pub(crate) fn finish_execution(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     let checkpoint = drain_checkpoint(runtime, program, state);
@@ -289,8 +289,8 @@ pub(crate) fn finish_execution(
 }
 
 pub(crate) fn finish_after_uncaught_error(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     state.borrow_mut().process.exit_code = Some(1);
@@ -299,8 +299,8 @@ pub(crate) fn finish_after_uncaught_error(
 }
 
 fn drain_checkpoint(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     loop {
@@ -414,8 +414,8 @@ fn drain_checkpoint(
 }
 
 fn drain_shared_jobs(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
 ) -> Result<(), String> {
     loop {
@@ -436,20 +436,20 @@ fn drain_shared_jobs(
 }
 
 fn emit_exit(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     state: &Rc<RefCell<crate::host::HostState>>,
     code: i32,
 ) -> Result<(), String> {
     let listeners = state.borrow_mut().event_loop.begin_shared_exit();
     if let Some(process) = shared_process_root(state) {
-        set_shared_property(runtime, program, process, "_exiting", rqj::Value::TRUE)?;
+        set_shared_property(runtime, program, process, "_exiting", quench_runtime::Value::TRUE)?;
     }
     let mut listeners = listeners.into_iter();
     while let Some(mut listener) = listeners.next() {
         listener
             .args
-            .push(runtime.root(rqj::Value::number(code as f64)));
+            .push(runtime.root(quench_runtime::Value::number(code as f64)));
         if let Err(error) = invoke(runtime, program, listener) {
             for callback in listeners {
                 release_callback(runtime, callback);
@@ -461,8 +461,8 @@ fn emit_exit(
 }
 
 fn invoke(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     callback: crate::modules::event_loop::SharedCallback,
 ) -> Result<(), String> {
     let result = runtime.call_rooted(callback.callback, callback.receiver, &callback.args);
@@ -483,14 +483,14 @@ fn invoke(
 }
 
 fn release_callback(
-    runtime: &mut rqj::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: crate::modules::event_loop::SharedCallback,
 ) {
     release_callback_roots(runtime, callback.callback, callback.receiver, callback.args);
 }
 
 fn release_callback_roots(
-    runtime: &mut rqj::Runtime<NodeHost>,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
     callback: RootId,
     receiver: RootId,
     args: Vec<RootId>,
@@ -503,18 +503,15 @@ fn release_callback_roots(
 }
 
 fn shared_process_root(state: &Rc<RefCell<crate::host::HostState>>) -> Option<RootId> {
-    match state.borrow().process_module.as_ref() {
-        Some(ProcessModule::Shared(root)) => Some(*root),
-        _ => None,
-    }
+    state.borrow().process_module
 }
 
 fn set_shared_property(
-    runtime: &mut rqj::Runtime<NodeHost>,
-    program: &rqj::ResidualProgram,
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
     object: RootId,
     name: &str,
-    value: rqj::Value,
+    value: quench_runtime::Value,
 ) -> Result<(), String> {
     let key = runtime.string_rooted(name);
     let value = runtime.root(value);

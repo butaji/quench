@@ -23,7 +23,7 @@ use quench_test262::{
 };
 use wait_timeout::ChildExt;
 
-const DEFAULT_REPORT: &str = "target/test262-next-report.json";
+const DEFAULT_REPORT: &str = "target/test262-report.json";
 const METADATA_TEST_BASENAMES: [&str; 4] = [
     "name.js",
     "length.js",
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
     if env::args().nth(1).as_deref() == Some("--case") {
         return match thread::Builder::new()
             .name("next-test262-case".into())
-            .stack_size(rqj::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_case_entry)
         {
             Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
@@ -52,7 +52,7 @@ fn main() -> ExitCode {
     }
     let handle = thread::Builder::new()
         .name("run-all-main".into())
-        .stack_size(rqj::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(run)
         .unwrap_or_else(|error| panic!("run-all thread: {error}"));
     handle.join().unwrap_or(ExitCode::from(1))
@@ -638,7 +638,7 @@ mod tests {
             classify_outcome("case process exited with signal: 11"),
             "crashed"
         );
-        assert_eq!(classify_outcome("next runtime: TypeError"), "failed");
+        assert_eq!(classify_outcome("shared runtime: TypeError"), "failed");
     }
 
     #[cfg(unix)]

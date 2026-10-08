@@ -1,13 +1,13 @@
 //! Minimal Test262 adapter for the staged v2 runtime.
 //!
 //! This adapter is intentionally separate from the legacy host while the
-//! next runtime grows module, realm, and `$262` capability support. Keeping
+//! shared runtime grows module, realm, and `$262` capability support. Keeping
 //! the boundary explicit prevents legacy pass counts from being reported as
-//! next-runtime evidence.
+//! shared-runtime evidence.
 
 use std::path::Path;
 
-use rqj::{
+use quench_runtime::{
     CapabilityId, Engine, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime, SourceKind,
     SystemHost,
 };
@@ -125,23 +125,23 @@ impl RuntimeHost {
                 SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
-            .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
+            .map_err(|errors| format!("shared runtime SyntaxError: {errors:?}"))?;
             runtime.execute(&program).map_err(|error| {
-                format!("next runtime: {}", runtime.format_error(&program, &error))
+                format!("shared runtime: {}", runtime.format_error(&program, &error))
             })?;
             if async_test {
                 runtime.run_jobs(&program).map_err(|error| {
                     format!(
-                        "next runtime jobs: {}",
+                        "shared runtime jobs: {}",
                         runtime.format_error(&program, &error)
                     )
                 })?;
                 if let Some(error) = runtime.host_mut().done.clone() {
                     if !error.is_empty() {
-                        return Err(format!("next runtime async: {error}"));
+                        return Err(format!("shared runtime async: {error}"));
                     }
                 } else {
-                    return Err("next runtime async: $DONE was not called".into());
+                    return Err("shared runtime async: $DONE was not called".into());
                 }
             }
             Ok(())

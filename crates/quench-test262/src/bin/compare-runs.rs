@@ -267,7 +267,7 @@ fn run_parallel(root: &Path, files: &[TestSource], threads: usize) -> Outcomes {
         let aggregated = Arc::clone(&aggregated);
         let harness_root = harness_root.clone();
         let handle = thread::Builder::new()
-            .stack_size(rqj::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(move || loop {
                 let start = {
                     let mut guard = next.lock().unwrap();
@@ -330,7 +330,7 @@ fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<Tes
     let harness_root = harness_root.to_path_buf();
     let (sender, receiver) = std::sync::mpsc::channel();
     let handle = thread::Builder::new()
-        .stack_size(rqj::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(move || {
             let mut runner = Test262Runner::new(RuntimeHost::default());
             let mut cache = HarnessCache::new(harness_root);

@@ -1,7 +1,7 @@
 //! Deep guest recursion must become a catchable RangeError before the worker
 //! stack is exhausted, then leave the runtime usable for later calls.
 
-use quench_node_test::{NodeOutcome, NodeTestRunner};
+use quench_node::shared_run::{execute_shared, SharedCompletion, SharedInput};
 
 #[test]
 fn deep_named_calls_throw_catchable_range_errors_on_the_shared_worker_stack() {
@@ -20,9 +20,9 @@ try {
 if (!caught) throw new Error("deep call did not throw the stack RangeError");
 if (new Box().walk(2, 0) !== 2) throw new Error("runtime did not recover after deep call");
 "#;
-    let outcome = NodeTestRunner::new().run_source(source);
-    assert!(
-        matches!(outcome, NodeOutcome::Pass),
-        "deep recursion policy failed: {outcome:?}"
+    let outcome = execute_shared(
+        SharedInput::Eval(source.to_owned()),
+        vec!["quench-node".into()],
     );
+    assert_eq!(outcome, Ok(SharedCompletion::Completed));
 }

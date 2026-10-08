@@ -1,7 +1,7 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
-use crate::host::{EntryGoal, ModuleCache, NodeHost, ProcessModule};
-use rqj::{NativeContext, RootId, RootedError};
+use crate::host::{EntryGoal, NodeHost};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -11,10 +11,10 @@ const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, _
 const WRAPPER_SUFFIX: &str = "\n});";
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
-pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
+pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
-        Some("mjs") => return Ok(rqj::SourceKind::Module),
-        Some("cjs") => return Ok(rqj::SourceKind::Script),
+        Some("mjs") => return Ok(quench_runtime::SourceKind::Module),
+        Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -31,9 +31,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<rqj::SourceKind, String> {
         == Some("module");
     Ok(
         if path.extension().is_some_and(|extension| extension == "js") && module {
-            rqj::SourceKind::Module
+            quench_runtime::SourceKind::Module
         } else {
-            rqj::SourceKind::Script
+            quench_runtime::SourceKind::Script
         },
     )
 }
@@ -46,14 +46,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     if let Some(root) = state.borrow_mut().path_module.take() {
         context.release_root(root);
     }
-    let previous = std::mem::replace(
-        &mut state.borrow_mut().module_cache,
-        ModuleCache::Shared(Default::default()),
-    );
-    if let ModuleCache::Shared(cache) = previous {
-        for root in cache.into_values() {
-            context.release_root(root);
-        }
+    let previous = std::mem::take(&mut state.borrow_mut().module_cache);
+    for root in previous.into_values() {
+        context.release_root(root);
     }
     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
     crate::modules::buffer::shared_vm::install_global(context, buffer_module)?;
@@ -92,8 +87,8 @@ pub(super) fn require(
     let specifier = specifier(context, args, Request::Require)?;
     match BuiltinModule::from_specifier(&specifier) {
         Some(BuiltinModule::Process) => {
-            return match context.host_mut().state().borrow().process_module.as_ref() {
-                Some(ProcessModule::Shared(root)) => Ok(*root),
+            return match context.host_mut().state().borrow().process_module {
+                Some(root) => Ok(root),
                 _ => Err(RootedError::host(
                     "shared process module is not initialized",
                 )),
@@ -325,20 +320,13 @@ fn cached_builtin(
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
     let key = format!("\0builtin:{canonical}");
     let state = context.host_mut().state();
-    if let Some(module) = match &state.borrow().module_cache {
-        ModuleCache::Shared(cache) => cache.get(&key).copied(),
-        ModuleCache::Legacy(_) => {
-            return Err(RootedError::host("CommonJS requires a shared module cache"));
-        }
-    } {
+    if let Some(module) = state.borrow().module_cache.get(&key).copied() {
         return Ok(module);
     }
 
     let module = build_builtin(context, builtin)?;
     let retained = context.retain(module)?;
-    if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-        cache.insert(key, retained);
-    }
+    state.borrow_mut().module_cache.insert(key, retained);
     Ok(module)
 }
 
@@ -555,8 +543,8 @@ fn module_record(
         .collect::<Vec<_>>();
     let paths = context.array_rooted(&paths)?;
     set(context, module, "paths", paths)?;
-    let process = match context.host_mut().state().borrow().process_module.as_ref() {
-        Some(ProcessModule::Shared(root)) => *root,
+    let process = match context.host_mut().state().borrow().process_module {
+        Some(root) => root,
         _ => {
             return Err(RootedError::host(
                 "shared process module is not initialized",
@@ -587,12 +575,7 @@ fn load(
 ) -> Result<RootId, RootedError> {
     let key = filename.to_string_lossy().into_owned();
     let state = context.host_mut().state();
-    let cached = match &state.borrow().module_cache {
-        ModuleCache::Shared(cache) => cache.get(&key).copied(),
-        ModuleCache::Legacy(_) => {
-            return Err(RootedError::host("CommonJS requires a shared module cache"));
-        }
-    };
+    let cached = state.borrow().module_cache.get(&key).copied();
     if let Some(module) = cached {
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Attach)?;
@@ -604,9 +587,7 @@ fn load(
         transition_child(context, parent, module, ChildTransition::Attach)?;
     }
     let retained = context.retain(module)?;
-    if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-        cache.insert(key.clone(), retained);
-    }
+    state.borrow_mut().module_cache.insert(key.clone(), retained);
     let result = (|| {
         let bytes =
             std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
@@ -627,7 +608,7 @@ fn load(
             }
             _ => {
                 if goal == EntryGoal::Node
-                    && source_kind(filename).map_err(RootedError::host)? == rqj::SourceKind::Module
+                    && source_kind(filename).map_err(RootedError::host)? == quench_runtime::SourceKind::Module
                 {
                     return Err(RootedError::host(
                         "requiring an ES module is not implemented on the shared VM",
@@ -663,9 +644,7 @@ fn load(
         get(context, module, "exports")
     })();
     if result.is_err() {
-        if let ModuleCache::Shared(cache) = &mut state.borrow_mut().module_cache {
-            cache.remove(&key);
-        }
+        state.borrow_mut().module_cache.remove(&key);
         context.release_root(retained);
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;
