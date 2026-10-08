@@ -60,40 +60,38 @@ impl<H: Host> Vm<H> {
         object: Value,
         key: Value,
     ) -> Result<Value, JsError> {
-        if let Some(index) = key.as_int().filter(|index| *index >= 0)
-            && let Some(value) = self.typed_array_get(object, index as usize)
-        {
-            return Ok(value);
-        }
-        if let Some(index) = key.as_int().filter(|index| *index >= 0)
-            && self
-                .array_descriptor(object, index as usize)
+        if let Some(index) = self.array_index_key(key) {
+            let index = index as usize;
+            if let Some(value) = self.typed_array_get(object, index) {
+                return Ok(value);
+            }
+            if self
+                .array_descriptor(object, index)
                 .is_some_and(|attributes| attributes.accessor)
-        {
-            let atom = self.intern_atom(&index.to_string());
-            return self.get_property(p, object, atom);
-        }
-        if let Some(index) = key.as_int().filter(|index| *index >= 0)
-            && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
-            && let Some(value) = elements
-                .get(index as usize)
-                .copied()
-                .filter(|value| !value.is_deleted())
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.index_get(ARRAY_INDEX_GET_DENSE);
-            return Ok(value);
-        }
-        if let Some(index) = key.as_int().filter(|index| *index >= 0)
-            && let Some(Cell::Array { .. }) = self.heap.get(object)
-            && let Some(value) = self
-                .heap
-                .sparse_get(object, index as usize)
-                .filter(|value| !value.is_deleted())
-        {
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.index_get(ARRAY_INDEX_GET_SPARSE);
-            return Ok(value);
+            {
+                let atom = self.intern_atom(&index.to_string());
+                return self.get_property(p, object, atom);
+            }
+            if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+                && let Some(value) = elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+            {
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.index_get(ARRAY_INDEX_GET_DENSE);
+                return Ok(value);
+            }
+            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+                && let Some(value) = self
+                    .heap
+                    .sparse_get(object, index)
+                    .filter(|value| !value.is_deleted())
+            {
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.index_get(ARRAY_INDEX_GET_SPARSE);
+                return Ok(value);
+            }
         }
         self.get_index_slow(p, object, key)
     }
@@ -109,7 +107,10 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom("");
             return self.get_property(p, object, atom);
         }
-        let key = self.to_property_key(p, key)?;
+        let key = match self.heap.get(key) {
+            Some(Cell::String(_) | Cell::Symbol(_)) => key,
+            _ => self.to_property_key(p, key)?,
+        };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             return self.get_symbol_property_with_receiver(p, object, key, object);
         }
@@ -148,7 +149,7 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
-        if let Some(index) = key.as_int().filter(|index| *index >= 0) {
+        if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
             if let Some(attributes) = self.array_descriptor(object, index)
                 && attributes.accessor
@@ -224,7 +225,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<(), JsError> {
-        let key = self.to_property_key(p, key)?;
+        let key = match self.heap.get(key) {
+            Some(Cell::String(_) | Cell::Symbol(_)) => key,
+            _ => self.to_property_key(p, key)?,
+        };
         if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
             let succeeded =
                 self.set_symbol_property_with_receiver(p, object, key, value, object)?;
@@ -310,6 +314,16 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "property has no setter".into()));
         }
         Ok(true)
+    }
+
+    fn array_index_key(&self, key: Value) -> Option<u32> {
+        if let Some(index) = key.as_int() {
+            return u32::try_from(index).ok();
+        }
+        let Some(Cell::String(key)) = self.heap.get(key) else {
+            return None;
+        };
+        super::object_static::array_index(key.host_string())
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
