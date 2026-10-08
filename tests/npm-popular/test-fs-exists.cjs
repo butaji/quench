@@ -9,6 +9,8 @@ assert.equal(fs.existsSync(`${manifest}.missing`), false);
 assert.throws(() => fs.exists(manifest), { code: 'ERR_INVALID_ARG_TYPE' });
 assert.equal(fs.accessSync(manifest), undefined);
 assert.throws(() => fs.accessSync(`${manifest}.missing`), { code: 'ENOENT' });
+assert.throws(() => fs.accessSync(manifest, {}), { code: 'ERR_INVALID_ARG_TYPE' });
+assert.throws(() => fs.accessSync(manifest, -1), { code: 'ERR_OUT_OF_RANGE' });
 
 let callbacks = 0;
 fs.exists(manifest, (exists) => {

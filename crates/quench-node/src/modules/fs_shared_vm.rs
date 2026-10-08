@@ -585,6 +585,11 @@ const EXISTS_API: &str = r#"(statSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (!Number.isFinite(mode) || mode < 0 || mode > 7) {
+      const error = new RangeError('mode is out of range');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
     statSync(path);
   }
   function existsSync(path) {
