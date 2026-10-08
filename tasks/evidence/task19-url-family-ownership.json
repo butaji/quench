@@ -7,7 +7,7 @@
   "source_state": "dirty; input and owner hashes bind this review to current bytes",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "71afeac8b6a5d249c2b2fccee132c8157c52307386ff09da2e0f06e447589bee",
+    "sha256": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "candidate_paths": 37,
     "specifier_hits": 38,
@@ -32,8 +32,6 @@
       "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
       "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
       "crates/quench-node/src/host.rs": "1e94689dd8ab06be455bac2defc9c50c1c7fe9ae3690239738acdc0063cca522",
-      "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
-      "crates/quench-node/src/js_runtime_url_pattern.rs": "3cbeabc17534099ace7761f01e86aa968689ca4cf53e6cc4efb3d72922845a87",
       "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
       "crates/quench-node/src/modules/event_loop.rs": "f9e57059a9bbc54cae3536a6b65d96a72d5834298eba42f2e7f1619d4826118c",
       "crates/quench-node/src/modules/path.rs": "ec50f94786edcc23b345bfd30ad8b5f4235dca07001aa08ff4efa8d1886197bf",
@@ -517,7 +515,6 @@
         "crates/quench-node/src/dispatch.rs",
         "crates/quench-node/src/dispatch_handlers.rs",
         "crates/quench-node/src/host.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-node/src/modules/require.rs",
         "crates/quench-node/src/modules/url.rs",
         "crates/quench-node/src/modules/url_whatwg.rs",
@@ -610,7 +607,6 @@
       "owners": [
         "crates/quench-node/src/dispatch.rs",
         "crates/quench-node/src/dispatch_handlers.rs",
-        "crates/quench-node/src/js_runtime_url_pattern.rs",
         "crates/quench-node/src/modules/require.rs",
         "crates/quench-node/src/modules/url.rs",
         "crates/quench-node/src/polyfills/bootstrap/url.rs",
@@ -706,5 +702,6 @@
     "No case outcome was used to decide membership; existing failures remain included when URL behavior is implemented.",
     "Platform-specific file URL behavior remains included even when the current macOS run skips Windows-only branches.",
     "The global inventory remains unfrozen until every assertion and observation case has an owner disposition and required observation trace."
-  ]
+  ],
+  "cleanup_note": "Unrooted js_runtime source references were removed from this historical owner census; remaining owner paths and obligations are preserved, and this file is not a current qualification."
 }

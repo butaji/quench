@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "unrooted_source_prune",
+  "reviewed_on": "2026-10-08",
+  "source": {
+    "revision": "415404ba53cdbd9243737754eefec80e265b47d9",
+    "dirty": true,
+    "snapshot_sha256": "ebfbc80096b22887fdf18ac9c704aa37d4891e8d80dcd7b5224c808a01de8cb7",
+    "snapshot_file_count": 1234,
+    "snapshot_evidence": "tasks/evidence/task27-framework-current-2026-10-08.json"
+  },
+  "audit": {
+    "crate": "crates/quench-node",
+    "crate_root": "crates/quench-node/src/lib.rs",
+    "unrooted_island_root": "crates/quench-node/src/js_runtime.rs",
+    "rooted_by_crate": false,
+    "autobins": false,
+    "tracked_files_deleted": 58,
+    "deleted_source_lines": 17615,
+    "retained_shared_file": "crates/quench-node/src/js_runtime_esm_imports.rs",
+    "retained_reason": "Live src/esm_imports.rs includes this shared ESM transform shard.",
+    "active_rust_consumers_of_deleted_files": 0
+  },
+  "inventory": {
+    "path": "tasks/node-compat-inventory.json",
+    "sha256": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
+    "entries_before_and_after": 1649,
+    "stale_owner_paths_removed": 657,
+    "entries_affected": 137,
+    "membership_and_obligations_changed": false,
+    "all_affected_entries_keep_an_owner": true
+  },
+  "historical_owner_evidence": {
+    "tracked_files_updated": [
+      "tasks/evidence/task19-buffer-family-ownership.json",
+      "tasks/evidence/task19-diagnostics-channel-family-ownership.json",
+      "tasks/evidence/task19-url-family-ownership.json",
+      "tasks/evidence/task19-stream-family-ownership.json"
+    ],
+    "tracked_stale_source_references_removed": 14,
+    "remaining_owner_paths_and_obligations_preserved": true,
+    "cleanup_note_added": "These are historical owner censuses, not current qualification evidence."
+  },
+  "verification": {
+    "build_command": "cargo build --profile iteration -p quench-node-test --bin run-parallel -p quench-node --bin quench-node",
+    "build_exit_status": 0,
+    "framework_core_evidence": "tasks/evidence/task27-framework-current-2026-10-08.json",
+    "framework_core_pass": 43,
+    "framework_core_total": 43,
+    "express_koa_fastify_exact_local_node_match": true
+  },
+  "remaining_stage_a_boundary": "The named quench-node binary executes through the shared VM, but crates/quench-node still directly depends on quench-runtime and compiles the legacy NodeHost/dispatch graph. This source prune does not close task 27."
+}

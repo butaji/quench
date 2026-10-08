@@ -7,7 +7,7 @@
   "source_state": "reconciled against current committed inventory and source-owner hunks; the two added framework-profile stream cases were checked against their assertions and existing owner records",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "5723ab24a64956bd27aece22cc2928271d5babbc557243cac322d878ee6e3fb1",
+    "sha256": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
     "source_head": "bdd49721abe0c5e58ed1705e269abf7f38068f67",
     "case_candidates": 1586,
     "stream_projection_cases": 230,
@@ -267,7 +267,6 @@
   },
   "owner_sources_sha256": {
     "crates/quench-node/src/dispatch_fs.rs": "de7b29037c83df61576dfc99e5879c7ec8d378836e8ded6973993a1c5ec24067",
-    "crates/quench-node/src/js_runtime_require_stream_http.rs": "1afc7bf201eec7dcb89f98d888e2383100345628988cb7837a671290e9c4e9c3",
     "crates/quench-node/src/modules/async_hooks.rs": "0cba3cae47932ac34c43f7df1e9f07952b71de0903c68d7813201cbcd243efbc",
     "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
     "crates/quench-node/src/modules/child_process.rs": "5ad7b1a43e3347e50f377cb387f6117ff8d8d44e28eba08fc8f32e4a27558903",
@@ -310,5 +309,6 @@
     "The larger stream/iter and FileHandle-pull source fragments are not installed by the live bootstrap and do not count as implemented API surface.",
     "Three included observation cases remain unqualified until matched Node traces are recorded.",
     "This is an owner/membership audit, not Node suite pass evidence or Stage A qualification."
-  ]
+  ],
+  "cleanup_note": "Unrooted js_runtime source references were removed from this historical owner census; remaining owner paths and obligations are preserved, and this file is not a current qualification."
 }

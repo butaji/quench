@@ -25,7 +25,6 @@
   "owner_sources_sha256": {
     "crates/quench-node/src/dispatch.rs": "8d2a0006c8906181c99947d0f2b15f009231bf25da4ddb91bcd7cf2cead6fd28",
     "crates/quench-node/src/host.rs": "2f59514c211308fcb642458972bc85cf8dfe08d4d650a1ff259b8df6a63e0fa4",
-    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
     "crates/quench-node/src/modules/async_hooks.rs": "0cba3cae47932ac34c43f7df1e9f07952b71de0903c68d7813201cbcd243efbc",
     "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
     "crates/quench-node/src/modules/clone.rs": "677fe8402b45cce3f27a8d242ad39fe5124e138dd4c6ec84eb48f539e36b9deb",
@@ -118,7 +117,6 @@
         "crates/quench-node/src/modules/diagnostics_channel.rs",
         "crates/quench-node/src/modules/buffer.rs",
         "crates/quench-node/src/modules/util.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-node/src/modules/clone.rs"
       ],
       "obligations": [
@@ -253,5 +251,6 @@
     "sha256": "d4e7461d2500c81d08dc7d0d5cf0e801433123dbe18f55eafa892db3b303a301",
     "global_status": "pending",
     "reason": "The fixture imports Channel to avoid unrelated Object.prototype name-setter effects; its assertion is module-loading behavior, not diagnostics_channel API behavior."
-  }
+  },
+  "cleanup_note": "Unrooted js_runtime source references were removed from this historical owner census; remaining owner paths and obligations are preserved, and this file is not a current qualification."
 }

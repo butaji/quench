@@ -7,7 +7,7 @@
   "source_state": "dirty; owner hashes bind the review to current source bytes",
   "inventory": {
     "path": "tasks/node-compat-inventory.json",
-    "sha256": "71afeac8b6a5d249c2b2fccee132c8157c52307386ff09da2e0f06e447589bee",
+    "sha256": "668c4302964d57f9e693e08f9225a9692072c435468c63f721627a45b3e37702",
     "source_head": "cb1c834bdea7240025ff05eebb7df4bb00317cd3",
     "candidate_assertions": 106,
     "candidate_observations": 1
@@ -43,8 +43,7 @@
         "crates/quench-node/src/modules/require.rs",
         "crates/quench-node/src/modules/buffer.rs",
         "crates/quench-node/src/modules/buffer_from.rs",
-        "crates/quench-node/src/modules/buffer_proto.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs"
+        "crates/quench-node/src/modules/buffer_proto.rs"
       ],
       "obligations": [
         "Buffer.allocUnsafe/allocUnsafeSlow alignment arguments, physical alignment, pool bounds and allocation errors; assertions at L30-L40, L49-L58 and L114-L157. Active allocation methods exist; the current internal aligned-offset helper returns zero, so membership does not imply the physical-alignment obligation passes."
@@ -74,7 +73,6 @@
       "sha256": "9b0262b7be7b9c07ba817be71f200edbf74d3b64e6dcc6567f18f4f7aaeea9ba",
       "status": "excluded",
       "owners": [
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-node/src/dispatch_handlers.rs",
         "crates/quench-node/src/modules/buffer.rs"
       ],
@@ -88,7 +86,6 @@
       "sha256": "271c47fb1ff5b0b8c8c409693016f0667861c35a44dc4440384ab14ed6fcfa89",
       "status": "excluded",
       "owners": [
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-node/src/dispatch_handlers.rs",
         "crates/quench-node/src/modules/buffer.rs"
       ],
@@ -286,8 +283,7 @@
         "crates/quench-node/src/modules/buffer.rs",
         "crates/quench-node/src/modules/buffer_proto.rs",
         "crates/quench-node/src/modules/buffer_methods.rs",
-        "crates/quench-node/src/modules/buffer_enc.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs"
+        "crates/quench-node/src/modules/buffer_enc.rs"
       ],
       "obligations": [
         "fill pattern, encoding, coercion, range and receiver behavior, plus internalBinding(buffer).fill."
@@ -858,7 +854,6 @@
         "crates/quench-node/src/dispatch_handlers.rs",
         "crates/quench-node/src/modules/buffer.rs",
         "crates/quench-node/src/modules/buffer_proto.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-runtime/src/value_buffer.rs",
         "crates/quench-runtime/src/typed_array_ops.rs",
         "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -1148,7 +1143,6 @@
         "crates/quench-node/src/modules/buffer_proto.rs",
         "crates/quench-node/src/modules/buffer_methods.rs",
         "crates/quench-node/src/modules/buffer_enc.rs",
-        "crates/quench-node/src/js_runtime_internal_binding.rs",
         "crates/quench-runtime/src/value_buffer.rs",
         "crates/quench-runtime/src/typed_array_ops.rs",
         "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -2109,7 +2103,6 @@
     "crates/quench-node/src/dispatch_handlers.rs": "a820fe950414226f4e6de63ac801c492fa4d11afa837b7a4a13b96d6df683103",
     "crates/quench-node/src/host/shared_vm.rs": "0abcbfc503aa5f336b82e5701f5ffa2f22180f3a3a4179cc36917066eb470394",
     "crates/quench-node/src/host/shared_vm/commonjs.rs": "0659e2f5fe672a8875013b192249e8b16b0bca81a999b6ef444c726afd5e8e1e",
-    "crates/quench-node/src/js_runtime_internal_binding.rs": "48444c8d1eab24185014674b994b1c7263e36a2eb3e1c58c3d0e454114dd2110",
     "crates/quench-node/src/modules/buffer.rs": "00e9f7a575f119e9a14a7c6d42efb933c56d23e32006831a80526366abd6af38",
     "crates/quench-node/src/modules/buffer_enc.rs": "1634e27a9874b93163b13b666c8b2ee2376d1b654c397ab54eb82f5c1488fbff",
     "crates/quench-node/src/modules/buffer_from.rs": "9762a39be4a212b8cfe68a8651b5020601e6d40d90c5f0c911fc2f17d5e404fa",
@@ -2136,5 +2129,6 @@
     "Membership follows asserted behavior and active owners regardless of runtime pass/fail. Three V8 fast-path fixtures are excluded because V8 optimizer intrinsics and debug fast-path counters are absent; the separate allocator-counter and source/path-matched child-output exclusions remain explicit.",
     "Aligned allocation remains included despite incomplete physical alignment. Cases relying on fabricated child output remain excluded until generic child execution replaces those shortcuts.",
     "No Buffer suite was run for this metadata-only ownership audit; behavior qualification remains in tasks 21/22."
-  ]
+  ],
+  "cleanup_note": "Unrooted js_runtime source references were removed from this historical owner census; remaining owner paths and obligations are preserved, and this file is not a current qualification."
 }

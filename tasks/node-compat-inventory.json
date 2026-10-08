@@ -782,7 +782,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -1022,7 +1021,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -1045,7 +1043,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -1068,7 +1065,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -2629,7 +2625,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -2903,7 +2898,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -3696,13 +3690,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "bindSync returns a bound address and emits listening with matching socket.address()."
@@ -3723,13 +3711,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "bindSync receiver accepts a loopback datagram and delivers the exact payload."
@@ -3750,13 +3732,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Occupied-port bind reports EADDRINUSE and permits cleanup/retry."
@@ -3786,13 +3762,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "connectSync reports IPv6 remote address and creates the expected implicit local bind."
@@ -3813,13 +3783,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected send accepts string arrays and delivers the concatenated payload."
@@ -3840,13 +3804,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send offset/length overload transmits a zero-length datagram."
@@ -3867,13 +3825,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send buffer offset/length/port overload transmits only the selected byte."
@@ -3894,13 +3846,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Received message length and rinfo.size report the payload byte count."
@@ -3921,13 +3867,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Invalid send port is rejected with the expected validation error."
@@ -3977,13 +3917,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Closing during handle lookup prevents later bind completion."
@@ -4004,13 +3938,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Socket signal option validation and abort-driven close lifecycle."
@@ -4031,13 +3959,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Failed destination lookup reports ENOTFOUND in the send callback."
@@ -4058,13 +3980,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Unavailable local address reports EADDRNOTAVAIL with matching address and message."
@@ -4085,13 +4001,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send callback overload delivers the payload and completes without error."
@@ -4112,13 +4022,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected offset/length send accepts the callback overload."
@@ -4139,13 +4043,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Localhost bind resolves to 127.0.0.1."
@@ -4167,13 +4065,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Underlying handle send failure reaches the socket callback with UNKNOWN code."
@@ -4194,13 +4086,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Bind emits listening before close, and close observes listening completion."
@@ -4221,13 +4107,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send callback is suppressed after the destination socket closes."
@@ -4268,13 +4148,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "A second bind on an already-bound socket throws the expected Node error."
@@ -4296,13 +4170,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Binding another socket with an already-owned fd rejects with the expected error."
@@ -4323,13 +4191,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Oversized UDP payload reports EMSGSIZE with destination address and port."
@@ -4350,13 +4212,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "reusePort permits two sockets to bind and observe the same port."
@@ -4377,13 +4233,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Custom lookup receives the requested host/family and supplies bind resolution."
@@ -4414,13 +4264,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Custom lookup receives the default host and family and is called once."
@@ -4461,13 +4305,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Closing before a pending lookup failure suppresses the socket error event."
@@ -4489,13 +4327,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Underlying receive failure reports syscall recvmsg on the socket error."
@@ -4517,13 +4349,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Wrapped internal lookup is invoked with only address and callback."
@@ -4544,13 +4370,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected send offset/length overload validates invalid ranges."
@@ -4571,13 +4391,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected socket rejects explicit destination arguments and accepts connected send."
@@ -4598,13 +4412,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send implicitly binds; callback byte count and local address/port are correct."
@@ -4634,13 +4442,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Callback is suppressed when the destination socket has already closed."
@@ -4661,13 +4463,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Recursive send overload invokes callback with the bytes sent."
@@ -5286,13 +5082,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Bind/send/close callback and event order, including received IPv4 peer fields."
@@ -5313,13 +5103,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multicast interface accepts wildcard and rejects invalid addresses with EINVAL."
@@ -5539,7 +5323,7 @@
           "crates/quench-node/src/modules/net/pump.rs"
         ],
         "obligations": [
-          "Decode a chunked raw request body and deliver the asserted “hello world” payload over TCP."
+          "Decode a chunked raw request body and deliver the asserted \u201chello world\u201d payload over TCP."
         ]
       }
     },
@@ -5779,7 +5563,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -7227,13 +7010,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send buffer offset/length selects bytes; invalid overload shape throws."
@@ -7254,13 +7031,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connect listener precedes callback and remoteAddress reports the connected IPv4 peer."
@@ -7281,13 +7052,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "address() throws before bind and returns the expected IPv4 tuple after bind."
@@ -8030,7 +7795,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -9028,8 +8792,7 @@
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/buffer_proto.rs",
           "crates/quench-node/src/modules/buffer_methods.rs",
-          "crates/quench-node/src/modules/buffer_enc.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs"
+          "crates/quench-node/src/modules/buffer_enc.rs"
         ],
         "obligations": [
           "fill pattern, encoding, coercion, range and receiver behavior, plus internalBinding(buffer).fill."
@@ -10348,8 +10111,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect renders the asserted functions, regexps, dates, strings, arrays, typed views, accessors and cycles/options."
@@ -10527,7 +10289,6 @@
           "crates/quench-node/src/modules/diagnostics_channel.rs",
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/util.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs",
           "crates/quench-node/src/modules/clone.rs"
         ],
         "obligations": [
@@ -12186,8 +11947,7 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/assert.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/modules/assert.rs"
         ],
         "obligations": [
           "util.inspect truncates actual/expected assertion diagnostics as asserted."
@@ -12590,8 +12350,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect renders the asserted colored regexp output."
@@ -12649,8 +12408,7 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/modules/vm_api.rs"
         ],
         "obligations": [
           "util.inspect renders the module namespace before and after evaluation."
@@ -14257,13 +14015,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "createSocket surface, UDP4 type/address, send completion, and unref method."
@@ -14435,13 +14187,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "The node:dgram module resolves as an object and exposes createSocket as a function on the legacy path; this shallow shape probe does not qualify UDP behavior."
@@ -15151,7 +14897,6 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs",
           "crates/quench-node/src/modules/event_target.rs",
           "crates/quench-node/src/modules/events.rs",
           "crates/quench-node/src/polyfills/bootstrap/target.rs"
@@ -17162,7 +16907,6 @@
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
           "crates/quench-node/src/host.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs",
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/modules/url.rs",
           "crates/quench-node/src/modules/url_whatwg.rs",
@@ -17297,7 +17041,6 @@
         "owners": [
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_url_pattern.rs",
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/modules/url.rs",
           "crates/quench-node/src/polyfills/bootstrap/url.rs",
@@ -17427,8 +17170,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect output and options for colors, hooks, errors, collections and numeric formatting."
@@ -17451,8 +17193,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect getter invocation and receiver behavior."
@@ -17655,8 +17396,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect remains correct when guest Object.keys is replaced."
@@ -17813,8 +17553,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/buffer_from.rs",
-          "crates/quench-node/src/modules/buffer_proto.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs"
+          "crates/quench-node/src/modules/buffer_proto.rs"
         ],
         "obligations": [
           "Buffer.allocUnsafe/allocUnsafeSlow alignment arguments, physical alignment, pool bounds and allocation errors; assertions at L30-L40, L49-L58 and L114-L157. Active allocation methods exist; the current internal aligned-offset helper returns zero, so membership does not imply the physical-alignment obligation passes."
@@ -17928,7 +17667,6 @@
           "crates/quench-node/src/dispatch_handlers.rs",
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/buffer_proto.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs",
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -18318,7 +18056,6 @@
           "crates/quench-node/src/modules/buffer_proto.rs",
           "crates/quench-node/src/modules/buffer_methods.rs",
           "crates/quench-node/src/modules/buffer_enc.rs",
-          "crates/quench-node/src/js_runtime_internal_binding.rs",
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -19670,7 +19407,6 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs",
           "crates/quench-node/src/polyfills/bootstrap/globals_extra.rs",
           "crates/quench-node/src/polyfills/bootstrap/web_streams_blob.rs"
         ],
@@ -20248,8 +19984,7 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/assert.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs"
+          "crates/quench-node/src/modules/assert.rs"
         ],
         "obligations": [
           "Direct util.inspect/defaultOptions formatting of assertion diagnostics."
@@ -21230,11 +20965,10 @@
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/js_runtime_util_inspect.rs",
           "crates/quench-node/src/modules/console.rs"
         ],
         "obligations": [
-          "util.inspect does not call a function’s overridden toString."
+          "util.inspect does not call a function\u2019s overridden toString."
         ]
       }
     },
@@ -22121,7 +21855,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -22144,7 +21877,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -22191,13 +21923,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "address() returns an IPv4 host and finite numeric port."
@@ -22219,13 +21945,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Synchronous bind address tuple matches the subsequent address()."
@@ -22247,13 +21967,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Socket type/options and configured buffer size."
@@ -22274,13 +21988,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Invalid close callback is ignored; close event follows send."
@@ -22302,13 +22010,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Failed bind error fields, message, and code."
@@ -22329,13 +22031,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Closing a signal-bound socket then aborting causes no late error/crash; matched trace remains a separate qualification."
@@ -22358,13 +22054,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Symbol.asyncDispose closes the socket and repeated disposal is safe."
@@ -22386,13 +22076,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Implicit bind selects a usable ephemeral address and port."
@@ -22413,13 +22097,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Repeated EADDRINUSE bind behavior."
@@ -22443,13 +22121,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Bind rejects occupied and wrong-type descriptors with the expected errors."
@@ -22504,13 +22176,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Lookup failure after close is suppressed."
@@ -22532,13 +22198,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Bind overload, listening event, and already-bound behavior."
@@ -22571,13 +22231,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send callback reports datagram byte length."
@@ -22599,13 +22253,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Close during lookup suppresses late bind completion."
@@ -22626,13 +22274,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Synchronous close from listening safely drains queued send."
@@ -22654,13 +22296,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Invalid signal plus normal/pre-aborted close-once behavior."
@@ -22683,13 +22319,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "close returns the same socket; callback/event ordering and retained handle access."
@@ -22747,12 +22377,6 @@
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs",
           "crates/quench-node/src/modules/cluster.rs"
         ],
         "obligations": [
@@ -22775,13 +22399,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected Buffer send callback byte count."
@@ -22803,13 +22421,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected Buffer send callback result and delivery."
@@ -22831,13 +22443,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected multi-Buffer send callback and delivery."
@@ -22859,13 +22465,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected send omits destination and uses the peer."
@@ -22887,13 +22487,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected empty-array payload semantics."
@@ -22915,13 +22509,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected empty-Buffer payload semantics."
@@ -22943,13 +22531,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected zero-byte packet delivery."
@@ -22971,13 +22553,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected send copies multi-Buffer payload correctly."
@@ -22999,13 +22575,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connected multi-string/array payload conversion."
@@ -23038,13 +22608,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Connect remote address and repeated-connect rejection."
@@ -23126,13 +22690,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send implicitly binds the socket."
@@ -23169,13 +22727,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Listen-after-bind behavior."
@@ -23197,13 +22749,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multicast membership state and argument validation."
@@ -23225,13 +22771,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Oversize datagram message behavior."
@@ -23253,13 +22793,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multicast loopback option behavior."
@@ -23281,13 +22815,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multicast interface selection."
@@ -23309,13 +22837,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multicast TTL setting."
@@ -23336,13 +22858,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Out-of-band Buffer send handling."
@@ -23365,13 +22881,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Receive error propagation."
@@ -23392,13 +22902,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "ref() keeps socket active and verifies lifecycle state."
@@ -23420,13 +22924,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "reusePort option and same-process socket behavior."
@@ -23448,13 +22946,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send accepts/rejects destination address forms."
@@ -23476,13 +22968,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send overload argument validation."
@@ -23504,13 +22990,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Buffer send callback with empty address."
@@ -23532,13 +23012,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Buffer send callback byte count with empty address."
@@ -23560,13 +23034,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Buffer send callback byte count."
@@ -23588,13 +23056,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Buffer send callback and payload delivery."
@@ -23616,13 +23078,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multi-Buffer send callback with empty address."
@@ -23644,13 +23100,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multi-Buffer send callback and payload delivery."
@@ -23672,13 +23122,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Recursive send from callback preserves ordering and completion."
@@ -23711,13 +23155,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send without host uses the default destination."
@@ -23739,13 +23177,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Empty-array payload conversion."
@@ -23767,13 +23199,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Empty-Buffer payload conversion."
@@ -23795,13 +23221,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Zero-byte datagram delivery."
@@ -23826,13 +23246,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send error propagation, callback delivery, and Node error fields."
@@ -23854,13 +23268,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Invalid message payload types are rejected."
@@ -23882,13 +23290,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multi-Buffer send copies payload."
@@ -23910,13 +23312,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Multi-string/array send conversion."
@@ -23938,13 +23334,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Queued-send accounting information."
@@ -23966,13 +23356,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "sendto argument forms and delivery."
@@ -23994,13 +23378,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Broadcast flag set/get behavior."
@@ -24022,13 +23400,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Socket TTL setting and validation."
@@ -24052,13 +23424,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "Send/receive socket buffer size API and error fields."
@@ -24080,13 +23446,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "UDP4 bind/send/receive behavior."
@@ -24125,13 +23485,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "UDP6 connected send default-host behavior."
@@ -24163,13 +23517,7 @@
           "crates/quench-node/src/modules/require.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram_head.rs",
           "crates/quench-node/src/polyfills/bootstrap/dgram.rs",
-          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs",
-          "crates/quench-node/src/js_runtime_host_zlib.rs",
-          "crates/quench-node/src/js_runtime_host_types.rs",
-          "crates/quench-node/src/js_runtime_dispatch_misc_a.rs",
-          "crates/quench-node/src/js_runtime_host_dgram.rs",
-          "crates/quench-node/src/js_runtime_fs_b.rs",
-          "crates/quench-node/src/js_runtime_adapters.rs"
+          "crates/quench-node/src/polyfills/bootstrap/dgram_tail.rs"
         ],
         "obligations": [
           "unref() releases socket event-loop liveness."
@@ -24512,7 +23860,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/events.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
@@ -26357,7 +25704,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_module.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
           "crates/quench-node/src/dispatch_handlers.rs",
@@ -26866,7 +26212,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -26936,7 +26281,6 @@
       "implementation": {
         "status": "included",
         "owners": [
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
           "crates/quench-node/src/modules/http_res.rs",
@@ -27605,7 +26949,6 @@
         "status": "included",
         "owners": [
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/js_runtime_require_stream_http.rs",
           "crates/quench-node/src/modules/fs.rs",
           "crates/quench-node/src/modules/http.rs",
           "crates/quench-node/src/modules/http_client.rs",
