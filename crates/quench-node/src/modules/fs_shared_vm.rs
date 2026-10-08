@@ -59,6 +59,62 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
 })"#);
 
 const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync) => {
+  const assertBuffer = (buffer) => {
+    if (ArrayBuffer.isView(buffer)) return;
+    const received = buffer === null || buffer === undefined
+      ? ` Received ${buffer}`
+      : typeof buffer === "number" || typeof buffer === "boolean" || typeof buffer === "string"
+        ? ` Received type ${typeof buffer} (${typeof buffer === "string" ? `'${buffer}'` : String(buffer)})`
+        : ` Received an instance of ${Array.isArray(buffer) ? "Array" : "Object"}`;
+    const error = new TypeError(`The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.${received}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  };
+  const validateReadRange = (buffer, offset, length, position) => {
+    for (const [name, value] of [["offset", offset], ["length", length]]) {
+      if (value != null && typeof value !== "number") {
+        const error = new TypeError(`The "${name}" argument must be of type number.`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    }
+    offset ??= 0;
+    length ??= buffer.byteLength - offset;
+    if (!Number.isInteger(offset) || offset < 0 || offset > buffer.byteLength) {
+      const message = offset > buffer.byteLength
+        ? `The value of "offset" is out of range. It must be <= ${buffer.byteLength}. Received ${offset}`
+        : `The value of "offset" is out of range. It must be an integer. Received ${String(offset)}`;
+      const error = new RangeError(message);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isInteger(length) || length < 0 || length > buffer.byteLength - offset) {
+      const message = length < 0
+        ? `The value of "length" is out of range. It must be >= 0. Received ${length}`
+        : length > buffer.byteLength - offset
+          ? `The value of "length" is out of range. It must be <= ${buffer.byteLength - offset}. Received ${length}`
+        : `The value of "length" is out of range. Received ${String(length)}`;
+      const error = new RangeError(message);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (position != null && typeof position !== "number" && typeof position !== "bigint") {
+      const error = new TypeError('The "position" argument must be of type number or bigint.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof position === "bigint" && position > BigInt(Number.MAX_SAFE_INTEGER)) {
+      const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof position === "number" && (!Number.isInteger(position) || position < 0 || position > Number.MAX_SAFE_INTEGER)) {
+      const error = new RangeError(`The value of "position" is out of range. Received ${String(position)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return [offset, length];
+  };
   const validatePath = (path) => {
     if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
       const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
@@ -94,11 +150,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
     throw error;
   };
   const readInto = (fd, buffer, offset, length, position) => {
-    if (!ArrayBuffer.isView(buffer)) {
-      const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
+    assertBuffer(buffer);
     length ??= buffer.byteLength - (offset ?? 0);
     if (buffer.byteLength === 0 && length > 0) {
       const name = buffer.constructor?.name || "TypedArray";
@@ -106,10 +158,11 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
+    [offset, length] = validateReadRange(buffer, offset, length, position);
     const bytesRead = readSync(fd, buffer, offset ?? 0, length, position ?? null);
     return { bytesRead, buffer };
   };
-  return {
+  const api = {
   open(path, flags, mode, callback) {
     if (typeof flags === "function") {
       callback = flags;
@@ -159,13 +212,21 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
         readPosition = bufferOrOptions.position ?? null;
         callback = offsetOrOptions;
       } else {
-        const options = bufferOrOptions && typeof bufferOrOptions === "object" ? bufferOrOptions : {};
-        buffer = Buffer.alloc(16384);
-        offset = options.offset ?? 0;
-        readLength = options.length;
-        readPosition = options.position ?? null;
-        if (typeof bufferOrOptions === "function") callback = bufferOrOptions;
-        else callback = offsetOrOptions;
+        if (bufferOrOptions === undefined || bufferOrOptions === null ||
+            (typeof bufferOrOptions === "object" && !Array.isArray(bufferOrOptions))) {
+          const options = bufferOrOptions || {};
+          buffer = Buffer.alloc(16384);
+          offset = options.offset ?? 0;
+          readLength = options.length;
+          readPosition = options.position ?? null;
+          callback = offsetOrOptions;
+        } else if (typeof bufferOrOptions === "function") {
+          buffer = Buffer.alloc(16384);
+          callback = bufferOrOptions;
+        } else {
+          buffer = bufferOrOptions;
+          callback = offsetOrOptions;
+        }
       }
     } else if (offsetOrOptions && typeof offsetOrOptions === "object") {
       offset = offsetOrOptions.offset ?? 0;
@@ -173,7 +234,11 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
       readPosition = offsetOrOptions.position ?? null;
       callback = length;
     } else {
-      if (typeof offsetOrOptions === "function") {
+      if (typeof callback === "function") {
+        offset = offsetOrOptions ?? 0;
+        readLength = length;
+        readPosition = position ?? null;
+      } else if (typeof offsetOrOptions === "function") {
         callback = offsetOrOptions;
       } else if (typeof length === "function") {
         offset = offsetOrOptions ?? 0;
@@ -188,11 +253,13 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
         readPosition = position ?? null;
       }
     }
+    assertBuffer(buffer);
     if (typeof callback !== "function") {
       const error = new TypeError('The "cb" argument must be of type function');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    readLength ??= buffer.byteLength - offset;
     const empty = readLength !== 0 && buffer?.byteLength === 0;
     if (empty) {
       const name = buffer.constructor?.name || "TypedArray";
@@ -200,6 +267,7 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
+    [offset, readLength] = validateReadRange(buffer, offset, readLength, readPosition);
     queueMicrotask(() => {
       try {
         const result = readInto(fd, buffer, offset, readLength, readPosition);
@@ -208,6 +276,13 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
     });
   },
   };
+  api.read[Symbol.for("nodejs.util.promisify.custom")] = (fd, ...args) => new Promise((resolve, reject) => {
+    api.read(fd, ...args, (error, bytesRead, buffer) => {
+      if (error) reject(error);
+      else resolve({ bytesRead, buffer });
+    });
+  });
+  return api;
 }"#);
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
@@ -835,6 +910,8 @@ pub(super) fn stream_io_error(
 ) -> Result<RootedError, RootedError> {
     let code = if error.raw_os_error() == Some(libc::EBADF) {
         "EBADF"
+    } else if error.raw_os_error() == Some(libc::EFBIG) {
+        "EFBIG"
     } else {
         fs_error_code(error.kind())
     };
