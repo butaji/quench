@@ -750,6 +750,12 @@ impl ResidualProgram {
     }
 
     fn validate_selective_capture_owners(&self) -> Result<(), String> {
+        // JavaScript captures are addressed through the function-parent chain.
+        // Wasm uses the same opcodes for slots in its separate instance
+        // environment, whose layout is validated by the Wasm module loader.
+        if self.kind == super::ProgramKind::Wasm {
+            return Ok(());
+        }
         for (function_id, function) in self.functions.iter().enumerate() {
             for instruction in function
                 .code

@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Bypass generic shape lookup for cached own fields on ordinary objects",
+  "decision": "reject: neither fixture shows a statistically supported Score gain, and maximum RSS increases with a 95% interval excluding a tie on both fixtures",
+  "source": {
+    "branch": "v2-cloud",
+    "base_revision": "c9c9eaccaf1ef1852b0312d08b96d64af0dd9c2d",
+    "candidate_source_dirty_during_checks": true,
+    "candidate_object_rs_sha256": "31e31eef5e5f229263f91a294cebe268166cbbaaeffb469d92eab08373e0e220",
+    "baseline_object_rs_sha256": "ef1e0da14a1cc3de22cc0e4a30c2084f18c3c095cecac99091db90c7baba778e",
+    "candidate_binary_sha256": "88e627c46584952f7a8821d1b0728df32c469e95ae65a915b9e0210569f865da",
+    "baseline_binary_sha256": "4141420eb899e0fb5f1d8a214bfbb6cba9b66f8e0145e12e3da003c3efe13f74",
+    "code_delta": "For ordinary Cell::Object values with a cacheable property key, compare the object's own shape directly to monomorphic/megamorphic field-cache entries before calling shape_property_lookup. Arrays, proxies, module namespaces, dictionary objects, private names and special keys retain the generic path.",
+    "candidate_source_restored": true
+  },
+  "measurement": {
+    "kind": "paired production-binary Score and maximum-RSS comparison",
+    "fixtures": ["richards.js", "splay.js"],
+    "pairs_per_fixture": 11,
+    "order": "alternating baseline/candidate",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of the difference between medians",
+      "replicates": 100000,
+      "interval": "95%",
+      "resampling": "same pair indices jointly resampled for baseline and candidate"
+    },
+    "host": {
+      "platform": "Linux x86_64 KVM",
+      "cpu_quota": "400000 100000",
+      "memory_limit_bytes": 17179869184,
+      "rss_backend": "Linux wait4 rusage"
+    },
+    "engines": {
+      "quickjs": "QuickJS version 2026-06-04, interpreter",
+      "bun": "1.4.2, JSC useJIT=false probed",
+      "node": "v24.19.0, --jitless probed"
+    },
+    "richards": {
+      "score": {
+        "baseline_median": 117,
+        "candidate_median": 117,
+        "paired_delta_median": 1,
+        "paired_delta_95_ci": [-6, 3]
+      },
+      "rss": {
+        "baseline_median_bytes": 18870272,
+        "candidate_median_bytes": 19238912,
+        "paired_delta_median_bytes": 368640,
+        "paired_delta_95_ci_bytes": [229376, 491520],
+        "candidate_lower_pairs": 0
+      },
+      "summary_path": "target/stageb-candidates/field-cache-own-shape/richards-paired-summary.json",
+      "summary_sha256": "a28ae7c9176f0e4a43304c5502758c299d05edc7e67f15e50591a252220314bb"
+    },
+    "splay": {
+      "score": {
+        "baseline_median": 826,
+        "candidate_median": 856,
+        "paired_delta_median": 39,
+        "paired_delta_95_ci": [-26, 75]
+      },
+      "rss": {
+        "baseline_median_bytes": 255496192,
+        "candidate_median_bytes": 255868928,
+        "paired_delta_median_bytes": 335872,
+        "paired_delta_95_ci_bytes": [245760, 454656],
+        "candidate_lower_pairs": 3
+      },
+      "summary_path": "target/stageb-candidates/field-cache-own-shape/splay-paired-summary.json",
+      "summary_sha256": "33796325110382a27f688e6328e4c61b211aebf0b9b52bd8aac203b4ffa25d88"
+    },
+    "raw_reports": "target/stageb-candidates/field-cache-own-shape/{richards,splay}-pairNN-{baseline,candidate}.json",
+    "runner_sha256": "89067d2fa81e57f11e3bbb568a2920e88e7fa7a062b76ec328eac7e191b1cd90",
+    "paired_runner_script_sha256": "f4000d7f6a886276d0c295c4c7b0356e9e3266fb500c4a8f1486c8d98465a691"
+  },
+  "correctness": {
+    "production_build": "cargo build --profile production -p quench-node passed",
+    "test_runner_build": "cargo build --profile production -p quench-test262 --bin run-stages passed",
+    "test262": {
+      "stage10": {"passed": 11102, "total": 11102, "failed": 0, "sha256": "57ce38612d1841a7e2b1faca76827988dd7f94dea89f4f0919f151a9d6c6435a"},
+      "stages60_63": {"passed": 4604, "total": 4604, "failed": 0, "sha256": "e46b4fa62606800d82ceee8b58dcd40cc107dcef0323573b4d85e8ba88e51597"},
+      "total_passed": 15706,
+      "total_failed": 0
+    },
+    "node_oracle": {
+      "engine": "Node.js v24.19.0",
+      "script": "work/stageb-candidates/property-read-once/field-read-oracle.js",
+      "script_sha256": "f89a5491df6c668de6e0743a8d26300c9f8d685f1ea2d174c7269290b95ff257",
+      "stdout_sha256": "22150d596d7533a77c63d1bbdf00fd60e7acdb3913f7eae91cf66c43f6882a44",
+      "baseline_and_candidate_match": true,
+      "cases": ["warm own data field", "replace with accessor", "delete and re-add", "inherit from prototype", "proxy get trap"]
+    },
+    "all_22_paired_reports_valid_and_output_equal": true
+  },
+  "profile_note": "A prior profile-aggregate Richards artifact ended with the Task 68 dispatch/opcode attribution assertion and was excluded from the decision. This experiment was judged only from paired production measurements.",
+  "stage_b_status": "candidate rejected; Task 61 remains open"
+}

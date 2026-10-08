@@ -1,0 +1,390 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Splay large-live-set GC headroom diagnostic",
+  "decision": "reject: the RSS reduction is clear, but the score regression is also clear; candidate not retained",
+  "source": {
+    "revision": "ac8febd3729384a382a7947d4cddb4b8ed167d6a",
+    "clean_source_after_experiment": true,
+    "baseline_heap_sha256": "5dace25a871e45f8558649f60399e70c67e0d1c05a24bb4396adb382522b2646",
+    "candidate_heap_sha256": "c818744927a898e590fd58f551852639833e980a1e57b34d2874433644956ea5",
+    "candidate_change": "For all post-collection live-set sizes use live // 2 as the next allocation threshold; original large-live-set rule uses live when live >= 65536."
+  },
+  "host": {
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184
+  },
+  "input": {
+    "path": "work/stageb-candidates/splay-memory-profile.js",
+    "sha256": "361cd3d5972fce0079ff4511e71f34deb3091a72c744c41033695534c2c5bf09",
+    "fixture": "pinned V8-v7 Splay materialized with the runner wrapper"
+  },
+  "oracle": {
+    "node_version": "v24.19.0",
+    "baseline_matches_node_all_pairs": true,
+    "candidate_matches_node_all_pairs": true
+  },
+  "binaries": {
+    "baseline": {
+      "sha256": "01e8a4b55912b3acb29222bd5ee090a2ac0b953f7013b1654cd7b3ca8fd89f49"
+    },
+    "candidate": {
+      "sha256": "f2af033f0717d6dd3856f2a748fb9b975b394489ffb16cf21dc362d49d7fed67"
+    }
+  },
+  "measurement": {
+    "pairs": 11,
+    "order": "alternating baseline/candidate and candidate/baseline",
+    "rss_backend": "Linux wait4 ru_maxrss converted from KiB to bytes",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median paired deltas",
+      "replicates": 100000,
+      "score_seed": 6100828,
+      "score_percent_seed": 6100830,
+      "rss_seed": 6100829,
+      "quantiles": [
+        0.025,
+        0.975
+      ]
+    },
+    "summary": {
+      "baseline_score_median": 823,
+      "candidate_score_median": 688,
+      "score_delta_95_ci": [
+        -209,
+        -90
+      ],
+      "paired_score_percent_delta_median": -16.94117647058824,
+      "paired_score_percent_delta_95_ci": [
+        -25.11210762331838,
+        -11.097410604192358
+      ],
+      "baseline_max_rss_median_bytes": 252628992,
+      "candidate_max_rss_median_bytes": 198250496,
+      "max_rss_delta_95_ci": [
+        -54550528,
+        -54243328
+      ],
+      "score_worse_pairs": 10,
+      "rss_lower_pairs": 11,
+      "all_outputs_equal": true,
+      "score_difference_of_medians": -135,
+      "paired_score_delta_median": -132,
+      "max_rss_difference_of_medians_bytes": -54378496,
+      "paired_max_rss_delta_median_bytes": -54382592
+    },
+    "rows": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 778,
+          "max_rss_bytes": 252682240,
+          "stdout_sha256": "ec99ce179ab9d0ea645ad712b347fd9d3feeac6a28fb3352412d3653c2a79bb3"
+        },
+        "candidate": {
+          "score": 646,
+          "max_rss_bytes": 198144000,
+          "stdout_sha256": "0f6e3a736ed73ad84328cae1afa3bfe3de7d9f667b84bea2cceaa25ca0b37a18"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 809,
+          "max_rss_bytes": 252637184,
+          "stdout_sha256": "62c96e1b700bc1fb26d768e0ba6f3b4efd3934ff180ddf2340c683b915abe6ea"
+        },
+        "candidate": {
+          "score": 600,
+          "max_rss_bytes": 198168576,
+          "stdout_sha256": "7dc8b9a84f3b018feff75d9eea06f14581e1eb214b9ec4f5ca6d42fadc41ebeb"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 850,
+          "max_rss_bytes": 252628992,
+          "stdout_sha256": "234e608127c4def787f4e1062ad5c982cdf148ab0521545ef77944602aaf64e6"
+        },
+        "candidate": {
+          "score": 706,
+          "max_rss_bytes": 198250496,
+          "stdout_sha256": "7ab031ba296f32513c253e2c2f4aac38342fc031d079711adaf9a4d1667fbd12"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 4,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 878,
+          "max_rss_bytes": 252682240,
+          "stdout_sha256": "c22545d1c90a0309abaca7b1b591dc3fe6cd0345573b4c3bf7b83b8d37e394b2"
+        },
+        "candidate": {
+          "score": 552,
+          "max_rss_bytes": 198131712,
+          "stdout_sha256": "4c98952eacbf0025387416ec3272cdaee43e4e4f08ac22d2036d1c08c2a560e4"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 5,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 813,
+          "max_rss_bytes": 252489728,
+          "stdout_sha256": "a9efc966c136a90d80ae4216f68b7131668ac07f485289ef6fdd82179067a583"
+        },
+        "candidate": {
+          "score": 688,
+          "max_rss_bytes": 198287360,
+          "stdout_sha256": "837b95b86fb806a35023185cd6df8685c1f542ed102f6ad456844f05dea97d1b"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 6,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 892,
+          "max_rss_bytes": 252542976,
+          "stdout_sha256": "23666385e738fcad4abbcdba3c1ab892641a2385604133c70a8111a6e331d1b1"
+        },
+        "candidate": {
+          "score": 668,
+          "max_rss_bytes": 198299648,
+          "stdout_sha256": "8ad87f677ab89dc4ee13c99551456674280ec30c3272a6d88a8bbeb67cd7ff4b"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 7,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 877,
+          "max_rss_bytes": 252514304,
+          "stdout_sha256": "2d0cd678be78b89d6fa91c8cd5959f87f06fd253f2f922f9ab666187f046c323"
+        },
+        "candidate": {
+          "score": 680,
+          "max_rss_bytes": 197644288,
+          "stdout_sha256": "09c915d3047df10cb95bae34acf746ba07a8100247e60e242ffe76bc939a6bbc"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 8,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 811,
+          "max_rss_bytes": 252649472,
+          "stdout_sha256": "b47b4f1860ca39ca0b8b02b43e537de849c995968fa4509996e29776abacbcbe"
+        },
+        "candidate": {
+          "score": 721,
+          "max_rss_bytes": 198266880,
+          "stdout_sha256": "be14412520abeeafb9547566771505a7c23b907030c50774c511dc5e9d11dc34"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 9,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 823,
+          "max_rss_bytes": 252612608,
+          "stdout_sha256": "c9387d725a39540e461532bb593a810b64570218f86392028c2d71c6853e90bb"
+        },
+        "candidate": {
+          "score": 758,
+          "max_rss_bytes": 200851456,
+          "stdout_sha256": "97ea2b9ee45bc5b697b12f64f8c29db171614e2b6206e592d120093c6e6dcd9e"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 10,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "score": 999,
+          "max_rss_bytes": 252784640,
+          "stdout_sha256": "12c4bdac38f56f31cbde1f01ccaf849ec417d794c040a7f13afb49f985c01ac2"
+        },
+        "candidate": {
+          "score": 876,
+          "max_rss_bytes": 198234112,
+          "stdout_sha256": "1fb9fd4d458749f607ce32a0a8687ab5d3a138be7f9ac70ba06f0160cd23cf41"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      },
+      {
+        "pair": 11,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "score": 813,
+          "max_rss_bytes": 252551168,
+          "stdout_sha256": "a9efc966c136a90d80ae4216f68b7131668ac07f485289ef6fdd82179067a583"
+        },
+        "candidate": {
+          "score": 859,
+          "max_rss_bytes": 198250496,
+          "stdout_sha256": "a864dd4ad658d6792f5741b2e538ee542c3e2d4dfa6fd899e19a35eaeb3c4aaa"
+        },
+        "baseline_candidate_output_equal": true,
+        "baseline_node_output_equal": true,
+        "candidate_node_output_equal": true
+      }
+    ]
+  },
+  "limitations": [
+    "One fixture and one Linux host; diagnostic only.",
+    "The allocation census was built with profile-memory instrumentation and is separate from these production-binary timings.",
+    "No Test262/GC conformance suite was run for this discarded candidate."
+  ],
+  "allocation_census": {
+    "binary_sha256": "ad141c58af4e33d175b2a4ab4d49b4580108b3eacec13cc6ae3bc2b04221502f",
+    "feature": "quench-runtime/profile-memory",
+    "input_sha256": "361cd3d5972fce0079ff4511e71f34deb3091a72c744c41033695534c2c5bf09",
+    "stdout_sha256": "d3cb8644075f93febd02adf1665f20e7e0a6bf25f2fceebc49a3bb0da90a3d58",
+    "stderr_sha256": "15d71f556ed0bf7edf4bf62f6136fe254c6681a9cbb6e666a11a803cb1bdd4c1",
+    "complete_phase_allocations": [
+      {
+        "kind": "object",
+        "allocated": 1809618,
+        "birth_bytes": 0
+      },
+      {
+        "kind": "array",
+        "allocated": 850009,
+        "birth_bytes": 67996008
+      },
+      {
+        "kind": "iterator",
+        "allocated": 38,
+        "birth_bytes": 0
+      },
+      {
+        "kind": "weak_map",
+        "allocated": 4,
+        "birth_bytes": 0
+      },
+      {
+        "kind": "function",
+        "allocated": 1542,
+        "birth_bytes": 37008
+      },
+      {
+        "kind": "environment",
+        "allocated": 214,
+        "birth_bytes": 147056
+      },
+      {
+        "kind": "string",
+        "allocated": 110153,
+        "birth_bytes": 8876581
+      },
+      {
+        "kind": "symbol",
+        "allocated": 38,
+        "birth_bytes": 703
+      },
+      {
+        "kind": "date",
+        "allocated": 234,
+        "birth_bytes": 0
+      }
+    ],
+    "complete_phase_heap": {
+      "heap_slots": 1562212,
+      "slot_bytes": 175013888,
+      "free_bytes": 3145728,
+      "cell_bytes": 64233209,
+      "property_values": 2058316,
+      "property_capacity": 4904060,
+      "array_elements": 2561961,
+      "array_capacity": 2561978,
+      "shapes": 8104,
+      "shape_bytes": 655360,
+      "frame_bytes": 5768,
+      "field_cache_bytes": 52800,
+      "method_cache_bytes": 0
+    },
+    "interpretation": "instrumented census only; scores and RSS from this binary are excluded from the paired production measurement"
+  },
+  "online_research": [
+    {
+      "source": "QuickJS 04be246001599f5995fa2f2d8c91a0f198d3f34c, malloc size classes and threshold collection",
+      "url": "https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L1419-L1438",
+      "collector_threshold_url": "https://github.com/bellard/quickjs/blob/04be246001599f5995fa2f2d8c91a0f198d3f34c/quickjs.c#L1775-L1797",
+      "source_sha256": "a68622cecb806f39bf24738c376a0a73032ea8913478cad702e0265c46f7999f",
+      "finding": "QuickJS triggers cycle GC when heap allocation bytes exceed a byte threshold, then resets the threshold to current bytes plus half; this supported testing a 1.5x high-water headroom but does not prove it is faster for Quench."
+    },
+    {
+      "source": "V8 14.6.202.34 heap allocation limits",
+      "url": "https://github.com/v8/v8/blob/14.6.202.34/src/heap/heap.cc#L554-L590",
+      "source_sha256": "64b3ae7e58afcd31974f73be36085a9ddccf594d4becd4e8b66dd525e1b304ed",
+      "finding": "V8 exposes byte-oriented allocation-limit checks; Quench count thresholds are not directly comparable to V8 byte limits."
+    }
+  ]
+}
