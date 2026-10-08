@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "dense_array_get_descriptor_check_reorder",
+  "recorded_on": "2026-10-08",
+  "decision": "reject_and_revert: paired timing and instruction counts show no measurable benefit",
+  "binding_time": {
+    "hypothesis": "For an ordinary dense array with a present integer-indexed element, load the element before checking for an indexed accessor descriptor.",
+    "candidate_guard": "The fast return was limited to a nonnegative integer key, Cell::Array, an in-bounds present element, and a non-DELETED value; typed arrays remained ahead of this path and holes/descriptors retained the existing fallback.",
+    "reduction": "Reorder an existing dense element load and descriptor probe. No new cache, metadata, or semantic rule was introduced."
+  },
+  "source": {
+    "base_revision": "8e0c5b23f7ce609383215f814c8f51b26e40414c",
+    "working_tree_clean_after_revert": true,
+    "owner_file": "crates/quench-runtime/src/vm/index.rs",
+    "baseline_sha256": "0e70f72bfde2faf23830a4fd6f6d58e413fe11943ac765bf391d419f358e1cd9",
+    "candidate_sha256": "3159fbb59b614d1110203b6d0489b47d97bde9c0f323494af2fabe8f9a5dbe9f",
+    "candidate_delta": "For present dense Cell::Array values, return before array_descriptor(); retain descriptor fallback for missing/deleted values.",
+    "cargo_lock_sha256": "02b0a61df0566b30cc3644995cbad9f142abac9c538a276a24cc9f502a1d6d14"
+  },
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)"
+  },
+  "build": {
+    "profile": "production",
+    "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production -p quench-node --bin quench-node",
+    "baseline_binary_path_during_run": "/tmp/quench-node-array-baseline",
+    "baseline_binary_sha256": "60cc517562cdf0bb6b6beeb3a14fb2379e590eb38e8f1a3574629bb50b3f5089",
+    "candidate_binary_path_during_run": "/tmp/quench-node-array-candidate",
+    "candidate_binary_sha256": "86ee00c4ea9933f789ff61ed2ee25bf9122c6010f1aca52c57f6723a6ea96a2e",
+    "note": "The baseline binary was rebuilt from the committed source; the candidate binary was built with only the owner-file reorder above. Both were compared in the same alternating run."
+  },
+  "measurement": {
+    "kind": "diagnostic single-engine paired microbenchmark",
+    "operation": "dense integer-index array read",
+    "input": {
+      "source": "function f(a){var total=0; for(var t=0;t<4000;t++) for(var i=0;i<2500;i++) total+=a[i]; return total;} var a=[]; for(var k=0;k<2500;k++) a.push(1); if(f(a)!==10000000) throw new Error(\"read result\");",
+      "source_sha256": "4418b106ef56c80d014b0af636ffbd62d6ae6ad4b73dcb083e1ec3dc0b821fa3",
+      "iterations": 10000000,
+      "warmup": "none; each timed process constructs its array before the loop",
+      "command_template": "/usr/bin/time -lp -o <time-file> <binary> -e <source> > /dev/null"
+    },
+    "pairs": 11,
+    "order": "alternating baseline/candidate and candidate/baseline by pair",
+    "timer_fields": [
+      "real seconds",
+      "maximum resident set size bytes",
+      "instructions retired"
+    ],
+    "raw_csv": {
+      "path": "tasks/evidence/task61-array-index-get-reorder-2026-10-08.csv",
+      "sha256": "791b62afb04a8c29b3fcc61ef0a99ba2541d0e7af1fb7479605bd49ec0ce6e36",
+      "rows": 22
+    },
+    "summary": {
+      "median_baseline_seconds": 4.49,
+      "median_candidate_seconds": 4.52,
+      "median_candidate_time_delta_percent": 0.22075055187637496,
+      "candidate_time_delta_percent_bootstrap_95_ci": [
+        -0.22271714922048522,
+        0.8948545861297548
+      ],
+      "median_candidate_instructions_delta_percent": 0.008271878761886616,
+      "candidate_instructions_delta_percent_bootstrap_95_ci": [
+        -0.02138600088246914,
+        0.03383851180979682
+      ],
+      "median_candidate_max_rss_delta_bytes": -65536,
+      "candidate_max_rss_delta_bytes_bootstrap_95_ci": [
+        -753664,
+        638976
+      ],
+      "candidate_faster_pairs": 4,
+      "candidate_lower_rss_pairs": 6
+    },
+    "bootstrap": {
+      "method": "paired percentile bootstrap of the median paired delta",
+      "replicates": 100000,
+      "prng": "xorshift32",
+      "seed": 6102026,
+      "quantiles": [
+        0.025,
+        0.975
+      ]
+    },
+    "conclusion": "The time and instruction intervals include zero. Retire the candidate; the measurement does not support a performance claim or retaining the source change.",
+    "scope_limit": "This diagnostic microbenchmark is not a V8-v7 Score gate or cross-engine qualification."
+  },
+  "verification": {
+    "candidate_test262": {
+      "runner": "cargo run --locked --profile iteration -p quench-test262 --bin run-stages -- <stage> <stage>",
+      "environment": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4",
+      "stages": [
+        {
+          "stage": 1,
+          "path": "language/arguments-object",
+          "passed": 263,
+          "failed": 0
+        },
+        {
+          "stage": 31,
+          "path": "built-ins/Array",
+          "passed": 3081,
+          "failed": 0
+        },
+        {
+          "stage": 60,
+          "path": "built-ins/Object",
+          "passed": 3411,
+          "failed": 0
+        }
+      ],
+      "total_passed": 6755,
+      "note": "These checks establish no observed regression in the affected slices; they do not change the performance rejection."
+    },
+    "node_oracle": "not run",
+    "rust_unit_tests": "not run, per instruction",
+    "profile": "Supporting source samples showed array_descriptor was a small share of the read path; profile-aggregate output was inconsistent and was not used in the decision."
+  }
+}
