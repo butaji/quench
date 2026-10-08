@@ -43,19 +43,19 @@ The three package scenarios define the Stage A framework target. Do not expand
 the Node gate to unrelated upstream APIs or the broader proposals in
 [88](88.md)/[89](89.md).
 
-Stage A remains open because integrated qualification, production cutover and
-final cleanup remain. Test262 conflicts follow the lower-numbered-stage rule:
-Stage 94 defines the Annex B behavior, and the two contradictory Stage 114
-cases remain explicit waivers rather than passes. The current source-bound
-resolution is in [Task 20](20.md#current-conflict-resolution). The shared-VM
-Wasm and framework Node gates have current source-bound passes; Task 24 still
-needs the complete gate on one build.
+Task 24 now qualifies the complete shared-runtime inventories: 53,404/53,404
+lower-stage-adjudicated Test262 cases, 67,124/67,124 WAST directives, and all
+26 `framework-core` fixtures plus the pinned Express, Koa and Fastify
+scenarios. The [integrated evidence](evidence/task24-integrated-shared-2026-10-08.json)
+records the two contradictory Stage 114 outcomes as explicit waivers, never
+passes. Stage A remains open because production cutover and removal of legacy
+Node state remain incomplete, and final cleanup has not run.
 
 The remaining work is:
 
-- [24](24.md): pass all three suite gates on one build; [27](27.md): promote the
-  shared VM and delete legacy execution; [86](86.md): remove audited clutter and
-  close Stage A on the final production build.
+- [27](27.md): promote the shared runtime and remove legacy execution;
+  [86](86.md): remove audited clutter and close Stage A on the final production
+  build.
 
 Prioritize failing suite cases, missing shared-VM execution paths and production
 cutover blockers. Do not start discretionary architecture or new host
@@ -75,9 +75,11 @@ then repeat Task 24.
 Tasks 27 and 86 reuse those reports only when source, binaries, configuration
 and inventories are unchanged.
 
-The framework Node and shared-VM Wasm suite tasks are complete. Optional broad
-Node embedding and JavaScript WebAssembly adapters do not block the selected
-Stage A profile. Implement only a concrete failure found by the suite gates.
+Tasks 23 and 24 are complete on the shared runtime. Task 27 remains in progress
+for production cutover; Task 86 will remove audited clutter and qualify the
+final build. Optional broad Node embedding and JavaScript WebAssembly adapters
+do not block the selected Stage A profile. Implement only concrete suite gaps
+and cutover blockers.
 
 Task 24 depends on the three suite closures. Support tasks supply required fixes
 and checks, including existing specialization fallbacks, roots, host re-entry
@@ -90,7 +92,8 @@ passes do not establish that gate. Once verified, proceed directly to tasks
 
 ## Stage B — performance
 
-After Stage A, run every V8-v7 benchmark on Apple M4/macOS: Crypto, DeltaBlue,
+After Stage A, run every V8-v7 benchmark on the recorded execution host
+(Linux x86_64 KVM in this workspace): Crypto, DeltaBlue,
 EarleyBoyer, NavierStokes, RayTrace, RegExp, Richards and Splay. On **each
 benchmark**, Quench must have both the best Score and the lowest maximum RSS
 against QuickJS, Bun/JSC with JIT disabled and Node/V8 `--jitless`. An aggregate

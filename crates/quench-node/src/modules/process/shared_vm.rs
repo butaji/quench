@@ -40,6 +40,16 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
     }
     install(context, process, "env", env)?;
+    let streams = context.evaluate_script_rooted(
+        "(() => { const stream = (fd) => ({ fd, isTTY: false, write() { return true; } }); return [stream(1), stream(2)]; })()",
+        "node:process/shared-stdio.js",
+    )?;
+    let stdout_index = context.number(0.0);
+    let stdout = context.get_property_rooted(streams, stdout_index)?;
+    install(context, process, "stdout", stdout)?;
+    let stderr_index = context.number(1.0);
+    let stderr = context.get_property_rooted(streams, stderr_index)?;
+    install(context, process, "stderr", stderr)?;
     for (name, values) in [("argv", argv), ("execArgv", exec_argv)] {
         let values = values
             .iter()

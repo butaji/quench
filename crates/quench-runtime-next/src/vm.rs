@@ -46,7 +46,6 @@ mod collections;
 mod construction;
 mod data_view;
 mod date;
-mod local_time;
 mod dispatch;
 mod dispatch_frame;
 mod dispatch_numeric;
@@ -77,6 +76,7 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
+mod local_time;
 mod property_definition;
 use group_by::GroupByKind;
 use property_definition::PropertyDefinitionKind;
@@ -506,6 +506,18 @@ pub(crate) struct Vm<H> {
     test262_agent: Test262AgentState,
     programs: ProgramStore,
     active_program: ProgramId,
+    wasm_modules: Vec<wasm::StoredWasmModule>,
+    wasm_globals: Vec<(crate::WasmValue, bool)>,
+    wasm_memories: Vec<wasm::WasmMemoryState>,
+    wasm_tables: Vec<std::rc::Rc<std::cell::RefCell<wasm::WasmTableState>>>,
+    wasm_gc_next_ref: u32,
+    wasm_gc_ref_types: FxHashMap<u32, u32>,
+    wasm_gc_objects: FxHashMap<u32, wasm::WasmGcObject>,
+    wasm_externref_bridge: FxHashMap<u32, Value>,
+    wasm_function_ref_next: u32,
+    wasm_function_ref_handles: FxHashMap<u32, crate::WasmFunctionRef>,
+    wasm_function_ref_ids: FxHashMap<crate::WasmFunctionRef, u32>,
+    active_wasm_module: Option<crate::WasmModuleId>,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
@@ -960,6 +972,11 @@ impl<H: Host> Vm<H> {
         self.function_values.clear();
         self.programs.reset(program);
         self.active_program = ProgramId::MAIN;
+        self.wasm_modules.clear();
+        self.wasm_globals.clear();
+        self.wasm_memories.clear();
+        self.wasm_tables.clear();
+        self.active_wasm_module = None;
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;

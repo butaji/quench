@@ -43,7 +43,7 @@ fn run_shared_file(path: &Path, goal: EntryGoal) -> NodeOutcome {
     match execute_shared(
         SharedInput::File {
             path: path.to_path_buf(),
-            exec_argv: crate::reader::fixture_flags(&source),
+            exec_argv: crate::fixture_metadata::fixture_flags(&source),
             goal,
         },
         vec![executable, script],

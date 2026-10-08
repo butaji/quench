@@ -154,10 +154,10 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
 }
 
 #[test]
-fn optional_method_cache_observes_callable_replacement_without_shape_change() {
+fn method_calls_observe_callable_replacement_without_shape_change() {
     let source = r#"
       var receiver = { value: 1, method: function() { return this.value; } };
-      function callMethod(value) { return value?.method?.(); }
+      function callMethod(value) { return value.method(); }
       print(callMethod(receiver));
       print(callMethod(receiver));
       receiver.method = function() { return this.value + 1; };
@@ -170,38 +170,18 @@ fn optional_method_cache_observes_callable_replacement_without_shape_change() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-cache-callable-replacement.js").unwrap();
-        assert!(
-            !program.method_sites.is_empty(),
-            "test must exercise CallMethod"
-        );
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
-
-        if vm.specialized {
-            let method = vm.intern_atom("method");
-            assert!(
-                vm.method_caches
-                    .iter()
-                    .flatten()
-                    .any(|entry| entry.atom == method && entry.target.is_some()),
-                "specialized method site should populate its method cache"
-            );
-            #[cfg(feature = "profile-aggregate")]
-            assert!(
-                vm.profile.method_cache_hits > 0,
-                "specialized method site should take its method-cache hit path"
-            );
-        }
     }
 }
 
 #[test]
-fn optional_method_cache_invalidates_when_inherited_callable_changes() {
+fn method_calls_observe_inherited_callable_changes() {
     let source = r#"
       var prototype = { method: function() { return this.value; } };
       var receiver = Object.create(prototype);
       receiver.value = 1;
-      function callMethod(value) { return value?.method?.(); }
+      function callMethod(value) { return value.method(); }
       print(callMethod(receiver));
       print(callMethod(receiver));
       prototype.method = function() { return this.value + 1; };
@@ -214,24 +194,20 @@ fn optional_method_cache_invalidates_when_inherited_callable_changes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-cache-inherited-replacement.js").unwrap();
-        assert!(
-            !program.method_sites.is_empty(),
-            "test must exercise CallMethod"
-        );
         vm.execute(&program).unwrap();
         assert_eq!(output.borrow().as_slice(), ["1", "1", "2"], "{mode}");
     }
 }
 
 #[test]
-fn optional_method_cache_executes_megamorphic_receiver_shapes() {
+fn method_calls_preserve_results_across_receiver_shapes() {
     let source = r#"
       var method = function() { return this.value; };
       var first = { method: method, value: 1 };
       var second = { extra: 0, method: method, value: 2 };
       var third = { value: 3, method: method, extra: 0 };
       var fourth = { extra: 0, value: 4, method: method };
-      function callMethod(value) { return value?.method?.(); }
+      function callMethod(value) { return value.method(); }
       print(callMethod(first));
       print(callMethod(second));
       print(callMethod(third));
@@ -250,40 +226,12 @@ fn optional_method_cache_executes_megamorphic_receiver_shapes() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-cache-megamorphic.js").unwrap();
-        assert_eq!(program.method_sites.len(), 1, "test needs one method site");
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
             ["1", "2", "3", "4", "1", "2", "3", "4", "13"],
             "{mode}"
         );
-
-        if vm.specialized {
-            assert!(
-                vm.megamorphic_methods.is_empty(),
-                "mutation should clear the megamorphic method cache"
-            );
-            let third_atom = vm.intern_atom("third");
-            let third = vm.own_property(vm.realm.globals, third_atom).unwrap();
-            let third_shape = vm.object_data(third).unwrap().shape();
-            let method_atom = vm.intern_atom("method");
-            let target = vm
-                .call_target(vm.own_property(third, method_atom).unwrap())
-                .unwrap();
-            assert!(
-                vm.method_caches[0]
-                    .iter()
-                    .any(|entry| entry.shape == third_shape
-                        && entry.atom == method_atom
-                        && entry.target == Some(target)),
-                "the replacement should refill the receiver's method cache"
-            );
-            #[cfg(feature = "profile-aggregate")]
-            assert!(
-                vm.profile.method_cache_tiers[2] > 0,
-                "calls should hit the megamorphic method-cache tier"
-            );
-        }
     }
 }
 
@@ -510,7 +458,7 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
 }
 
 #[test]
-fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
+fn method_calls_preserve_proxy_get_trap_and_receiver() {
     let source = r#"
       var reads = 0;
       var target = { method: function() { return this === proxy; } };
@@ -520,7 +468,7 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
           return Reflect.get(target, key, receiver);
         }
       });
-      function callMethod(value) { return value?.method?.(); }
+      function callMethod(value) { return value.method(); }
       print(callMethod(proxy));
       print(reads);
       print(callMethod(proxy));
@@ -533,40 +481,17 @@ fn method_cache_fallback_preserves_proxy_get_trap_and_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "method-cache-proxy-get.js").unwrap();
-        assert!(
-            !program.method_sites.is_empty(),
-            "test must exercise CallMethod"
-        );
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
             ["true", "1", "true", "2"],
             "{mode}"
         );
-
-        if vm.specialized {
-            let method = vm.intern_atom("method");
-            assert!(
-                vm.method_caches
-                    .iter()
-                    .flatten()
-                    .all(|entry| entry.atom != method),
-                "Proxy method reads must retain the generic trap path"
-            );
-            assert!(
-                vm.megamorphic_methods
-                    .iter()
-                    .all(|cache| cache.entries[..usize::from(cache.len)]
-                        .iter()
-                        .all(|entry| entry.atom != method)),
-                "Proxy method reads must not enter a megamorphic cache"
-            );
-        }
     }
 }
 
 #[test]
-fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
+fn method_lookup_reenters_accessor_once_and_preserves_receiver() {
     let source = r#"
       var reads = 0;
       var receiver = {
@@ -575,7 +500,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
           return function() { return this === receiver; };
         }
       };
-      function callMethod(value) { return value?.method?.(); }
+      function callMethod(value) { return value.method(); }
       print(callMethod(receiver));
       print(reads);
       print(callMethod(receiver));
@@ -588,33 +513,12 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         let program = compile(source, "optional-method-accessor.js").unwrap();
-        assert!(
-            !program.method_sites.is_empty(),
-            "test must exercise CallMethod"
-        );
         vm.execute(&program).unwrap();
         assert_eq!(
             output.borrow().as_slice(),
             ["true", "1", "true", "2"],
             "{mode}"
         );
-
-        if vm.specialized {
-            let method = vm.intern_atom("method");
-            assert!(
-                vm.field_caches
-                    .iter()
-                    .all(|entry| entry.atom != method || entry.receiver == u32::MAX),
-                "optional accessor lookup must retain the generic getter path"
-            );
-            assert!(
-                vm.method_caches
-                    .iter()
-                    .flatten()
-                    .all(|entry| entry.atom != method),
-                "optional accessor lookup must not enter the method cache"
-            );
-        }
     }
 }
 

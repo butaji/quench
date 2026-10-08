@@ -1,7 +1,7 @@
 //! Protect recursive projections of OXC's RegExp AST before lowering.
 use oxc::regular_expression::{
     ast::{CharacterClass, Pattern, Term},
-    visit::{Visit, walk},
+    visit::{walk, Visit},
 };
 
 #[derive(Default)]

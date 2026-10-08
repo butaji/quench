@@ -2553,9 +2553,9 @@ impl<H: Host> Vm<H> {
         let root_key = module_cache_key(&cycle_root.to_string_lossy(), "javascript");
         match self.realm.promise.modules.get(&root_key)?.outcome {
             ModuleOutcome::Errored(reason) => Some(reason),
-            ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) | ModuleOutcome::Evaluated(_) => {
-                None
-            }
+            ModuleOutcome::Pending(_)
+            | ModuleOutcome::Deferred(_)
+            | ModuleOutcome::Evaluated(_) => None,
         }
     }
 
@@ -3077,9 +3077,9 @@ impl<H: Host> Vm<H> {
         }
         let namespace = self.evaluate_static_synthetic_module(p, module, module_type)?;
         let default_atom = self.intern_atom("default");
-        let default_value = self.own_property(namespace, default_atom).ok_or_else(|| {
-            self.type_error(p, "synthetic module has no default export".into())
-        })?;
+        let default_value = self
+            .own_property(namespace, default_atom)
+            .ok_or_else(|| self.type_error(p, "synthetic module has no default export".into()))?;
         let deferred = self.module_namespace_with_tag(
             vec![("default".into(), default_value)],
             "Deferred Module",
@@ -3510,7 +3510,7 @@ impl<H: Host> Vm<H> {
                 .map_err(|message| self.type_error(p, message))?
                 .ok_or_else(|| {
                     self.type_error(p, "static module request was not resolved".into())
-            })?;
+                })?;
             let dependency_key = module_cache_key(&dependency.name, "javascript");
             let module_identity =
                 crate::module_identity::normalize(std::path::Path::new(&module.name));

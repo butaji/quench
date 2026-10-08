@@ -219,9 +219,8 @@ pub(crate) fn parse_legacy_parts(input: &str) -> Result<LegacyUrlParts, LegacyUr
 }
 
 fn is_bare_protocol_relative(url: &str) -> bool {
-    url.strip_prefix("//").is_some_and(|rest| {
-        !rest.contains('@') && !rest.contains(':') && !rest.contains('/')
-    })
+    url.strip_prefix("//")
+        .is_some_and(|rest| !rest.contains('@') && !rest.contains(':') && !rest.contains('/'))
 }
 
 fn parse_relative_path(
@@ -355,10 +354,16 @@ fn complete_legacy_fields(parsed: &mut BTreeMap<String, String>, url: &str) {
         parsed.insert(
             "href".into(),
             assemble_url(
-                parsed.get("protocol").map(String::as_str).unwrap_or_default(),
+                parsed
+                    .get("protocol")
+                    .map(String::as_str)
+                    .unwrap_or_default(),
                 parsed.get("auth").map(String::as_str).unwrap_or_default(),
                 parsed.get("host").map(String::as_str).unwrap_or_default(),
-                parsed.get("pathname").map(String::as_str).unwrap_or_default(),
+                parsed
+                    .get("pathname")
+                    .map(String::as_str)
+                    .unwrap_or_default(),
                 parsed.get("search").map(String::as_str).unwrap_or_default(),
                 parsed.get("hash").map(String::as_str).unwrap_or_default(),
                 url.contains("://") || url.starts_with("//"),
@@ -368,7 +373,10 @@ fn complete_legacy_fields(parsed: &mut BTreeMap<String, String>, url: &str) {
     if !parsed.contains_key("path")
         && (parsed.contains_key("pathname") || parsed.contains_key("search"))
     {
-        let pathname = parsed.get("pathname").map(String::as_str).unwrap_or_default();
+        let pathname = parsed
+            .get("pathname")
+            .map(String::as_str)
+            .unwrap_or_default();
         let search = parsed.get("search").map(String::as_str).unwrap_or_default();
         parsed.insert("path".into(), format!("{pathname}{search}"));
     }
@@ -488,10 +496,10 @@ fn legacy_object(entries: Vec<(String, Value)>) -> Value {
 fn legacy_plain_object(entries: Vec<(String, Value)>) -> Value {
     let mut object = host_api::object(
         LEGACY_URL_FIELD_ORDER
-        .iter()
-        .copied()
-        .map(|key| (key.to_string(), Value::Null))
-        .collect(),
+            .iter()
+            .copied()
+            .map(|key| (key.to_string(), Value::Null))
+            .collect(),
     );
     for (key, value) in entries {
         object = execute::set_property(object, &key, value);

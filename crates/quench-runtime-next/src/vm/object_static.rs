@@ -284,7 +284,8 @@ impl<H: Host> Vm<H> {
                     .map(|key| self.heap.root(key))
                     .collect();
                 for key in &own_keys {
-                    let Some(Cell::String(name)) = self.heap.get(self.heap.root_value(*key).unwrap())
+                    let Some(Cell::String(name)) =
+                        self.heap.get(self.heap.root_value(*key).unwrap())
                     else {
                         continue;
                     };
@@ -773,7 +774,6 @@ impl<H: Host> Vm<H> {
         self.set_property_attributes(target, key, attributes);
         Ok(true)
     }
-
 }
 
 pub(super) fn array_index(name: &str) -> Option<u32> {

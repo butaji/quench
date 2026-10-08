@@ -25,20 +25,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let fail = context.host_function(crate::host::shared_vm::operation("fail"))?;
     let throws = context.host_function(crate::host::shared_vm::operation("throws"))?;
     let assertion_error = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(r#"class AssertionError extends Error {
+        quench_js_check::checked_js!(
+            r#"class AssertionError extends Error {
   constructor(options = {}) {
     super(options.message);
     this.name = "AssertionError";
     Object.assign(this, options);
   }
 }
-AssertionError"#),
+AssertionError"#
+        ),
         "node:assert/AssertionError.js",
     )?;
-    let rejects = context.evaluate_script_rooted(
-        super::ASSERT_REJECTS,
-        "node:assert/rejects.js",
-    )?;
+    let rejects =
+        context.evaluate_script_rooted(super::ASSERT_REJECTS, "node:assert/rejects.js")?;
 
     set(context, assert, "ok", ok)?;
     set(context, assert, "strictEqual", strict_equal)?;
@@ -117,11 +117,8 @@ pub(crate) fn not_strict_equal(
     if !context.same_value_rooted(actual, expected)? {
         return Ok(context.undefined());
     }
-    let (message, generated) = assertion_message(
-        context,
-        args.get(2).copied(),
-        ASSERTION_NOT_UNEQUAL,
-    )?;
+    let (message, generated) =
+        assertion_message(context, args.get(2).copied(), ASSERTION_NOT_UNEQUAL)?;
     assertion_error(
         context,
         actual,
@@ -249,7 +246,9 @@ fn array_kind(
     let array = get(context, global, "Array")?;
     let is_array = get(context, array, "isArray")?;
     let result = context.call_rooted(is_array, array, &[value])?;
-    Ok(context.rooted_value(result).is_some_and(|value| value.as_bool() == Some(true)))
+    Ok(context
+        .rooted_value(result)
+        .is_some_and(|value| value.as_bool() == Some(true)))
 }
 
 pub(crate) fn throws(
@@ -296,6 +295,23 @@ pub(crate) fn throws(
             true,
         );
     }
+    if context.is_regexp_rooted(expected)? {
+        let matcher = get(context, expected, "test")?;
+        let actual_text = context.to_string(thrown)?;
+        let actual = context.string_rooted(&actual_text);
+        let matched = context.call_rooted(matcher, expected, &[actual])?;
+        if context.truthy_rooted(matched)? {
+            return Ok(thrown);
+        }
+        return assertion_error(
+            context,
+            thrown,
+            expected,
+            "throws",
+            "The error did not match the expected regular expression.",
+            true,
+        );
+    }
     let expected_keys = if context
         .rooted_value(expected)
         .is_some_and(|value| value.is_undefined() || value.is_null())
@@ -333,20 +349,17 @@ pub(crate) fn fail(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let message = match args.first().copied() {
-        Some(message) if !context.rooted_value(message).is_some_and(|value| value.is_undefined()) => {
+        Some(message)
+            if !context
+                .rooted_value(message)
+                .is_some_and(|value| value.is_undefined()) =>
+        {
             context.to_string(message)?
         }
         _ => "Failed".to_owned(),
     };
     let undefined = context.undefined();
-    assertion_error(
-        context,
-        undefined,
-        undefined,
-        "fail",
-        &message,
-        false,
-    )
+    assertion_error(context, undefined, undefined, "fail", &message, false)
 }
 
 fn invalid_assert_callback(
@@ -383,7 +396,8 @@ fn enumerable_keys(
 ) -> Result<Vec<RootId>, RootedError> {
     let keys = object_keys(context, expected)?;
     if keys.is_empty() {
-        let error = context.type_error_rooted("The argument 'error' may not be an empty object.")?;
+        let error =
+            context.type_error_rooted("The argument 'error' may not be an empty object.")?;
         let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
         set(context, error, "code", code)?;
         return Err(context.throw(error));

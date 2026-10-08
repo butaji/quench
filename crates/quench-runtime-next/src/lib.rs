@@ -17,7 +17,12 @@ mod value_vec;
 mod vm;
 mod wasm;
 pub use wasm::{
-    WasmFunction, WasmFunctionBody, WasmI32Function, WasmSignature, WasmTrap, WasmType, WasmValue,
+    WASM_GC_INITIAL_REFERENCE_ID_MASK, WASM_GC_INITIAL_REFERENCE_TAG,
+    WASM_GC_REFERENCE_ARRAY_CLASS, WASM_GC_REFERENCE_CLASS_SHIFT, WASM_GC_REFERENCE_STRUCT_CLASS,
+    WasmElementSegment, WasmFunction, WasmFunctionBody, WasmFunctionRef, WasmGcDescriptor,
+    WasmGcField, WasmGcInitialObject, WasmGcType, WasmGlobalId, WasmI32Function,
+    WasmMemoryAccessKind, WasmMemoryId, WasmMemoryInit, WasmModule, WasmModuleId, WasmSignature,
+    WasmTableId, WasmTableInit, WasmTagId, WasmTrap, WasmType, WasmValue,
 };
 
 pub use bytecode::ResidualProgram;

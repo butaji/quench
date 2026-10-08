@@ -166,8 +166,8 @@ impl<'a> JsonParser<'a> {
     }
 
     fn value(&mut self) -> Result<JsonValue, JsonParseError> {
-        let _stack = crate::stack::StackGuard::enter()
-            .map_err(|()| JsonParseError::StackExhausted)?;
+        let _stack =
+            crate::stack::StackGuard::enter().map_err(|()| JsonParseError::StackExhausted)?;
         self.whitespace();
         let start = self.index;
         let value = match self.peek() {
@@ -457,7 +457,11 @@ impl<H: Host> Vm<H> {
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
-    pub(super) fn json_parse(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+    pub(super) fn json_parse(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let parsed = match JsonParser::new(text.units()).parse() {
             Ok(parsed) => parsed,
@@ -918,7 +922,9 @@ impl<H: Host> Vm<H> {
             | Some(Cell::Iterator { .. })
             | Some(Cell::ArrayFromAsyncState(_))
             | Some(Cell::PromiseResolvingState { .. })
-            | Some(Cell::WasmBits64(_)) => Ok(None),
+            | Some(Cell::WasmBits64(_))
+            | Some(Cell::WasmMultiValue(_))
+            | Some(Cell::WasmExceptionRef { .. }) => Ok(None),
         }
     }
 
@@ -1073,8 +1079,6 @@ impl<H: Host> Vm<H> {
         }
         result
     }
-
-
 }
 
 #[cfg(test)]

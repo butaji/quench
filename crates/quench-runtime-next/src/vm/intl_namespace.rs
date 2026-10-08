@@ -14,17 +14,24 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_intl_namespace_for_realm(program, intl, global, object_prototype)?;
         let constructor = self.native_with_realm(Native::IntlNumberFormat, global, global);
-        self.realm.intrinsics.intl_number_format_constructors
+        self.realm
+            .intrinsics
+            .intl_number_format_constructors
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "NumberFormat")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_number_format_prototypes.insert(global, prototype);
-        let fallback_symbol = self.heap.alloc(Cell::Symbol(Some(
-            "IntlLegacyConstructedSymbol".into(),
-        )));
-        self.realm.intrinsics.intl_number_format_fallback_symbols
+        self.realm
+            .intrinsics
+            .intl_number_format_prototypes
+            .insert(global, prototype);
+        let fallback_symbol = self
+            .heap
+            .alloc(Cell::Symbol(Some("IntlLegacyConstructedSymbol".into())));
+        self.realm
+            .intrinsics
+            .intl_number_format_fallback_symbols
             .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -115,7 +122,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_locale_prototypes.insert(global, prototype);
+        self.realm
+            .intrinsics
+            .intl_locale_prototypes
+            .insert(global, prototype);
         self.set_builtin_function_name(locale, "Locale")?;
         self.set_builtin_value_named(locale, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -227,9 +237,7 @@ impl<H: Host> Vm<H> {
             | Native::IntlLocaleCaseFirstGetter
             | Native::IntlLocaleFirstDayOfWeekGetter
             | Native::IntlLocaleNumberingSystemGetter
-            | Native::IntlLocaleNumericGetter => {
-                self.intl_locale_native(p, native, this)
-            }
+            | Native::IntlLocaleNumericGetter => self.intl_locale_native(p, native, this),
             _ => Err(JsError("invalid Intl namespace operation".into())),
         }
     }
@@ -255,15 +263,14 @@ impl<H: Host> Vm<H> {
             .iter()
             .skip(1)
             .find(|part| {
-                part.len() == 2 || (part.len() == 3 && part.bytes().all(|byte| byte.is_ascii_digit()))
+                part.len() == 2
+                    || (part.len() == 3 && part.bytes().all(|byte| byte.is_ascii_digit()))
             })
             .copied();
         let variants = parts
             .iter()
             .skip(1)
-            .filter(|part| {
-                part.len() >= 4 && !(script == Some(part) || region == Some(part))
-            })
+            .filter(|part| part.len() >= 4 && !(script == Some(part) || region == Some(part)))
             .copied()
             .collect::<Vec<_>>();
         let property = match native {
@@ -271,14 +278,19 @@ impl<H: Host> Vm<H> {
             Native::IntlLocaleLanguageGetter => Some(language.to_owned()),
             Native::IntlLocaleScriptGetter => script.map(str::to_owned),
             Native::IntlLocaleRegionGetter => region.map(str::to_owned),
-            Native::IntlLocaleVariantsGetter => {
-                (!variants.is_empty()).then(|| variants.join("-"))
-            }
+            Native::IntlLocaleVariantsGetter => (!variants.is_empty()).then(|| variants.join("-")),
             Native::IntlLocaleCalendarGetter => unicode_locale_keyword(&locale, "ca"),
             Native::IntlLocaleCollationGetter => unicode_locale_keyword(&locale, "co"),
             Native::IntlLocaleHourCycleGetter => unicode_locale_keyword(&locale, "hc"),
-            Native::IntlLocaleCaseFirstGetter => unicode_locale_keyword(&locale, "kf")
-                .map(|value| if value == "true" { String::new() } else { value }),
+            Native::IntlLocaleCaseFirstGetter => {
+                unicode_locale_keyword(&locale, "kf").map(|value| {
+                    if value == "true" {
+                        String::new()
+                    } else {
+                        value
+                    }
+                })
+            }
             Native::IntlLocaleFirstDayOfWeekGetter => unicode_locale_keyword(&locale, "fw"),
             Native::IntlLocaleNumberingSystemGetter => unicode_locale_keyword(&locale, "nu"),
             _ => None,
@@ -302,13 +314,13 @@ impl<H: Host> Vm<H> {
             return Ok(Value::UNDEFINED);
         }
         match native {
-            Native::IntlLocaleNumericGetter => Ok(if unicode_locale_keyword(&locale, "kn")
-                .is_some_and(|value| value != "false")
-            {
-                Value::TRUE
-            } else {
-                Value::FALSE
-            }),
+            Native::IntlLocaleNumericGetter => Ok(
+                if unicode_locale_keyword(&locale, "kn").is_some_and(|value| value != "false") {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                },
+            ),
             Native::IntlLocaleToString => Ok(self.heap.alloc(Cell::String(locale.into()))),
             Native::IntlLocaleMaximize => {
                 let maximized = maximize_locale(&locale);
@@ -362,10 +374,35 @@ impl<H: Host> Vm<H> {
                     .map(weekday_number)
                     .or_else(|| week_first_day(region.unwrap_or_default()));
                 let first_day = first_day.unwrap_or(WEEKDAY_MONDAY);
-                let weekend = if matches!(region, Some("AE" | "BH" | "DJ" | "DZ" | "EG" | "IQ" | "IR" | "JO" | "KW" | "LY" | "OM" | "QA" | "SA" | "SD" | "SY" | "YE")) {
-                    vec![Value::number(WEEKDAY_FRIDAY), Value::number(WEEKDAY_SATURDAY)]
+                let weekend = if matches!(
+                    region,
+                    Some(
+                        "AE" | "BH"
+                            | "DJ"
+                            | "DZ"
+                            | "EG"
+                            | "IQ"
+                            | "IR"
+                            | "JO"
+                            | "KW"
+                            | "LY"
+                            | "OM"
+                            | "QA"
+                            | "SA"
+                            | "SD"
+                            | "SY"
+                            | "YE"
+                    )
+                ) {
+                    vec![
+                        Value::number(WEEKDAY_FRIDAY),
+                        Value::number(WEEKDAY_SATURDAY),
+                    ]
                 } else {
-                    vec![Value::number(WEEKDAY_SATURDAY), Value::number(WEEKDAY_SUNDAY)]
+                    vec![
+                        Value::number(WEEKDAY_SATURDAY),
+                        Value::number(WEEKDAY_SUNDAY),
+                    ]
                 };
                 let result = self.object();
                 self.set_named(p, result, "firstDay", Value::number(first_day as f64))?;
@@ -377,7 +414,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn new_intl_locale_object(&mut self, prototype: Value, locale: String) -> Result<Value, JsError> {
+    fn new_intl_locale_object(
+        &mut self,
+        prototype: Value,
+        locale: String,
+    ) -> Result<Value, JsError> {
         let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.set_hidden_string(result, INTL_LOCALE_SLOT, &locale)?;
         Ok(result)
@@ -457,7 +498,9 @@ impl<H: Host> Vm<H> {
                                     }
                                     ("kf", text)
                                 }
-                                "firstDayOfWeek" => ("fw", normalize_first_day_option(p, vm, &text)?),
+                                "firstDayOfWeek" => {
+                                    ("fw", normalize_first_day_option(p, vm, &text)?)
+                                }
                                 "collation" => ("co", option_value(p, vm, option, &text)?),
                                 "numberingSystem" => ("nu", option_value(p, vm, option, &text)?),
                                 _ => unreachable!(),
@@ -585,8 +628,9 @@ impl<H: Host> Vm<H> {
                         }
                         let value = self_.get_index(p, object, key)?;
                         let locale = self_.locale_tag_string(p, value)?;
-                        let locale = canonical_locale(&locale)
-                            .ok_or_else(|| self_.range_error(p, "invalid locale identifier".into()))?;
+                        let locale = canonical_locale(&locale).ok_or_else(|| {
+                            self_.range_error(p, "invalid locale identifier".into())
+                        })?;
                         if !canonical.contains(&locale) {
                             canonical.push(locale);
                         }
@@ -697,7 +741,9 @@ fn unique_unicode_keywords(locale: &str) -> String {
         while index < unicode.len() && unicode[index].len() != 2 {
             index += 1;
         }
-        keywords.entry(key).or_insert_with(|| unicode[start..index].to_vec());
+        keywords
+            .entry(key)
+            .or_insert_with(|| unicode[start..index].to_vec());
     }
     if attributes.is_empty() && keywords.is_empty() {
         return locale.to_owned();
@@ -785,10 +831,7 @@ fn apply_locale_base_option<H: Host>(
                     !((5..=8).contains(&variant.len())
                         && variant.bytes().all(|byte| byte.is_ascii_alphanumeric())
                         || variant.len() == 4
-                            && variant
-                                .as_bytes()
-                                .first()
-                                .is_some_and(u8::is_ascii_digit))
+                            && variant.as_bytes().first().is_some_and(u8::is_ascii_digit))
                 })
             {
                 return Err(vm.range_error(p, "invalid variants".into()));
@@ -805,10 +848,8 @@ fn apply_locale_base_option<H: Host>(
             let has_script = parts.get(1).is_some_and(|part| {
                 part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphabetic())
             });
-            let variant_start = region_index.map_or_else(
-                || if has_script { 2 } else { 1 },
-                |index| index + 1,
-            );
+            let variant_start =
+                region_index.map_or_else(|| if has_script { 2 } else { 1 }, |index| index + 1);
             parts.truncate(variant_start);
             parts.extend(variants);
         }
@@ -818,8 +859,7 @@ fn apply_locale_base_option<H: Host>(
 }
 
 fn valid_language(value: &str) -> bool {
-    matches!(value.len(), 2 | 3 | 5..=8)
-        && value.bytes().all(|byte| byte.is_ascii_alphabetic())
+    matches!(value.len(), 2 | 3 | 5..=8) && value.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
 fn option_value<H: Host>(
@@ -863,14 +903,13 @@ fn set_unicode_keyword(locale: &str, key: &str, value: Option<&str>) -> String {
     let (base, unicode_extension) = locale
         .split_once("-u-")
         .map_or((locale, None), |(base, extension)| (base, Some(extension)));
-    let (unicode, trailing_extensions) = unicode_extension.map_or(
-        (Vec::new(), String::new()),
-        |extension| {
-        let parts = extension.split('-').collect::<Vec<_>>();
-        let boundary = parts.iter().position(|part| part.len() == 1);
-        let (unicode, trailing) = boundary.map_or((parts.as_slice(), &[][..]), |index| {
-            (&parts[..index], &parts[index..])
-        });
+    let (unicode, trailing_extensions) =
+        unicode_extension.map_or((Vec::new(), String::new()), |extension| {
+            let parts = extension.split('-').collect::<Vec<_>>();
+            let boundary = parts.iter().position(|part| part.len() == 1);
+            let (unicode, trailing) = boundary.map_or((parts.as_slice(), &[][..]), |index| {
+                (&parts[..index], &parts[index..])
+            });
             (
                 unicode.to_vec(),
                 if trailing.is_empty() {
@@ -879,8 +918,7 @@ fn set_unicode_keyword(locale: &str, key: &str, value: Option<&str>) -> String {
                     format!("-{}", trailing.join("-"))
                 },
             )
-        },
-    );
+        });
     let mut attributes = Vec::new();
     let mut keywords = std::collections::BTreeMap::<String, Vec<String>>::new();
     let mut index = 0;
@@ -974,11 +1012,13 @@ fn weekday_number(day: &str) -> f64 {
 }
 
 fn week_first_day(region: &str) -> Option<f64> {
-    Some(if matches!(region, "US" | "CA" | "JP" | "MX" | "BR" | "PH") {
-        WEEKDAY_SUNDAY
-    } else {
-        WEEKDAY_MONDAY
-    })
+    Some(
+        if matches!(region, "US" | "CA" | "JP" | "MX" | "BR" | "PH") {
+            WEEKDAY_SUNDAY
+        } else {
+            WEEKDAY_MONDAY
+        },
+    )
 }
 
 fn maximize_locale(tag: &str) -> String {
@@ -1013,8 +1053,7 @@ fn maximize_locale(tag: &str) -> String {
         language
     };
     let (default_script, default_region) = likely_subtags(inferred_language);
-    let default_script = if inferred_language == "zh"
-        && matches!(region, Some("TW" | "HK" | "MO"))
+    let default_script = if inferred_language == "zh" && matches!(region, Some("TW" | "HK" | "MO"))
     {
         "Hant"
     } else {
@@ -1035,11 +1074,7 @@ fn maximize_locale(tag: &str) -> String {
     let variants = parts
         .iter()
         .skip(1)
-        .filter(|part| {
-            part.len() >= 4
-                && Some(**part) != script
-                && Some(**part) != region
-        })
+        .filter(|part| part.len() >= 4 && Some(**part) != script && Some(**part) != region)
         .copied()
         .collect::<Vec<_>>();
     if variants.is_empty() {

@@ -15,6 +15,8 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+pub(crate) mod shared_vm;
+
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const TRIGGER_ID: &str = "\0quench:async_hooks:trigger";
 const HOOK_ID: &str = "\0quench:async_hooks:hook";

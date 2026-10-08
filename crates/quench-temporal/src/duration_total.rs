@@ -1,4 +1,4 @@
-use crate::{IsoDate, civil_from_days, days_from_civil, days_in_month};
+use crate::{civil_from_days, days_from_civil, days_in_month, IsoDate};
 
 const NANOSECONDS_PER_DAY: i128 = 86_400_000_000_000;
 const NANOSECONDS_PER_WEEK: i128 = 604_800_000_000_000;
@@ -227,5 +227,9 @@ fn divide_duration(nanoseconds: i128, divisor: i128) -> f64 {
         }
     }
     let value = digits.parse::<f64>().unwrap_or(f64::INFINITY);
-    if nanoseconds < 0 { -value } else { value }
+    if nanoseconds < 0 {
+        -value
+    } else {
+        value
+    }
 }

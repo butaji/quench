@@ -3,7 +3,7 @@
 
 use super::{WasmTrap, WasmValue};
 
-use super::numeric::{selectors, NumericResult};
+use super::numeric::{NumericResult, selectors};
 
 macro_rules! binary_family {
     ($enum:ident, $signed:ty, $unsigned:ty, $variant:ident,

@@ -6,15 +6,11 @@ use rqj::{NativeContext, RootId, RootedError};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let constructor = context.evaluate_script_rooted(URL_CONSTRUCTOR_SOURCE, "node:url/Url")?;
     let module = context.object_rooted()?;
-    let parse = context.host_function_with_data(
-        crate::host::shared_vm::operation("urlParse"),
-        constructor,
-    )?;
+    let parse = context
+        .host_function_with_data(crate::host::shared_vm::operation("urlParse"), constructor)?;
     set(context, module, "parse", parse)?;
     set(context, module, "Url", constructor)?;
     Ok(module)
@@ -26,18 +22,20 @@ pub(crate) fn parse(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(input) = args.first().copied() else {
-        return Err(type_error(context, "The \"url\" argument must be of type string"));
+        return Err(type_error(
+            context,
+            "The \"url\" argument must be of type string",
+        ));
     };
     let Some(input) = context.string_text(input)? else {
-        return Err(type_error(context, "The \"url\" argument must be of type string"));
+        return Err(type_error(
+            context,
+            "The \"url\" argument must be of type string",
+        ));
     };
-    let parsed = crate::modules::url::parse_legacy_parts(&input).map_err(|error| {
-        match error {
-            LegacyUrlParseError::Invalid { code, input } => {
-                coded_type_error(context, &code, &input)
-            }
-            LegacyUrlParseError::MalformedUri => uri_error(context),
-        }
+    let parsed = crate::modules::url::parse_legacy_parts(&input).map_err(|error| match error {
+        LegacyUrlParseError::Invalid { code, input } => coded_type_error(context, &code, &input),
+        LegacyUrlParseError::MalformedUri => uri_error(context),
     })?;
     let query_requested = args
         .get(1)

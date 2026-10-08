@@ -63,9 +63,12 @@ impl<H: Host> Vm<H> {
         let mut then_root = None;
         let outcome = (|| {
             let then_atom = self.intern_atom("then");
-            let then = self.get_property(p, self.heap.root_value(input_root).unwrap(), then_atom)?;
+            let then =
+                self.get_property(p, self.heap.root_value(input_root).unwrap(), then_atom)?;
             if !self.is_function(then) {
-                return Err(self.type_error(p, "Promise resolve result has no callable then".into()));
+                return Err(
+                    self.type_error(p, "Promise resolve result has no callable then".into())
+                );
             }
             then_root = Some(self.heap.root(then));
             let aggregate = self.heap.root_value(aggregate_root).unwrap();

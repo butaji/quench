@@ -40,7 +40,8 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .intl_segments_prototypes
             .insert(global, segments_prototype);
-        let iterator_prototype = self.realm.intrinsics.builtin_prototypes[&(global, Native::Iterator)];
+        let iterator_prototype =
+            self.realm.intrinsics.builtin_prototypes[&(global, Native::Iterator)];
         let iterator_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(iterator_prototype)));
@@ -52,7 +53,8 @@ impl<H: Host> Vm<H> {
         let next = self.native_with_realm(Native::IntlSegmenterIteratorNext, global, global);
         self.set_builtin_function_name(next, "next")?;
         self.set_builtin_value_named(iterator_prototype, "next", next)?;
-        let iterator = self.native_with_realm(Native::IntlSegmenterSegmentsIterator, global, global);
+        let iterator =
+            self.native_with_realm(Native::IntlSegmenterSegmentsIterator, global, global);
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
         let symbol_iterator = self.well_known_symbols["iterator"];
         self.set_symbol_property(segments_prototype, symbol_iterator, iterator)?;
@@ -60,7 +62,8 @@ impl<H: Host> Vm<H> {
             self.native_with_realm(Native::IntlSegmenterSegmentsContaining, global, global);
         self.set_builtin_function_name(containing, "containing")?;
         self.set_builtin_value_named(segments_prototype, "containing", containing)?;
-        let supported = self.native_with_realm(Native::IntlSegmenterSupportedLocalesOf, global, global);
+        let supported =
+            self.native_with_realm(Native::IntlSegmenterSupportedLocalesOf, global, global);
         self.set_builtin_function_name(supported, "supportedLocalesOf")?;
         self.set_builtin_value_named(constructor, "supportedLocalesOf", supported)?;
         self.set_builtin_value_named(intl, "Segmenter", constructor)
@@ -132,32 +135,36 @@ impl<H: Host> Vm<H> {
             let data = self
                 .hidden_value(this, SEGMENTS_DATA_SLOT)
                 .ok_or_else(|| self.type_error(p, "incompatible Segments receiver".into()))?;
-            return self.with_call_roots([this, data].into_iter().chain(args.iter().copied()), |vm| {
-                if native == Native::IntlSegmenterSegmentsIterator {
-                    let prototype =
-                        vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
-                    return Ok(vm.heap.alloc(Cell::Iterator {
-                        object: Self::empty_object(prototype),
-                        source: data,
-                        next_method: None,
-                        helper: None,
-                        helper_running: false,
-                        helper_started: false,
-                        kind: IteratorKind::IntlSegments,
-                        index: 0,
-                        done: false,
-                        generator: None,
-                    }));
-                }
-                let index = vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                let index = if index.is_nan() { 0.0 } else { index.trunc() };
-                if !index.is_finite() || index < 0.0 {
-                    return Ok(Value::UNDEFINED);
-                }
-                Ok(vm
-                    .segment_data(p, data, index as usize)?
-                    .map_or(Value::UNDEFINED, |(value, _)| value))
-            });
+            return self.with_call_roots(
+                [this, data].into_iter().chain(args.iter().copied()),
+                |vm| {
+                    if native == Native::IntlSegmenterSegmentsIterator {
+                        let prototype =
+                            vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
+                        return Ok(vm.heap.alloc(Cell::Iterator {
+                            object: Self::empty_object(prototype),
+                            source: data,
+                            next_method: None,
+                            helper: None,
+                            helper_running: false,
+                            helper_started: false,
+                            kind: IteratorKind::IntlSegments,
+                            index: 0,
+                            done: false,
+                            generator: None,
+                        }));
+                    }
+                    let index =
+                        vm.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                    let index = if index.is_nan() { 0.0 } else { index.trunc() };
+                    if !index.is_finite() || index < 0.0 {
+                        return Ok(Value::UNDEFINED);
+                    }
+                    Ok(vm
+                        .segment_data(p, data, index as usize)?
+                        .map_or(Value::UNDEFINED, |(value, _)| value))
+                },
+            );
         }
         let locale = self
             .hidden_string(this, SEGMENTER_LOCALE_SLOT)
@@ -214,8 +221,8 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Array { elements, .. }) = self.heap.get(boundaries) else {
             return Ok(None);
         };
-        let end =
-            elements.partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
+        let end = elements
+            .partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
         let Some((start, end)) = end
             .checked_sub(1)
             .and_then(|start| elements.get(start).zip(elements.get(end)))

@@ -135,7 +135,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let span = token.span();
         // Fast path: most identifiers are not escaped, so we can slice directly
         // from source text without going through `get_string`'s kind matching.
-        let name = if token.escaped() { self.cur_string() } else { self.token_source(&token) };
+        let name = if token.escaped() {
+            self.cur_string()
+        } else {
+            self.token_source(&token)
+        };
         self.advance(kind);
         (span, self.ident(name))
     }
@@ -150,7 +154,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// [`ParseOptions::enable_ident_hashes`]: crate::ParseOptions::enable_ident_hashes
     #[inline]
     pub(crate) fn ident(&self, name: &'a str) -> Ident<'a> {
-        if self.options.enable_ident_hashes { Ident::from(name) } else { Ident::new_unhashed(name) }
+        if self.options.enable_ident_hashes {
+            Ident::from(name)
+        } else {
+            Ident::new_unhashed(name)
+        }
     }
 
     pub(crate) fn check_identifier(&mut self, kind: Kind, ctx: Context) {
@@ -272,8 +280,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         let opening_span = self.cur_token().span();
         // Capture annotation flags before bumping `(` since bump resets them
-        let no_side_effects_comments =
-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
+        let no_side_effects_comments = self
+            .lexer
+            .trivia_builder
+            .previous_token_no_side_effects_comments();
         self.bump_any(); // `bump` `(`
         let expr_start = self.cur_start();
         let (mut expressions, comma_start) = self.context(Context::In, Context::Decorator, |p| {
@@ -314,14 +324,18 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 arrow_expr.pife = true;
                 if let Some(comments) = no_side_effects_comments {
                     arrow_expr.pure = true;
-                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                    self.lexer
+                        .trivia_builder
+                        .mark_no_side_effects_comments_applied(comments);
                 }
             }
             Expression::FunctionExpression(func_expr) => {
                 func_expr.pife = true;
                 if let Some(comments) = no_side_effects_comments {
                     func_expr.pure = true;
-                    self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                    self.lexer
+                        .trivia_builder
+                        .mark_no_side_effects_comments_applied(comments);
                 }
             }
             _ => {}
@@ -461,7 +475,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             None
         };
 
-        let pattern = RegExpPattern { text: Str::from(pattern_text), pattern };
+        let pattern = RegExpPattern {
+            text: Str::from(pattern_text),
+            pattern,
+        };
 
         if flags.contains(RegExpFlags::U | RegExpFlags::V) {
             self.error(diagnostics::reg_exp_flag_u_and_v(span));
@@ -483,7 +500,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             self.allocator(),
             pattern,
             Some(flags),
-            Options { pattern_span_offset, flags_span_offset },
+            Options {
+                pattern_span_offset,
+                flags_span_offset,
+            },
         )
         .parse()
         {
@@ -525,9 +545,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             )
         });
         if let Some(comma_start) = comma_start
-            && matches!(elements.last(), Some(ArrayExpressionElement::SpreadElement(_)))
+            && matches!(
+                elements.last(),
+                Some(ArrayExpressionElement::SpreadElement(_))
+            )
         {
-            self.state.trailing_commas.insert(start, self.end_span(comma_start));
+            self.state
+                .trailing_commas
+                .insert(start, self.end_span(comma_start));
         }
         self.expect(Kind::RBrack);
         Expression::new_array_expression(self.end_span(start), elements, self)
@@ -737,7 +762,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     fn parse_v8_intrinsic_argument(&mut self) -> Argument<'a> {
         if self.at(Kind::Dot3) {
-            self.error(diagnostics::v8_intrinsic_spread_elem(self.cur_token().span()));
+            self.error(diagnostics::v8_intrinsic_spread_elem(
+                self.cur_token().span(),
+            ));
             Argument::SpreadElement(self.parse_spread_element())
         } else {
             Argument::from(self.parse_assignment_expression_or_higher())
@@ -776,7 +803,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         }
         // Add `ChainExpression` to `a?.c?.b<c>`;
         if let Expression::TSInstantiationExpression(mut expr) = lhs {
-            expr.expression.replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
+            expr.expression
+                .replace_with(|expr| self.map_to_chain_expression(expr.span(), expr));
             Expression::TSInstantiationExpression(expr)
         } else {
             let span = self.end_span(start);
@@ -793,7 +821,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(comments) = pure_comments
             && Self::set_pure_on_call_or_new_expr(&mut expr)
         {
-            self.lexer.trivia_builder.mark_pure_comments_applied(comments);
+            self.lexer
+                .trivia_builder
+                .mark_pure_comments_applied(comments);
         }
         expr
     }
@@ -1304,7 +1334,6 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     fn parse_unary_expression(&mut self) -> Expression<'a> {
-
         let start = self.cur_start();
         let operator = map_unary_operator(self.cur_kind());
         self.bump_any();
@@ -1354,7 +1383,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // This is needed for jsx `<div>=</div>` case
             let kind = self.re_lex_right_angle();
 
-            let Some(left_precedence) = kind_to_precedence(kind) else { break };
+            let Some(left_precedence) = kind_to_precedence(kind) else {
+                break;
+            };
 
             let stop = if left_precedence.is_right_associative() {
                 left_precedence < min_precedence
@@ -1505,8 +1536,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return self.fatal_error(diagnostics::stack_exhausted(self.cur_token().span()));
         };
 
-        let no_side_effects_comments =
-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
+        let no_side_effects_comments = self
+            .lexer
+            .trivia_builder
+            .previous_token_no_side_effects_comments();
         // [+Yield] YieldExpression
         if self.is_yield_expression() {
             return self.parse_yield_expression();
@@ -1519,7 +1552,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
             {
                 func.pure = true;
-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                self.lexer
+                    .trivia_builder
+                    .mark_no_side_effects_comments_applied(comments);
             }
             return arrow_expr;
         }
@@ -1531,7 +1566,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
             {
                 func.pure = true;
-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                self.lexer
+                    .trivia_builder
+                    .mark_no_side_effects_comments_applied(comments);
             }
             return arrow_expr;
         }
@@ -1556,7 +1593,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 && let Expression::ArrowFunctionExpression(func) = &mut arrow_expr
             {
                 func.pure = true;
-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                self.lexer
+                    .trivia_builder
+                    .mark_no_side_effects_comments_applied(comments);
             }
             return arrow_expr;
         }
@@ -1576,7 +1615,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if let Some(comments) = no_side_effects_comments
             && Self::set_pure_on_function_expr(&mut expr)
         {
-            self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+            self.lexer
+                .trivia_builder
+                .mark_no_side_effects_comments_applied(comments);
         }
 
         expr
@@ -1643,13 +1684,19 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         //    ArrayAssignmentPattern
         if let Some(span) = left_parenthesized_span {
             //  `({}) = x;`, `([]) = x;`
-            if matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_)) {
+            if matches!(
+                lhs,
+                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
+            ) {
                 self.error(diagnostics::invalid_assignment(span));
             }
         }
         // A destructuring pattern target is only valid with `=`, not a compound operator.
         if operator != AssignmentOperator::Assign
-            && matches!(lhs, Expression::ObjectExpression(_) | Expression::ArrayExpression(_))
+            && matches!(
+                lhs,
+                Expression::ObjectExpression(_) | Expression::ArrayExpression(_)
+            )
         {
             self.error(diagnostics::assignment_is_not_simple(lhs.span()));
         }

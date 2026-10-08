@@ -18,7 +18,9 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value)? {
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if super::object_static::array_index(self.atom_name(atom)).is_some() => {
+            Cell::Array { .. }
+                if super::object_static::array_index(self.atom_name(atom)).is_some() =>
+            {
                 return None;
             }
             Cell::TypedArray { .. }
@@ -40,7 +42,8 @@ impl<H: Host> Vm<H> {
         for depth in 0..=cache.depth {
             let current = self.shape_property_lookup(owner, cache.atom)?;
             if depth == cache.depth {
-                return (owner == cache.owner && current.shape() == cache.owner_shape).then_some(owner);
+                return (owner == cache.owner && current.shape() == cache.owner_shape)
+                    .then_some(owner);
             }
             if self
                 .shape_slot(current.shape(), cache.atom)

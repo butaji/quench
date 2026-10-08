@@ -1,5 +1,5 @@
 use super::Runtime;
-use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
+use crate::{vm::Vm, Host, JsError, RootId, RootedError, Value};
 
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,22 +88,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Compare with SameValue: NaN equals itself and signed zeros differ.
-    pub fn same_value_rooted(
-        &mut self,
-        left: RootId,
-        right: RootId,
-    ) -> Result<bool, RootedError> {
+    pub fn same_value_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
         self.vm
             .embedding_same_value(left, right)
             .map_err(|error| self.error(error))
     }
 
     /// Apply JavaScript abstract equality, preserving coercion effects and throws.
-    pub fn equal_rooted(
-        &mut self,
-        left: RootId,
-        right: RootId,
-    ) -> Result<bool, RootedError> {
+    pub fn equal_rooted(&mut self, left: RootId, right: RootId) -> Result<bool, RootedError> {
         self.vm
             .embedding_equal(left, right)
             .map_err(|error| self.error(error))
@@ -142,6 +134,10 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn boolean(&mut self, value: bool) -> RootId {
         self.scoped_value(if value { Value::TRUE } else { Value::FALSE })
+    }
+
+    pub fn null(&mut self) -> RootId {
+        self.scoped_value(Value::NULL)
     }
 
     pub fn error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
@@ -198,6 +194,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Apply the RegExp brand check used by JavaScript's IsRegExp operation.
+    pub fn is_regexp_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_regexp(root)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn number(&mut self, value: f64) -> RootId {
         self.scoped_value(Value::number(value))
     }
@@ -216,6 +219,31 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();
         self.completion(result)
+    }
+
+    /// Create an object whose prototype is null, as for `Object.create(null)`.
+    pub fn null_object_rooted(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_null_object();
+        self.completion(result)
+    }
+
+    /// Queue a callback in this runtime's microtask queue. The queue retains
+    /// the callback and arguments after this native call's scoped roots end.
+    pub fn queue_microtask_rooted(
+        &mut self,
+        callback: RootId,
+        args: &[RootId],
+    ) -> Result<(), RootedError> {
+        let callback = self
+            .vm
+            .embedding_value(callback)
+            .map_err(|error| self.error(error))?;
+        let args = match self.vm.embedding_arguments(args) {
+            Ok(args) => args,
+            Err(error) => return Err(self.error(error)),
+        };
+        self.vm.enqueue_job(callback, args);
+        Ok(())
     }
 
     pub fn global_root(&mut self) -> Result<RootId, RootedError> {

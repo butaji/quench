@@ -1,382 +1,187 @@
-//! Adapter from the runner contract to the residual runtime.
+//! Minimal Test262 adapter for the staged v2 runtime.
+//!
+//! This adapter is intentionally separate from the legacy host while the
+//! next runtime grows module, realm, and `$262` capability support. Keeping
+//! the boundary explicit prevents legacy pass counts from being reported as
+//! next-runtime evidence.
 
-use std::{
-    cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
-    path::Path,
-    rc::Rc,
+use std::path::Path;
+
+use rqj::{
+    CapabilityId, Engine, ExecutionRequest, Host, HostGlobal, ModuleSource, Runtime, SourceKind,
+    SystemHost,
 };
 
-use quench_runtime::module_bindings::ModuleBindingCell;
-use quench_runtime::reduce::{
-    inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
-    reduce_source, ScriptSource,
-};
-use quench_runtime::vm::{execute_code_with_context, ExecutionScope, VmContext};
-
-use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
 use crate::Test262Host;
 
+const TEST262_MODULE_SOURCE_SPECIFIER: &str = "<module source>";
+
+static HOST_GLOBALS: [HostGlobal; 2] = [
+    HostGlobal {
+        name: "$262",
+        capability: CapabilityId::CreateRealm,
+    },
+    HostGlobal {
+        name: "$262",
+        capability: CapabilityId::IsHTMLDDA,
+    },
+];
+static ASYNC_GLOBALS: [HostGlobal; 3] = [
+    HOST_GLOBALS[0],
+    HOST_GLOBALS[1],
+    HostGlobal {
+        name: "$DONE",
+        capability: CapabilityId::Done,
+    },
+];
+
 #[derive(Debug, Default)]
-pub struct RuntimeHost;
-
-/// Independently reduced module unit with explicit live-cell linking.
-pub struct LinkedModule {
-    program: quench_runtime::reduce::ResidualProgram,
-    scope: ExecutionScope,
-    fixed_exports: Vec<(String, quench_runtime::value::Value)>,
-    linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
-    star_exports: RefCell<HashSet<String>>,
-    ambiguous_exports: RefCell<HashSet<String>>,
-    namespace_cell: RefCell<Option<ModuleBindingCell>>,
-    deferred_namespace_cell: RefCell<Option<ModuleBindingCell>>,
-    module_source: ModuleBindingCell,
-    evaluated: Cell<bool>,
-    started: Cell<bool>,
-    evaluating: Cell<bool>,
-    thrown: RefCell<Option<quench_runtime::value::Value>>,
-    resume_pc: Cell<usize>,
-    resume_registers: RefCell<Vec<quench_runtime::value::Value>>,
-    async_suspended: Cell<bool>,
+pub struct RuntimeHost {
+    async_test: bool,
+    can_block: bool,
+    done: Option<String>,
 }
 
-/// Graph-owned collection of independently compiled linked modules.
-pub struct LinkedModuleGraph {
-    units: std::collections::HashMap<ModuleId, LinkedModule>,
-}
-
-impl LinkedModuleGraph {
-    pub fn compile(graph: &mut ModuleGraph) -> Result<Self, String> {
-        Self::compile_with_entry_prefix(graph, None, &[])
+impl Host for RuntimeHost {
+    fn write_line(&mut self, text: &str) {
+        if let Some(error) = text.strip_prefix("Test262:AsyncTestFailure:") {
+            self.done = Some(error.to_string());
+            return;
+        }
+        if text == "Test262:AsyncTestComplete" {
+            self.done = Some(String::new());
+            return;
+        }
+        println!("{text}");
     }
 
-    pub fn compile_with_entry_prefix(
-        graph: &mut ModuleGraph,
-        entry: Option<ModuleId>,
-        prefix: &[&str],
-    ) -> Result<Self, String> {
-        graph.link_all_units()?;
-        let mut units = std::collections::HashMap::new();
-        for unit in graph.units() {
-            let module = if Some(unit.id) == entry {
-                LinkedModule::compile_with_prefix(prefix, &unit.source)?
-            } else if unit.kind == ModuleKind::Json {
-                LinkedModule::compile_json(&unit.source)?
-            } else if unit.kind == ModuleKind::Text {
-                LinkedModule::compile_text(&unit.source)?
-            } else if unit.kind == ModuleKind::Bytes {
-                LinkedModule::compile_bytes(&unit.bytes)?
-            } else {
-                match LinkedModule::compile(&unit.source) {
-                    Ok(module) => module,
-                    Err(error) if graph.is_dynamic_target(unit.id) => {
-                        let message = error.strip_prefix("SyntaxError: ").unwrap_or(&error);
-                        let source = format!(
-                            "throw new SyntaxError({});",
-                            serde_json::to_string(message)
-                                .map_err(|serialize| serialize.to_string())?
-                        );
-                        LinkedModule::compile(&source)?
-                    }
-                    Err(error) => return Err(error),
-                }
-            };
-            units.insert(unit.id, module);
+    fn clock_millis(&mut self) -> f64 {
+        SystemHost.clock_millis()
+    }
+
+    fn globals(&self) -> &'static [HostGlobal] {
+        if self.async_test {
+            &ASYNC_GLOBALS
+        } else {
+            &HOST_GLOBALS
         }
-        let root = entry
-            .or_else(|| graph.entry())
-            .ok_or_else(|| "module graph missing entry".to_string())?;
-        let order = graph.dependency_order(root)?;
-        bind_imports(&units, graph, &order, |binding| {
-            binding.imported == "source"
-        })?;
-        for _ in 0..units.len() {
-            for id in &order {
-                link_reexports(graph, &units, *id)?;
+    }
+
+    fn done(&mut self, text: Option<&str>) {
+        self.done = Some(text.unwrap_or_default().to_string());
+    }
+
+    fn has_module_source(&self, module: &ModuleSource) -> bool {
+        module.name == TEST262_MODULE_SOURCE_SPECIFIER
+    }
+
+    fn can_block(&self) -> bool {
+        self.can_block
+    }
+
+    fn resolve_dynamic_import(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<ModuleSource>, String> {
+        if specifier == TEST262_MODULE_SOURCE_SPECIFIER {
+            return Ok(Some(ModuleSource {
+                name: specifier.to_string(),
+                source: String::new(),
+                bytes: Vec::new(),
+            }));
+        }
+        if !specifier.starts_with('.') {
+            return Ok(None);
+        }
+        let referrer = Path::new(referrer);
+        let path = referrer
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join(specifier);
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        let source = String::from_utf8_lossy(&bytes).into_owned();
+        Ok(Some(ModuleSource {
+            name: path.display().to_string(),
+            source,
+            bytes,
+        }))
+    }
+}
+
+impl RuntimeHost {
+    fn execute(&mut self, source: &str, name: &str) -> Result<(), String> {
+        self.execute_kind(source, name, SourceKind::Script)
+    }
+
+    fn execute_kind(&mut self, source: &str, name: &str, kind: SourceKind) -> Result<(), String> {
+        self.done = None;
+        let async_test = self.async_test;
+        let mut runtime = Runtime::new(std::mem::take(self));
+        let result = (|| {
+            let program = match kind {
+                SourceKind::Script => Engine::specialize_unspecialized(source, name),
+                SourceKind::Module => Engine::specialize_module_unspecialized(source, name),
+                SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
-        }
-        bind_imports(&units, graph, &order, |binding| {
-            binding.imported != "source"
-        })?;
-        Ok(Self { units })
-    }
-
-    pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
-        let _shared = quench_runtime::vm::SharedGlobal::install();
-        quench_runtime::module_bindings::reset_module_jobs();
-        quench_runtime::module_bindings::defer_fulfilled_await(true);
-        let graph_ptr = self as *const LinkedModuleGraph;
-        let modules_ptr = graph as *const ModuleGraph;
-        CURRENT_MODULE_GRAPH.with(|current| {
-            current.set(Some((graph_ptr, modules_ptr)));
-        });
-        let _import = quench_runtime::module_bindings::install_dynamic_import(Rc::new(
-            move |specifier, deferred| {
-                CURRENT_MODULE_ID.with(|id| {
-                    let from = id.get().or_else(|| unsafe { &*modules_ptr }.entry())?;
-                    let target = unsafe { &*modules_ptr }.resolve(from, specifier)?;
-                    if unsafe { &*modules_ptr }.has_deferred_resolution_error(target) {
-                        quench_runtime::module_bindings::request_ensure_type_error();
-                        return None;
-                    }
-                    if !deferred {
-                        let _ = evaluate_module(
-                            unsafe { &*graph_ptr },
-                            unsafe { &*modules_ptr },
-                            target,
-                            true,
-                        );
-                        settle_dynamic_import(unsafe { &*graph_ptr }, target);
-                    }
-                    import_cell(
-                        unsafe { &*modules_ptr },
-                        &unsafe { &*graph_ptr }.units,
-                        target,
-                        "*",
-                        deferred,
+            .map_err(|errors| format!("next runtime SyntaxError: {errors:?}"))?;
+            runtime.execute(&program).map_err(|error| {
+                format!("next runtime: {}", runtime.format_error(&program, &error))
+            })?;
+            if async_test {
+                runtime.run_jobs(&program).map_err(|error| {
+                    format!(
+                        "next runtime jobs: {}",
+                        runtime.format_error(&program, &error)
                     )
-                    .ok()
-                    .map(|cell| cell.get())
-                })
-            },
-        ));
-        let result = evaluate_module(self, graph, entry, true);
-        quench_runtime::module_bindings::drain_jobs();
-        let result = match self
-            .units
-            .get(&entry)
-            .and_then(|unit| unit.thrown.borrow().clone())
-        {
-            Some(thrown) => {
-                quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
-                Err(format!(
-                    "residual VM error: {}",
-                    quench_runtime::execute::VmError::Thrown(thrown).render()
-                ))
+                })?;
+                if let Some(error) = runtime.host_mut().done.clone() {
+                    if !error.is_empty() {
+                        return Err(format!("next runtime async: {error}"));
+                    }
+                } else {
+                    return Err("next runtime async: $DONE was not called".into());
+                }
             }
-            None => result,
-        };
-        CURRENT_MODULE_GRAPH.with(|current| current.set(None));
-        quench_runtime::module_bindings::defer_fulfilled_await(false);
+            Ok(())
+        })();
+        *self = runtime.into_host();
         result
     }
 
-    pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
-        self.units.get(&unit)?.export_cell(name)
-    }
-}
-
-include!("runtime_host_linking.rs");
-
-impl LinkedModule {
-    pub fn compile(source: &str) -> Result<Self, String> {
-        let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-        Ok(Self {
-            program,
-            scope: ExecutionScope::new(),
-            fixed_exports: Vec::new(),
-            linked_exports: RefCell::new(HashMap::new()),
-            star_exports: RefCell::new(HashSet::new()),
-            ambiguous_exports: RefCell::new(HashSet::new()),
-            namespace_cell: RefCell::new(None),
-            deferred_namespace_cell: RefCell::new(None),
-            module_source: module_source_cell(),
-            evaluated: Cell::new(false),
-            started: Cell::new(false),
-            evaluating: Cell::new(false),
-            thrown: RefCell::new(None),
-            resume_pc: Cell::new(0),
-            resume_registers: RefCell::new(Vec::new()),
-            async_suspended: Cell::new(false),
-        })
-    }
-
-    pub fn compile_with_prefix(prefix: &[&str], source: &str) -> Result<Self, String> {
-        let program = reduce_module_sequence(prefix, source).map_err(|errors| errors.join("; "))?;
-        Ok(Self {
-            program,
-            scope: ExecutionScope::new(),
-            fixed_exports: Vec::new(),
-            linked_exports: RefCell::new(HashMap::new()),
-            star_exports: RefCell::new(HashSet::new()),
-            ambiguous_exports: RefCell::new(HashSet::new()),
-            namespace_cell: RefCell::new(None),
-            deferred_namespace_cell: RefCell::new(None),
-            module_source: module_source_cell(),
-            evaluated: Cell::new(false),
-            started: Cell::new(false),
-            evaluating: Cell::new(false),
-            thrown: RefCell::new(None),
-            resume_pc: Cell::new(0),
-            resume_registers: RefCell::new(Vec::new()),
-            async_suspended: Cell::new(false),
-        })
-    }
-
-    pub fn compile_json(source: &str) -> Result<Self, String> {
-        let value = quench_runtime::parse_json(source)
-            .map_err(|error| format!("SyntaxError: invalid JSON module: {error}"))?;
-        let mut module = Self::compile("export default null;")?;
-        module.fixed_exports.push(("default".to_string(), value));
-        Ok(module)
-    }
-
-    pub fn compile_text(source: &str) -> Result<Self, String> {
-        let mut module = Self::compile("export default null;")?;
-        module.fixed_exports.push((
-            "default".to_string(),
-            quench_runtime::value::Value::String(source.to_string()),
-        ));
-        Ok(module)
-    }
-
-    pub fn compile_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let mut module = Self::compile("export default null;")?;
-        let buffer = quench_runtime::value::ArrayBufferData::new(0);
-        *buffer.bytes.borrow_mut() = bytes.to_vec();
-        let buffer = std::rc::Rc::new(buffer.transfer_to_immutable());
-        let view = quench_runtime::value::Uint8ArrayData::new(buffer, 0, bytes.len());
-        module.fixed_exports.push((
-            "default".to_string(),
-            quench_runtime::value::Value::Uint8Array(std::rc::Rc::new(view)),
-        ));
-        Ok(module)
-    }
-
-    pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
-        let slot = self
-            .program
-            .local_slots
-            .get(local)
-            .copied()
-            .ok_or_else(|| format!("unknown module import binding {local}"))?;
-        self.scope.bind_module_slot(slot, cell);
-        Ok(())
-    }
-
-    pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
-        if self.ambiguous_exports.borrow().contains(name) {
-            return None;
+    fn compose(harness: &[&str], source: &str, strict: bool) -> String {
+        let mut composed = String::new();
+        if strict {
+            composed.push_str("\"use strict\";\n");
         }
-        if let Some(cell) = self.linked_exports.borrow().get(name) {
-            return Some(cell.clone());
+        if source.starts_with("#!") {
+            composed.push_str(source);
+            composed.push('\n');
         }
-        let binding = self
-            .program
-            .module_metadata
-            .as_ref()?
-            .exports
-            .iter()
-            .find(|binding| binding.exported == name)?;
-        let local = binding.local.as_str();
-        self.program
-            .local_slots
-            .get(local)
-            .copied()
-            .map(|slot| self.scope.module_cell_slot(slot))
-    }
-
-    fn export_names(&self) -> Vec<String> {
-        let mut names = self
-            .program
-            .module_metadata
-            .as_ref()
-            .map_or_else(Vec::new, |metadata| metadata.exported_names.clone());
-        names.retain(|name| !self.ambiguous_exports.borrow().contains(name));
-        for name in self.linked_exports.borrow().keys() {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
+        for script in harness {
+            composed.push_str(script);
+            composed.push('\n');
         }
-        names
+        if !source.starts_with("#!") {
+            composed.push_str(source);
+        }
+        composed
     }
-
-    fn link_export(&self, name: &str, cell: ModuleBindingCell) {
-        self.linked_exports
-            .borrow_mut()
-            .insert(name.to_string(), cell);
-        self.refresh_namespace();
-    }
-
-    fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {
-        self.link_export(name, cell);
-        self.star_exports.borrow_mut().insert(name.to_string());
-    }
-
-    fn mark_ambiguous_export(&self, name: &str) {
-        self.linked_exports.borrow_mut().remove(name);
-        self.star_exports.borrow_mut().remove(name);
-        self.ambiguous_exports.borrow_mut().insert(name.to_string());
-    }
-
-    fn has_star_export(&self, name: &str) -> bool {
-        self.star_exports.borrow().contains(name)
-    }
-
-    fn same_star_export(&self, name: &str, cell: &ModuleBindingCell) -> bool {
-        self.linked_exports
-            .borrow()
-            .get(name)
-            .is_some_and(|existing| Rc::ptr_eq(&existing.shared(), &cell.shared()))
-    }
-
-    fn has_local_export(&self, name: &str) -> bool {
-        self.program
-            .module_metadata
-            .as_ref()
-            .is_some_and(|metadata| {
-                metadata
-                    .exports
-                    .iter()
-                    .any(|binding| binding.exported == name)
-            })
-    }
-
-    fn is_ambiguous_export(&self, name: &str) -> bool {
-        self.ambiguous_exports.borrow().contains(name)
-    }
-}
-
-thread_local! {
-    static TEST_CAN_BLOCK: Cell<bool> = const { Cell::new(false) };
-    static TEST_FLOAT16: Cell<bool> = const { Cell::new(false) };
-    static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
-        const { Cell::new(None) };
-    static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
-}
-
-include!("runtime_host_namespace.rs");
-include!("runtime_host_execute.rs");
-include!("runtime_host_eval.rs");
-
-fn module_source_cell() -> ModuleBindingCell {
-    ModuleBindingCell::new(quench_runtime::value::Value::object(vec![(
-        "\0prototype".to_string(),
-        quench_runtime::value::Value::Builtin(
-            quench_runtime::ops::Builtin::AbstractModuleSourcePrototype,
-        ),
-    )]))
 }
 
 impl Test262Host for RuntimeHost {
     fn configure(&mut self, metadata: &crate::TestMetadata) {
-        TEST_CAN_BLOCK.with(|can_block| can_block.set(metadata.can_block));
-        TEST_FLOAT16.with(|enabled| {
-            enabled.set(
-                metadata
-                    .features
-                    .iter()
-                    .any(|feature| feature == "Float16Array"),
-            );
-        });
+        self.async_test = metadata.is_async;
+        self.can_block = metadata.can_block;
     }
 
     fn run_script(&mut self, source: &str) -> Result<(), String> {
-        run_source(source)
+        self.execute(source, "<test262>")
     }
 
     fn run_module_script(&mut self, source: &str) -> Result<(), String> {
-        run_module_source(source)
+        self.execute_kind(source, "<test262-module>", SourceKind::Module)
     }
 
     fn run_harnessed_script(
@@ -385,195 +190,40 @@ impl Test262Host for RuntimeHost {
         source: &str,
         strict: bool,
     ) -> Result<(), String> {
-        // AGENTS.md: harness fidelity is absolute; dispatch exact sources without rewriting.
-        let mut scripts = harness
-            .iter()
-            .map(|source| ScriptSource {
-                source,
-                strict: false,
-            })
-            .collect::<Vec<_>>();
-        scripts.push(ScriptSource { source, strict });
-        let program = reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        self.execute(&Self::compose(harness, source, strict), "<test262-harness>")
     }
+
+    fn run_harnessed_script_at(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        strict: bool,
+        path: &Path,
+    ) -> Result<(), String> {
+        self.execute(
+            &Self::compose(harness, source, strict),
+            &path.display().to_string(),
+        )
+    }
+
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
-        // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
-        let program =
-            reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        self.execute_kind(
+            &Self::compose(harness, source, false),
+            "<test262-module>",
+            SourceKind::Module,
+        )
     }
+
     fn run_harnessed_module_at(
         &mut self,
         harness: &[&str],
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
-        // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
-        reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
-        let mut graph = module_graph(path, source)?;
-        let entry = graph
-            .entry()
-            .ok_or_else(|| "module graph missing entry".to_string())?;
-        let linked =
-            LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
-        quench_runtime::builtins::reset_intrinsic_prototype_state();
-        quench_runtime::execute::reset_replacements();
-        let context = fresh_context();
-        quench_runtime::vm::with_current_context(&context, || linked.execute(&graph, entry))
+        self.execute_kind(
+            &Self::compose(harness, source, false),
+            &path.display().to_string(),
+            SourceKind::Module,
+        )
     }
-}
-
-include!("runtime_host_graph.rs");
-
-fn run_source(source: &str) -> Result<(), String> {
-    let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
-}
-
-fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
-    // Each Test262 file is an independent Realm-like program. Clear the
-    // thread-local root global before installing the fresh execution scope so
-    // properties created by one fixture cannot leak into the next fixture.
-    quench_runtime::vm::reset_global_object();
-    quench_runtime::vm::reset_host_agent_state();
-    quench_runtime::builtins::reset_intrinsic_prototype_state();
-    quench_runtime::execute::reset_replacements();
-    let context = fresh_context();
-    let result = execute_code_with_context(program.code(), &context)
-        .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()));
-    quench_runtime::vm::reset_host_agent_state();
-    // Promise reactions (including asyncHelpers' $DONE handler) are queued
-    // during script execution and must settle before the host reports success.
-    quench_runtime::module_bindings::drain_jobs();
-    result
-}
-
-fn fresh_context() -> VmContext {
-    // Harness constructors and intrinsic values must remain in the canonical
-    // realm; creating a child realm here gives Array.from a constructor whose
-    // identity does not match the harness's Test262Error value.
-    let context = VmContext::for_realm(
-        quench_runtime::ops::RealmId::ROOT,
-        vec![
-            quench_runtime::ops::HostCapabilityKind::GetGlobal,
-            quench_runtime::ops::HostCapabilityKind::CreateRealm,
-            quench_runtime::ops::HostCapabilityKind::EvalScript,
-            quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
-            quench_runtime::ops::HostCapabilityKind::Agent,
-            quench_runtime::ops::HostCapabilityKind::AgentStart,
-            quench_runtime::ops::HostCapabilityKind::AgentBroadcast,
-            quench_runtime::ops::HostCapabilityKind::AgentReport,
-            quench_runtime::ops::HostCapabilityKind::AgentGetReport,
-            quench_runtime::ops::HostCapabilityKind::AgentLeaving,
-            quench_runtime::ops::HostCapabilityKind::AgentReceiveBroadcast,
-            quench_runtime::ops::HostCapabilityKind::AgentSleep,
-            quench_runtime::ops::HostCapabilityKind::AgentTryYield,
-            quench_runtime::ops::HostCapabilityKind::AgentTrySleep,
-            quench_runtime::ops::HostCapabilityKind::AgentSetTimeout,
-            quench_runtime::ops::HostCapabilityKind::AgentMonotonicNow,
-            quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
-        ],
-    )
-    .with_can_block(TEST_CAN_BLOCK.with(Cell::get));
-    // Float16Array is exposed only to tests that declare the feature.  This
-    // preserves Test262's feature-gated global surface for the ordinary
-    // TypedArray tests while enabling the staging Float16 shell.
-    let context = TEST_FLOAT16.with(|enabled| {
-        if enabled.get() {
-            context.with_host_value("Float16Array", float16_constructor())
-        } else {
-            context
-        }
-    });
-    context.with_host_capability(
-        "$262",
-        quench_runtime::ops::HostCapabilityRef {
-            realm: quench_runtime::ops::RealmId::ROOT,
-            kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
-        },
-    )
-}
-
-fn float16_constructor() -> quench_runtime::value::Value {
-    let prototype = quench_runtime::host_api::object(Vec::new());
-    let _ = quench_runtime::execute::set_property(
-        prototype.clone(),
-        "\0float16_constructor",
-        quench_runtime::value::Value::Boolean(true),
-    );
-    let receiver = quench_runtime::host_api::object(vec![
-        (
-            "\0float16_constructor".to_string(),
-            quench_runtime::value::Value::Boolean(true),
-        ),
-        ("\0prototype".to_string(), prototype.clone()),
-    ]);
-    let receiver_for_update = receiver.clone();
-    let constructor = quench_runtime::host_api::bound_builtin(
-        quench_runtime::ops::Builtin::Uint16Array,
-        receiver,
-    );
-    let constructor =
-        quench_runtime::execute::set_property(constructor, "prototype", prototype.clone());
-    let constructor = quench_runtime::execute::set_property(
-        constructor,
-        "name",
-        quench_runtime::value::Value::String("Float16Array".into()),
-    );
-    let constructor = quench_runtime::execute::set_property(
-        constructor,
-        "BYTES_PER_ELEMENT",
-        quench_runtime::value::Value::Number(2.0),
-    );
-    // Object.getPrototypeOf(Float16Array) is %TypedArray%, just like the
-    // native typed-array constructors.  Bound functions otherwise inherit
-    // Function.prototype, which makes the shell's shared-constructor class
-    // declaration reject its heritage value.
-    let _ = quench_runtime::execute::set_property_in_place(
-        &constructor,
-        "\0function_prototype",
-        quench_runtime::value::Value::Builtin(quench_runtime::ops::Builtin::TypedArray),
-    );
-    let prototype = quench_runtime::builtins::define_own_property_public(
-        &prototype,
-        "constructor",
-        &[
-            ("value".to_string(), constructor.clone()),
-            (
-                "writable".to_string(),
-                quench_runtime::value::Value::Boolean(true),
-            ),
-            (
-                "enumerable".to_string(),
-                quench_runtime::value::Value::Boolean(false),
-            ),
-            (
-                "configurable".to_string(),
-                quench_runtime::value::Value::Boolean(true),
-            ),
-        ],
-    )
-    .unwrap_or(prototype);
-    let _ = quench_runtime::execute::set_property_in_place(
-        &receiver_for_update,
-        "\0prototype",
-        prototype.clone(),
-    );
-    quench_runtime::execute::set_property(constructor, "prototype", prototype)
-}
-fn host_context() -> VmContext {
-    quench_runtime::vm::current_context().as_ref().clone()
-}
-
-fn run_module_source(source: &str) -> Result<(), String> {
-    let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
-}
-
-#[cfg(test)]
-mod tests {
-    include!("runtime_host_tests.rs");
-    include!("runtime_host_determinism_tests.rs");
 }

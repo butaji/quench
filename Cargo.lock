@@ -2762,6 +2762,7 @@ dependencies = [
 name = "quench-bench"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -2841,7 +2842,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "quench-node",
- "quench-runtime",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2924,7 +2924,6 @@ version = "0.1.0"
 name = "quench-test262"
 version = "0.1.0"
 dependencies = [
- "quench-runtime",
  "quench-runtime-next",
  "serde",
  "serde_json",
@@ -2936,7 +2935,6 @@ dependencies = [
 name = "quench-wasm"
 version = "0.1.0"
 dependencies = [
- "quench-runtime",
  "quench-runtime-next",
  "wasmparser",
  "wast",

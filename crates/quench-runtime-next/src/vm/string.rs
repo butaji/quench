@@ -53,22 +53,88 @@ struct StringHtmlMethod {
 }
 
 const STRING_HTML_METHODS: &[StringHtmlMethod] = &[
-    StringHtmlMethod { name: "anchor", native: Native::StringAnchor, tag: "a", attribute: Some("name") },
-    StringHtmlMethod { name: "big", native: Native::StringBig, tag: "big", attribute: None },
-    StringHtmlMethod { name: "blink", native: Native::StringBlink, tag: "blink", attribute: None },
-    StringHtmlMethod { name: "bold", native: Native::StringBold, tag: "b", attribute: None },
-    StringHtmlMethod { name: "fixed", native: Native::StringFixed, tag: "tt", attribute: None },
-    StringHtmlMethod { name: "fontcolor", native: Native::StringFontcolor, tag: "font", attribute: Some("color") },
-    StringHtmlMethod { name: "fontsize", native: Native::StringFontsize, tag: "font", attribute: Some("size") },
-    StringHtmlMethod { name: "italics", native: Native::StringItalics, tag: "i", attribute: None },
-    StringHtmlMethod { name: "link", native: Native::StringLink, tag: "a", attribute: Some("href") },
-    StringHtmlMethod { name: "small", native: Native::StringSmall, tag: "small", attribute: None },
-    StringHtmlMethod { name: "strike", native: Native::StringStrike, tag: "strike", attribute: None },
-    StringHtmlMethod { name: "sub", native: Native::StringSub, tag: "sub", attribute: None },
-    StringHtmlMethod { name: "sup", native: Native::StringSup, tag: "sup", attribute: None },
+    StringHtmlMethod {
+        name: "anchor",
+        native: Native::StringAnchor,
+        tag: "a",
+        attribute: Some("name"),
+    },
+    StringHtmlMethod {
+        name: "big",
+        native: Native::StringBig,
+        tag: "big",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "blink",
+        native: Native::StringBlink,
+        tag: "blink",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "bold",
+        native: Native::StringBold,
+        tag: "b",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "fixed",
+        native: Native::StringFixed,
+        tag: "tt",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "fontcolor",
+        native: Native::StringFontcolor,
+        tag: "font",
+        attribute: Some("color"),
+    },
+    StringHtmlMethod {
+        name: "fontsize",
+        native: Native::StringFontsize,
+        tag: "font",
+        attribute: Some("size"),
+    },
+    StringHtmlMethod {
+        name: "italics",
+        native: Native::StringItalics,
+        tag: "i",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "link",
+        native: Native::StringLink,
+        tag: "a",
+        attribute: Some("href"),
+    },
+    StringHtmlMethod {
+        name: "small",
+        native: Native::StringSmall,
+        tag: "small",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "strike",
+        native: Native::StringStrike,
+        tag: "strike",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "sub",
+        native: Native::StringSub,
+        tag: "sub",
+        attribute: None,
+    },
+    StringHtmlMethod {
+        name: "sup",
+        native: Native::StringSup,
+        tag: "sup",
+        attribute: None,
+    },
 ];
 
-const STRING_METHOD_ALIASES: &[(&str, &str)] = &[("trimLeft", "trimStart"), ("trimRight", "trimEnd")];
+const STRING_METHOD_ALIASES: &[(&str, &str)] =
+    &[("trimLeft", "trimStart"), ("trimRight", "trimEnd")];
 const HTML_ATTRIBUTE_QUOTE: u16 = b'"' as u16;
 const HTML_QUOTE_ENTITY: &str = "&quot;";
 
@@ -78,8 +144,11 @@ pub(super) fn string_native_length(native: Native) -> Option<f64> {
         .find_map(|(_, candidate, length)| (*candidate == native).then_some(*length))
         .or_else(|| {
             STRING_HTML_METHODS.iter().find_map(|method| {
-                (method.native == native)
-                    .then_some(if method.attribute.is_some() { 1.0 } else { 0.0 })
+                (method.native == native).then_some(if method.attribute.is_some() {
+                    1.0
+                } else {
+                    0.0
+                })
             })
         })
 }
@@ -94,12 +163,12 @@ pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Opti
     if search.is_empty() {
         return Some(position.min(text.len()));
     }
-        (search.len() <= text.len())
-            .then_some(position.min(text.len() - search.len()))
-            .into_iter()
-            .flat_map(|end| 0..=end)
-            .rev()
-            .find(|index| text[*index..*index + search.len()] == *search)
+    (search.len() <= text.len())
+        .then_some(position.min(text.len() - search.len()))
+        .into_iter()
+        .flat_map(|end| 0..=end)
+        .rev()
+        .find(|index| text[*index..*index + search.len()] == *search)
 }
 
 impl<H: Host> Vm<H> {
@@ -178,8 +247,20 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(string, "String")?;
         self.install_string_prototype(program, string, object_proto, global)?;
         self.set_builtin_value_named(global, "String", string)?;
-        self.set_builtin_named_for_realm(program, string, "fromCharCode", Native::StringFromCharCode, global)?;
-        self.set_builtin_named_for_realm(program, string, "fromCodePoint", Native::StringFromCodePoint, global)?;
+        self.set_builtin_named_for_realm(
+            program,
+            string,
+            "fromCharCode",
+            Native::StringFromCharCode,
+            global,
+        )?;
+        self.set_builtin_named_for_realm(
+            program,
+            string,
+            "fromCodePoint",
+            Native::StringFromCodePoint,
+            global,
+        )?;
         self.set_builtin_named_for_realm(program, string, "raw", Native::StringRaw, global)
     }
 
@@ -191,7 +272,9 @@ impl<H: Host> Vm<H> {
         realm: Value,
     ) -> Result<Value, JsError> {
         let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
-        let prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_proto)));
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_proto)));
         let value_atom = self.intern_atom("\0rqj:string-value");
         self.set_property(prototype, value_atom, empty)?;
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
@@ -214,7 +297,13 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named_for_realm(program, prototype, name, *native, realm)?;
         }
         for method in STRING_HTML_METHODS {
-            self.set_builtin_named_for_realm(program, prototype, method.name, method.native, realm)?;
+            self.set_builtin_named_for_realm(
+                program,
+                prototype,
+                method.name,
+                method.native,
+                realm,
+            )?;
         }
         for (alias, original) in STRING_METHOD_ALIASES {
             let original = self.intern_atom(original);
@@ -247,10 +336,8 @@ impl<H: Host> Vm<H> {
             };
             units.extend(opening.encode_utf16());
             if method.attribute.is_some() {
-                let argument = self.coerce_js_string(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                )?;
+                let argument =
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 for &unit in argument.units() {
                     if unit == HTML_ATTRIBUTE_QUOTE {
                         units.extend(HTML_QUOTE_ENTITY.encode_utf16());
@@ -279,7 +366,11 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(object, name, function)
     }
 
-    pub(super) fn string_raw(&mut self, p: &ResidualProgram, args: &[Value]) -> Result<Value, JsError> {
+    pub(super) fn string_raw(
+        &mut self,
+        p: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
         self.with_call_roots(args.iter().copied(), |vm| {
             let template = args.first().copied().unwrap_or(Value::UNDEFINED);
             vm.require_object_coercible(p, template)?;
@@ -386,19 +477,17 @@ impl<H: Host> Vm<H> {
                     args.get(1).copied().unwrap_or(Value::UNDEFINED),
                     args.get(2).copied().unwrap_or(Value::UNDEFINED),
                 ];
-                let constructor = self.realm.intrinsics.intl_collator_constructors
+                let constructor = self
+                    .realm
+                    .intrinsics
+                    .intl_collator_constructors
                     .get(&self.realm.globals)
                     .copied()
                     .ok_or_else(|| JsError("Intl.Collator intrinsic is not installed".into()))?;
                 let collator = self.intl_collator_construct(p, &collator_args, constructor)?;
                 let left = self.heap.alloc(Cell::String(receiver));
                 let right = self.heap.alloc(Cell::String(other.into()));
-                self.intl_collator_native(
-                    p,
-                    Native::IntlCollatorCompare,
-                    collator,
-                    &[left, right],
-                )
+                self.intl_collator_native(p, Native::IntlCollatorCompare, collator, &[left, right])
             }
             Native::StringConcat => {
                 let mut text = receiver;
@@ -462,11 +551,10 @@ impl<H: Host> Vm<H> {
             let separator = args.first().copied().unwrap_or(Value::UNDEFINED);
             let limit = args.get(1).copied();
             if vm.is_object_like(separator) {
-                let symbol = vm
-                    .well_known_symbols
-                    .get("split")
-                    .copied()
-                    .ok_or_else(|| vm.type_error(p, "RegExp split symbol is unavailable".into()))?;
+                let symbol =
+                    vm.well_known_symbols.get("split").copied().ok_or_else(|| {
+                        vm.type_error(p, "RegExp split symbol is unavailable".into())
+                    })?;
                 let method = vm.get_index(p, separator, symbol)?;
                 if !method.is_undefined() && !method.is_null() {
                     if !vm.is_function(method) {
@@ -518,11 +606,10 @@ impl<H: Host> Vm<H> {
         self.with_call_roots(std::iter::once(this).chain(args.iter().copied()), |vm| {
             vm.require_object_coercible(p, this)?;
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
-            let symbol = vm
-                .well_known_symbols
-                .get(name)
-                .copied()
-                .ok_or_else(|| vm.type_error(p, "RegExp method symbol is unavailable".into()))?;
+            let symbol =
+                vm.well_known_symbols.get(name).copied().ok_or_else(|| {
+                    vm.type_error(p, "RegExp method symbol is unavailable".into())
+                })?;
             if vm.is_object_like(pattern) {
                 let method = vm.get_index(p, pattern, symbol)?;
                 if !method.is_undefined() && !method.is_null() {

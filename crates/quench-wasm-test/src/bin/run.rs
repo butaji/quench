@@ -9,14 +9,18 @@ fn main() -> ExitCode {
         "wasm tests: {} total, {} passed, {} failed",
         report.total, report.passed, report.failed
     );
-    const PRINT_LIMIT: usize = 2000;
-    for failure in report.failures.iter().take(PRINT_LIMIT) {
+    const DEFAULT_FAILURE_LIMIT: usize = 2000;
+    let failure_limit = env::var("QUENCH_WASM_FAILURE_LIMIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_FAILURE_LIMIT);
+    for failure in report.failures.iter().take(failure_limit) {
         println!("{}", failure.format_line());
     }
-    if report.failures.len() > PRINT_LIMIT {
+    if report.failures.len() > failure_limit {
         println!(
             "... and {} more failures",
-            report.failures.len() - PRINT_LIMIT
+            report.failures.len() - failure_limit
         );
     }
     if report.failed == 0 {

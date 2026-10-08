@@ -1,6 +1,7 @@
 //! Shared guest bridge for Node's EventEmitter listener semantics.
 
-pub const JS: &str = quench_js_check::checked_js!(r#"class NodeEventEmitter {
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"class NodeEventEmitter {
   constructor(options = {}) {
     this._events = Object.create(null);
     const activeDomain = globalThis.__quench_active_domain;
@@ -25,9 +26,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeEventEmitter {
     return this.on(event, listener);
   }
   once(event, listener) {
+    let called = false;
     const wrapped = (...args) => {
+      if (called) return;
+      called = true;
       this.removeListener(event, wrapped);
-      listener(...args);
+      return Reflect.apply(listener, this, args);
     };
     wrapped.listener = listener;
     return this.on(event, wrapped);
@@ -122,9 +126,37 @@ pub const JS: &str = quench_js_check::checked_js!(r#"class NodeEventEmitter {
   listenerCount(event) {
     return this.listeners(event).length;
   }
+  getMaxListeners() {
+    return this._maxListeners ?? NodeEventEmitter.defaultMaxListeners;
+  }
+  setMaxListeners(limit) {
+    if (!Number.isInteger(limit) || limit < 0) {
+      throw Object.assign(new RangeError('The value of "n" is out of range'), {
+        code: 'ERR_OUT_OF_RANGE',
+      });
+    }
+    this._maxListeners = limit;
+    return this;
+  }
 }
+NodeEventEmitter.defaultMaxListeners = 10;
+NodeEventEmitter.getMaxListeners = (emitter) => emitter.getMaxListeners();
+NodeEventEmitter.setMaxListeners = (limit, ...emitters) => {
+  if (emitters.length === 0) {
+    if (!Number.isInteger(limit) || limit < 0) {
+      throw Object.assign(new RangeError('The value of "n" is out of range'), {
+        code: 'ERR_OUT_OF_RANGE',
+      });
+    }
+    NodeEventEmitter.defaultMaxListeners = limit;
+  } else {
+    for (const emitter of emitters) emitter.setMaxListeners(limit);
+  }
+  return NodeEventEmitter;
+};
 NodeEventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
 Object.defineProperty(globalThis, "__nodeEventEmitter", {
   value: NodeEventEmitter,
   configurable: true,
-});"#);
+});"#
+);

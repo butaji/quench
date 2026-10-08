@@ -86,18 +86,12 @@ impl DateTimeDefaults {
 }
 
 const NUMERIC: &str = "numeric";
-const PLAIN_DATE_DEFAULTS: &[(&str, &str)] = &[
-    ("year", NUMERIC),
-    ("month", NUMERIC),
-    ("day", NUMERIC),
-];
+const PLAIN_DATE_DEFAULTS: &[(&str, &str)] =
+    &[("year", NUMERIC), ("month", NUMERIC), ("day", NUMERIC)];
 const PLAIN_MONTH_DAY_DEFAULTS: &[(&str, &str)] = &[("month", NUMERIC), ("day", NUMERIC)];
 const PLAIN_YEAR_MONTH_DEFAULTS: &[(&str, &str)] = &[("year", NUMERIC), ("month", NUMERIC)];
-const PLAIN_TIME_DEFAULTS: &[(&str, &str)] = &[
-    ("hour", NUMERIC),
-    ("minute", NUMERIC),
-    ("second", NUMERIC),
-];
+const PLAIN_TIME_DEFAULTS: &[(&str, &str)] =
+    &[("hour", NUMERIC), ("minute", NUMERIC), ("second", NUMERIC)];
 const DATE_TIME_DEFAULTS: &[(&str, &str)] = &[
     ("year", NUMERIC),
     ("month", NUMERIC),
@@ -123,18 +117,24 @@ impl<H: Host> Vm<H> {
         object_prototype: Value,
     ) -> Result<(), JsError> {
         let constructor = self.native_with_realm(Native::IntlDateTimeFormat, global, global);
-        self.realm.intrinsics.intl_datetime_format_constructors
+        self.realm
+            .intrinsics
+            .intl_datetime_format_constructors
             .insert(global, constructor);
         self.set_builtin_function_name(constructor, "DateTimeFormat")?;
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_datetime_format_prototypes
+        self.realm
+            .intrinsics
+            .intl_datetime_format_prototypes
             .insert(global, prototype);
         let fallback_symbol = self
             .heap
             .alloc(Cell::Symbol(Some(INTL_LEGACY_CONSTRUCTED_SYMBOL.into())));
-        self.realm.intrinsics.intl_datetime_format_fallback_symbols
+        self.realm
+            .intrinsics
+            .intl_datetime_format_fallback_symbols
             .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         set_non_writable_property(self, constructor, "prototype");
@@ -205,11 +205,16 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
-            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlDateTimeFormat)?;
+            let prototype =
+                vm.intl_instance_prototype(p, new_target, Native::IntlDateTimeFormat)?;
             vm.with_call_roots([prototype], |vm| {
                 let locale = vm.collator_locale(p, args.first().copied())?;
-                let options =
-                    vm.date_time_options(p, args.get(1).copied(), DateTimeDefaults::Format, &locale)?;
+                let options = vm.date_time_options(
+                    p,
+                    args.get(1).copied(),
+                    DateTimeDefaults::Format,
+                    &locale,
+                )?;
                 vm.with_call_roots([options.2], |vm| {
                     let locale = vm
                         .date_time_option(options.2, "\0locale")
@@ -372,10 +377,11 @@ impl<H: Host> Vm<H> {
                 self.set_property(resolved, atom, normalized)?;
             }
         }
-        let fractional_seconds_only =
-            self.date_time_option(resolved, "fractionalSecondDigits").is_some()
-                && !has_date
-                && !has_time;
+        let fractional_seconds_only = self
+            .date_time_option(resolved, "fractionalSecondDigits")
+            .is_some()
+            && !has_date
+            && !has_time;
         if fractional_seconds_only && defaults.has_time_components() {
             self.set_default_time_components(resolved)?;
             has_time = true;
@@ -594,7 +600,10 @@ impl<H: Host> Vm<H> {
         {
             return Ok(self.heap.alloc(Cell::String("Invalid Date".into())));
         }
-        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
+        let constructor = self
+            .realm
+            .intrinsics
+            .intl_datetime_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
@@ -647,17 +656,15 @@ impl<H: Host> Vm<H> {
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
         };
-        let constructor = self.realm.intrinsics.intl_datetime_format_constructors
+        let constructor = self
+            .realm
+            .intrinsics
+            .intl_datetime_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DateTimeFormat intrinsic is not installed".into()))?;
         let locale = self.collator_locale(p, args.first().copied())?;
-        let options = self.date_time_options(
-            p,
-            args.get(1).copied(),
-            defaults,
-            &locale,
-        )?;
+        let options = self.date_time_options(p, args.get(1).copied(), defaults, &locale)?;
         let formatter = self.date_time_formatter(p, constructor, locale, options)?;
         if let Some((epoch_nanoseconds, time_zone, calendar)) = zoned {
             let resolved = self
@@ -670,7 +677,10 @@ impl<H: Host> Vm<H> {
             let calendar = quench_intl::calendar_alias(&calendar);
             let formatter_calendar = quench_intl::calendar_alias(&formatter_calendar);
             if calendar != "iso8601" && calendar != formatter_calendar {
-                return Err(self.range_error(p, "Temporal calendar does not match formatter calendar".into()));
+                return Err(self.range_error(
+                    p,
+                    "Temporal calendar does not match formatter calendar".into(),
+                ));
             }
             let time_zone = normalize_time_zone_identifier(&time_zone)
                 .ok_or_else(|| self.range_error(p, "Invalid time zone".into()))?;
@@ -698,9 +708,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let prototype_atom = self.intern_atom("prototype");
         let prototype = self.get_property(p, constructor, prototype_atom)?;
-        let formatter = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(prototype)));
+        let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let locale = self
             .date_time_option(options.2, "\0locale")
             .and_then(|value| self.string_value(value))
@@ -826,7 +834,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let mut prototype = self.object_get_prototype_of(p, receiver)?;
         while !prototype.is_null() {
-            if let Some(realm) = self.realm.intrinsics.intl_datetime_format_prototypes
+            if let Some(realm) = self
+                .realm
+                .intrinsics
+                .intl_datetime_format_prototypes
                 .iter()
                 .find_map(|(realm, candidate)| (*candidate == prototype).then_some(*realm))
             {
@@ -908,7 +919,10 @@ impl<H: Host> Vm<H> {
                     || self
                         .date_time_option(resolved, DATE_TIME_FORMAT_TEMPORAL_DEFAULTS_SLOT)
                         .is_some_and(|value| value == Value::TRUE)
-                        && matches!(fields.temporal_kind, Some(TemporalKind::PlainDateTime | TemporalKind::PlainTime))
+                        && matches!(
+                            fields.temporal_kind,
+                            Some(TemporalKind::PlainDateTime | TemporalKind::PlainTime)
+                        )
                     || fields.temporal_kind == Some(TemporalKind::PlainTime));
             self.calendarize_date_time_fields(formatter, &mut fields);
             return Ok(fields);
@@ -1693,11 +1707,7 @@ fn merge_date_time_range_parts(
     append_range_parts(&mut merged, &start[..shared_prefix], "shared");
     append_range_parts(&mut merged, &start[shared_prefix..start_end], "startRange");
     if shared_prefix < start_end || shared_prefix < end_end {
-        merged.push((
-            "literal".into(),
-            " – ".into(),
-            Some("shared".into()),
-        ));
+        merged.push(("literal".into(), " – ".into(), Some("shared".into())));
     }
     append_range_parts(&mut merged, &end[shared_prefix..end_end], "endRange");
     append_range_parts(&mut merged, &start[start_end..], "shared");
@@ -1804,11 +1814,7 @@ fn offset_time_zone_name(style: &str, zone: &str) -> Option<String> {
     })
 }
 
-fn time_zone_name_from_zone(
-    style: &str,
-    zone: &str,
-    fields: &DateTimeFields,
-) -> Option<String> {
+fn time_zone_name_from_zone(style: &str, zone: &str, fields: &DateTimeFields) -> Option<String> {
     let zone = chrono_tz::Tz::from_str(zone).ok()?;
     let date = NaiveDate::from_ymd_opt(fields.year, fields.month, fields.day)?;
     let local = date.and_hms_opt(fields.hour, fields.minute, fields.second)?;
@@ -1906,7 +1912,8 @@ fn date_in_time_zone(
             .map(|instant| instant.with_timezone(&offset));
     }
     let timezone = chrono_tz::Tz::from_str(zone).ok().or_else(|| {
-        normalize_time_zone_identifier(zone).and_then(|canonical| chrono_tz::Tz::from_str(&canonical).ok())
+        normalize_time_zone_identifier(zone)
+            .and_then(|canonical| chrono_tz::Tz::from_str(&canonical).ok())
     })?;
     Utc.timestamp_millis_opt(milliseconds.trunc() as i64)
         .single()

@@ -42,7 +42,10 @@ impl<H: Host> Vm<H> {
                 let record = self.to_property_descriptor(p, view)?;
                 definitions.push((
                     key,
-                    super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, record),
+                    super::property_definition::RootedPropertyDescriptor::new(
+                        &mut self.heap,
+                        record,
+                    ),
                 ));
             }
             for (key, descriptor) in &definitions {

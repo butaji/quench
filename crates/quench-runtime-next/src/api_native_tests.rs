@@ -462,13 +462,11 @@ fn callbacks_cannot_return_foreign_or_released_handles() {
             }
         }
     }
-    assert!(
-        runtime
-            .host_function(HostFunctionId(u32::MAX))
-            .unwrap_err()
-            .exception
-            .is_none()
-    );
+    assert!(runtime
+        .host_function(HostFunctionId(u32::MAX))
+        .unwrap_err()
+        .exception
+        .is_none());
     let trap = runtime.host_function(TRAP).unwrap();
     let error = runtime.call_rooted(trap, receiver, &[]).unwrap_err();
     assert_eq!(error.error.wasm_trap(), Some(crate::WasmTrap::Unreachable));
@@ -484,7 +482,12 @@ fn compare(
     let result = context.equal_rooted(args[0], args[1]);
     context.collect()?;
     if let Err(error) = &result {
-        context.host_mut().0.borrow_mut().borrowed.extend(error.exception);
+        context
+            .host_mut()
+            .0
+            .borrow_mut()
+            .borrowed
+            .extend(error.exception);
     }
     result.map(|equal| context.boolean(equal))
 }
@@ -501,10 +504,15 @@ fn native_comparison_preserves_coercion_exception_roots_through_collection() {
     let receiver = runtime.root(Value::UNDEFINED);
     let callback = runtime.host_function(COMPARE).unwrap();
     for operands in [[input, primitive], [primitive, input]] {
-        let error = runtime.call_rooted(callback, receiver, &operands).unwrap_err();
+        let error = runtime
+            .call_rooted(callback, receiver, &operands)
+            .unwrap_err();
         let exception = error.exception.unwrap();
         runtime.collect(&program).unwrap();
-        assert_eq!(runtime.rooted_value(exception), runtime.rooted_value(payload));
+        assert_eq!(
+            runtime.rooted_value(exception),
+            runtime.rooted_value(payload)
+        );
         assert_eq!(runtime.rooted_value(exception), error.error.thrown_value());
         assert!(runtime.release_root(exception));
         for root in &host.0.borrow().borrowed {

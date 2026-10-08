@@ -66,7 +66,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             //
             // TODO: I (@overlookmotel) don't think we should really be doing this.
             // We don't have static guarantees of these properties.
-            unsafe { self.source_text.get_unchecked(span.start as usize..span.end as usize) }
+            unsafe {
+                self.source_text
+                    .get_unchecked(span.start as usize..span.end as usize)
+            }
         }
     }
 
@@ -331,8 +334,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if self.stack_is_exhausted() {
             return;
         }
-        let ParserCheckpoint { lexer, cur_token, prev_token_end, errors_pos, fatal_error } =
-            checkpoint;
+        let ParserCheckpoint {
+            lexer,
+            cur_token,
+            prev_token_end,
+            errors_pos,
+            fatal_error,
+        } = checkpoint;
 
         self.lexer.rewind(lexer);
         self.token = cur_token;
@@ -549,7 +557,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         parse_element: E,
         parse_rest: R,
         rest_last_diagnostic: D,
-    ) -> (ArenaVec<'a, A>, Option<ArenaBox<'a, BindingRestElement<'a>>>)
+    ) -> (
+        ArenaVec<'a, A>,
+        Option<ArenaBox<'a, BindingRestElement<'a>>>,
+    )
     where
         E: Fn(&mut Self) -> A,
         R: Fn(&mut Self) -> ArenaBox<'a, BindingRestElement<'a>>,

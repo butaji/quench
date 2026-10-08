@@ -618,10 +618,7 @@ fn info_props_with_exec_argv(
             "versions",
             crate::host::readonly_namespace_from_pairs(versions_props()),
         ),
-        (
-            "platform",
-            Value::String(platform()),
-        ),
+        ("platform", Value::String(platform())),
         ("arch", Value::String(architecture().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         (

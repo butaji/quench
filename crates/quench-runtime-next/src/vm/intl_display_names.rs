@@ -43,9 +43,13 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_display_names_constructors
+        self.realm
+            .intrinsics
+            .intl_display_names_constructors
             .insert(global, constructor);
-        self.realm.intrinsics.intl_display_names_prototypes
+        self.realm
+            .intrinsics
+            .intl_display_names_prototypes
             .insert(global, prototype);
         self.set_builtin_function_name(constructor, "DisplayNames")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;

@@ -860,14 +860,20 @@ impl<H: Host> Vm<H> {
         self.set_named(program, console, "log", self.native_value(Native::Print))?;
         self.global(program, "console", console)
     }
-    pub(super) fn install_json_for_realm(&mut self, program: &ResidualProgram, global: Value) -> Result<(), JsError> {
+    pub(super) fn install_json_for_realm(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+    ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
         let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
         for (name, native) in [
-            ("parse", Native::JsonParse), ("stringify", Native::JsonStringify),
-            ("rawJSON", Native::JsonRawJson), ("isRawJSON", Native::JsonIsRawJson),
+            ("parse", Native::JsonParse),
+            ("stringify", Native::JsonStringify),
+            ("rawJSON", Native::JsonRawJson),
+            ("isRawJSON", Native::JsonIsRawJson),
         ] {
             self.set_realm_builtin_named(program, json, name, native, realm)?;
         }

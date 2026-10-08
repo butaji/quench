@@ -7,7 +7,9 @@ fn main() {
         .spawn(run)
         .map_err(|error| format!("runtime worker thread: {error}"))
         .and_then(|worker| {
-            worker.join().unwrap_or_else(|_| Err("runtime worker panicked".into()))
+            worker
+                .join()
+                .unwrap_or_else(|_| Err("runtime worker panicked".into()))
         });
     if let Err(error) = result {
         eprintln!("quench-next: {error}");

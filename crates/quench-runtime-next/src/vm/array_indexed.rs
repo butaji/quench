@@ -42,11 +42,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.box_object_or_type_error(p, this)?;
         let length = self.array_like_length(p, object)?;
-        let Some(index) = self.indexed_at_index(
-            p,
-            args.first().copied().unwrap_or(Value::UNDEFINED),
-            length,
-        )? else {
+        let Some(index) =
+            self.indexed_at_index(p, args.first().copied().unwrap_or(Value::UNDEFINED), length)?
+        else {
             return Ok(Value::UNDEFINED);
         };
         self.get_index(p, object, Value::number(index as f64))
@@ -332,7 +330,8 @@ impl<H: Host> Vm<H> {
             match native {
                 Native::ArrayForEach => Ok(Value::UNDEFINED),
                 Native::ArrayFilter if typed_array => {
-                    let target = self.typed_array_species_create_for_writing(p, this, result_length)?;
+                    let target =
+                        self.typed_array_species_create_for_writing(p, this, result_length)?;
                     let target_root = self.heap.root(target);
                     let result = (|| {
                         for (index, value_root) in filtered_value_roots.iter().enumerate() {
@@ -456,5 +455,4 @@ impl<H: Host> Vm<H> {
         self.heap.release_root(object_root);
         outcome
     }
-
 }

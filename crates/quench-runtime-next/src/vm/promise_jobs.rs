@@ -58,7 +58,8 @@ impl<H: Host> Vm<H> {
             return;
         };
         if record.state == PromiseState::Pending {
-            self.realm.promise
+            self.realm
+                .promise
                 .records
                 .get_mut(&cleanup)
                 .expect("cleanup Promise record exists")
@@ -98,7 +99,9 @@ impl<H: Host> Vm<H> {
                 completion => {
                     let error = match completion {
                         Err(error) => error,
-                        Ok(_) => self.type_error(p, "Promise resolve method is not callable".into()),
+                        Ok(_) => {
+                            self.type_error(p, "Promise resolve method is not callable".into())
+                        }
                     };
                     let reject = self.heap.root_value(capability.reject).unwrap();
                     self.reject_aggregate_completion(p, reject, error)?;
@@ -181,7 +184,8 @@ impl<H: Host> Vm<H> {
                     let object = self.heap.root_value(source).unwrap();
                     let name = self.heap.root_value(key).unwrap();
                     let descriptor = self.object_get_own_property_descriptor(p, &[object, name])?;
-                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                    if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable")
+                    {
                         continue;
                     }
                     let object = self.heap.root_value(source).unwrap();
@@ -265,7 +269,12 @@ impl<H: Host> Vm<H> {
                 ) {
                     Ok(value) => value,
                     Err(error) => {
-                        self.reject_aggregate_input_completion(p, &input, capability.reject, error)?;
+                        self.reject_aggregate_input_completion(
+                            p,
+                            &input,
+                            capability.reject,
+                            error,
+                        )?;
                         return Ok(self.heap.root_value(capability.output).unwrap());
                     }
                 };
@@ -341,7 +350,11 @@ impl<H: Host> Vm<H> {
         mut error: JsError,
     ) -> Result<(), JsError> {
         let AggregateInput::Iterable { iterator, .. } = input else {
-            return self.reject_aggregate_completion(p, self.heap.root_value(reject).unwrap(), error);
+            return self.reject_aggregate_completion(
+                p,
+                self.heap.root_value(reject).unwrap(),
+                error,
+            );
         };
         let thrown = error.thrown_value().map(|value| self.heap.root(value));
         let iterator = self.heap.root_value(*iterator).unwrap();
@@ -375,14 +388,19 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise aggregate job without callback".into()))?;
-        let aggregate_job = self.realm.promise
+        let aggregate_job = self
+            .realm
+            .promise
             .aggregate_jobs
             .get(&job)
             .copied()
             .ok_or_else(|| JsError("stale Promise aggregate job".into()))?;
-        let Some(mode) = self.realm.promise
+        let Some(mode) = self
+            .realm
+            .promise
             .aggregates
             .get(&aggregate_job.aggregate)
             .map(|record| record.mode)
@@ -414,7 +432,8 @@ impl<H: Host> Vm<H> {
                 if record.called.get(index).copied().unwrap_or(true) {
                     return Ok(Value::UNDEFINED);
                 }
-                self.realm.promise
+                self.realm
+                    .promise
                     .aggregates
                     .get_mut(&aggregate_job.aggregate)
                     .unwrap()
@@ -442,7 +461,9 @@ impl<H: Host> Vm<H> {
                     value
                 };
                 let (remaining, values) = {
-                    let record = self.realm.promise
+                    let record = self
+                        .realm
+                        .promise
                         .aggregates
                         .get_mut(&aggregate_job.aggregate)
                         .unwrap();
@@ -515,9 +536,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise job without callback".into()))?;
-        let reaction = self.realm.promise
+        let reaction = self
+            .realm
+            .promise
             .jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise job".into()))?;
@@ -571,9 +595,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn promise_thenable_job(&mut self, p: &ResidualProgram) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise thenable job without callback".into()))?;
-        let thenable = self.realm.promise
+        let thenable = self
+            .realm
+            .promise
             .thenable_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise thenable job".into()))?;
@@ -591,9 +618,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise finally job without callback".into()))?;
-        let reaction = self.realm.promise
+        let reaction = self
+            .realm
+            .promise
             .finally_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally job".into()))?;
@@ -624,9 +654,12 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         cleanup_value: Value,
     ) -> Result<Value, JsError> {
-        let job = self.active_native_callable()
+        let job = self
+            .active_native_callable()
             .ok_or_else(|| JsError("Promise finally continuation without callback".into()))?;
-        let continuation = self.realm.promise
+        let continuation = self
+            .realm
+            .promise
             .finally_continuation_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise finally continuation".into()))?;

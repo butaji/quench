@@ -3,7 +3,8 @@
 use crate::host::NodeHost;
 use rqj::{NativeContext, RootId, RootedError};
 
-const EVENTS_API: &str = quench_js_check::checked_js!(r#"(() => {
+const EVENTS_API: &str = quench_js_check::checked_js!(
+    r#"(() => {
   const invalid = (message) => {
     const error = new TypeError(message);
     error.code = "ERR_INVALID_ARG_TYPE";
@@ -62,16 +63,15 @@ const EVENTS_API: &str = quench_js_check::checked_js!(r#"(() => {
   };
 
   return { once, listenerCount };
-})()"#);
+})()"#
+);
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
-    let module = context.object_rooted()?;
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let global = context.global_root()?;
     let class_key = context.string_rooted("__nodeEventEmitter");
-    let constructor = context.get_property_rooted(global, class_key)?;
-    set(context, module, "EventEmitter", constructor)?;
+    let module = context.get_property_rooted(global, class_key)?;
+    set(context, module, "EventEmitter", module)?;
+    set(context, module, "default", module)?;
 
     let api = context.evaluate_script_rooted(EVENTS_API, "node:events/shared-api.js")?;
     for name in ["once", "listenerCount"] {
@@ -89,6 +89,13 @@ pub(crate) fn module(
         "node:events/captureRejectionSymbol",
     )?;
     set(context, module, "captureRejectionSymbol", capture_symbol)?;
+    let default_max_listeners = context.number(10.0);
+    set(
+        context,
+        module,
+        "defaultMaxListeners",
+        default_max_listeners,
+    )?;
     Ok(module)
 }
 

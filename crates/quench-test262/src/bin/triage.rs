@@ -348,7 +348,7 @@ fn run_parallel(
             let counter = Arc::clone(&counter);
             let next = Arc::clone(&next);
             thread::Builder::new()
-                .stack_size(quench_runtime::WORKER_STACK_SIZE)
+                .stack_size(rqj::WORKER_STACK_SIZE)
                 .spawn(move || run_worker(files, root, limit, counter, next, emit_outcomes))
                 .expect("spawn triage worker")
         })
@@ -378,7 +378,7 @@ fn run_worker(
     next: Arc<AtomicUsize>,
     emit_outcomes: bool,
 ) -> RunReport {
-    let mut runner = Test262Runner::new(RuntimeHost);
+    let mut runner = Test262Runner::new(RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     let mut report = RunReport::default();
     loop {

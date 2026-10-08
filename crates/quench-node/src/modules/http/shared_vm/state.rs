@@ -6,6 +6,7 @@ pub(crate) struct State {
     next_agent: u64,
     next_response: u64,
     pub(crate) response_factory: Option<RootId>,
+    pub(crate) request_factory: Option<RootId>,
     pub(crate) servers: HashMap<u64, Server>,
     pub(crate) connections: HashMap<u64, ServerConnection>,
     pub(crate) responses: HashMap<u64, Response>,
@@ -30,6 +31,7 @@ pub(crate) struct ServerConnection {
 pub(crate) struct Response {
     pub(crate) socket: u64,
     pub(crate) headers: Vec<(String, String)>,
+    pub(crate) send_date: bool,
     pub(crate) ended: bool,
 }
 
@@ -46,6 +48,7 @@ impl State {
             next_agent: 1,
             next_response: 1,
             response_factory: None,
+            request_factory: None,
             servers: HashMap::new(),
             connections: HashMap::new(),
             responses: HashMap::new(),

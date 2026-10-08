@@ -1,343 +1,78 @@
-//! Run real Node.js `test/parallel` fixtures from the `tests/node`
-//! submodule through the host.
-//!
-//! Default mode runs the manifest (one test file name per line, `#`
-//! comments allowed) and fails if any listed test regresses. An inline
-//! `profile=NAME` comment selects a reviewed subset with `--profile NAME`.
-//! `--triage` sweeps the whole `parallel/` directory and prints the
-//! tests that pass — diagnostic output for growing the manifest,
-//! never a conformance gate.
-//!
-//! Usage:
-//!   cargo run -p quench-node-test --bin run-parallel
-//!   cargo run -p quench-node-test --bin run-parallel -- --profile framework-core
-//!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
+//! Run checked-in Node parallel fixtures through the shared VM.
 
-use std::path::PathBuf;
+use quench_node_test::{case_process::worker_entry_with, parallel_profile, shared_runner};
 use std::process::ExitCode;
 
-use quench_node_test::case_process::{
-    observe_parallel_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
-};
-
-const PARALLEL_DIR: &str = "tests/node/test/parallel";
-
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Some(code) = worker_entry(&args) {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(code) = worker_entry_with(&arguments, shared_runner::run_parallel_fixture) {
         return code;
     }
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
+    let options = match Options::parse(&arguments) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    if options.help {
+        println!("run-parallel [--profile NAME] [--filter NAME] [--timeout-secs N]");
         return ExitCode::SUCCESS;
     }
-    if let Some(path) = args
-        .iter()
-        .position(|arg| arg == "--one")
-        .and_then(|index| args.get(index + 1))
-    {
-        return run_one(PathBuf::from(path));
-    }
-    if args.iter().any(|arg| arg == "--triage-one") {
-        eprintln!("error: obsolete private worker invocation");
-        return ExitCode::from(2);
-    }
-    if args.iter().any(|a| a == "--triage") {
-        let filter = args
-            .iter()
-            .position(|a| a == "--filter")
-            .and_then(|i| args.get(i + 1));
-        let timeout = args
-            .iter()
-            .position(|a| a == "--timeout-secs")
-            .and_then(|i| args.get(i + 1))
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
-        return triage(filter, timeout);
-    }
-    if args.iter().any(|a| a == "--all") {
-        let filter = args
-            .iter()
-            .position(|a| a == "--filter")
-            .and_then(|i| args.get(i + 1));
-        let timeout = args
-            .iter()
-            .position(|a| a == "--timeout-secs")
-            .and_then(|i| args.get(i + 1))
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
-        let results = args
-            .iter()
-            .position(|a| a == "--results")
-            .and_then(|i| args.get(i + 1));
-        return run_all(filter, timeout, results);
-    }
-    let profile = args
-        .iter()
-        .position(|arg| arg == "--profile")
-        .and_then(|index| args.get(index + 1));
-    if args.iter().any(|arg| arg == "--profile") && profile.is_none() {
-        eprintln!("error: --profile requires a profile name");
-        return ExitCode::from(2);
-    }
-    run_manifest(profile.map(String::as_str))
+    parallel_profile::run(
+        options.profile.as_deref(),
+        options.filter.as_deref(),
+        options.timeout_secs,
+    )
 }
 
-fn print_help() {
-    println!("run-parallel: execute Node parallel fixtures through quench-node");
-    println!();
-    println!("usage:");
-    println!("  run-parallel                         run the checked-in stage manifest");
-    println!("  run-parallel --profile NAME          run a tagged manifest subset");
-    println!("  run-parallel --one PATH               run one fixture");
-    println!("  run-parallel --all [options]         run the recursive fixture inventory");
-    println!("  run-parallel --triage [options]        print passing triage fixtures");
-    println!();
-    println!("options for --all:");
-    println!("  --filter NAME       restrict fixtures by filename");
-    println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
-    println!("  --results PATH      write machine-readable results and inventory hash");
-}
-
-fn run_one(path: PathBuf) -> ExitCode {
-    let executable = match std::env::current_exe() {
-        Ok(executable) => executable,
-        Err(error) => {
-            eprintln!("worker executable: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    match observe_parallel_case(
-        &executable,
-        &path,
-        std::time::Duration::from_secs(DEFAULT_CASE_TIMEOUT_SECS),
-    ) {
-        Ok(observation) => {
-            use std::io::Write;
-            if std::io::stdout().write_all(&observation.stdout).is_err()
-                || std::io::stderr().write_all(&observation.stderr).is_err()
-            {
-                return ExitCode::from(2);
-            }
-            let result = observation.outcome();
-            println!("{} {}", result.label().to_uppercase(), path.display());
-            if result == RunResult::Pass {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
-            }
-        }
-        Err(error) => {
-            eprintln!("worker {}: {error}", path.display());
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn run_manifest(profile: Option<&str>) -> ExitCode {
-    quench_node_test::parallel_profile::run(profile, None, DEFAULT_CASE_TIMEOUT_SECS)
-}
-
-fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
-    if !std::path::Path::new(PARALLEL_DIR).is_dir() {
-        eprintln!(
-            "error: upstream Node fixture directory is missing: {PARALLEL_DIR}\n\
-             initialize the tests/node submodule before running triage"
-        );
-        return ExitCode::from(2);
-    }
-    let entries = match quench_node_test::stages::discover_fixtures(&PathBuf::from(PARALLEL_DIR)) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("error: fixture discovery: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    let mut entries: Vec<PathBuf> = entries
-        .into_iter()
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with("test-")
-                        && filter.as_ref().is_none_or(|f| name.contains(f.as_str()))
-                })
-        })
-        .collect();
-    entries.sort();
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    let mut passed = 0;
-    for path in &entries {
-        if matches!(triage_one(&exe, path, timeout_secs), RunResult::Pass) {
-            println!("{}", path.file_name().unwrap().to_string_lossy());
-            passed += 1;
-        }
-    }
-    eprintln!("triage: {passed} passed of {}", entries.len());
-    ExitCode::SUCCESS
-}
-
-fn triage_one(exe: &std::path::Path, path: &std::path::Path, timeout_secs: u64) -> RunResult {
-    match observe_parallel_case(exe, path, std::time::Duration::from_secs(timeout_secs)) {
-        Ok(observation) => observation.outcome(),
-        Err(error) => {
-            eprintln!("worker {}: {error}", path.display());
-            RunResult::Unclassified
-        }
-    }
-}
-
-fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&String>) -> ExitCode {
-    let root = PathBuf::from(PARALLEL_DIR);
-    let mut entries = match quench_node_test::stages::discover_fixtures(&root) {
-        Ok(entries) => entries,
-        Err(error) => {
-            eprintln!("error: fixture discovery: {error}");
-            return ExitCode::from(2);
-        }
-    };
-    entries.retain(|path| {
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("test-"))
-            && filter.is_none_or(|needle| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.contains(needle))
-            })
-    });
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
-    let mut counts = [0usize; RunResult::COUNT];
-    let mut results = Vec::with_capacity(entries.len());
-    for path in &entries {
-        let observation =
-            observe_parallel_case(&exe, path, std::time::Duration::from_secs(timeout_secs));
-        let result = observation
-            .as_ref()
-            .map(|record| record.outcome())
-            .unwrap_or(RunResult::Unclassified);
-        counts[result as usize] += 1;
-        results.push((path, observation));
-        println!("{:?} {}", result, path.display());
-    }
-    let inventory_hash = inventory_hash(&entries);
-    let [passed, skipped, failed, timeout, crash, unclassified] = counts;
-    println!(
-        "all: pass={passed} skip={skipped} fail={failed} timeout={timeout} crash={crash} unclassified={unclassified} total={} inventory_hash={inventory_hash:016x}",
-        entries.len()
-    );
-    if let Some(path) = results_path {
-        if let Err(error) = write_results(path, &results, inventory_hash, timeout_secs) {
-            eprintln!("error: cannot write {path}: {error}");
-            return ExitCode::from(2);
-        }
-    }
-    gate_exit(passed, entries.len())
-}
-
-fn gate_exit(passed: usize, total: usize) -> ExitCode {
-    if total != 0 && passed == total {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::from(1)
-    }
-}
-
-fn write_results(
-    path: &str,
-    results: &[(
-        &PathBuf,
-        Result<quench_node_test::case_process::CaseObservation, String>,
-    )],
-    inventory_hash: u64,
+struct Options {
+    profile: Option<String>,
+    filter: Option<String>,
     timeout_secs: u64,
-) -> std::io::Result<()> {
-    let records: Vec<_> = results
-        .iter()
-        .map(|(fixture, observation)| {
-            let result = observation
-                .as_ref()
-                .map(|record| record.outcome())
-                .unwrap_or(RunResult::Unclassified);
-            serde_json::json!({"fixture":fixture,"status":result.label(),"observation":observation})
+    help: bool,
+}
+
+impl Options {
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut profile = None;
+        let mut filter = None;
+        let mut timeout_secs = quench_node_test::case_process::DEFAULT_CASE_TIMEOUT_SECS;
+        let mut help = false;
+        let mut args = arguments.iter();
+        while let Some(argument) = args.next() {
+            match argument.as_str() {
+                "--help" | "-h" => help = true,
+                "--profile" => profile = Some(next_value(&mut args, "--profile")?),
+                "--filter" => filter = Some(next_value(&mut args, "--filter")?),
+                "--timeout-secs" => {
+                    timeout_secs = next_value(&mut args, "--timeout-secs")?
+                        .parse()
+                        .map_err(|_| "--timeout-secs must be a positive integer")?;
+                    if timeout_secs == 0 {
+                        return Err("--timeout-secs must be a positive integer".into());
+                    }
+                }
+                value => return Err(format!("unknown option {value}")),
+            }
+        }
+        if !help && profile.is_none() && filter.is_none() {
+            return Err("--profile or --filter is required".into());
+        }
+        Ok(Self {
+            profile,
+            filter,
+            timeout_secs,
+            help,
         })
-        .collect();
-    let report = serde_json::json!({
-        "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,
-        "node_version":command_output("node", &["--version"]),
-        "runtime_commit":command_output("git", &["rev-parse", "HEAD"]),
-        "tests_node_commit":command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]),
-        "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
-        "results":records,
-    });
-    let bytes = serde_json::to_vec_pretty(&report).map_err(std::io::Error::other)?;
-    std::fs::write(path, bytes)
-}
-
-fn inventory_hash(entries: &[PathBuf]) -> u64 {
-    entries.iter().fold(0xcbf29ce484222325u64, |hash, path| {
-        let hash = path.to_string_lossy().bytes().fold(hash, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-        });
-        std::fs::read(path)
-            .unwrap_or_default()
-            .into_iter()
-            .fold(hash, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-            })
-    })
-}
-
-fn command_output(program: &str, args: &[&str]) -> String {
-    std::process::Command::new(program)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|output| !output.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::validate_manifest;
-    use std::fs;
-
-    #[test]
-    fn manifest_validation_rejects_duplicates_and_unknown_extensions() {
-        let root =
-            std::env::temp_dir().join(format!("quench-node-manifest-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("test-a.js"), "").unwrap();
-        fs::write(root.join("test-b.txt"), "").unwrap();
-        let duplicate = vec!["test-a.js".to_string(), "test-a.js".to_string()];
-        assert!(validate_manifest(&duplicate, &root).is_err());
-        let unsupported = vec!["test-b.txt".to_string()];
-        assert!(validate_manifest(&unsupported, &root).is_err());
-        for name in [
-            "../test-a.js".to_string(),
-            root.join("test-a.js").display().to_string(),
-        ] {
-            let error = validate_manifest(&[name], &root).unwrap_err();
-            assert!(error.contains("relative to the parallel suite"));
-        }
-        fs::remove_dir_all(root).unwrap();
     }
+}
 
-    #[test]
-    fn manifest_validation_accepts_all_fixture_extensions() {
-        let root =
-            std::env::temp_dir().join(format!("quench-node-manifest-valid-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        for name in ["test-a.js", "test-b.mjs", "test-c.cjs"] {
-            fs::write(root.join(name), "").unwrap();
-        }
-        let names = ["test-a.js", "test-b.mjs", "test-c.cjs"]
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>();
-        assert!(validate_manifest(&names, &root).is_ok());
-        fs::remove_dir_all(root).unwrap();
-    }
+fn next_value<'a>(
+    args: &mut impl Iterator<Item = &'a String>,
+    option: &str,
+) -> Result<String, String> {
+    args.next()
+        .cloned()
+        .ok_or_else(|| format!("{option} requires a value"))
 }

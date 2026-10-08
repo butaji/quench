@@ -100,7 +100,13 @@ impl<'a> Source<'a> {
         // will always test positive, and disable batch search.
         let end_for_batch_search_addr = (end as usize).saturating_sub(SEARCH_BATCH_SIZE);
 
-        Self { start, end, ptr: start, end_for_batch_search_addr, _marker: PhantomData }
+        Self {
+            start,
+            end,
+            ptr: start,
+            end_for_batch_search_addr,
+            _marker: PhantomData,
+        }
     }
 
     /// Get entire source text as `&str`.
@@ -344,7 +350,10 @@ impl<'a> Source<'a> {
 
         // Ensure not attempting to go back to before start of source
         let offset = self.offset_usize();
-        assert!(n <= offset, "Cannot go back {n} bytes - only {offset} bytes consumed");
+        assert!(
+            n <= offset,
+            "Cannot go back {n} bytes - only {offset} bytes consumed"
+        );
 
         // SAFETY: We have checked that `n` is less than distance between `start` and `ptr`,
         // so `new_ptr` cannot be outside of allocation of original `&str`
@@ -357,7 +366,10 @@ impl<'a> Source<'a> {
         // `Source::new` takes an immutable ref `&str`, guaranteeing that the memory `new_ptr`
         // addresses cannot be aliased by a `&mut` ref as long as `Source` exists.
         let byte = unsafe { new_pos.read() };
-        assert!(!is_utf8_cont_byte(byte), "Offset is not on a UTF-8 character boundary");
+        assert!(
+            !is_utf8_cont_byte(byte),
+            "Offset is not on a UTF-8 character boundary"
+        );
 
         // Move current position. The checks above satisfy `Source`'s invariants.
         self.ptr = new_pos.ptr;
@@ -635,7 +647,10 @@ impl<'a> SourcePosition<'a> {
     /// * It must be positioned on a UTF-8 character boundary (or EOF).
     #[inline]
     pub(super) unsafe fn new(ptr: *const u8) -> Self {
-        Self { ptr, _marker: PhantomData }
+        Self {
+            ptr,
+            _marker: PhantomData,
+        }
     }
 
     /// Create new `SourcePosition` which is `n` bytes after this one.

@@ -43,8 +43,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     }
 
     pub(crate) fn stack_is_exhausted(&self) -> bool {
-        self.fatal_error.as_ref().is_some_and(|fatal|
-            matches!(fatal.error, ParserDiagnostic::stack_exhausted { .. }))
+        self.fatal_error
+            .as_ref()
+            .is_some_and(|fatal| matches!(fatal.error, ParserDiagnostic::stack_exhausted { .. }))
     }
 
     /// Syntax backtracking may consume ordinary errors, but not resource exhaustion.
@@ -98,7 +99,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     pub(crate) fn set_fatal_error(&mut self, error: ParserDiagnostic<'a>) {
         if self.fatal_error.is_none() {
             self.lexer.advance_to_end();
-            self.fatal_error = Some(FatalError { error, errors_len: self.errors.len() });
+            self.fatal_error = Some(FatalError {
+                error,
+                errors_len: self.errors.len(),
+            });
         }
     }
 
@@ -236,8 +240,14 @@ mod quench_stack_tests {
     #[test]
     fn regression_resource_exhaustion_survives_checkpoints_and_rewind() {
         let allocator = Allocator::default();
-        let mut parser = ParserImpl::new(&allocator, "1", SourceType::script(),
-            ParseOptions::default(), NoTokensParserConfig, UniquePromise::new_for_tests_and_benchmarks());
+        let mut parser = ParserImpl::new(
+            &allocator,
+            "1",
+            SourceType::script(),
+            ParseOptions::default(),
+            NoTokensParserConfig,
+            UniquePromise::new_for_tests_and_benchmarks(),
+        );
         let checkpoint = parser.checkpoint();
         parser.set_fatal_error(diagnostics::stack_exhausted(Span::default()));
         parser.rewind(checkpoint);

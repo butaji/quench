@@ -718,6 +718,78 @@ impl<H: Host> Vm<H> {
         error: JsError,
     ) -> Result<usize, JsError> {
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
+        if wasm
+            && let Some((tag, values, exception_ref)) = error
+                .wasm_exception_details()
+                .map(|(tag, values, exception_ref)| (tag, values.to_vec(), exception_ref))
+        {
+            let Some(module) = self.active_wasm_module else {
+                return Err(error);
+            };
+            let Some(stored) = self.wasm_modules.get(module.raw() as usize) else {
+                return Err(error);
+            };
+            let Some(handlers) = stored.exception_handlers.get(function).cloned() else {
+                return Err(error);
+            };
+            let tags = stored.tags.clone();
+            for handler in handlers
+                .into_iter()
+                .filter(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
+            {
+                if handler
+                    .tag_index
+                    .is_some_and(|index| tags.get(index as usize) != Some(&tag))
+                {
+                    continue;
+                }
+                // catch_all handlers discard the tag's payload. catch_all_ref
+                // receives only the exception reference, regardless of the
+                // payload carried by the thrown tag.
+                let payload_values = if handler.tag_index.is_some() {
+                    values.len()
+                } else {
+                    0
+                };
+                let exception_values = usize::from(handler.payload_count)
+                    .checked_sub(usize::from(handler.catch_ref))
+                    .filter(|count| *count == payload_values);
+                let Some(exception_values) = exception_values else {
+                    continue;
+                };
+                if handler.tag_index.is_some() {
+                    for (offset, value) in values.iter().copied().enumerate() {
+                        let encoded = self.encode_wasm_scalar(value);
+                        self.write(frame, handler.payload_register + offset as u16, encoded);
+                    }
+                }
+                if handler.catch_ref || handler.exception_register.is_some() {
+                    let exception_ref = match exception_ref {
+                        Some(exception_ref) => exception_ref,
+                        None => {
+                            let payload = values
+                                .iter()
+                                .copied()
+                                .map(|value| self.encode_wasm_scalar(value))
+                                .collect();
+                            self.heap.alloc(Cell::WasmExceptionRef { tag, payload })
+                        }
+                    };
+                    if handler.catch_ref {
+                        self.write(
+                            frame,
+                            handler.payload_register + exception_values as u16,
+                            exception_ref,
+                        );
+                    }
+                    if let Some(register) = handler.exception_register {
+                        self.write(frame, register, exception_ref);
+                    }
+                }
+                return Ok(handler.target as usize);
+            }
+            return Err(error);
+        }
         let handler = program.functions[function]
             .handlers
             .iter()

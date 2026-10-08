@@ -5,6 +5,12 @@ impl<H: Host> Vm<H> {
         Ok(self.is_function(self.embedding_value(root)?))
     }
 
+    pub(crate) fn embedding_is_regexp(&mut self, root: RootId) -> Result<bool, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.regexp_is_regexp(&program, value)
+    }
+
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(match self.heap.get(value) {
@@ -23,7 +29,11 @@ impl<H: Host> Vm<H> {
         Ok(self.truthy(self.embedding_value(root)?))
     }
 
-    pub(crate) fn embedding_same_value(&self, left: RootId, right: RootId) -> Result<bool, JsError> {
+    pub(crate) fn embedding_same_value(
+        &self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, JsError> {
         Ok(self.same_value(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
@@ -86,6 +96,11 @@ impl<H: Host> Vm<H> {
         self.call_object_native(&program, Native::ObjectCreate, &[self.object_proto])
     }
 
+    pub(crate) fn create_embedding_null_object(&mut self) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        self.call_object_native(&program, Native::ObjectCreate, &[Value::NULL])
+    }
+
     pub(crate) fn embedding_value(&self, root: RootId) -> Result<Value, JsError> {
         self.root_value(root)
             .ok_or_else(|| JsError("released or foreign embedding root".into()))
@@ -121,7 +136,7 @@ impl<H: Host> Vm<H> {
         self.call_value(&program, callee, receiver, &args)
     }
 
-    fn embedding_arguments(&self, args: &[RootId]) -> Result<Vec<Value>, JsError> {
+    pub(crate) fn embedding_arguments(&self, args: &[RootId]) -> Result<Vec<Value>, JsError> {
         args.iter()
             .map(|root| self.embedding_value(*root))
             .collect()

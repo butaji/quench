@@ -118,10 +118,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value_atom = self.intern_atom("\0rqj:string-value");
                     self.own_property(this, value_atom).ok_or_else(|| {
-                        self.type_error(
-                            p,
-                            "String method called on incompatible receiver".into(),
-                        )
+                        self.type_error(p, "String method called on incompatible receiver".into())
                     })
                 }
             }
@@ -275,8 +272,12 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let matched = match native {
-                    Native::StringIncludes => receiver.find_units(search.units(), position).is_some(),
-                    Native::StringStartsWith => receiver.units()[position..].starts_with(search.units()),
+                    Native::StringIncludes => {
+                        receiver.find_units(search.units(), position).is_some()
+                    }
+                    Native::StringStartsWith => {
+                        receiver.units()[position..].starts_with(search.units())
+                    }
                     Native::StringEndsWith => {
                         let start = position.saturating_sub(search.units().len());
                         receiver.units()[start..position] == *search.units()
@@ -325,12 +326,18 @@ impl<H: Host> Vm<H> {
                 let start = if native == Native::StringTrimEnd {
                     0
                 } else {
-                    units.iter().position(|unit| !is_ecma_whitespace(*unit)).unwrap_or(units.len())
+                    units
+                        .iter()
+                        .position(|unit| !is_ecma_whitespace(*unit))
+                        .unwrap_or(units.len())
                 };
                 let end = if native == Native::StringTrimStart {
                     units.len()
                 } else {
-                    units.iter().rposition(|unit| !is_ecma_whitespace(*unit)).map_or(start, |i| i + 1)
+                    units
+                        .iter()
+                        .rposition(|unit| !is_ecma_whitespace(*unit))
+                        .map_or(start, |i| i + 1)
                 };
                 self.string_from_units(&units[start..end])
             }
@@ -355,7 +362,11 @@ impl<H: Host> Vm<H> {
                 if count.is_infinite() || count < 0.0 {
                     return Err(self.range_error(p, "invalid string repeat count".into()));
                 }
-                let count = if count.is_nan() { 0 } else { count.trunc() as usize };
+                let count = if count.is_nan() {
+                    0
+                } else {
+                    count.trunc() as usize
+                };
                 let Some(size) = receiver.units().len().checked_mul(count) else {
                     return Err(self.range_error(p, "string repeat count is too large".into()));
                 };
@@ -379,9 +390,7 @@ impl<H: Host> Vm<H> {
                     return Ok(self.heap.alloc(Cell::String(receiver)));
                 }
                 let fill = match args.get(1).copied() {
-                    None | Some(Value::UNDEFINED) => {
-                        super::wtf16::JsString::from_str(" ")
-                    }
+                    None | Some(Value::UNDEFINED) => super::wtf16::JsString::from_str(" "),
                     Some(value) => self.coerce_js_string(p, value)?,
                 };
                 let fill_units = fill.units();
@@ -405,22 +414,16 @@ impl<H: Host> Vm<H> {
                 self.string_from_units(&units)
             }
             Native::EncodeUri | Native::EncodeUriComponent => {
-                let value = self.coerce_js_string(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                )?;
-                let encoded = super::string_extra::encode_uri(
-                    &value,
-                    native == Native::EncodeUriComponent,
-                )
-                .map_err(|message| self.uri_error(p, message.into()))?;
+                let value =
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let encoded =
+                    super::string_extra::encode_uri(&value, native == Native::EncodeUriComponent)
+                        .map_err(|message| self.uri_error(p, message.into()))?;
                 Ok(self.heap.alloc(Cell::String(encoded.into())))
             }
             Native::GlobalEscape | Native::GlobalUnescape => {
-                let value = self.coerce_js_string(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                )?;
+                let value =
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let result = if native == Native::GlobalEscape {
                     super::string_extra::escape(&value).into()
                 } else {
@@ -429,15 +432,11 @@ impl<H: Host> Vm<H> {
                 Ok(self.heap.alloc(Cell::String(result)))
             }
             Native::DecodeUri | Native::DecodeUriComponent => {
-                let value = self.coerce_js_string(
-                    p,
-                    args.first().copied().unwrap_or(Value::UNDEFINED),
-                )?;
-                let decoded = super::string_extra::decode_uri(
-                    &value,
-                    native == Native::DecodeUriComponent,
-                )
-                .map_err(|message| self.uri_error(p, message.into()))?;
+                let value =
+                    self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
+                let decoded =
+                    super::string_extra::decode_uri(&value, native == Native::DecodeUriComponent)
+                        .map_err(|message| self.uri_error(p, message.into()))?;
                 Ok(self.heap.alloc(Cell::String(decoded)))
             }
             Native::StringFromCharCode => {
@@ -626,7 +625,11 @@ impl<H: Host> Vm<H> {
             Some(value) if value.is_undefined() => Ok(default),
             Some(value) => {
                 let number = self.to_number(p, value)?;
-                Ok(if number.is_nan() { 0 } else { number.trunc() as i64 })
+                Ok(if number.is_nan() {
+                    0
+                } else {
+                    number.trunc() as i64
+                })
             }
             None => Ok(default),
         }

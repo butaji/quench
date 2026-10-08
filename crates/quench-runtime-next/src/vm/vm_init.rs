@@ -71,6 +71,18 @@ impl<H: Host> Vm<H> {
             test262_agent: Default::default(),
             programs: ProgramStore::default(),
             active_program: ProgramId::MAIN,
+            wasm_modules: Vec::new(),
+            wasm_globals: Vec::new(),
+            wasm_memories: Vec::new(),
+            wasm_tables: Vec::new(),
+            wasm_gc_next_ref: 1,
+            wasm_gc_ref_types: FxHashMap::default(),
+            wasm_gc_objects: FxHashMap::default(),
+            wasm_externref_bridge: FxHashMap::default(),
+            wasm_function_ref_next: 1,
+            wasm_function_ref_handles: FxHashMap::default(),
+            wasm_function_ref_ids: FxHashMap::default(),
+            active_wasm_module: None,
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]

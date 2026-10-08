@@ -39,8 +39,25 @@ macro_rules! unary_family {
                 type $float_alias = $float;
                 type $bits_alias = $bits;
                 const $sign: $bits_alias = super::numeric::sign_mask($bits_alias::BITS) as $bits_alias;
-                let value: $float = match self { $(Self::$name => $body,)+ };
-                WasmValue::$variant(value.to_bits())
+                const CANONICAL_NAN: $float = <$float>::from_bits(
+                    super::numeric::canonical_nan_bits(
+                        <$float>::MANTISSA_DIGITS,
+                        <$float>::INFINITY.to_bits() as u64,
+                    ) as $bits_alias,
+                );
+                const QUIET_NAN_MASK: $bits_alias =
+                    (1 as $bits_alias) << (<$float>::MANTISSA_DIGITS - 2);
+                let result: $float = match self { $(Self::$name => $body,)+ };
+                let bits = result.to_bits();
+                let bits = if !matches!(self, Self::Absolute | Self::Negate)
+                    && result.is_nan()
+                    && bits & QUIET_NAN_MASK == 0
+                {
+                    CANONICAL_NAN.to_bits()
+                } else {
+                    bits
+                };
+                WasmValue::$variant(bits)
             }
         }
     };

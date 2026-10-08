@@ -159,335 +159,417 @@ impl<H: Host> Vm<H> {
         }
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_method_caches(0);
-        let roots =
-            self.programs
-                .roots()
-                .chain([
-                    self.realm.globals,
-                    self.object_proto,
-                    self.function_proto,
-                    self.array_proto,
-                    self.array_buffer_proto,
-                    self.shared_array_buffer_proto,
-                    self.array_iterator_proto,
-                    self.typed_array_proto,
-                    self.uint8_array_proto,
-                    self.uint8_clamped_array_proto,
-                    self.uint16_array_proto,
-                    self.uint32_array_proto,
-                    self.int8_array_proto,
-                    self.int16_array_proto,
-                    self.int32_array_proto,
-                    self.bigint64_array_proto,
-                    self.biguint64_array_proto,
-                    self.float16_array_proto,
-                    self.float32_array_proto,
-                    self.float64_array_proto,
-                    self.data_view_proto,
-                    self.map_proto,
-                    self.set_proto,
-                    self.shadow_realm_proto,
-                    self.map_iterator_proto,
-                    self.set_iterator_proto,
-                    self.weak_map_proto,
-                    self.weak_set_proto,
-                    self.weak_ref_proto,
-                    self.finalization_registry_proto,
-                    self.iterator_proto,
-                    self.string_iterator_proto,
-                    self.regexp_string_iterator_proto,
-                    self.generator_proto,
-                    self.iterator_helper_proto,
-                    self.wrap_for_valid_iterator_proto,
-                    self.async_iterator_proto,
-                    self.async_generator_proto,
-                    self.async_from_sync_iterator_proto,
-                    self.regexp_proto,
-                ])
-                .chain(
-                    self.realm
-                        .global_lexical_states
-                        .iter()
-                        .flat_map(|(global, state)| {
-                            std::iter::once(*global).chain(state.bindings.values().copied())
-                        }),
-                )
-                .chain(
-                    self.realm.intrinsics.builtin_prototypes
-                        .iter()
-                        .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.promise_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.regexp_intrinsics
-                        .iter()
-                        .flat_map(|(realm, intrinsics)| {
-                            [*realm, intrinsics.constructor, intrinsics.prototype]
-                        }),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_number_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_number_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_number_format_fallback_symbols
-                        .iter()
-                        .flat_map(|(realm, symbol)| [*realm, *symbol]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_collator_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_collator_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_plural_rules_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_datetime_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_datetime_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_datetime_format_fallback_symbols
-                        .iter()
-                        .flat_map(|(realm, symbol)| [*realm, *symbol]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_display_names_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_display_names_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_duration_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_duration_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_list_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_list_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_relative_time_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_segmenter_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_segment_iterator_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_segments_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm.intrinsics.intl_locale_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(self.natives.iter().map(|(_, value)| *value))
-                .chain(
-                    self.realm.intrinsics.iterator_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototypes)| {
-                            [
-                                *realm,
-                                prototypes.helper,
-                                prototypes.wrapper,
-                                prototypes.generator,
-                                prototypes.async_generator,
-                            ]
-                        }),
-                )
-                .chain(self.test262_agent.roots())
-                .chain(
-                    self.realm.promise.active_native.iter().map(|activation| activation.callable),
-                )
-                .chain(self.realm.promise.modules.values().flat_map(ModuleRecord::roots))
-                .chain(self.realm.promise.module_sources.values().copied())
-                .chain(self.realm.promise.records.iter().flat_map(|(promise, record)| {
-                    std::iter::once(*promise)
-                        .chain(std::iter::once(record.result))
-                        .chain(record.reactions.iter().flat_map(|reaction| {
-                            [reaction.on_fulfilled, reaction.on_rejected, reaction.next]
-                        }))
-                        .chain(
-                            record
-                                .finally_reactions
-                                .iter()
-                                .flat_map(|reaction| [reaction.handler, reaction.next]),
-                        )
-                }))
-                .chain(self.realm.promise.jobs.iter().flat_map(|(job, reaction)| {
-                    [*job, reaction.handler, reaction.next, reaction.value]
-                }))
-                .chain(
-                    self.realm.promise
-                        .thenable_jobs
-                        .iter()
-                        .flat_map(|(job, thenable)| {
-                            [*job, thenable.then, thenable.thenable, thenable.promise]
-                        }),
-                )
-                .chain(
-                    self.realm.promise
-                        .finally_jobs
-                        .iter()
-                        .flat_map(|(job, finally_job)| {
-                            [
-                                *job,
-                                finally_job.handler,
-                                finally_job.next,
-                                finally_job.value,
-                            ]
-                        }),
-                )
-                .chain(
-                    self.realm.promise.finally_continuation_jobs.iter().flat_map(
-                        |(job, continuation)| [*job, continuation.next, continuation.value],
-                    ),
-                )
-                .chain(self.realm.promise.finally_handler_callbacks.iter().flat_map(
-                    |(function, callback)| [*function, callback.handler, callback.constructor],
-                ))
-                .chain(
-                    self.realm.promise
-                        .finally_continuation_callbacks
-                        .iter()
-                        .flat_map(|(function, callback)| [*function, callback.original]),
-                )
-                .chain(
-                    self.realm.promise
-                        .aggregates
-                        .iter()
-                        .flat_map(|(aggregate, record)| {
-                            std::iter::once(*aggregate)
-                                .chain(std::iter::once(record.output))
-                                .chain(std::iter::once(record.resolve))
-                                .chain(std::iter::once(record.reject))
-                                .chain(record.values.iter().copied())
-                                .chain(record.keys.iter().flatten().copied())
-                        }),
-                )
-                .chain(
-                    self.realm.promise
-                        .aggregate_jobs
-                        .iter()
-                        .flat_map(|(job, aggregate_job)| [*job, aggregate_job.aggregate]),
-                )
-                .chain(
-                    self.realm.promise
-                        .reaction_capabilities
-                        .iter()
-                        .flat_map(|(promise, (resolve, reject))| [*promise, *resolve, *reject]),
-                )
-                .chain(
-                    self.realm.promise
-                        .async_resume_jobs
-                        .iter()
-                        .flat_map(|(job, resume)| {
-                            [Some(*job), Some(resume.promise), resume.generator]
-                                .into_iter()
-                                .flatten()
-                        }),
-                )
-                .chain(self.realm.jobs.iter().flat_map(|job| {
-                    std::iter::once(job.callback)
-                        .chain(std::iter::once(job.this))
-                        .chain(job.args.iter().copied())
-                }))
-                .chain(self.realm.template_objects.values().copied())
-                .chain(self.with_stack.iter().copied())
-                .chain(self.active_call_roots.iter().copied())
-                .chain(
-                    self.suspended
-                        .iter()
-                        .filter_map(|entry| entry.continuation.as_ref())
-                        .flat_map(Continuation::roots),
-                )
-                .chain(self.symbol_registry.values().copied())
-                .chain(self.well_known_symbols.values().copied())
-                .chain(
-                    self.descriptors
-                        .values()
-                        .flat_map(|attributes| [attributes.getter, attributes.setter])
-                        .flatten(),
-                )
-                .chain(self.frames.iter().flat_map(|frame| {
-                    // A missing map means the function uses a register form
-                    // the liveness pass cannot represent; keep the safe
-                    // conservative scan for that activation.
-                    let register_mask = self.programs.get(frame.program).and_then(|program| {
-                        let function = program.functions.get(frame.function as usize)?;
-                        (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                            .then(|| {
-                                program
-                                    .register_roots
-                                    .get(function.register_root_offset as usize + frame.pc)
-                            })
+        let roots = self
+            .programs
+            .roots()
+            .chain([
+                self.realm.globals,
+                self.object_proto,
+                self.function_proto,
+                self.array_proto,
+                self.array_buffer_proto,
+                self.shared_array_buffer_proto,
+                self.array_iterator_proto,
+                self.typed_array_proto,
+                self.uint8_array_proto,
+                self.uint8_clamped_array_proto,
+                self.uint16_array_proto,
+                self.uint32_array_proto,
+                self.int8_array_proto,
+                self.int16_array_proto,
+                self.int32_array_proto,
+                self.bigint64_array_proto,
+                self.biguint64_array_proto,
+                self.float16_array_proto,
+                self.float32_array_proto,
+                self.float64_array_proto,
+                self.data_view_proto,
+                self.map_proto,
+                self.set_proto,
+                self.shadow_realm_proto,
+                self.map_iterator_proto,
+                self.set_iterator_proto,
+                self.weak_map_proto,
+                self.weak_set_proto,
+                self.weak_ref_proto,
+                self.finalization_registry_proto,
+                self.iterator_proto,
+                self.string_iterator_proto,
+                self.regexp_string_iterator_proto,
+                self.generator_proto,
+                self.iterator_helper_proto,
+                self.wrap_for_valid_iterator_proto,
+                self.async_iterator_proto,
+                self.async_generator_proto,
+                self.async_from_sync_iterator_proto,
+                self.regexp_proto,
+            ])
+            .chain(
+                self.realm
+                    .global_lexical_states
+                    .iter()
+                    .flat_map(|(global, state)| {
+                        std::iter::once(*global).chain(state.bindings.values().copied())
+                    }),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .builtin_prototypes
+                    .iter()
+                    .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .promise_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
+                |(realm, intrinsics)| [*realm, intrinsics.constructor, intrinsics.prototype],
+            ))
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_number_format_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_number_format_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_number_format_fallback_symbols
+                    .iter()
+                    .flat_map(|(realm, symbol)| [*realm, *symbol]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_collator_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_collator_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_plural_rules_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_datetime_format_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_datetime_format_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_datetime_format_fallback_symbols
+                    .iter()
+                    .flat_map(|(realm, symbol)| [*realm, *symbol]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_display_names_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_display_names_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_duration_format_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_duration_format_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_list_format_constructors
+                    .iter()
+                    .flat_map(|(realm, constructor)| [*realm, *constructor]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_list_format_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_relative_time_format_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_segmenter_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_segment_iterator_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_segments_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(
+                self.realm
+                    .intrinsics
+                    .intl_locale_prototypes
+                    .iter()
+                    .flat_map(|(realm, prototype)| [*realm, *prototype]),
+            )
+            .chain(self.natives.iter().map(|(_, value)| *value))
+            .chain(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
+                |(realm, prototypes)| {
+                    [
+                        *realm,
+                        prototypes.helper,
+                        prototypes.wrapper,
+                        prototypes.generator,
+                        prototypes.async_generator,
+                    ]
+                },
+            ))
+            .chain(self.test262_agent.roots())
+            .chain(
+                self.realm
+                    .promise
+                    .active_native
+                    .iter()
+                    .map(|activation| activation.callable),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .modules
+                    .values()
+                    .flat_map(ModuleRecord::roots),
+            )
+            .chain(self.realm.promise.module_sources.values().copied())
+            .chain(
+                self.realm
+                    .promise
+                    .records
+                    .iter()
+                    .flat_map(|(promise, record)| {
+                        std::iter::once(*promise)
+                            .chain(std::iter::once(record.result))
+                            .chain(record.reactions.iter().flat_map(|reaction| {
+                                [reaction.on_fulfilled, reaction.on_rejected, reaction.next]
+                            }))
+                            .chain(
+                                record
+                                    .finally_reactions
+                                    .iter()
+                                    .flat_map(|reaction| [reaction.handler, reaction.next]),
+                            )
+                    }),
+            )
+            .chain(self.realm.promise.jobs.iter().flat_map(|(job, reaction)| {
+                [*job, reaction.handler, reaction.next, reaction.value]
+            }))
+            .chain(
+                self.realm
+                    .promise
+                    .thenable_jobs
+                    .iter()
+                    .flat_map(|(job, thenable)| {
+                        [*job, thenable.then, thenable.thenable, thenable.promise]
+                    }),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .finally_jobs
+                    .iter()
+                    .flat_map(|(job, finally_job)| {
+                        [
+                            *job,
+                            finally_job.handler,
+                            finally_job.next,
+                            finally_job.value,
+                        ]
+                    }),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .finally_continuation_jobs
+                    .iter()
+                    .flat_map(|(job, continuation)| [*job, continuation.next, continuation.value]),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .finally_handler_callbacks
+                    .iter()
+                    .flat_map(|(function, callback)| {
+                        [*function, callback.handler, callback.constructor]
+                    }),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .finally_continuation_callbacks
+                    .iter()
+                    .flat_map(|(function, callback)| [*function, callback.original]),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .aggregates
+                    .iter()
+                    .flat_map(|(aggregate, record)| {
+                        std::iter::once(*aggregate)
+                            .chain(std::iter::once(record.output))
+                            .chain(std::iter::once(record.resolve))
+                            .chain(std::iter::once(record.reject))
+                            .chain(record.values.iter().copied())
+                            .chain(record.keys.iter().flatten().copied())
+                    }),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .aggregate_jobs
+                    .iter()
+                    .flat_map(|(job, aggregate_job)| [*job, aggregate_job.aggregate]),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .reaction_capabilities
+                    .iter()
+                    .flat_map(|(promise, (resolve, reject))| [*promise, *resolve, *reject]),
+            )
+            .chain(
+                self.realm
+                    .promise
+                    .async_resume_jobs
+                    .iter()
+                    .flat_map(|(job, resume)| {
+                        [Some(*job), Some(resume.promise), resume.generator]
+                            .into_iter()
                             .flatten()
-                            .copied()
-                    });
-                    [frame.env, frame.this]
-                        .into_iter()
-                        .chain(frame.context.callee())
-                        .chain(frame.original_arguments.iter().copied())
-                        .chain(frame.locals.iter().copied())
-                        .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
-                        .chain(frame.registers.iter().enumerate().filter_map(
-                            move |(register, value)| {
-                                register_mask
-                                    .is_none_or(|mask| {
-                                        register < u64::BITS as usize && mask & (1 << register) != 0
-                                    })
-                                    .then_some(*value)
-                            },
-                        ))
-                }));
+                    }),
+            )
+            .chain(self.realm.jobs.iter().flat_map(|job| {
+                std::iter::once(job.callback)
+                    .chain(std::iter::once(job.this))
+                    .chain(job.args.iter().copied())
+            }))
+            .chain(self.realm.template_objects.values().copied())
+            .chain(self.with_stack.iter().copied())
+            .chain(self.active_call_roots.iter().copied())
+            .chain(
+                self.wasm_gc_objects
+                    .values()
+                    .flat_map(|object| match object {
+                        super::wasm::WasmGcObject::Array { values, .. } => {
+                            values.iter().copied().chain(std::iter::once(Value::NULL))
+                        }
+                        super::wasm::WasmGcObject::Struct {
+                            values, descriptor, ..
+                        } => values.iter().copied().chain(std::iter::once(*descriptor)),
+                    }),
+            )
+            .chain(self.wasm_externref_bridge.values().copied())
+            .chain(
+                self.suspended
+                    .iter()
+                    .filter_map(|entry| entry.continuation.as_ref())
+                    .flat_map(Continuation::roots),
+            )
+            .chain(self.symbol_registry.values().copied())
+            .chain(self.well_known_symbols.values().copied())
+            .chain(
+                self.descriptors
+                    .values()
+                    .flat_map(|attributes| [attributes.getter, attributes.setter])
+                    .flatten(),
+            )
+            .chain(self.frames.iter().flat_map(|frame| {
+                // A missing map means the function uses a register form
+                // the liveness pass cannot represent; keep the safe
+                // conservative scan for that activation.
+                let register_mask = self.programs.get(frame.program).and_then(|program| {
+                    let function = program.functions.get(frame.function as usize)?;
+                    (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
+                        .then(|| {
+                            program
+                                .register_roots
+                                .get(function.register_root_offset as usize + frame.pc)
+                        })
+                        .flatten()
+                        .copied()
+                });
+                [frame.env, frame.this]
+                    .into_iter()
+                    .chain(frame.context.callee())
+                    .chain(frame.original_arguments.iter().copied())
+                    .chain(frame.locals.iter().copied())
+                    .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
+                    .chain(frame.registers.iter().enumerate().filter_map(
+                        move |(register, value)| {
+                            register_mask
+                                .is_none_or(|mask| {
+                                    register < u64::BITS as usize && mask & (1 << register) != 0
+                                })
+                                .then_some(*value)
+                        },
+                    ))
+            }));
         let shapes = &self.shapes;
         let finalization_jobs = self.heap.collect_with_shape_roots(roots, |shape, roots| {
             append_shape_roots(shapes, shape, roots)
@@ -505,37 +587,48 @@ impl<H: Host> Vm<H> {
         );
         self.descriptors
             .retain(|(object, _), _| self.heap.get(*object).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .records
             .retain(|promise, _| self.heap.get(*promise).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .thenable_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .finally_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .finally_continuation_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .finally_handler_callbacks
             .retain(|function, _| self.heap.get(*function).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .finally_continuation_callbacks
             .retain(|function, _| self.heap.get(*function).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .aggregates
             .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .aggregate_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .reaction_capabilities
             .retain(|promise, _| self.heap.get(*promise).is_some());
-        self.realm.promise
+        self.realm
+            .promise
             .async_resume_jobs
             .retain(|job, _| self.heap.get(*job).is_some());
         #[cfg(feature = "profile-aggregate")]
@@ -623,10 +716,7 @@ impl<H: Host> Vm<H> {
         Ok(Value::UNDEFINED)
     }
 
-    pub(crate) fn drain_host_jobs(
-        &mut self,
-        program: &ResidualProgram,
-    ) -> Result<Value, JsError> {
+    pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
         self.advance_static_module_jobs(program)?;
         self.advance_dynamic_import_jobs(program, true)?;
         self.drain_jobs(program)
@@ -638,7 +728,9 @@ impl<H: Host> Vm<H> {
         promise: Value,
     ) -> Result<(), JsError> {
         let mut index = 0;
-        while self.realm.promise
+        while self
+            .realm
+            .promise
             .records
             .get(&promise)
             .is_some_and(|record| record.state == PromiseState::Pending)

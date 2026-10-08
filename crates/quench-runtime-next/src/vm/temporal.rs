@@ -1075,7 +1075,10 @@ impl<H: Host> Vm<H> {
         duration: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self.realm.intrinsics.intl_duration_format_constructors
+        let constructor = self
+            .realm
+            .intrinsics
+            .intl_duration_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.DurationFormat intrinsic is not installed".into()))?;
