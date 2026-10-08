@@ -30,6 +30,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "strictEqual" (2) => crate::modules::assert_shared_vm::strict_equal,
         method "notStrictEqual" (2) => crate::modules::assert_shared_vm::not_strict_equal,
         method "deepStrictEqual" (2) => crate::modules::assert_shared_vm::deep_strict_equal,
+        method "notDeepStrictEqual" (2) => crate::modules::assert_shared_vm::not_deep_strict_equal,
         method "match" (2) => crate::modules::assert_shared_vm::match_string,
         method "fail" (1) => crate::modules::assert_shared_vm::fail,
         method "throws" (3) => crate::modules::assert_shared_vm::throws,

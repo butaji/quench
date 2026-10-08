@@ -11,6 +11,17 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     return error;
   };
   const typedArraySet = Object.getPrototypeOf(Uint8Array.prototype).set;
+  const maxBufferLength = Number.MAX_SAFE_INTEGER;
+  const maxStringLength = 536870888;
+  const invalidArgumentDescription = (value) => {
+    if (value === null || value === undefined) return ` Received ${value}`;
+    if (typeof value === "function") return ` Received function ${value.name}`;
+    if (typeof value === "object") {
+      return ` Received an instance of ${value.constructor?.name || "Object"}`;
+    }
+    if (typeof value === "string") return ` Received type string ('${value}')`;
+    return ` Received type ${typeof value} (${String(value)})`;
+  };
   const normalizeEncoding = (encoding) => {
     const normalized = canonicalEncoding(String(encoding));
     if (normalized === undefined) {
@@ -140,18 +151,53 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
 
     static concat(list, totalLength) {
       if (!Array.isArray(list)) {
-        throw codedTypeError('The "list" argument must be an instance of Array', "ERR_INVALID_ARG_TYPE");
+        throw codedTypeError(
+          'The "list" argument must be an instance of Array.' + invalidArgumentDescription(list),
+          "ERR_INVALID_ARG_TYPE",
+        );
       }
-      const length = totalLength === undefined
-        ? list.reduce((sum, item) => sum + item.byteLength, 0)
-        : Math.max(0, Math.trunc(Number(totalLength)) || 0);
+      if (list.length === 0) return new Buffer(0);
+      let byteLength = 0;
+      for (let index = 0; index < list.length; index++) {
+        const item = list[index];
+        if (!(item instanceof Uint8Array)) {
+          throw codedTypeError(
+            `The "list[${index}]" argument must be an instance of Buffer or Uint8Array.` +
+              invalidArgumentDescription(item),
+            "ERR_INVALID_ARG_TYPE",
+          );
+        }
+        byteLength += intrinsicByteLength(item);
+      }
+      let length = byteLength;
+      if (totalLength !== undefined) {
+        if (typeof totalLength !== "number") {
+          throw codedTypeError(
+            'The "length" argument must be of type number.' +
+              invalidArgumentDescription(totalLength),
+            "ERR_INVALID_ARG_TYPE",
+          );
+        }
+        if (!Number.isInteger(totalLength)) {
+          const error = new RangeError(
+            `The value of "length" is out of range. It must be an integer. Received ${totalLength}`,
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        if (totalLength < 0) {
+          const error = new RangeError(
+            `The value of "length" is out of range. It must be >= 0 && <= ${maxBufferLength}. Received ${totalLength}`,
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        length = totalLength;
+      }
       const result = new Buffer(length);
       let offset = 0;
       for (const item of list) {
-        if (!ArrayBuffer.isView(item) || !(item instanceof Uint8Array)) {
-          throw codedTypeError(`The "list[${list.indexOf(item)}]" argument must be an instance of Buffer or Uint8Array`, "ERR_INVALID_ARG_TYPE");
-        }
-        const count = Math.min(item.byteLength, result.length - offset);
+        const count = Math.min(intrinsicByteLength(item), result.length - offset);
         result.set(new Uint8Array(item.buffer, item.byteOffset, count), offset);
         offset += count;
         if (offset === result.length) break;
@@ -525,7 +571,15 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     Object.defineProperty(Buffer, name, { enumerable: true });
   }
 
-  return { Buffer, SlowBuffer: Buffer, isAscii, isUtf8 };
+  return {
+    Buffer,
+    SlowBuffer: Buffer,
+    isAscii,
+    isUtf8,
+    kMaxLength: maxBufferLength,
+    kStringMaxLength: maxStringLength,
+    constants: { MAX_LENGTH: maxBufferLength, MAX_STRING_LENGTH: maxStringLength },
+  };
 }"#
 );
 
@@ -544,7 +598,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "Buffer", buffer)?;
     let slow_buffer = get(context, constructor, "SlowBuffer")?;
     set(context, module, "SlowBuffer", slow_buffer)?;
-    for name in ["isAscii", "isUtf8"] {
+    for name in ["isAscii", "isUtf8", "kMaxLength", "kStringMaxLength", "constants"] {
         let value = get(context, constructor, name)?;
         set(context, module, name, value)?;
     }
