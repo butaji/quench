@@ -72,7 +72,7 @@ pub(crate) fn path_to_file_url(
         .map(|root| context.string_text(root))
         .transpose()?
         .flatten()
-        .ok_or_else(|| invalid_argument(context, "path"))?;
+        .ok_or_else(|| invalid_path_argument(context))?;
     let windows = windows_option(context, args)?;
     let href = if windows {
         windows_path_to_url(&path)
@@ -87,7 +87,7 @@ pub(crate) fn path_to_file_url(
         };
         url::Url::from_file_path(normalize_path(&absolute)).ok()
     }
-    .ok_or_else(|| invalid_argument(context, "path"))?
+    .ok_or_else(|| invalid_path_argument(context))?
     .to_string();
     let href = context.string_rooted(&href);
     let constructor = url_constructor(context)?;
@@ -100,9 +100,9 @@ pub(crate) fn file_url_to_path(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let Some(input) = args.first().copied() else {
-        return Err(invalid_argument(context, "url"));
+        return Err(invalid_url_argument(context));
     };
-    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_argument(context, "url"))?;
+    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_url_argument(context))?;
     let windows = windows_option(context, args)?;
     let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
     if parsed.scheme() != "file" {
@@ -119,7 +119,10 @@ pub(crate) fn file_url_to_path(
         return Err(coded_url_type_error(
             context,
             "ERR_INVALID_FILE_URL_HOST",
-            "File URL host must be \"localhost\" or empty on this platform",
+            &format!(
+                "File URL host must be \"localhost\" or empty on {}",
+                std::env::consts::OS
+            ),
         ));
     }
     if parsed.path().to_ascii_lowercase().contains("%2f")
@@ -128,23 +131,33 @@ pub(crate) fn file_url_to_path(
         return Err(coded_url_type_error(
             context,
             "ERR_INVALID_FILE_URL_PATH",
-            "File URL path must not include encoded path separators",
+            "File URL path must not include encoded / characters",
         ));
     }
-    let path = if windows && !cfg!(windows) {
-        windows_file_url_path(&parsed).ok_or_else(|| {
+    let path = if windows {
+        if cfg!(windows) {
+            parsed
+                .to_file_path()
+                .map_err(|_| invalid_url(context, &input))?
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            windows_file_url_path(&parsed).ok_or_else(|| {
+                coded_url_type_error(
+                    context,
+                    "ERR_INVALID_FILE_URL_PATH",
+                    "File URL path must be an absolute Windows path",
+                )
+            })?
+        }
+    } else {
+        percent_decode(parsed.path()).ok_or_else(|| {
             coded_url_type_error(
                 context,
                 "ERR_INVALID_FILE_URL_PATH",
-                "File URL path must be an absolute Windows path",
+                "File URL path contains invalid UTF-8",
             )
         })?
-    } else {
-        parsed
-            .to_file_path()
-            .map_err(|_| invalid_url(context, &input))?
-            .to_string_lossy()
-            .into_owned()
     };
     Ok(context.string_rooted(&path))
 }
@@ -316,11 +329,19 @@ fn url_argument_text(
     }
 }
 
-fn invalid_argument(context: &mut NativeContext<'_, NodeHost>, name: &str) -> RootedError {
+fn invalid_path_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
     coded_url_type_error(
         context,
         "ERR_INVALID_ARG_TYPE",
-        &format!("The \"{name}\" argument must be of type string or an instance of URL"),
+        "The \"path\" argument must be of type string",
+    )
+}
+
+fn invalid_url_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
+    coded_url_type_error(
+        context,
+        "ERR_INVALID_ARG_TYPE",
+        "The \"url\" argument must be of type string or an instance of URL",
     )
 }
 
