@@ -868,7 +868,9 @@ impl<H: Host> Vm<H> {
                 let source = self.heap.root_value(root).unwrap();
                 let iterator = self.call_value(p, method, source, &[])?;
                 if !self.is_object_like(iterator) {
-                    return Err(self.type_error(p, "iterator method did not return an object".into()));
+                    return Err(
+                        self.type_error(p, "iterator method did not return an object".into())
+                    );
                 }
                 return Ok(iterator);
             }
@@ -973,7 +975,10 @@ impl<H: Host> Vm<H> {
     fn protocol_iterator(&mut self, source: Value, next_method: Value) -> Result<Value, JsError> {
         let source_root = self.heap.root(source);
         let next_root = self.heap.root(next_method);
-        let prototypes = self.realm.intrinsics.iterator_prototypes
+        let prototypes = self
+            .realm
+            .intrinsics
+            .iterator_prototypes
             .get(&self.realm.globals)
             .copied();
         let prototype = prototypes
@@ -1006,7 +1011,10 @@ impl<H: Host> Vm<H> {
         helper: IteratorHelper,
     ) -> Result<Value, JsError> {
         let source = self.iterator_record(p, source)?;
-        let prototypes = self.realm.intrinsics.iterator_prototypes
+        let prototypes = self
+            .realm
+            .intrinsics
+            .iterator_prototypes
             .get(&self.realm.globals)
             .copied();
         let prototype = prototypes
@@ -2707,8 +2715,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let is_array_iterator =
-            matches!(self.heap.get(this), Some(Cell::Iterator {kind,..}) if kind.is_array_iterator());
+        let is_array_iterator = matches!(self.heap.get(this), Some(Cell::Iterator {kind,..}) if kind.is_array_iterator());
         if !is_array_iterator {
             return Err(self.type_error(
                 p,
@@ -2884,7 +2891,9 @@ impl<H: Host> Vm<H> {
                     }
                     let result = vm.call_value(p, method, this, args)?;
                     if !vm.is_object_like(result) {
-                        return Err(vm.type_error(p, "iterator next result is not an object".into()));
+                        return Err(
+                            vm.type_error(p, "iterator next result is not an object".into())
+                        );
                     }
                     return Ok(result);
                 }
@@ -2901,7 +2910,9 @@ impl<H: Host> Vm<H> {
                         next_method: Some(next_method),
                         ..
                     }) => *next_method,
-                    _ => return Err(vm.type_error(p, "iterator next method is not callable".into())),
+                    _ => {
+                        return Err(vm.type_error(p, "iterator next method is not callable".into()));
+                    }
                 };
                 return vm.call_value(p, next_method, source, &[]);
             }
@@ -2990,7 +3001,8 @@ impl<H: Host> Vm<H> {
                             let mut selected = None;
                             while offset < units.len() {
                                 let end = if units.get(offset + 1).is_some_and(|low| {
-                                    crate::unicode::decode_surrogate_pair(units[offset], *low).is_some()
+                                    crate::unicode::decode_surrogate_pair(units[offset], *low)
+                                        .is_some()
                                 }) {
                                     offset + 2
                                 } else {

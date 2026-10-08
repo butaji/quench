@@ -2934,7 +2934,6 @@ dependencies = [
 name = "quench-wasm"
 version = "0.1.0"
 dependencies = [
- "quench-runtime",
  "quench-runtime-next",
  "wasmparser",
  "wast",
@@ -2944,7 +2943,10 @@ dependencies = [
 name = "quench-wasm-test"
 version = "0.1.0"
 dependencies = [
+ "quench-stack",
  "quench-wasm",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "walkdir",
 ]

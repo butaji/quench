@@ -37,6 +37,7 @@ pub fn process_uptime_capability() -> Value {
 
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
+    shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
 }
 
@@ -52,43 +53,40 @@ pub(crate) struct CommonJsEntry {
     pub(crate) goal: EntryGoal,
 }
 
-/// One canonical process identity in the active VM. The legacy variant is
-/// transitional and disappears with the legacy runtime at task 27.
-pub enum ProcessModule {
-    Legacy(Value),
-    Shared(quench_runtime_next::RootId),
+/// Host-owned state whose values and lifecycle belong to the shared VM path.
+///
+/// Legacy `Value`s remain in `HostState` until their consumers are removed;
+/// shared `RootId`s and request state never pass through that representation.
+pub(crate) struct SharedNodeState {
+    pub(crate) async_hooks: crate::modules::async_hooks::SharedAsyncHooksState,
+    pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
+    pub(crate) module_cache: std::collections::HashMap<String, quench_runtime_next::RootId>,
+    pub(crate) process_module: Option<quench_runtime_next::RootId>,
+    pub(crate) assert_module: Option<quench_runtime_next::RootId>,
+    pub(crate) path_module: Option<quench_runtime_next::RootId>,
+    pub(crate) url_constructor: Option<quench_runtime_next::RootId>,
+    pub(crate) timer_handle_api: Option<crate::modules::timers::shared_vm::TimerHandleApi>,
+    pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
+    pub(crate) diagnostics: crate::modules::diagnostics_channel::SharedDiagnosticsState,
+    pub(crate) http: crate::modules::http::shared_vm::State,
+    pub(crate) tcp: crate::modules::net::shared_vm::Transport,
 }
 
-impl ProcessModule {
-    pub(crate) fn legacy(&self) -> Option<Value> {
-        match self {
-            Self::Legacy(value) => Some(value.clone()),
-            Self::Shared(_) => None,
-        }
-    }
-}
-
-/// The active engine owns one cache. The legacy projection is removed at cutover.
-pub enum ModuleCache {
-    Legacy(std::collections::HashMap<String, Value>),
-    Shared(std::collections::HashMap<String, quench_runtime_next::RootId>),
-}
-
-impl std::ops::Deref for ModuleCache {
-    type Target = std::collections::HashMap<String, Value>;
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Legacy(cache) => cache,
-            Self::Shared(_) => panic!("legacy cache access in shared VM"),
-        }
-    }
-}
-
-impl std::ops::DerefMut for ModuleCache {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match self {
-            Self::Legacy(cache) => cache,
-            Self::Shared(_) => panic!("legacy cache access in shared VM"),
+impl SharedNodeState {
+    fn new() -> Self {
+        Self {
+            async_hooks: crate::modules::async_hooks::SharedAsyncHooksState::default(),
+            scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
+            module_cache: std::collections::HashMap::new(),
+            process_module: None,
+            assert_module: None,
+            path_module: None,
+            url_constructor: None,
+            timer_handle_api: None,
+            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
+            diagnostics: crate::modules::diagnostics_channel::SharedDiagnosticsState::default(),
+            http: crate::modules::http::shared_vm::State::new(),
+            tcp: crate::modules::net::shared_vm::Transport::new(),
         }
     }
 }
@@ -102,7 +100,6 @@ pub struct HostState {
     pub exec_argv: Vec<String>,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
-    pub fetch: crate::modules::fetch_shared_vm::FetchState,
     pub http: crate::modules::http::HttpState,
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
@@ -116,7 +113,7 @@ pub struct HostState {
     /// Directory stack for the CJS loader: top is the requiring module's dir.
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
-    pub module_cache: ModuleCache,
+    pub module_cache: std::collections::HashMap<String, Value>,
     /// Module record handed to `__quench_cjs_wrap__` for the file
     /// currently being loaded by `require`.
     pub pending_module: Option<PendingModule>,
@@ -149,12 +146,7 @@ pub struct HostState {
     /// Canonical `require("console")` module and global console identity.
     pub console_module: Option<Value>,
     /// Canonical `require("process")` module and global process identity.
-    pub process_module: Option<ProcessModule>,
-    /// One retained shared-VM export for `assert` and its `node:` alias.
-    pub assert_module: Option<quench_runtime_next::RootId>,
-    /// Canonical retained shared-VM `path` namespace; `posix` and `win32`
-    /// projections are derived from its cross-linked properties.
-    pub path_module: Option<quench_runtime_next::RootId>,
+    pub process_module: Option<Value>,
     /// Canonical `require("module")` namespace for this realm.
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
@@ -213,7 +205,6 @@ impl NodeHost {
             exec_argv: Vec::new(),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
-            fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             http: crate::modules::http::HttpState::new(),
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
@@ -225,7 +216,7 @@ impl NodeHost {
             dispatching_events: HashSet::new(),
             output: None,
             dir_stack: Vec::new(),
-            module_cache: ModuleCache::Legacy(std::collections::HashMap::new()),
+            module_cache: std::collections::HashMap::new(),
             pending_module: None,
             module_stack: Vec::new(),
             pending_uncaught: None,
@@ -240,8 +231,6 @@ impl NodeHost {
             util_module: None,
             console_module: None,
             process_module: None,
-            assert_module: None,
-            path_module: None,
             module_api: None,
             module_extensions: None,
             string_decoder_aliases: std::collections::HashMap::new(),
@@ -261,6 +250,7 @@ impl NodeHost {
         };
         Self {
             state: Rc::new(RefCell::new(state)),
+            shared_state: Rc::new(RefCell::new(SharedNodeState::new())),
             commonjs_entry: None,
         }
     }
@@ -285,9 +275,14 @@ impl NodeHost {
     }
 
     /// Retain the Node invocation flags supplied by the fixture adapter.
-    pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Self {
-        self.state.borrow_mut().exec_argv = exec_argv;
-        self
+    pub fn with_exec_argv(self, exec_argv: Vec<String>) -> Result<Self, String> {
+        let mode = crate::modules::process::UnhandledRejectionMode::from_exec_argv(&exec_argv)?;
+        {
+            let mut state = self.state.borrow_mut();
+            state.exec_argv = exec_argv;
+            state.process.unhandled_rejection_mode = mode;
+        }
+        Ok(self)
     }
 
     pub fn with_output_sink(self, sink: OutputSink) -> Self {
@@ -297,6 +292,10 @@ impl NodeHost {
 
     pub fn state(&self) -> Rc<RefCell<HostState>> {
         self.state.clone()
+    }
+
+    pub(crate) fn shared_state(&self) -> Rc<RefCell<SharedNodeState>> {
+        self.shared_state.clone()
     }
 
     /// Seed the CJS loader with the main script's directory.

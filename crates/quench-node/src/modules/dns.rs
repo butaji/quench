@@ -1,5 +1,7 @@
 //! `dns` module — `lookup` returning the first address.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::net::ToSocketAddrs;
 use std::rc::Rc;

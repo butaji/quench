@@ -23,8 +23,8 @@ pub(crate) fn get_prototype_from_constructor(
     default: impl FnOnce(crate::ops::RealmId) -> Value,
 ) -> Value {
     let constructor = peel_construct_value(constructor);
-    let proto = crate::execute::get_property_result(&constructor, "prototype")
-        .unwrap_or(Value::Undefined);
+    let proto =
+        crate::execute::get_property_result(&constructor, "prototype").unwrap_or(Value::Undefined);
     if crate::value::is_object(&proto) {
         return proto;
     }
@@ -38,18 +38,21 @@ pub(crate) fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
             match value {
                 Value::Function(function) => return Some(function_realm_id(function)),
                 Value::BoundFunction(bound) => {
-                    if let Some(realm) = bound
-                        .properties
-                        .borrow()
-                        .iter()
-                        .rev()
-                        .find_map(|(key, value)| {
-                            (key == "\0realm").then(|| match value {
-                                Value::HostCapability(token) => Some(token.realm()),
-                                Value::Number(number) => Some(crate::ops::RealmId::new(*number as u64)),
-                                _ => None,
-                            })?
-                        })
+                    if let Some(realm) =
+                        bound
+                            .properties
+                            .borrow()
+                            .iter()
+                            .rev()
+                            .find_map(|(key, value)| {
+                                (key == "\0realm").then(|| match value {
+                                    Value::HostCapability(token) => Some(token.realm()),
+                                    Value::Number(number) => {
+                                        Some(crate::ops::RealmId::new(*number as u64))
+                                    }
+                                    _ => None,
+                                })?
+                            })
                     {
                         return Some(realm);
                     }
@@ -67,9 +70,7 @@ pub(crate) fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     value_realm(constructor).unwrap_or(crate::ops::RealmId::ROOT)
 }
 
-pub(crate) fn function_realm_id(
-    function: &crate::value::FunctionValue,
-) -> crate::ops::RealmId {
+pub(crate) fn function_realm_id(function: &crate::value::FunctionValue) -> crate::ops::RealmId {
     fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
         let value = peel_construct_value(value);
         match &value {
@@ -147,7 +148,10 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
         if let Value::HostCapability(capability) = &bound.receiver {
             if let Value::Builtin(builtin) = target {
                 if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
-                    return Some(crate::vm::realm_intrinsic_for(capability.realm(), prototype));
+                    return Some(crate::vm::realm_intrinsic_for(
+                        capability.realm(),
+                        prototype,
+                    ));
                 }
             }
         }
@@ -214,19 +218,22 @@ mod realm_stack_tests {
         let receiver_realm = crate::ops::RealmId::new(7);
         let target_realm = crate::ops::RealmId::new(9);
         let realm_value = |realm: crate::ops::RealmId| {
-            Value::BoundFunction(Rc::new(BoundFunctionValue {
+            Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
                 realm: crate::ops::RealmId::ROOT,
                 target: Value::Undefined,
                 receiver: Value::Undefined,
                 arguments: Vec::new(),
-                properties: RefCell::new(vec![("\0realm".into(), Value::Number(realm.get() as f64))]),
+                properties: RefCell::new(vec![(
+                    "\0realm".into(),
+                    Value::Number(realm.get() as f64),
+                )]),
             }))
         };
         let mut value = realm_value(receiver_realm);
         let mut owners = Vec::new();
         for _ in 0..REALM_STRESS_DEPTH {
             owners.push(value.clone());
-            value = Value::BoundFunction(Rc::new(BoundFunctionValue {
+            value = Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
                 realm: crate::ops::RealmId::ROOT,
                 target: realm_value(target_realm),
                 receiver: value,
@@ -247,7 +254,7 @@ mod realm_stack_tests {
         assert_eq!(constructor_realm(&value), receiver_realm);
         drop(value);
         while owners.pop().is_some() {}
-        let fallback = Value::BoundFunction(Rc::new(BoundFunctionValue {
+        let fallback = Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
             realm: crate::ops::RealmId::ROOT,
             target: realm_value(target_realm),
             receiver: Value::Undefined,
@@ -255,6 +262,9 @@ mod realm_stack_tests {
             properties: RefCell::new(Vec::new()),
         }));
         assert_eq!(constructor_realm(&fallback), target_realm);
-        assert_eq!(constructor_realm(&Value::Undefined), crate::ops::RealmId::ROOT);
+        assert_eq!(
+            constructor_realm(&Value::Undefined),
+            crate::ops::RealmId::ROOT
+        );
     }
 }

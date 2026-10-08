@@ -588,6 +588,17 @@ pub fn method_emit(
         }
     }
     for listener in &snapshot {
+        let current = emitter.borrow().listeners_for_scope(&event, process_scope);
+        let present = current
+            .iter()
+            .any(|current| execute::same_value(&current.callback, &listener.callback));
+        eprintln!(
+            "EMIT-ONCE event={event} scope={process_scope} once={} present={} active={} callback={:?}",
+            listener.once,
+            present,
+            current.len(),
+            listener.callback,
+        );
         if listener.once
             && !emitter
                 .borrow()

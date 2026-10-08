@@ -1,5 +1,5 @@
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -59,25 +59,18 @@ impl Default for Transport {
     }
 }
 
-pub(crate) fn listen(
-    net: &mut crate::modules::net::NetState,
-    address: SocketAddr,
-) -> Result<u64, String> {
+pub(crate) fn listen(transport: &mut Transport, address: SocketAddr) -> Result<u64, String> {
     let listener = TcpListener::bind(address).map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
-    let id = net.shared_transport.id()?;
-    net.shared_transport.listeners.insert(id, listener);
+    let id = transport.id()?;
+    transport.listeners.insert(id, listener);
     Ok(id)
 }
 
-pub(crate) fn connect(
-    net: &mut crate::modules::net::NetState,
-    host: String,
-    port: u16,
-) -> Result<u64, String> {
-    let id = net.shared_transport.id()?;
+pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
+    let id = transport.id()?;
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
@@ -91,24 +84,19 @@ pub(crate) fn connect(
             let _ = sender.send(result);
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
-    net.shared_transport.connecting.insert(id, receiver);
+    transport.connecting.insert(id, receiver);
     Ok(id)
 }
 
-pub(crate) fn address(net: &crate::modules::net::NetState, listener: u64) -> Option<SocketAddr> {
-    net.shared_transport
+pub(crate) fn address(transport: &Transport, listener: u64) -> Option<SocketAddr> {
+    transport
         .listeners
         .get(&listener)
         .and_then(|listener| listener.local_addr().ok())
 }
 
-pub(crate) fn write(
-    net: &mut crate::modules::net::NetState,
-    socket: u64,
-    bytes: &[u8],
-) -> Result<(), String> {
-    let stream = net
-        .shared_transport
+pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Result<(), String> {
+    let stream = transport
         .sockets
         .get_mut(&socket)
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
@@ -116,32 +104,32 @@ pub(crate) fn write(
     Ok(())
 }
 
-pub(crate) fn close_listener(net: &mut crate::modules::net::NetState, listener: u64) {
-    net.shared_transport.listeners.remove(&listener);
+pub(crate) fn close_listener(transport: &mut Transport, listener: u64) {
+    transport.listeners.remove(&listener);
 }
 
-pub(crate) fn close_socket(net: &mut crate::modules::net::NetState, socket: u64) {
-    net.shared_transport.connecting.remove(&socket);
-    net.shared_transport.sockets.remove(&socket);
+pub(crate) fn close_socket(transport: &mut Transport, socket: u64) {
+    transport.connecting.remove(&socket);
+    transport.sockets.remove(&socket);
 }
 
-pub(crate) fn poll(net: &mut crate::modules::net::NetState) -> Vec<TransportEvent> {
-    let mut events = poll_connects(&mut net.shared_transport);
-    events.extend(poll_accepts(&mut net.shared_transport));
-    events.extend(poll_sockets(&mut net.shared_transport));
+pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
+    let mut events = poll_connects(transport);
+    events.extend(poll_accepts(transport));
+    events.extend(poll_sockets(transport));
     events
 }
 
-pub(crate) fn has_work(net: &crate::modules::net::NetState) -> bool {
-    !net.shared_transport.listeners.is_empty()
-        || !net.shared_transport.sockets.is_empty()
-        || !net.shared_transport.connecting.is_empty()
+pub(crate) fn has_work(transport: &Transport) -> bool {
+    !transport.listeners.is_empty()
+        || !transport.sockets.is_empty()
+        || !transport.connecting.is_empty()
 }
 
-pub(crate) fn cleanup(net: &mut crate::modules::net::NetState) {
-    net.shared_transport.listeners.clear();
-    net.shared_transport.sockets.clear();
-    net.shared_transport.connecting.clear();
+pub(crate) fn cleanup(transport: &mut Transport) {
+    transport.listeners.clear();
+    transport.sockets.clear();
+    transport.connecting.clear();
 }
 
 pub(crate) const fn poll_interval() -> std::time::Duration {
@@ -157,7 +145,9 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
         };
         let result = match receiver.try_recv() {
             Ok(result) => result,
-            Err(TryRecvError::Empty) => continue,
+            Err(TryRecvError::Empty) => {
+                continue;
+            }
             Err(TryRecvError::Disconnected) => Err("TCP connect worker stopped".to_owned()),
         };
         transport.connecting.remove(&id);

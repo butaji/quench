@@ -83,39 +83,6 @@ fn view_bytes(
         })
 }
 
-fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {
-    let mut open = std::fs::OpenOptions::new();
-    match flag.unwrap_or("w") {
-        "w" | "w+" => {
-            open.write(true).create(true).truncate(true);
-        }
-        "a" | "a+" => {
-            open.append(true).create(true);
-        }
-        "wx" | "ax" => {
-            open.write(true).create_new(true);
-        }
-        "r" => {
-            open.read(true);
-        }
-        other => {
-            return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
-                "The argument 'flag' is invalid. Received {other:?}"
-            )));
-        }
-    }
-    open.open(Path::new(path))
-        .map_err(|e| super::fs_error::fs_error(syscall, Some(path), &e))
-}
-
-pub(crate) fn apply_mode(path: &str, mode: Option<u32>) {
-    #[cfg(unix)]
-    if let Some(mode) = mode {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
-    }
-}
-
 fn observe_read_fstat(state: &Rc<RefCell<HostState>>, path: &str) -> Result<(), VmError> {
     let binding = state
         .borrow()
@@ -363,7 +330,7 @@ pub fn write_file_sync(
         return Err(crate::modules::process::permission_error("fs.write", &path));
     }
     let options = parse_options(args.get(2))?;
-    let result = write_impl(&path, args.get(1), &options, "open");
+    let result = write_impl(&path, args.get(1), &options);
     if result.is_ok() && options.flush {
         let fd = super::fs::open_sync(
             state,
@@ -381,25 +348,27 @@ pub fn write_file_sync(
     result
 }
 
-fn write_impl(
-    path: &str,
-    data: Option<&Value>,
-    options: &FsOptions,
-    syscall: &str,
-) -> Result<Value, VmError> {
+fn write_impl(path: &str, data: Option<&Value>, options: &FsOptions) -> Result<Value, VmError> {
     let bytes = string_data(
         data.unwrap_or(&Value::Undefined),
         options.encoding.as_deref(),
     )?;
-    use std::io::Write;
-    let mut file = write_open(path, options.flag.as_deref(), syscall)?;
-    file.write_all(&bytes)
-        .map_err(|e| super::fs_error::fs_error("write", Some(path), &e))?;
-    if options.flush {
-        file.sync_all()
-            .map_err(|e| super::fs_error::fs_error("fsync", Some(path), &e))?;
+    if !crate::modules::fs::ops::valid_write_flag(options.flag.as_deref()) {
+        return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
+            "The argument 'flag' is invalid. Received {:?}",
+            options.flag.as_deref().unwrap_or("w")
+        )));
     }
-    apply_mode(path, options.mode);
+    crate::modules::fs::ops::write_file(
+        path,
+        &bytes,
+        crate::modules::fs::ops::WriteOptions {
+            flag: options.flag.clone(),
+            mode: options.mode,
+            flush: options.flush,
+        },
+    )
+    .map_err(|error| super::fs_error::operation_error(&error))?;
     Ok(Value::Undefined)
 }
 
@@ -441,7 +410,7 @@ pub fn append_file_sync(
     if options.flag.is_none() {
         options.flag = Some("a".to_string());
     }
-    let result = write_impl(&path, args.get(1), &options, "open");
+    let result = write_impl(&path, args.get(1), &options);
     if result.is_ok() && options.flush {
         // Open a tracked descriptor solely for the observable fsyncSync call;
         // the write itself was flushed above on its owning Rust handle.
@@ -700,31 +669,15 @@ pub fn mkdir_sync(
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
     let options = parse_mkdir_options(args.get(1))?;
-    let first_created = options.recursive.then(|| first_missing_path(&path));
-    let result = if options.recursive {
-        std::fs::create_dir_all(Path::new(&path))
-    } else {
-        std::fs::create_dir(Path::new(&path))
-    };
-    result.map_err(|e| super::fs_error::fs_error("mkdir", Some(&path), &e))?;
-    apply_mode(&path, options.mode);
-    Ok(first_created
-        .flatten()
-        .map_or(Value::Undefined, Value::String))
-}
-
-fn first_missing_path(path: &str) -> Option<String> {
-    let mut candidate = PathBuf::from(path);
-    if candidate.exists() {
-        return None;
-    }
-    while candidate
-        .parent()
-        .is_some_and(|parent| !parent.exists() && parent != Path::new(""))
-    {
-        candidate = candidate.parent()?.to_path_buf();
-    }
-    Some(candidate.to_string_lossy().into_owned())
+    let first_created = crate::modules::fs::ops::mkdir(
+        &path,
+        crate::modules::fs::ops::MkdirOptions {
+            mode: options.mode,
+            recursive: options.recursive,
+        },
+    )
+    .map_err(|error| super::fs_error::operation_error(&error))?;
+    Ok(first_created.map_or(Value::Undefined, Value::String))
 }
 
 pub fn unlink_sync(
@@ -755,35 +708,15 @@ pub fn rm_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let (path, options) = split(args)?;
-    let target = Path::new(&path);
-    if std::fs::symlink_metadata(target).is_err() {
-        if options.force {
-            return Ok(Value::Undefined);
-        }
-        return Err(super::fs_error::fs_error(
-            "lstat",
-            Some(&path),
-            &std::io::Error::from_raw_os_error(2),
-        ));
-    }
-    // Node's `rm` family never removes a directory unless `recursive` is
-    // explicitly true, even when the directory is empty.  Keep that policy
-    // as a semantic fact instead of relying on the platform's `rmdir`
-    // behavior (which would incorrectly succeed for empty directories).
-    let result = if target.is_dir() && !target.is_symlink() {
-        if options.recursive {
-            std::fs::remove_dir_all(target)
-        } else {
-            Err(std::io::Error::from_raw_os_error(21))
-        }
-    } else {
-        std::fs::remove_file(target)
-    };
-    match result {
-        Ok(()) => Ok(Value::Undefined),
-        Err(e) if options.force && e.kind() == std::io::ErrorKind::NotFound => Ok(Value::Undefined),
-        Err(e) => Err(super::fs_error::fs_error("rm", Some(&path), &e)),
-    }
+    crate::modules::fs::ops::rm(
+        &path,
+        crate::modules::fs::ops::RmOptions {
+            recursive: options.recursive,
+            force: options.force,
+        },
+    )
+    .map_err(|error| super::fs_error::operation_error(&error))?;
+    Ok(Value::Undefined)
 }
 
 pub fn rename_sync(

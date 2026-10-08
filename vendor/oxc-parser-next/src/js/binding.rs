@@ -20,7 +20,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
     pub(super) fn parse_binding_pattern_with_type_annotation(
         &mut self,
-    ) -> (BindingPattern<'a>, Option<ArenaBox<'a, TSTypeAnnotation<'a>>>) {
+    ) -> (
+        BindingPattern<'a>,
+        Option<ArenaBox<'a, TSTypeAnnotation<'a>>>,
+    ) {
         let pattern = self.parse_binding_pattern_kind();
         let type_annotation = self.parse_ts_type_annotation();
         (pattern, type_annotation)
@@ -117,7 +120,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         //                    ^^^^ A rest element cannot have an initializer
         let argument = self.context_add(Context::In, |p| p.parse_initializer(init_start, pattern));
         if let BindingPattern::AssignmentPattern(pat) = &argument {
-            self.error(diagnostics::a_rest_element_cannot_have_an_initializer(pat.span));
+            self.error(diagnostics::a_rest_element_cannot_have_an_initializer(
+                pat.span,
+            ));
         }
 
         BindingRestElement::boxed(self.end_span(start), argument, self)
@@ -146,7 +151,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         //                 ^^^^^^ A rest parameter cannot have an initializer
         let argument = self.context_add(Context::In, |p| p.parse_initializer(init_start, pattern));
         if let BindingPattern::AssignmentPattern(pat) = &argument {
-            self.error(diagnostics::a_rest_parameter_cannot_have_an_initializer(pat.span));
+            self.error(diagnostics::a_rest_parameter_cannot_have_an_initializer(
+                pat.span,
+            ));
         }
 
         BindingRestElement::new(self.end_span(start), argument, self)

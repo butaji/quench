@@ -1,5 +1,21 @@
 //! Polyfill: `globals-extra`
 
+const WEB_API_START: &str = "/* quench:web-api:start */";
+const WEB_API_END: &str = "/* quench:web-api:end */";
+
+/// The Web API constructors installed by `globals-extra`, as a projection of
+/// the same checked source used by the legacy installer.
+pub fn web_api_source() -> &'static str {
+    let source = JS
+        .split_once(WEB_API_START)
+        .expect("globals-extra Web API source start marker")
+        .1;
+    source
+        .split_once(WEB_API_END)
+        .expect("globals-extra Web API source end marker")
+        .0
+}
+
 pub const JS: &str = quench_js_check::checked_js!(r#"const __nodeDomExceptionCodes = {
   IndexSizeError: 1,
   HierarchyRequestError: 3,
@@ -160,6 +176,7 @@ if (!globalThis.navigator) {
   });
   globalThis.navigator = Object.freeze(navigator);
 }
+/* quench:web-api:start */
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
   if (typeof globalThis.ReadableStream !== "function") {
@@ -361,22 +378,6 @@ if (typeof globalThis.Blob !== "function" ||
     value: Blob
   });
 }
-if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "function") {
-  class File extends globalThis.Blob {
-    constructor(parts = [], name = "", options = {}) {
-      super(parts, options);
-      this.name = String(name);
-      const modified = options && options.lastModified;
-      this.lastModified = modified === undefined ? Date.now() : Number(modified);
-    }
-  }
-  Object.defineProperty(globalThis, "File", {
-    configurable: true,
-    enumerable: false,
-    writable: true,
-    value: File
-  });
-}
 // Native Blob methods reject an invalid receiver with an empty reason in some
 // embedded builds. Normalize that edge at the host boundary to Node's
 // observable ERR_INVALID_THIS contract while retaining the native semantics
@@ -523,6 +524,23 @@ if (typeof globalThis.Response !== "function") {
   }
   Object.defineProperty(globalThis, "Response", {
     configurable: true, enumerable: false, writable: true, value: Response,
+  });
+}
+/* quench:web-api:end */
+if (typeof globalThis.File !== "function" && typeof globalThis.Blob === "function") {
+  class File extends globalThis.Blob {
+    constructor(parts = [], name = "", options = {}) {
+      super(parts, options);
+      this.name = String(name);
+      const modified = options && options.lastModified;
+      this.lastModified = modified === undefined ? Date.now() : Number(modified);
+    }
+  }
+  Object.defineProperty(globalThis, "File", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: File
   });
 }
 if (typeof globalThis.fetch === "function" && !globalThis.fetch.__quenchBlobFetch) {

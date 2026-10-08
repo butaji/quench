@@ -1,7 +1,7 @@
 //! Shared-VM StringDecoder facade over the Node-owned byte decoder.
 
 use crate::host::NodeHost;
-use rqj::{NativeContext, RootId, RootedError};
+use quench_runtime_next::{NativeContext, RootId, RootedError};
 
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(decodeChunk, canonicalEncoding, Buffer, maxStringBytes) => {

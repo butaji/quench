@@ -170,24 +170,238 @@ const __quenchReadableReader = (stream) => ({
     stream.locked = false;
   }
 });
+const __quenchWritablePromiseRecord = (status, reason) => {
+  if (status === "resolved") {
+    return { promise: Promise.resolve(), status };
+  }
+  if (status === "rejected") {
+    const promise = Promise.reject(reason);
+    promise.catch(() => undefined);
+    return { promise, status };
+  }
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  promise.catch(() => undefined);
+  return { promise, reject, resolve, status: "pending" };
+};
+const __quenchWritableDefaultSize = () => 1;
+const __quenchWritableDesiredSize = (stream) => {
+  const state = stream[__quenchWebStreamsState];
+  if (state.phase === "errored") return null;
+  if (state.phase === "closed") return 0;
+  return state.highWaterMark - state.queue.totalSize;
+};
+const __quenchWritableReady = (stream, writer) => {
+  if (writer.ready) return writer.ready.promise;
+  const state = stream[__quenchWebStreamsState];
+  if (writer.released) {
+    writer.ready = __quenchWritablePromiseRecord(
+      "rejected",
+      writer.releasedError,
+    );
+  } else if (state.phase === "errored") {
+    writer.ready = __quenchWritablePromiseRecord(
+      "rejected",
+      state.storedError,
+    );
+  } else if (state.phase === "closed" || state.phase === "closing") {
+    writer.ready = __quenchWritablePromiseRecord("resolved");
+  } else if (__quenchWritableDesiredSize(stream) <= 0) {
+    writer.ready = __quenchWritablePromiseRecord("pending");
+  } else {
+    writer.ready = __quenchWritablePromiseRecord("resolved");
+  }
+  return writer.ready.promise;
+};
+const __quenchWritableUpdateReady = (stream) => {
+  const state = stream[__quenchWebStreamsState];
+  const writer = state.writer;
+  if (!writer || writer.released) return;
+  if (state.phase === "errored") {
+    const ready = writer.ready;
+    if (ready?.status === "pending") {
+      ready.status = "rejected";
+      ready.reject(state.storedError);
+    } else {
+      writer.ready = undefined;
+    }
+    return;
+  }
+  if (state.phase === "closed" || state.phase === "closing") {
+    const ready = writer.ready;
+    if (ready?.status === "pending") {
+      ready.status = "resolved";
+      ready.resolve();
+    }
+    return;
+  }
+  if (__quenchWritableDesiredSize(stream) <= 0) {
+    if (writer.ready?.status === "resolved") writer.ready = undefined;
+    return;
+  }
+  const ready = writer.ready;
+  if (ready?.status === "pending") {
+    ready.status = "resolved";
+    ready.resolve();
+  }
+};
 const __quenchWritableError = (stream, error) => {
   const state = stream[__quenchWebStreamsState];
-  if (state.state !== "writable" && state.state !== "closing") return;
-  state.state = "errored";
+  if (state.phase !== "writable" && state.phase !== "closing") return;
+  state.phase = "errored";
   state.storedError = error;
   stream._rejectClosed(error);
+  __quenchWritableUpdateReady(stream);
   while (stream._finishWaiters.length) stream._finishWaiters.shift()(error);
+  __quenchWritablePump(stream);
 };
-const __quenchWritableInvoke = (stream, algorithm) => {
-  try {
-    return Promise.resolve(algorithm()).catch((error) => {
-      __quenchWritableError(stream, error);
-      throw error;
-    });
-  } catch (error) {
-    __quenchWritableError(stream, error);
-    return Promise.reject(error);
+const __quenchWritableEnqueue = (stream, request) => {
+  const queue = stream[__quenchWebStreamsState].queue;
+  queue.items.push(request);
+  if (request.kind === "write") queue.totalSize += request.size;
+};
+const __quenchWritableDequeue = (stream) => {
+  const queue = stream[__quenchWebStreamsState].queue;
+  const request = queue.items.shift();
+  if (request?.kind === "write") {
+    queue.totalSize = Math.max(0, queue.totalSize - request.size);
+    __quenchWritableUpdateReady(stream);
   }
+  return request;
+};
+const __quenchWritableExecute = (stream, request) => {
+  const state = stream[__quenchWebStreamsState];
+  const { algorithms, sink, controller } = state;
+  if (request.kind === "write") {
+    return algorithms.write?.call(sink, request.value, controller);
+  }
+  if (request.kind === "close") {
+    return algorithms.close?.call(sink, controller);
+  }
+  return algorithms.abort?.call(sink, request.reason, controller);
+};
+const __quenchWritablePump = (stream) => {
+  const state = stream[__quenchWebStreamsState];
+  if (!state.started || state.processing) return;
+  let request;
+  while ((request = state.queue.items[0])) {
+    if (request.kind !== "abort" && state.phase === "errored") {
+      __quenchWritableDequeue(stream);
+      request.reject(state.storedError);
+      continue;
+    }
+    state.processing = true;
+    const finish = (result, error, failed) => {
+      if (failed) {
+        if (request.kind !== "abort") __quenchWritableError(stream, error);
+        request.reject(error);
+      } else if (request.kind !== "abort" && state.phase === "errored") {
+        request.reject(state.storedError);
+      } else if (request.kind === "close" && state.phase !== "closing") {
+        request.reject(state.storedError);
+      } else {
+        if (request.kind === "close") {
+          state.phase = "closed";
+          stream._resolveClosed();
+          __quenchWritableUpdateReady(stream);
+          while (stream._finishWaiters.length) stream._finishWaiters.shift()();
+        }
+        request.resolve(result);
+      }
+      __quenchWritableDequeue(stream);
+      state.processing = false;
+      __quenchWritablePump(stream);
+    };
+    Promise.resolve()
+      .then(() => __quenchWritableExecute(stream, request))
+      .then(
+        (result) => finish(result, undefined, false),
+        (error) => finish(undefined, error, true),
+      )
+      .catch((error) => {
+        if (state.processing && state.queue.items[0] === request) {
+          __quenchWritableError(stream, error);
+          request.reject(error);
+          __quenchWritableDequeue(stream);
+          state.processing = false;
+        }
+        __quenchWritablePump(stream);
+      });
+    return;
+  }
+};
+const __quenchWritableRequest = (kind, fields = {}) => {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { ...fields, kind, promise, reject, resolve };
+};
+const __quenchWritableRejected = (error) => {
+  const promise = Promise.reject(error);
+  promise.catch(() => undefined);
+  return promise;
+};
+const __quenchWritableReleasedError = () =>
+  Object.assign(new TypeError("Writer is not bound to a WritableStream"), {
+    code: "ERR_INVALID_STATE",
+  });
+const __quenchWritableInvalidState = (message) =>
+  Object.assign(new TypeError(message), { code: "ERR_INVALID_STATE" });
+const __quenchWritableOptions = (sink, strategy) => {
+  if (sink === null || (typeof sink !== "object" && typeof sink !== "function")) {
+    throw Object.assign(new TypeError("The sink argument must be an object"), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if (
+    strategy !== null &&
+    typeof strategy !== "object" &&
+    typeof strategy !== "function"
+  ) {
+    throw Object.assign(new TypeError("The strategy argument must be an object"), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  if (sink.type !== undefined) {
+    throw Object.assign(new RangeError("The writable stream type is invalid"), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  }
+  const sizeAlgorithm = strategy?.size;
+  if (sizeAlgorithm !== undefined && typeof sizeAlgorithm !== "function") {
+    throw Object.assign(new TypeError("The strategy size must be a function"), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
+  }
+  const highWaterMarkValue = strategy?.highWaterMark;
+  const highWaterMark = highWaterMarkValue === undefined
+    ? 1
+    : +highWaterMarkValue;
+  if (Number.isNaN(highWaterMark) || highWaterMark < 0) {
+    throw Object.assign(new RangeError("The highWaterMark is invalid"), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  }
+  return {
+    highWaterMark,
+    sizeAlgorithm: sizeAlgorithm || __quenchWritableDefaultSize,
+  };
+};
+const __quenchWritableChunkSize = (state, value) => {
+  const size = +state.sizeAlgorithm.call(undefined, value);
+  if (Number.isNaN(size) || size < 0 || size === Infinity) {
+    throw Object.assign(new RangeError("The writable chunk size is invalid"), {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
+  }
+  return size;
 };
 class __quenchReadableStream {
   constructor(source = {}, options = {}) {
@@ -254,6 +468,7 @@ class __quenchReadableStream {
     if (this.locked) {
       throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
     }
+    const state = this[__quenchWebStreamsState];
     this.locked = true;
     return __quenchReadableReader(this);
   }
@@ -345,22 +560,51 @@ class __quenchReadableStream {
   }
 }
 class __quenchWritableStream {
-  constructor(sink = {}) {
-    this._sink = sink;
-    this.locked = false;
-    const state = { state: "writable" };
+  constructor(sink = {}, strategy = {}) {
+    const { highWaterMark, sizeAlgorithm } =
+      __quenchWritableOptions(sink, strategy);
+    const underlyingSink = sink;
+    const start = underlyingSink.start;
+    const write = underlyingSink.write;
+    const close = underlyingSink.close;
+    const abort = underlyingSink.abort;
+    const state = {
+      phase: "writable",
+      queue: { items: [], totalSize: 0 },
+      highWaterMark,
+      sizeAlgorithm,
+      started: false,
+      processing: false,
+      writer: undefined,
+      abortPromise: undefined,
+      abortController: new AbortController(),
+      sink: underlyingSink,
+      algorithms: {
+        start: typeof start === "function" ? start : undefined,
+        write: typeof write === "function" ? write : undefined,
+        close: typeof close === "function" ? close : undefined,
+        abort: typeof abort === "function" ? abort : undefined,
+      },
+    };
     this[__quenchWebStreamsState] = state;
+    Object.defineProperty(this, "locked", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return state.writer !== undefined;
+      }
+    });
     Object.defineProperties(this, {
       _closed: {
         configurable: true,
         get() {
-          return state.state === "closed";
+          return state.phase === "closed";
         }
       },
       _error: {
         configurable: true,
         get() {
-          return state.state === "errored" ? state.storedError : undefined;
+          return state.phase === "errored" ? state.storedError : undefined;
         }
       }
     });
@@ -370,58 +614,140 @@ class __quenchWritableStream {
       this._rejectClosed = reject;
     });
     this._closedPromise.catch(() => undefined);
+    const stream = this;
+    state.controller = {
+      get signal() {
+        return state.abortController.signal;
+      },
+      error(error) {
+        __quenchWritableError(stream, error);
+      },
+    };
+    let startResult;
+    try {
+      startResult = state.algorithms.start
+        ? state.algorithms.start.call(underlyingSink, state.controller)
+        : undefined;
+    } catch (error) {
+      startResult = Promise.reject(error);
+    }
+    Promise.resolve(startResult).then(
+      () => {
+        state.started = true;
+        __quenchWritablePump(stream);
+      },
+      (error) => {
+        state.started = true;
+        __quenchWritableError(stream, error);
+        __quenchWritablePump(stream);
+      },
+    ).catch((error) => {
+      __quenchWritableError(stream, error);
+    });
   }
   [__quenchWebStreamControllerError](error) {
     __quenchWritableError(this, error);
   }
   getWriter() {
-    if (this.locked) {
-      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
+    const state = this[__quenchWebStreamsState];
+    if (state.writer !== undefined) {
+      throw Object.assign(new TypeError("WritableStream is locked"), {
+        code: "ERR_INVALID_STATE",
+      });
     }
-    this.locked = true;
-    const sink = this._sink;
     const stream = this;
+    const writer = { ready: undefined, released: false, releasedError: undefined };
+    state.writer = writer;
     return {
       get closed() {
-        return stream._closedPromise;
+        return writer.released
+          ? (writer.releasedClosed ||= __quenchWritableRejected(writer.releasedError))
+          : stream._closedPromise;
       },
-      write: (value) => {
-        const state = stream[__quenchWebStreamsState];
-        if (state.state === "errored") return Promise.reject(state.storedError);
-        if (state.state !== "writable") {
-          return Promise.reject(new TypeError("The stream is not writable"));
-        }
-        return __quenchWritableInvoke(stream, () =>
-          typeof sink.write === "function" ? sink.write(value) : undefined
-        );
+      get ready() {
+        return __quenchWritableReady(stream, writer);
       },
-      close: () => {
-        const state = stream[__quenchWebStreamsState];
-        if (state.state === "errored") return Promise.reject(state.storedError);
-        if (state.state !== "writable") {
-          return Promise.reject(new TypeError("The stream is not writable"));
-        }
-        state.state = "closing";
-        return __quenchWritableInvoke(stream, async () => {
-          if (typeof sink.close === "function") await sink.close();
-          if (state.state === "errored") throw state.storedError;
-          state.state = "closed";
-          stream._resolveClosed();
-          while (stream._finishWaiters.length) stream._finishWaiters.shift()();
-        });
+      get desiredSize() {
+        if (writer.released) throw writer.releasedError;
+        return __quenchWritableDesiredSize(stream);
       },
-      abort: (error) => {
-        const state = stream[__quenchWebStreamsState];
-        if (state.state === "closed" || state.state === "errored") {
-          return Promise.resolve();
+      write(value) {
+        if (writer.released) {
+          return __quenchWritableRejected(writer.releasedError);
         }
-        __quenchWritableError(stream, error);
-        return __quenchWritableInvoke(stream, () =>
-          typeof sink.abort === "function" ? sink.abort(error) : undefined
-        );
+        if (state.phase === "errored") {
+          return __quenchWritableRejected(state.storedError);
+        }
+        if (state.phase !== "writable") {
+          return __quenchWritableRejected(
+            __quenchWritableInvalidState("The stream is not writable"),
+          );
+        }
+        let size;
+        try {
+          size = __quenchWritableChunkSize(state, value);
+        } catch (error) {
+          __quenchWritableError(stream, error);
+          return __quenchWritableRejected(error);
+        }
+        if (writer.released || state.writer !== writer) {
+          return __quenchWritableRejected(
+            __quenchWritableInvalidState("Mismatched WritableStreams"),
+          );
+        }
+        const request = __quenchWritableRequest("write", { value, size });
+        __quenchWritableEnqueue(stream, request);
+        __quenchWritableUpdateReady(stream);
+        __quenchWritablePump(stream);
+        return request.promise;
+      },
+      close() {
+        if (writer.released) {
+          return __quenchWritableRejected(writer.releasedError);
+        }
+        if (state.phase === "errored") {
+          return __quenchWritableRejected(state.storedError);
+        }
+        if (state.phase !== "writable") {
+          return __quenchWritableRejected(
+            __quenchWritableInvalidState("The stream is not writable"),
+          );
+        }
+        state.phase = "closing";
+        __quenchWritableUpdateReady(stream);
+        const request = __quenchWritableRequest("close");
+        __quenchWritableEnqueue(stream, request);
+        __quenchWritablePump(stream);
+        return request.promise;
+      },
+      abort(reason) {
+        if (writer.released) {
+          return __quenchWritableRejected(writer.releasedError);
+        }
+        if (state.phase === "closed") return Promise.resolve();
+        if (state.phase === "errored") {
+          return state.abortPromise || Promise.resolve();
+        }
+        __quenchWritableError(stream, reason);
+        state.abortController.abort(reason);
+        const request = __quenchWritableRequest("abort", { reason });
+        state.abortPromise = request.promise;
+        __quenchWritableEnqueue(stream, request);
+        __quenchWritablePump(stream);
+        return request.promise;
       },
       releaseLock() {
-        stream.locked = false;
+        if (writer.released) return;
+        writer.released = true;
+        writer.releasedError = __quenchWritableReleasedError();
+        const ready = writer.ready;
+        if (ready?.status === "pending") {
+          ready.status = "rejected";
+          ready.reject(writer.releasedError);
+        } else {
+          writer.ready = undefined;
+        }
+        if (state.writer === writer) state.writer = undefined;
       }
     };
   }

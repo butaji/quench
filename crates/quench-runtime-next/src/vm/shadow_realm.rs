@@ -284,9 +284,9 @@ impl<H: Host> Vm<H> {
         rejected: bool,
     ) -> Result<Value, JsError> {
         let env = self.object();
-        let export_atom = self.intern_atom("\0rqj:shadow-export-name");
-        let caller_atom = self.intern_atom("\0rqj:shadow-import-caller");
-        let rejected_atom = self.intern_atom("\0rqj:shadow-import-rejected");
+        let export_atom = self.intern_atom("\0quench:shadow-export-name");
+        let caller_atom = self.intern_atom("\0quench:shadow-import-caller");
+        let rejected_atom = self.intern_atom("\0quench:shadow-import-rejected");
         self.set_property(env, export_atom, export_name)?;
         self.set_property(env, caller_atom, caller_global)?;
         self.set_property(
@@ -303,9 +303,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let env = self.active_native_env().unwrap_or(Value::NULL);
-        let export_atom = self.intern_atom("\0rqj:shadow-export-name");
-        let caller_atom = self.intern_atom("\0rqj:shadow-import-caller");
-        let rejected_atom = self.intern_atom("\0rqj:shadow-import-rejected");
+        let export_atom = self.intern_atom("\0quench:shadow-export-name");
+        let caller_atom = self.intern_atom("\0quench:shadow-import-caller");
+        let rejected_atom = self.intern_atom("\0quench:shadow-import-rejected");
         let export_name = self
             .own_property(env, export_atom)
             .unwrap_or(Value::UNDEFINED);
@@ -382,9 +382,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let env = self.active_native_env().unwrap_or(Value::NULL);
-        let target_atom = self.intern_atom("\0rqj:shadow-target");
-        let caller_atom = self.intern_atom("\0rqj:shadow-caller");
-        let target_realm_atom = self.intern_atom("\0rqj:shadow-target-realm");
+        let target_atom = self.intern_atom("\0quench:shadow-target");
+        let caller_atom = self.intern_atom("\0quench:shadow-caller");
+        let target_realm_atom = self.intern_atom("\0quench:shadow-target-realm");
         let target = self
             .own_property(env, target_atom)
             .unwrap_or(Value::UNDEFINED);
@@ -489,9 +489,9 @@ impl<H: Host> Vm<H> {
             }
         };
         let env = self.object();
-        let target_atom = self.intern_atom("\0rqj:shadow-target");
-        let caller_atom = self.intern_atom("\0rqj:shadow-caller");
-        let target_realm_atom = self.intern_atom("\0rqj:shadow-target-realm");
+        let target_atom = self.intern_atom("\0quench:shadow-target");
+        let caller_atom = self.intern_atom("\0quench:shadow-caller");
+        let target_realm_atom = self.intern_atom("\0quench:shadow-target-realm");
         self.set_property(
             env,
             target_atom,

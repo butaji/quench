@@ -20,6 +20,22 @@ pub enum UnhandledRejectionMode {
     None,
 }
 
+impl UnhandledRejectionMode {
+    pub fn from_exec_argv(exec_argv: &[String]) -> Result<Self, String> {
+        let mode = exec_argv
+            .iter()
+            .filter_map(|argument| argument.strip_prefix("--unhandled-rejections="))
+            .next_back();
+        match mode {
+            None | Some("throw") => Ok(Self::Throw),
+            Some("strict") => Ok(Self::Strict),
+            Some("warn") => Ok(Self::Warn),
+            Some("none") => Ok(Self::None),
+            Some(value) => Err(format!("invalid --unhandled-rejections mode: {value}")),
+        }
+    }
+}
+
 pub struct ProcessState {
     /// Monotonic origin for this logical Node process, shared by both adapters.
     started: std::time::Instant,
@@ -618,10 +634,7 @@ fn info_props_with_exec_argv(
             "versions",
             crate::host::readonly_namespace_from_pairs(versions_props()),
         ),
-        (
-            "platform",
-            Value::String(platform()),
-        ),
+        ("platform", Value::String(platform())),
         ("arch", Value::String(architecture().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         (
@@ -1248,35 +1261,76 @@ pub fn chdir(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
             "The \"directory\" argument must be of type string".into(),
         ));
     };
-    let pb = std::path::PathBuf::from(&path);
-    match std::env::set_current_dir(&pb) {
-        Ok(()) => {
-            let previous = state.borrow().process.cwd.clone();
-            state.borrow_mut().process.cwd = lexical_cwd(&previous, &pb);
-            Ok(Value::Undefined)
-        }
+    match change_directory_os(state, &path) {
+        Ok(()) => Ok(Value::Undefined),
         Err(error) => Err(VmError::Thrown(host_api::object(vec![
             ("name".into(), Value::String("Error".into())),
-            ("code".into(), Value::String("ENOENT".into())),
-            (
-                "message".into(),
-                Value::String(format!(
-                    "ENOENT: no such file or directory, chdir {} -> '{}'",
-                    state.borrow().process.cwd.display(),
-                    path
-                )),
-            ),
-            (
-                "path".into(),
-                Value::String(state.borrow().process.cwd.to_string_lossy().into_owned()),
-            ),
+            ("code".into(), Value::String(error.code.into())),
+            ("message".into(), Value::String(error.message)),
+            ("path".into(), Value::String(error.path)),
             ("syscall".into(), Value::String("chdir".into())),
-            ("dest".into(), Value::String(path.clone())),
-            (
-                "errno".into(),
-                Value::Number(error.raw_os_error().unwrap_or(2) as f64),
-            ),
+            ("dest".into(), Value::String(error.destination)),
+            ("errno".into(), Value::Number(error.errno as f64)),
         ]))),
+    }
+}
+
+pub(crate) struct ChdirError {
+    pub code: &'static str,
+    pub errno: i32,
+    pub path: String,
+    pub destination: String,
+    pub message: String,
+}
+
+pub(crate) fn change_directory(
+    state: &Rc<RefCell<HostState>>,
+    destination: &str,
+) -> Result<(), ChdirError> {
+    let previous = state.borrow().process.cwd.clone();
+    let destination_path = std::path::Path::new(destination);
+    let requested = lexical_cwd(&previous, destination_path);
+    let metadata = std::fs::metadata(&requested)
+        .map_err(|error| chdir_error(&previous, destination, error))?;
+    if !metadata.is_dir() {
+        return Err(chdir_error(
+            &previous,
+            destination,
+            std::io::Error::from_raw_os_error(libc::ENOTDIR),
+        ));
+    }
+    state.borrow_mut().process.cwd = requested;
+    Ok(())
+}
+
+fn change_directory_os(
+    state: &Rc<RefCell<HostState>>,
+    destination: &str,
+) -> Result<(), ChdirError> {
+    let previous = state.borrow().process.cwd.clone();
+    let destination_path = std::path::Path::new(destination);
+    match std::env::set_current_dir(destination) {
+        Ok(()) => {
+            state.borrow_mut().process.cwd = lexical_cwd(&previous, destination_path);
+            Ok(())
+        }
+        Err(error) => Err(chdir_error(&previous, destination, error)),
+    }
+}
+
+fn chdir_error(previous: &std::path::Path, destination: &str, error: std::io::Error) -> ChdirError {
+    let (code, errno) = crate::modules::fs_error::code_for(&error);
+    let message = format!(
+        "{code}: {}, chdir '{}' -> '{destination}'",
+        crate::modules::fs_error::strerror(code),
+        previous.display(),
+    );
+    ChdirError {
+        code,
+        errno,
+        path: previous.to_string_lossy().into_owned(),
+        destination: destination.to_owned(),
+        message,
     }
 }
 

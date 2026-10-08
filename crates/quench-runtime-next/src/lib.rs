@@ -17,13 +17,20 @@ mod value_vec;
 mod vm;
 mod wasm;
 pub use wasm::{
-    WasmFunction, WasmFunctionBody, WasmI32Function, WasmSignature, WasmTrap, WasmType, WasmValue,
+    WasmCallableType, WasmConstantExpression, WasmData, WasmDataMode, WasmElement, WasmElementMode,
+    WasmFunction, WasmFunctionBody, WasmFunctionImport, WasmGlobal, WasmGlobalInitializer,
+    WasmI32Function, WasmImportName, WasmInstance, WasmMemory, WasmModule,
+    WasmReferenceInitializer, WasmReferenceKind, WasmSignature, WasmTable, WasmTableInitializer,
+    WasmTag, WasmTrap, WasmType, WasmTypes, WasmValue,
 };
 
 pub use bytecode::ResidualProgram;
 pub use compile::{Diagnostic, Engine};
 pub use heap::RootId;
-pub use host::{CapabilityId, Host, HostContext, HostGlobal, ModuleSource, SystemHost};
+pub use host::{
+    CapabilityId, Host, HostContext, HostExecutionContext, HostGlobal, ModuleSource, SystemHost,
+    WasmHostFunctionId, WasmHostValue,
+};
 #[cfg(feature = "profile-memory")]
 pub use memory_edge::report_allocator_memory;
 pub use stack::{STACK_BUDGET_BYTES, STACK_HEADROOM_BYTES, WORKER_STACK_SIZE};
@@ -32,6 +39,6 @@ pub use vm::JsError;
 
 mod api;
 pub use api::{
-    ExecutionRequest, HostFunction, HostFunctionId, NativeContext, RootedError, Runtime,
-    RuntimeError, SourceKind,
+    ExecutionRequest, HostFunction, HostFunctionId, NativeContext, PromiseRejectionEvent,
+    RootedError, Runtime, RuntimeError, SourceKind,
 };

@@ -19,48 +19,50 @@ impl<H: Host> Vm<H> {
             return self.call_user(p, id, env, this, args, context);
         }
         let promise = self.promise_object();
-        let outcome = match self.call_user_frame(p, id, env, this, args, context) {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                let reason = error
-                    .thrown_value()
-                    .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                self.promise_settle(p, promise, PromiseState::Rejected, reason)?;
-                return Ok(promise);
+        self.with_call_roots([promise], |vm| {
+            let outcome = match vm.call_user_frame(p, id, env, this, args, context) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let reason = error
+                        .thrown_value()
+                        .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
+                    vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+                    return Ok(promise);
+                }
+            };
+            match outcome {
+                super::FrameOutcome::Complete(value)
+                | super::FrameOutcome::ConstructComplete { value, .. } => {
+                    vm.promise_resolve_value(p, promise, value)?
+                }
+                super::FrameOutcome::Await {
+                    value,
+                    destination,
+                    frame: Some(mut frame),
+                } => {
+                    let continuation = Continuation::from_frame(
+                        &mut frame,
+                        Completion::Await(value),
+                        Some(destination),
+                        promise,
+                    );
+                    let id = vm.suspend_continuation(continuation);
+                    vm.enqueue_async_resume(p, id, promise, None, value, false)?;
+                }
+                super::FrameOutcome::Await { frame: None, .. } => {
+                    return Err(JsError("async frame lost at suspension".into()));
+                }
+                super::FrameOutcome::Yield { .. } => {
+                    return Err(JsError("yield is not valid in an async function".into()));
+                }
+                super::FrameOutcome::ParameterInitializationComplete => {
+                    return Err(JsError(
+                        "unexpected generator parameter initialization boundary".into(),
+                    ));
+                }
             }
-        };
-        match outcome {
-            super::FrameOutcome::Complete(value)
-            | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.promise_resolve_value(p, promise, value)?
-            }
-            super::FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(mut frame),
-            } => {
-                let continuation = Continuation::from_frame(
-                    &mut frame,
-                    Completion::Await(value),
-                    Some(destination),
-                    promise,
-                );
-                let id = self.suspend_continuation(continuation);
-                self.enqueue_async_resume(p, id, promise, None, value, false)?;
-            }
-            super::FrameOutcome::Await { frame: None, .. } => {
-                return Err(JsError("async frame lost at suspension".into()));
-            }
-            super::FrameOutcome::Yield { .. } => {
-                return Err(JsError("yield is not valid in an async function".into()));
-            }
-            super::FrameOutcome::ParameterInitializationComplete => {
-                return Err(JsError(
-                    "unexpected generator parameter initialization boundary".into(),
-                ));
-            }
-        }
-        Ok(promise)
+            Ok(promise)
+        })
     }
 
     pub(super) fn enqueue_async_resume(
@@ -101,10 +103,12 @@ impl<H: Host> Vm<H> {
             .get(&source)
             .cloned()
             .ok_or_else(|| JsError("await source is not a Promise".into()))?;
+        self.observe_promise_rejection(source);
         let reaction = PromiseReaction {
             on_fulfilled: fulfilled,
             on_rejected: rejected,
             next: self.promise_object(),
+            execution_context: self.host.capture_job_context(),
         };
         if record.state == PromiseState::Pending {
             self.realm
@@ -138,11 +142,18 @@ impl<H: Host> Vm<H> {
             .promise
             .async_resume_jobs
             .retain(|_, candidate| candidate.continuation != resume.continuation);
-        self.resume_async_continuation(p, resume, value)?;
-        if let Some(generator) = resume.generator {
-            self.resume_async_generator_queue(p, generator)?;
-        }
-        Ok(Value::UNDEFINED)
+        self.with_call_roots(
+            [Some(resume.promise), resume.generator, Some(value)]
+                .into_iter()
+                .flatten(),
+            |vm| {
+                vm.resume_async_continuation(p, resume, value)?;
+                if let Some(generator) = resume.generator {
+                    vm.resume_async_generator_queue(p, generator)?;
+                }
+                Ok(Value::UNDEFINED)
+            },
+        )
     }
 
     fn resume_async_continuation(

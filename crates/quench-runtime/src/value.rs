@@ -3396,6 +3396,13 @@ pub struct BoundFunctionValue {
     pub arguments: Vec<Value>,
     pub properties: RefCell<Vec<(String, Value)>>,
 }
+impl BoundFunctionValue {
+    pub(crate) fn allocate(value: Self) -> Rc<Self> {
+        let value = Rc::new(value);
+        crate::cycle_collector::track_bound_function(&value);
+        value
+    }
+}
 impl PartialEq for BoundFunctionValue {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)

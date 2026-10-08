@@ -33,7 +33,8 @@ pub(crate) fn has_strict_directive(program: &oxc::ast::ast::Program<'_>) -> bool
 }
 
 pub(crate) fn validate_parse(parsed: &oxc::parser::ParserReturn<'_>) -> Result<(), Vec<String>> {
-    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors) {
+    if parsed.stack_exhausted || crate::compiler_stack::parser_errors_are_exhaustion(&parsed.errors)
+    {
         return Err(crate::compiler_stack::errors());
     }
     if parsed.panicked {

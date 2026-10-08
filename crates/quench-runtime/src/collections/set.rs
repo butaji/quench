@@ -223,9 +223,6 @@ pub(crate) fn set_add(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 fn set_add_value(data: &Rc<SetData>, arguments: &[Value]) -> Result<Value, VmError> {
-    if data.is_frozen() {
-        return Ok(Value::Set(Rc::clone(data)));
-    }
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
@@ -259,9 +256,6 @@ pub(crate) fn set_delete(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 }
 
 fn set_delete_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
-    if data.is_frozen() {
-        return Value::Boolean(false);
-    }
     let Some(value) = arguments.first() else {
         return Value::Boolean(false);
     };
@@ -276,9 +270,6 @@ fn set_delete_value(data: &Rc<SetData>, arguments: &[Value]) -> Value {
 
 pub(crate) fn set_clear(receiver: Option<&Value>) -> Result<Value, VmError> {
     let data = require_set(receiver)?;
-    if data.is_frozen() {
-        return Ok(Value::Undefined);
-    }
     data.values.borrow_mut().clear();
     Ok(Value::Undefined)
 }

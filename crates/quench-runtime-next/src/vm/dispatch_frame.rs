@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) {
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
-            let atom = self.intern_atom("\0rqj:new-target");
+            let atom = self.intern_atom("\0quench:new-target");
             frame.dynamic_bindings.push((atom, new_target));
         }
         let inherits_this = arrow
@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
                     .get(frame.program)
                     .is_some_and(|program| program.kind == crate::bytecode::ProgramKind::Eval));
         if !inherits_this {
-            let atom = self.intern_atom("\0rqj:lexical-this");
+            let atom = self.intern_atom("\0quench:lexical-this");
             frame.dynamic_bindings.push((atom, frame.this));
         }
     }
@@ -130,12 +130,8 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(elements),
             });
         }
-        if let Some(slot) = function
-            .local_atoms
-            .iter()
-            .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
-        {
-            frame.locals[slot] = context.callee().unwrap_or(Value::UNDEFINED);
+        if let Some(slot) = function.self_binding_slot {
+            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
@@ -158,9 +154,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
-        let arrow = function
-            .name
-            .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
+        let arrow = function.is_arrow;
         let derived = function.derived_constructor;
         let this = if derived {
             Value::DELETED
@@ -208,17 +202,30 @@ impl<H: Host> Vm<H> {
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
+        let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         frame.prepare_registers(register_count);
         self.frames.push(frame);
+        let frame_index = self.frames.len() - 1;
         if id == super::ROOT_FUNCTION_ID
             && self.programs.is_module(self.frames.last().unwrap().program)
         {
-            let frame_index = self.frames.len() - 1;
             let environment = self.promote_frame_environment(frame_index);
             self.programs
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
-        let result = self.run_frame_general(p, self.frames.len() - 1);
+        // Numeric dispatch changes the body loop only. Frame activation and cleanup
+        // remain shared; unsupported tail-call and suspension completions use general.
+        let result = if run_numeric {
+            let active_program =
+                std::mem::replace(&mut self.active_program, self.frames[frame_index].program);
+            let result = self
+                .run_frame_numeric(p, frame_index)
+                .map(FrameOutcome::Complete);
+            self.active_program = active_program;
+            result
+        } else {
+            self.run_frame_general(p, frame_index)
+        };
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         self.persist_global_lexical_bindings(p, &frame);
@@ -315,12 +322,8 @@ impl<H: Host> Vm<H> {
                 elements: Rc::new(elements),
             });
         }
-        if let Some(slot) = function
-            .local_atoms
-            .iter()
-            .position(|atom| self.atom_name(*atom).contains("\0rqj:self-binding:"))
-        {
-            frame.locals[slot] = context.callee().unwrap_or(Value::UNDEFINED);
+        if let Some(slot) = function.self_binding_slot {
+            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
@@ -343,9 +346,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
-        let arrow = function
-            .name
-            .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
+        let arrow = function.is_arrow;
         let derived = function.derived_constructor;
         let this = if derived {
             Value::DELETED
@@ -601,7 +602,8 @@ impl<H: Host> Vm<H> {
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
         let entry_program = p;
-        let previous_program = self.active_program;
+        let frame_program = self.frames[frame].program;
+        let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
@@ -656,6 +658,7 @@ impl<H: Host> Vm<H> {
                     Ok(StepResult::Continue) => {}
                     Ok(StepResult::TailCall) => {
                         if self.frames[frame].program != executing_program {
+                            self.active_program = self.frames[frame].program;
                             current_program =
                                 Some(self.programs.get(self.frames[frame].program).ok_or_else(
                                     || JsError::validation("missing tail-call program".into()),
@@ -718,6 +721,9 @@ impl<H: Host> Vm<H> {
         error: JsError,
     ) -> Result<usize, JsError> {
         let wasm = program.kind == crate::bytecode::ProgramKind::Wasm;
+        if wasm && error.wasm_exception().is_none() {
+            return Err(error);
+        }
         let handler = program.functions[function]
             .handlers
             .iter()
@@ -783,4 +789,29 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(r as usize) = v;
         }
     }
+}
+
+fn numeric_frame_is_safe(
+    function: &crate::bytecode::Function,
+    capture_constructor_this: bool,
+) -> bool {
+    if function.dispatch != crate::bytecode::DispatchClass::Numeric
+        || capture_constructor_this
+        || function.is_async
+        || function.is_generator
+        || function.is_class_constructor
+        || function.derived_constructor
+        || function.class_field_initializer
+    {
+        return false;
+    }
+    !function.strict
+        || !function.code.iter().enumerate().any(|(pc, instruction)| {
+            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
+                && (instruction.returns_from_frame()
+                    || function
+                        .code
+                        .get(pc + 1)
+                        .is_some_and(|next| next.op() == Op::Return))
+        })
 }

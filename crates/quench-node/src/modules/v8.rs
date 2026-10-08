@@ -14,6 +14,21 @@ use quench_runtime::host_api;
 use quench_runtime::ops::HostCapabilityKind;
 use quench_runtime::value::{ArrayBufferData, Uint8ArrayData, Value};
 
+pub(crate) mod shared_vm {
+    use crate::host::NodeHost;
+    use quench_runtime_next::{NativeContext, RootId, RootedError};
+
+    const MODULE: &str = r#"({
+  startupSnapshot: Object.freeze({
+    isBuildingSnapshot() { return false; },
+  }),
+})"#;
+
+    pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+        context.evaluate_script_rooted(MODULE, "node:v8/shared-vm.js")
+    }
+}
+
 const TAG: &str = "__quench_type";
 const SERIALIZER: u16 = 2420;
 const DESERIALIZER: u16 = 2421;

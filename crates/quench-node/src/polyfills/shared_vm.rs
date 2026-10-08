@@ -1,6 +1,7 @@
 //! Guest bootstrap source shared by the Node host adapters.
 
-pub const ABORT: &str = quench_js_check::checked_js!(r#"
+pub const ABORT: &str = quench_js_check::checked_js!(
+    r#"
 (() => {
   const signalStates = new WeakMap();
   const controllerSignals = new WeakMap();
@@ -194,9 +195,11 @@ pub const ABORT: &str = quench_js_check::checked_js!(r#"
     configurable: true,
   });
 })();
-"#);
+"#
+);
 
-pub const EVENT_TARGET: &str = quench_js_check::checked_js!(r#"
+pub const EVENT_TARGET: &str = quench_js_check::checked_js!(
+    r#"
 if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   value: class Event {
   constructor(type, options = {}) {
@@ -248,4 +251,5 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   writable: true,
   configurable: true,
 });
-"#);
+"#
+);

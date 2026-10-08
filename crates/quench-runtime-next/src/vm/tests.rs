@@ -1,7 +1,7 @@
 use super::wtf16::JsString;
 use super::{
-    CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, TypedArrayKind, Vm,
-    activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
+    CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, TypedArrayKind,
+    Vm, activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -25,6 +25,55 @@ impl Host for RecordingHost {
     fn clock_millis(&mut self) -> f64 {
         0.0
     }
+}
+
+#[test]
+fn fallback_descriptor_edges_follow_their_owner_lifetime() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
+    use crate::heap::{Cell, WeakMapEntries};
+    let program = Engine::specialize("", "descriptor-owner.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let owner = vm.heap.alloc(Cell::Array {
+        object: Vm::<SilentHost>::empty_object(Value::NULL),
+        elements: Rc::new(Vec::new()),
+    });
+    let setter = vm.native_with_env(Native::Object, owner);
+    let owner_weak = vm.heap.weak_handle(owner).unwrap();
+    let setter_weak = vm.heap.weak_handle(setter).unwrap();
+    let key = PropertyKey::string(vm.intern_atom("0"));
+    vm.set_property_attributes(
+        owner,
+        key,
+        super::PropertyAttributes {
+            accessor: true,
+            setter: Some(setter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+    let root = vm.heap.root(owner);
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(owner_weak), Some(owner));
+    assert_eq!(vm.heap.weak_value(setter_weak), Some(setter));
+    assert!(vm.heap.release_root(root));
+    let map = vm.heap.alloc(Cell::WeakMap {
+        object: Vm::<SilentHost>::empty_object(Value::NULL),
+        entries: WeakMapEntries::default(),
+    });
+    let map_key = vm.object();
+    if let Some(Cell::WeakMap { entries, .. }) = vm.heap.get_mut(map) {
+        entries.insert(map_key, owner);
+    }
+    let map_root = vm.heap.root(map);
+    let key_root = vm.heap.root(map_key);
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(owner_weak), Some(owner));
+    assert_eq!(vm.heap.weak_value(setter_weak), Some(setter));
+    assert!(vm.heap.release_root(key_root));
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(owner_weak).is_none());
+    assert!(vm.heap.weak_value(setter_weak).is_none());
+    assert!(!vm.descriptors.contains_key(&(owner, key)));
+    assert!(vm.heap.release_root(map_root));
 }
 
 #[test]
@@ -224,13 +273,74 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
 }
 
 #[test]
-fn realm_promise_records_keep_values_rooted() {
+fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize(
+        "function make() { var p = new Promise(() => {}), value = {}; var handler = () => value; return [p, p.then(handler), p.finally(handler), Promise.all([p])]; }",
+        "promise-owner-cycles.js",
+    ).unwrap();
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("make");
+    let factory = vm.own_property(vm.realm.globals, name).unwrap();
+    let values = vm
+        .call_value(&program, factory, Value::UNDEFINED, &[])
+        .unwrap();
+    let owners: Vec<_> = vm
+        .realm
+        .promise
+        .records
+        .keys()
+        .chain(vm.realm.promise.finally_handler_callbacks.keys())
+        .chain(vm.realm.promise.aggregates.keys())
+        .chain(vm.realm.promise.aggregate_jobs.keys())
+        .chain(vm.realm.promise.reaction_capabilities.keys())
+        .copied()
+        .collect();
+    assert!(!vm.realm.promise.finally_handler_callbacks.is_empty());
+    assert!(!vm.realm.promise.aggregates.is_empty());
+    assert!(!vm.realm.promise.aggregate_jobs.is_empty());
+    assert!(!vm.realm.promise.reaction_capabilities.is_empty());
+    let weak: Vec<_> = owners
+        .iter()
+        .map(|owner| vm.heap.weak_handle(*owner).unwrap())
+        .collect();
+    let root = vm.heap.root(values);
+    vm.collect_now(&program);
+    assert!(
+        weak.iter()
+            .all(|handle| vm.heap.weak_value(*handle).is_some())
+    );
+    assert!(vm.heap.release_root(root));
+    vm.collect_now(&program);
+    assert!(
+        weak.iter()
+            .all(|handle| vm.heap.weak_value(*handle).is_none())
+    );
+    assert!(vm.realm.promise.records.is_empty());
+    assert!(vm.realm.promise.finally_handler_callbacks.is_empty());
+    assert!(vm.realm.promise.aggregates.is_empty());
+    assert!(vm.realm.promise.aggregate_jobs.is_empty());
+    assert!(vm.realm.promise.reaction_capabilities.is_empty());
+}
+
+#[test]
+fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
     let result = vm.object();
-    vm.realm.promise.records.get_mut(&promise).unwrap().result = result;
-
     let program = Engine::specialize("print(0);", "realm-promises.js").unwrap();
+    let owner_atom = vm.intern_atom("owner");
+    vm.set_property(result, owner_atom, promise).unwrap();
+    vm.promise_settle(
+        &program,
+        promise,
+        super::promise::PromiseState::Fulfilled,
+        result,
+    )
+    .unwrap();
+    let promise_weak = vm.heap.weak_handle(promise).unwrap();
+    let result_weak = vm.heap.weak_handle(result).unwrap();
+    let promise_root = vm.heap.root(promise);
     vm.collect_now(&program);
 
     assert!(vm.heap.get(promise).is_some());
@@ -243,6 +353,17 @@ fn realm_promise_records_keep_values_rooted() {
             .map(|record| record.result),
         Some(result)
     );
+    let (resolve, _) = vm.promise_resolving_functions(promise);
+    let resolver_root = vm.heap.root(resolve);
+    assert!(vm.heap.release_root(promise_root));
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(promise_weak), Some(promise));
+    assert_eq!(vm.heap.weak_value(result_weak), Some(result));
+    assert!(vm.heap.release_root(resolver_root));
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(promise_weak).is_none());
+    assert!(vm.heap.weak_value(result_weak).is_none());
+    assert!(!vm.realm.promise.records.contains_key(&promise));
 }
 
 #[test]
@@ -603,7 +724,8 @@ fn third_method_receiver_promotes_site_to_megamorphic() {
                 shape,
                 atom: 0,
                 proto: crate::Value::NULL,
-                guard: super::EMPTY_CACHE,
+                callee: crate::Value::NULL,
+                guard: super::EMPTY_METHOD_GUARD,
                 target: Some(CallTarget::User(
                     super::program_store::ProgramId::MAIN,
                     shape,
@@ -643,7 +765,8 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             shape: 1,
             atom: 0,
             proto: crate::Value::NULL,
-            guard: super::EMPTY_CACHE,
+            callee: crate::Value::NULL,
+            guard: super::EMPTY_METHOD_GUARD,
             target: Some(CallTarget::User(
                 super::program_store::ProgramId::MAIN,
                 1,
@@ -654,7 +777,8 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
             shape: 2,
             atom: 0,
             proto: crate::Value::NULL,
-            guard: super::EMPTY_CACHE,
+            callee: crate::Value::NULL,
+            guard: super::EMPTY_METHOD_GUARD,
             target: Some(CallTarget::User(
                 super::program_store::ProgramId::MAIN,
                 2,
@@ -2437,6 +2561,71 @@ fn error_constructor_and_call_scopes_release_after_coercion() {
 }
 
 #[test]
+fn error_new_target_roots_release_after_prototype_success_and_throw() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for native in [
+            Native::Error,
+            Native::EvalError,
+            Native::RangeError,
+            Native::ReferenceError,
+            Native::SyntaxError,
+            Native::TypeError,
+            Native::URIError,
+            Native::SuppressedError,
+            Native::AggregateError,
+        ] {
+            for fails in [false, true] {
+                let action = if fails { "throw 37" } else { "return {}" };
+                let source = format!(
+                    "var target = new Proxy(function Target() {{}}, {{get(t, k, r) {{if(k === 'prototype') {{$262.gc(); {action};}} return Reflect.get(t, k, r);}}}}); function coerce() {{$262.gc(); return 'message';}}"
+                );
+                let program = compile(&source, "error-new-target-roots.js").unwrap();
+                let mut vm = Vm::new(Test262Host);
+                vm.execute(&program).unwrap();
+                let target_atom = vm.intern_atom("target");
+                let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
+                let coerce_atom = vm.intern_atom("coerce");
+                let coerce = vm.own_property(vm.realm.globals, coerce_atom).unwrap();
+                let message = vm.object();
+                vm.set_named(&program, message, "toString", coerce).unwrap();
+                let cause = vm.object();
+                let options = vm.object();
+                vm.set_named(&program, options, "cause", cause).unwrap();
+                let args = match native {
+                    Native::AggregateError => vec![vm.new_array(vec![cause]), message, options],
+                    Native::SuppressedError => vec![cause, options, message],
+                    _ => vec![message, options],
+                };
+                let weak = args
+                    .iter()
+                    .map(|value| vm.heap.weak_handle(*value).unwrap())
+                    .collect::<Vec<_>>();
+                let roots = vm.heap.root_count_for_test();
+                let calls = vm.active_call_roots.len();
+                let constructor = vm.native_value(native);
+                let result =
+                    vm.construct_value_with_new_target(&program, constructor, target, &args);
+                assert_eq!(result.is_err(), fails);
+                assert_eq!(vm.heap.root_count_for_test(), roots);
+                assert_eq!(vm.active_call_roots.len(), calls);
+                let result = result.ok().map(|value| vm.heap.weak_handle(value).unwrap());
+                vm.collect_now(&program);
+                assert!(
+                    weak.into_iter()
+                        .all(|value| vm.heap.weak_value(value).is_none())
+                );
+                if let Some(value) = result {
+                    assert!(vm.heap.weak_value(value).is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn spread_and_aggregate_roots_release_after_guest_failures() {
     let cases = [
         (
@@ -2999,6 +3188,123 @@ fn flattening_uses_rooted_frames_instead_of_native_recursion() {
 }
 
 #[test]
+fn bound_function_observes_proxy_metadata_order_and_prototype() {
+    let source = r#"
+        var events = [], prototype = {};
+        var target = new Proxy(function(a, b, c) { return this.value + a; }, {
+            getPrototypeOf() { events.push('prototype'); return prototype; },
+            getOwnPropertyDescriptor(target, key) {
+                events.push('own:' + key);
+                return {value: 3, configurable: true};
+            },
+            get(target, key) {
+                events.push('get:' + key);
+                return key === 'length' ? 3.9 : 'example';
+            }
+        });
+        var bound = Function.prototype.bind.call(target, {value: 40}, 2);
+        print(events.join(','));
+        print(Object.getPrototypeOf(bound) === prototype);
+        print(bound.length);
+        print(bound.name);
+        print(bound());
+        print(Object.getOwnPropertyDescriptor(bound, 'length').writable);
+        print(Object.getOwnPropertyDescriptor(bound, 'length').enumerable);
+        print(Object.getOwnPropertyDescriptor(bound, 'length').configurable);
+        var absent = new Proxy(function() {}, {
+            getOwnPropertyDescriptor() { return undefined; },
+            get(target, key) {
+                if (key === 'length') throw new Error('length must not be read');
+                return 1337;
+            }
+        });
+        bound = Function.prototype.bind.call(absent);
+        print(bound.length);
+        print(bound.name);
+        var plain = function() {};
+        Object.setPrototypeOf(plain, null);
+        bound = Function.prototype.bind.call(plain);
+        print(Object.getPrototypeOf(bound) === null);
+    "#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "bound-proxy-metadata.js").unwrap();
+        if let Err(error) = vm.execute(&program) {
+            panic!("{}", vm.format_error(&program, &error));
+        }
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "prototype,own:length,get:length,get:name",
+                "true",
+                "2",
+                "bound example",
+                "42",
+                "false",
+                "false",
+                "true",
+                "0",
+                "bound ",
+                "true",
+            ]
+        );
+    }
+}
+
+#[test]
+fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        for phase in ["accept", "prototype", "descriptor", "length", "name"] {
+            let mut vm = Vm::new(Test262Host);
+            let source = format!(
+                r#"
+                var marker = {{}};
+                var target = new Proxy(function() {{}}, {{
+                    getPrototypeOf() {{
+                        $262.gc(); if ('{phase}' === 'prototype') throw marker;
+                        return null;
+                    }},
+                    getOwnPropertyDescriptor() {{
+                        $262.gc(); if ('{phase}' === 'descriptor') throw marker;
+                        return {{value: 3, configurable: true}};
+                    }},
+                    get(target, key) {{
+                        $262.gc(); if ('{phase}' === key) throw marker;
+                        return key === 'length' ? 3 : 'rooted';
+                    }}
+                }});
+            "#
+            );
+            let program = compile(&source, "bound-proxy-roots.js").unwrap();
+            vm.execute(&program).unwrap();
+            let atom = vm.intern_atom("target");
+            let target = vm.own_property(vm.realm.globals, atom).unwrap();
+            let roots_before = vm.heap.root_count_for_test();
+            let outcome = vm.bind_function(&program, target, &[]);
+            assert_eq!(vm.heap.root_count_for_test(), roots_before, "{phase}");
+            match outcome {
+                Ok(function) => {
+                    assert_eq!(phase, "accept");
+                    assert!(vm.object_data(function).unwrap().proto.is_null());
+                    let atom = vm.intern_atom("length");
+                    assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
+                    let handle = vm.heap.weak_handle(function).unwrap();
+                    vm.collect_now(&program);
+                    assert!(vm.heap.weak_value(handle).is_none());
+                }
+                Err(error) => {
+                    assert_ne!(phase, "accept");
+                    let atom = vm.intern_atom("marker");
+                    let marker = vm.own_property(vm.realm.globals, atom).unwrap();
+                    assert_eq!(error.thrown_value(), Some(marker), "{phase}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn bound_function_metadata_roots_release_on_normal_and_abrupt_completion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
@@ -3118,6 +3424,132 @@ fn pending_jobs_use_the_shared_interpreter_after_root_release() {
 }
 
 #[test]
+fn internal_promise_then_handlers_survive_species_reentry_and_release_after_jobs() {
+    let mut vm = Vm::new(Test262Host);
+    let program = Engine::specialize(
+        "var promise = Promise.resolve(1); Object.defineProperty(promise, 'constructor', {get() {$262.gc(); return Promise;}});",
+        "internal-then-owner.js",
+    ).unwrap();
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("promise");
+    let promise = vm.own_property(vm.realm.globals, name).unwrap();
+    let held = vm
+        .heap
+        .alloc(crate::heap::Cell::Error("handler state".into()));
+    let weak = vm.heap.weak_handle(held).unwrap();
+    let handler = vm.native_with_env(Native::Print, held);
+    vm.promise_then(&program, promise, handler, Value::UNDEFINED)
+        .unwrap();
+    assert_eq!(vm.heap.weak_value(weak), Some(held));
+    assert!(vm.active_call_roots.is_empty());
+    vm.drain_jobs(&program).unwrap();
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(weak).is_none());
+}
+
+#[test]
+fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation() {
+    use super::promise::{DynamicImportJob, PromiseState};
+    for collect_while_queued in [false, true] {
+        let mut vm = Vm::new(Test262Host);
+        let program = Engine::specialize("", "dynamic-import-owner.js").unwrap();
+        vm.execute(&program).unwrap();
+        let mut promises = Vec::new();
+        for index in 0..2 {
+            let promise = vm.promise_object();
+            promises.push((promise, vm.heap.weak_handle(promise).unwrap()));
+            let name = format!("dynamic-job-{index}.js");
+            let source = "$262.gc(); export const value = 57;".to_owned();
+            vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
+                cache_key: format!("{name}:javascript"),
+                module: crate::ModuleSource {
+                    name,
+                    bytes: source.as_bytes().to_vec(),
+                    source,
+                },
+                promises: vec![promise],
+            });
+        }
+        if collect_while_queued {
+            vm.collect_now(&program);
+            for (promise, weak) in &promises {
+                assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
+            }
+            vm.advance_dynamic_import_jobs(&program, false).unwrap();
+            assert_eq!(vm.realm.promise.dynamic_import_jobs.len(), promises.len());
+        }
+        vm.advance_dynamic_import_jobs(&program, true).unwrap();
+        assert!(vm.realm.promise.dynamic_import_jobs.is_empty());
+        for (promise, weak) in &promises {
+            assert_eq!(vm.heap.weak_value(*weak), Some(*promise));
+            assert_eq!(
+                vm.realm.promise.records[promise].state,
+                PromiseState::Fulfilled
+            );
+        }
+        vm.collect_now(&program);
+        for (promise, weak) in promises {
+            assert!(vm.heap.weak_value(weak).is_none());
+            assert!(!vm.realm.promise.records.contains_key(&promise));
+        }
+    }
+}
+
+#[test]
+fn async_continuation_lifetime_follows_reachable_callbacks_and_jobs() {
+    for queued in [false, true] {
+        let mut vm = Vm::new(SilentHost);
+        let program = Engine::specialize(
+            "function make() { var gate = Promise.withResolvers(), held = {value:57}; async function run() { let retained = held; await gate.promise; return retained; } return {gate:gate, result:run(), held:held}; }",
+            "async-continuation-owner.js",
+        ).unwrap();
+        vm.execute(&program).unwrap();
+        let name = vm.intern_atom("make");
+        let factory = vm.own_property(vm.realm.globals, name).unwrap();
+        let values = vm
+            .call_value(&program, factory, Value::UNDEFINED, &[])
+            .unwrap();
+        let held_atom = vm.intern_atom("held");
+        let held = vm.own_property(values, held_atom).unwrap();
+        let held_weak = vm.heap.weak_handle(held).unwrap();
+        let token = vm
+            .realm
+            .promise
+            .async_resume_jobs
+            .values()
+            .next()
+            .unwrap()
+            .continuation;
+        let root = vm.heap.root(values);
+        vm.collect_now(&program);
+        assert_eq!(vm.heap.weak_value(held_weak), Some(held));
+        if queued {
+            let gate_atom = vm.intern_atom("gate");
+            let gate = vm.own_property(values, gate_atom).unwrap();
+            let resolve_atom = vm.intern_atom("resolve");
+            let resolve = vm.own_property(gate, resolve_atom).unwrap();
+            vm.call_value(&program, resolve, Value::UNDEFINED, &[])
+                .unwrap();
+            assert!(!vm.realm.jobs.is_empty());
+        }
+        assert!(vm.heap.release_root(root));
+        vm.collect_now(&program);
+        if queued {
+            assert_eq!(vm.heap.weak_value(held_weak), Some(held));
+            vm.drain_jobs(&program).unwrap();
+            vm.collect_now(&program);
+        }
+        assert!(vm.heap.weak_value(held_weak).is_none(), "queued={queued}");
+        assert!(
+            vm.suspended
+                .iter()
+                .all(|entry| entry.continuation.is_none())
+        );
+        assert!(vm.resume_continuation(token).is_none());
+    }
+}
+
+#[test]
 fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("print(0);", "continuation.js").unwrap();
@@ -3183,7 +3615,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
     let program = Engine::specialize("print(0);", "continuation-generation.js").unwrap();
     vm.initialize(&program).unwrap();
     let continuation = || Continuation {
-        context: super::activation::CallContext::Internal,
+        context: CallContext::Internal,
         original_arguments: vec![],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
@@ -5395,7 +5827,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 .collect::<Vec<_>>();
             let atom = vm.intern_atom("binding");
             let mut frame = super::Frame {
-                context: super::activation::CallContext::Internal,
+                context: CallContext::Internal,
                 original_arguments: vec![],
                 program: super::program_store::ProgramId::MAIN,
                 function: 0,

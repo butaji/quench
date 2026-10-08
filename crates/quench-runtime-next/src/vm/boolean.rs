@@ -18,7 +18,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        let boolean_value = self.intern_atom("\0rqj:boolean-value");
+        let boolean_value = self.intern_atom("\0quench:boolean-value");
         self.set_property(prototype, boolean_value, Value::FALSE)?;
         self.set_property_attributes(
             prototype,
@@ -80,7 +80,7 @@ impl<H: Host> Vm<H> {
         if receiver.as_bool().is_some() {
             return Some(receiver);
         }
-        let value_atom = self.intern_atom("\0rqj:boolean-value");
+        let value_atom = self.intern_atom("\0quench:boolean-value");
         if let Some(value) = self
             .own_property(receiver, value_atom)
             .filter(|value| value.as_bool().is_some())

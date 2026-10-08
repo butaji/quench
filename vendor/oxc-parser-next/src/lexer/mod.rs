@@ -210,7 +210,9 @@ impl<'a, C: Config> Lexer<'a, C> {
             errors_snapshot,
             tokens_len: self.tokens.len(),
             pure_comments: self.trivia_builder.previous_token_pure_comments(),
-            no_side_effects_comments: self.trivia_builder.previous_token_no_side_effects_comments(),
+            no_side_effects_comments: self
+                .trivia_builder
+                .previous_token_no_side_effects_comments(),
         }
     }
 
@@ -231,7 +233,9 @@ impl<'a, C: Config> Lexer<'a, C> {
             errors_snapshot,
             tokens_len: self.tokens.len(),
             pure_comments: self.trivia_builder.previous_token_pure_comments(),
-            no_side_effects_comments: self.trivia_builder.previous_token_no_side_effects_comments(),
+            no_side_effects_comments: self
+                .trivia_builder
+                .previous_token_no_side_effects_comments(),
         }
     }
 
@@ -248,8 +252,10 @@ impl<'a, C: Config> Lexer<'a, C> {
 
         self.tokens.truncate(checkpoint.tokens_len);
         self.source.set_position(checkpoint.source_position);
-        self.trivia_builder.set_pure_comments(checkpoint.pure_comments);
-        self.trivia_builder.set_no_side_effects_comments(checkpoint.no_side_effects_comments);
+        self.trivia_builder
+            .set_pure_comments(checkpoint.pure_comments);
+        self.trivia_builder
+            .set_no_side_effects_comments(checkpoint.no_side_effects_comments);
     }
 
     pub fn peek_token(&mut self) -> Token {
@@ -324,7 +330,9 @@ impl<'a, C: Config> Lexer<'a, C> {
                 }
                 FinishTokenMode::Replace => {
                     debug_assert!(
-                        self.tokens.last().is_some_and(|last| last.start() == token.start())
+                        self.tokens
+                            .last()
+                            .is_some_and(|last| last.start() == token.start())
                     );
                     let last = self.tokens.last_mut().unwrap();
                     *last = token;

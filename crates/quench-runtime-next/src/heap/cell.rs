@@ -344,7 +344,11 @@ pub(crate) enum Native {
     DateToString, DateToDateString, DateToTimeString, DateToUTCString,
     DateToLocaleString, DateToLocaleDateString, DateToLocaleTimeString, DateToISOString,
     DateToJSON, DateToPrimitive, DateToTemporalInstant, DateParse, DateUTC,
-    Error, ErrorToString, ErrorIsError, ErrorStackGetter, ErrorStackSetter, AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
+    Error, ErrorToString, ErrorIsError, ErrorCaptureStackTrace, ErrorStackGetter, ErrorStackSetter,
+    CallSiteGetFileName, CallSiteGetThis, CallSiteGetFunctionName, CallSiteGetLineNumber, CallSiteGetColumnNumber,
+    CallSiteGetTypeName, CallSiteGetMethodName, CallSiteIsEval, CallSiteGetEvalOrigin,
+    CallSiteIsConstructor, CallSiteIsNative, CallSiteToString,
+    AggregateError, SuppressedError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError, ThrowTypeError,
     RegExp, RegExpCompile, RegExpEscape, RegExpLegacyGetter, RegExpLegacySetter, RegExpToString, RegExpSymbolMatch, RegExpSymbolSearch, RegExpSymbolReplace,
     RegExpSymbolMatchAll, RegExpSymbolSplit, RegExpSpecies,
     RegExpExec,
@@ -565,11 +569,10 @@ pub(crate) enum Native {
     PromiseAny,
     PromiseReactionJob,
     PromiseThenableJob,
-    PromiseFinallyJob,
-    PromiseFinallyContinuationJob,
     PromiseAggregateJob,
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
+    WasmHost,
     HostFunction,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -823,8 +826,6 @@ impl Native {
                 | Self::PromiseAny
                 | Self::PromiseReactionJob
                 | Self::PromiseThenableJob
-                | Self::PromiseFinallyJob
-                | Self::PromiseFinallyContinuationJob
                 | Self::PromiseAggregateJob
                 | Self::PromiseAsyncResumeJob
                 | Self::ArrayFromAsyncFulfilled
@@ -940,6 +941,22 @@ pub(crate) struct Object {
     pub properties: ValueVec,
     extras: Option<Box<ObjectExtras>>,
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct CallSiteRecord {
+    pub(crate) file_name: String,
+    pub(crate) function_name: Option<String>,
+    pub(crate) this_value: Value,
+    pub(crate) line: u32,
+    pub(crate) column: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum StackData {
+    Captured(Vec<CallSiteRecord>),
+    CallSite(CallSiteRecord),
+}
+
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
     arguments_map: Option<Vec<u16>>,
@@ -950,6 +967,7 @@ struct ObjectExtras {
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
     private_names: Vec<PrivateBrand>,
+    stack_data: Option<StackData>,
 }
 impl ObjectExtras {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
@@ -964,6 +982,25 @@ impl ObjectExtras {
                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
             })
             + self.private_names.capacity() * std::mem::size_of::<PrivateBrand>()
+            + self
+                .stack_data
+                .as_ref()
+                .map_or(0, StackData::allocated_bytes)
+    }
+}
+impl StackData {
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    fn allocated_bytes(&self) -> usize {
+        fn record_bytes(record: &CallSiteRecord) -> usize {
+            record.file_name.capacity() + record.function_name.as_ref().map_or(0, String::capacity)
+        }
+        match self {
+            Self::Captured(records) => {
+                records.capacity() * std::mem::size_of::<CallSiteRecord>()
+                    + records.iter().map(record_bytes).sum::<usize>()
+            }
+            Self::CallSite(record) => record_bytes(record),
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1011,6 +1048,36 @@ impl Object {
         self.extras
             .as_deref()
             .is_some_and(|extras| extras.error_data)
+    }
+
+    pub(crate) fn stack_data(&self) -> Option<&StackData> {
+        self.extras.as_deref()?.stack_data.as_ref()
+    }
+
+    pub(crate) fn set_stack_data(&mut self, data: StackData) {
+        self.extras_mut().stack_data = Some(data);
+    }
+
+    pub(crate) fn clear_stack_data(&mut self) {
+        if let Some(extras) = self.extras.as_deref_mut() {
+            extras.stack_data = None;
+        }
+    }
+
+    pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
+        match self
+            .extras
+            .as_deref()
+            .and_then(|extras| extras.stack_data.as_ref())
+        {
+            Some(StackData::Captured(records)) => {
+                for record in records {
+                    visit(record.this_value);
+                }
+            }
+            Some(StackData::CallSite(record)) => visit(record.this_value),
+            None => {}
+        }
     }
 
     pub(crate) fn shape(&self) -> u32 {
@@ -1267,6 +1334,8 @@ pub(crate) enum Cell {
         parent: Value,
         program: Option<u32>,
         root_eval_scope: bool,
+        // A captured lexical scope selects its names from the owning function's
+        // binding-site table; slot values remain shared with that activation.
         binding_site_pc: Option<u32>,
         function: u32,
         slots: EnvironmentSlots,
@@ -1275,6 +1344,33 @@ pub(crate) enum Cell {
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
+    WasmV128([u8; crate::wasm::V128_BYTES]),
+    /// Opaque external payload in the internal anyref hierarchy, outside eqref.
+    WasmExtern(Value),
+    /// One exception identity owns its original tag and traced payload.
+    WasmException { tag: Value, payload: Vec<Value> },
+    /// A tag retains its original declaration; identity is independent of type equality.
+    WasmTag { declarations: crate::WasmTypes, ty: u32 },
+    /// GC object identity owns its original declaration and traced field values.
+    WasmGc { declarations: crate::WasmTypes, ty: u32, fields: Vec<Value>, descriptor: Option<Value> },
+    /// The native callable's immutable host operation and structural signature.
+    WasmHostFunction {
+        id: crate::WasmHostFunctionId,
+        signature: Rc<crate::WasmSignature>,
+    },
+    /// Immutable references available until an element segment drops.
+    WasmElements(Vec<Value>),
+    /// One memory identity owns its bytes and original optional maximum.
+    WasmGlobal { value: Value, ty: crate::WasmType, declarations: crate::WasmTypes, mutable: bool },
+    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: wasmparser::MemoryType },
+    /// Typed references owned by a Wasm instance, traced like other heap edges.
+    WasmTable {
+        table64: bool,
+        elements: Vec<Value>,
+        element_type: wasmparser::RefType,
+        declarations: crate::WasmTypes,
+        maximum: Option<u64>,
+    },
     String(JsString), BigInt(String),
     Symbol(Option<String>),
     Date { milliseconds: f64, object: Box<Object> },

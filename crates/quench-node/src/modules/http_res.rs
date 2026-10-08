@@ -586,31 +586,53 @@ pub(crate) fn is_http_token_char(character: char) -> bool {
 }
 
 fn invalid_header_name(name: &str) -> VmError {
-    let error = quench_runtime::builtins::error(
-        quench_runtime::ops::Builtin::TypeError,
-        &[Value::String(format!(
-            "Header name must be a valid HTTP token [\"{name}\"]"
-        ))],
-    );
-    VmError::Thrown(execute::set_property(
-        error,
-        "code",
-        Value::String("ERR_INVALID_HTTP_TOKEN".into()),
-    ))
+    header_issue(HeaderIssue::InvalidName(name.to_owned()))
 }
 
 fn invalid_header_value(name: &str) -> VmError {
+    header_issue(HeaderIssue::MissingValue(name.to_owned()))
+}
+
+fn header_issue(issue: HeaderIssue) -> VmError {
     let error = quench_runtime::builtins::error(
         quench_runtime::ops::Builtin::TypeError,
-        &[Value::String(format!(
-            "Invalid value \"undefined\" for header \"{name}\""
-        ))],
+        &[Value::String(issue.message())],
     );
     VmError::Thrown(execute::set_property(
         error,
         "code",
-        Value::String("ERR_HTTP_INVALID_HEADER_VALUE".into()),
+        Value::String(issue.code().into()),
     ))
+}
+
+pub(crate) enum HeaderIssue {
+    InvalidName(String),
+    MissingValue(String),
+    InvalidContent(String),
+}
+
+impl HeaderIssue {
+    pub(crate) fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidName(_) => "ERR_INVALID_HTTP_TOKEN",
+            Self::MissingValue(_) => "ERR_HTTP_INVALID_HEADER_VALUE",
+            Self::InvalidContent(_) => "ERR_INVALID_CHAR",
+        }
+    }
+
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::InvalidName(name) => {
+                format!("Header name must be a valid HTTP token [\"{name}\"]")
+            }
+            Self::MissingValue(name) => {
+                format!("Invalid value \"undefined\" for header \"{name}\"")
+            }
+            Self::InvalidContent(name) => {
+                format!("Invalid character in header content [\"{name}\"]")
+            }
+        }
+    }
 }
 
 pub(crate) fn valid_header_value(value: &str) -> bool {
@@ -621,17 +643,7 @@ pub(crate) fn valid_header_value(value: &str) -> bool {
 
 fn validate_header_value(name: &str, value: &str) -> Result<(), VmError> {
     if !valid_header_value(value) {
-        let error = quench_runtime::builtins::error(
-            quench_runtime::ops::Builtin::TypeError,
-            &[Value::String(format!(
-                "Invalid character in header content [\"{name}\"]"
-            ))],
-        );
-        return Err(VmError::Thrown(execute::set_property(
-            error,
-            "code",
-            Value::String("ERR_INVALID_CHAR".into()),
-        )));
+        return Err(header_issue(HeaderIssue::InvalidContent(name.to_owned())));
     }
     Ok(())
 }
@@ -1065,7 +1077,7 @@ pub fn res_end(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-fn default_status_message(status: u16) -> &'static str {
+pub(crate) fn default_status_message(status: u16) -> &'static str {
     match status {
         200 => "OK",
         201 => "Created",
@@ -1260,7 +1272,7 @@ fn response_keep_alive(headers: &[(String, String)], fallback: bool) -> bool {
         .unwrap_or(fallback)
 }
 
-fn chunk_frame(body: &[u8]) -> Vec<u8> {
+pub(crate) fn chunk_frame(body: &[u8]) -> Vec<u8> {
     if body.is_empty() {
         return Vec::new();
     }
@@ -1270,7 +1282,7 @@ fn chunk_frame(body: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {
+pub(crate) fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {
     let mut out = b"0\r\n".to_vec();
     for (name, value) in trailers {
         out.extend_from_slice(format!("{name}: {value}\r\n").as_bytes());
@@ -1281,13 +1293,14 @@ fn chunk_terminator(trailers: &[(String, String)]) -> Vec<u8> {
 
 fn valid_status(value: &Value) -> Option<u16> {
     match value {
-        Value::Number(number)
-            if number.is_finite() && number.fract() == 0.0 && (100.0..=999.0).contains(number) =>
-        {
-            Some(*number as u16)
-        }
+        Value::Number(number) => valid_status_number(*number),
         _ => None,
     }
+}
+
+pub(crate) fn valid_status_number(number: f64) -> Option<u16> {
+    (number.is_finite() && number.fract() == 0.0 && (100.0..=999.0).contains(&number))
+        .then_some(number as u16)
 }
 
 fn invalid_status(value: &Value) -> VmError {

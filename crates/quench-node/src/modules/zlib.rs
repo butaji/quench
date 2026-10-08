@@ -13,6 +13,8 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+pub(crate) mod shared_vm;
+
 const DEFAULT_ZLIB_CHUNK_BYTES: usize = 16_384;
 const ZLIB_FINISH_FLUSH: f64 = 4.0;
 

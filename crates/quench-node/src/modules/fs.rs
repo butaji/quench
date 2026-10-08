@@ -17,6 +17,8 @@ use quench_runtime::value::{PromiseData, PromiseState, Value};
 use crate::host::HostState;
 use crate::modules::{fs_error, fs_stats};
 
+#[path = "fs/ops.rs"]
+pub(crate) mod ops;
 #[path = "fs/shared_vm.rs"]
 pub(crate) mod shared_vm;
 
@@ -46,6 +48,67 @@ impl FsState {
             next_fd: 3,
             descriptors: HashMap::new(),
         }
+    }
+
+    pub(crate) fn open_read_stream(&mut self, path: String) -> std::io::Result<i32> {
+        let file = std::fs::File::open(&path)?;
+        self.insert_descriptor(file, path)
+    }
+
+    pub(crate) fn open_write_stream(
+        &mut self,
+        path: String,
+        flags: Option<&str>,
+    ) -> std::io::Result<i32> {
+        let file = ops::open_write(&path, flags)?;
+        self.insert_descriptor(file, path)
+    }
+
+    fn insert_descriptor(&mut self, file: std::fs::File, path: String) -> std::io::Result<i32> {
+        let fd = self.next_fd;
+        self.next_fd = self.next_fd.checked_add(1).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::Other, "file descriptor space exhausted")
+        })?;
+        self.descriptors.insert(fd, FileDescriptor { file, path });
+        Ok(fd)
+    }
+
+    pub(crate) fn write_stream_chunk(&mut self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
+        let descriptor = self
+            .descriptors
+            .get_mut(&fd)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+        descriptor.file.write_all(bytes)?;
+        Ok(bytes.len())
+    }
+
+    pub(crate) fn close_stream(&mut self, fd: i32) -> std::io::Result<String> {
+        self.descriptors
+            .remove(&fd)
+            .map(|descriptor| descriptor.path)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
+    }
+
+    pub(crate) fn read_stream_chunk(
+        &mut self,
+        fd: i32,
+        size: usize,
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        let descriptor = self
+            .descriptors
+            .get_mut(&fd)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+        let mut bytes = vec![0; size];
+        let read = descriptor.file.read(&mut bytes)?;
+        if read == 0 {
+            return Ok(None);
+        }
+        bytes.truncate(read);
+        Ok(Some(bytes))
+    }
+
+    pub(crate) fn close_read_stream(&mut self, fd: i32) {
+        self.descriptors.remove(&fd);
     }
 }
 
@@ -120,7 +183,7 @@ pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
 /// Quench runner intentionally keeps the repository root as its cwd. Resolve
 /// only the fixture-relative `./test/...` spelling when its canonical target
 /// exists; ordinary application paths retain normal host semantics.
-fn resolve_fixture_path(path: String) -> String {
+pub(crate) fn resolve_fixture_path(path: String) -> String {
     let Some(suffix) = path.strip_prefix("./test/") else {
         return path;
     };
@@ -632,7 +695,7 @@ pub fn open_sync(
             );
             drop(fs);
             if let Some(mode) = mode {
-                super::fs_sync::apply_mode(&path, Some(mode));
+                ops::apply_mode(&path, Some(mode));
             }
             return Ok(Value::Number(fd as f64));
         }
@@ -658,7 +721,7 @@ pub fn open_sync(
     );
     drop(fs);
     if let Some(mode) = mode {
-        super::fs_sync::apply_mode(&path, Some(mode));
+        ops::apply_mode(&path, Some(mode));
     }
     Ok(Value::Number(fd as f64))
 }

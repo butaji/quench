@@ -20,7 +20,7 @@ pub fn array(values: Vec<Value>) -> Value {
 
 pub fn capability_function(capability: HostCapabilityRef) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
-    Value::BoundFunction(Rc::new(BoundFunctionValue::new(
+    Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue::new(
         capability.realm,
         Value::Builtin(Builtin::HostCapability(capability.kind)),
         token,
@@ -32,7 +32,7 @@ pub fn capability_function_with_properties(
     properties: Vec<(String, Value)>,
 ) -> Value {
     let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(capability)));
-    Value::BoundFunction(Rc::new(BoundFunctionValue {
+    Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
         realm: capability.realm,
         target: Value::Builtin(Builtin::HostCapability(capability.kind)),
         receiver: token,
@@ -46,7 +46,7 @@ pub fn capability_function_with_properties(
 /// specialize a constructor without mutating the shared intrinsic.
 pub fn bound_builtin(target: Builtin, receiver: Value) -> Value {
     let realm = crate::vm::current_context().realm();
-    Value::BoundFunction(Rc::new(BoundFunctionValue {
+    Value::BoundFunction(BoundFunctionValue::allocate(BoundFunctionValue {
         realm,
         target: Value::Builtin(target),
         receiver,
@@ -83,7 +83,7 @@ pub fn bound_capability_with_arguments_in_realm(
         token,
     );
     bound.arguments = arguments;
-    Value::BoundFunction(Rc::new(bound))
+    Value::BoundFunction(BoundFunctionValue::allocate(bound))
 }
 
 pub fn bytes(bytes: &[u8]) -> Value {

@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
         frame: usize,
         value: Value,
     ) -> Result<(), JsError> {
-        let atom = self.intern_atom("\0rqj:lexical-this");
+        let atom = self.intern_atom("\0quench:lexical-this");
         let owner = self.lexical_this_owner(frame, atom);
         if !self.store_own_dynamic_binding(frame, atom, value)
             && !self.store_outer_dynamic_binding(frame, atom, value)
@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
                     || self
                         .atom_name(*candidate)
                         .strip_prefix(name)
-                        .is_some_and(|suffix| suffix.starts_with("\0rqj:self-binding:"))
+                        .is_some_and(|suffix| suffix.starts_with("\0quench:self-binding:"))
             })
     }
 
@@ -593,7 +593,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {
-        self.atom_name(atom).contains("\0rqj:self-binding:")
+        self.atom_name(atom).contains("\0quench:self-binding:")
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
@@ -602,7 +602,7 @@ impl<H: Host> Vm<H> {
             if let Some((_, value)) = dynamic_bindings
                 .iter()
                 .rev()
-                .find(|(atom, _)| self.atom_name(*atom) == "\0rqj:lexical-this")
+                .find(|(atom, _)| self.atom_name(*atom) == "\0quench:lexical-this")
             {
                 return Some(*value);
             }
@@ -612,7 +612,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn check_super_call(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let atom = self.intern_atom("\0rqj:lexical-this");
+        let atom = self.intern_atom("\0quench:lexical-this");
         let frame = self
             .frames
             .len()
@@ -1317,7 +1317,7 @@ impl<H: Host> Vm<H> {
                 && slots.is_empty()
                 && (dynamic_bindings.is_empty()
                     || (dynamic_bindings.len() == 1
-                        && self.atom_name(dynamic_bindings[0].0) == "\0rqj:lexical-this"));
+                        && self.atom_name(dynamic_bindings[0].0) == "\0quench:lexical-this"));
             if with_objects.is_empty() && !lexical_this_wrapper {
                 break;
             }
@@ -1558,31 +1558,31 @@ impl<H: Host> Vm<H> {
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
         let name = self.atom_name(atom);
-        if name == "\0rqj:dynamic-import" {
+        if name == "\0quench:dynamic-import" {
             return Ok(self.native_value(Native::DynamicImport));
         }
         if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
             return Ok(self.regexp_intrinsic_constructor());
         }
-        if name == "\0rqj:intrinsic-promise" {
+        if name == "\0quench:intrinsic-promise" {
             return Ok(self.native_value(Native::Promise));
         }
-        if name == "\0rqj:super-get" {
+        if name == "\0quench:super-get" {
             return Ok(self.native_value(Native::ReflectGet));
         }
-        if name == "\0rqj:super-set" {
+        if name == "\0quench:super-set" {
             return Ok(self.native_value(Native::SuperSet));
         }
-        if name == "\0rqj:super-base" {
+        if name == "\0quench:super-base" {
             return Ok(self.native_value(Native::ReflectGetPrototypeOf));
         }
-        if name == "\0rqj:object-literal-prototype" {
+        if name == "\0quench:object-literal-prototype" {
             return Ok(self.native_value(Native::ObjectLiteralPrototype));
         }
-        if name == "\0rqj:object-define-property" {
+        if name == "\0quench:object-define-property" {
             return Ok(self.native_value(Native::ObjectDefineProperty));
         }
-        if name == "\0rqj:object-freeze" {
+        if name == "\0quench:object-freeze" {
             return Ok(self.native_value(Native::ObjectFreeze));
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {

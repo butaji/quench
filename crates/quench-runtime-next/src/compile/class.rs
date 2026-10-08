@@ -28,7 +28,7 @@ impl FunctionCompiler<'_, '_> {
         let class_binding = class.id.as_ref().map(|identifier| {
             let source = self.owner.atom(identifier.name.as_str());
             let binding = self.hidden_local(&format!(
-                "{}\0rqj:class-binding:{}",
+                "{}\0quench:class-binding:{}",
                 identifier.name.as_str(),
                 self.function_id
             ));
@@ -50,8 +50,8 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::ValidateClassHeritage, heritage, 0, 0, 0);
         }
         let super_atom = heritage.map(|_| {
-            let atom = self.hidden_local(&format!("\0rqj:class-super:{}", class.span.start));
-            let super_binding = self.owner.atom("\0rqj:super");
+            let atom = self.hidden_local(&format!("\0quench:class-super:{}", class.span.start));
+            let super_binding = self.owner.atom("\0quench:super");
             self.push_lexical_bindings(FxHashMap::from_iter([(super_binding, atom)]));
             atom
         });
@@ -79,7 +79,7 @@ impl FunctionCompiler<'_, '_> {
         let mut method_home_atoms = FxHashMap::default();
         for element in &class.body.body {
             if let ClassElement::MethodDefinition(method) = element {
-                let atom = self.hidden_local(&format!("\0rqj:home:{}", method.span.start));
+                let atom = self.hidden_local(&format!("\0quench:home:{}", method.span.start));
                 method_home_atoms.insert(method.span.start, atom);
             }
         }
@@ -142,11 +142,12 @@ impl FunctionCompiler<'_, '_> {
             .map(|(method, _)| method_home_atoms[&method.span.start])
             .unwrap_or_else(|| {
                 self.hidden_local(&format!(
-                    "\0rqj:home:implicit-constructor:{}",
+                    "\0quench:home:implicit-constructor:{}",
                     class.span.start
                 ))
             });
-        let class_home_atom = self.hidden_local(&format!("\0rqj:home:class:{}", class.span.start));
+        let class_home_atom =
+            self.hidden_local(&format!("\0quench:home:class:{}", class.span.start));
         for field in &fields {
             if class_field_value(*field).is_some() {
                 self.hidden_local(&class_field_initializer_name(
@@ -209,7 +210,7 @@ impl FunctionCompiler<'_, '_> {
             })
             .unwrap_or_else(|| {
                 let params = if implicit_super {
-                    vec!["\0rqj:derived-args".to_owned()]
+                    vec!["\0quench:derived-args".to_owned()]
                 } else {
                     vec![]
                 };
@@ -654,7 +655,7 @@ impl FunctionCompiler<'_, '_> {
         }
         let key =
             computed_key.unwrap_or_else(|| self.literal(Constant::String(name.unwrap().into())));
-        let mode = if name.is_some_and(|name| name.starts_with("\0rqj:private:")) {
+        let mode = if name.is_some_and(|name| name.starts_with("\0quench:private:")) {
             crate::bytecode::PropertyDefinitionMode::ReadonlyMethod
         } else {
             crate::bytecode::PropertyDefinitionMode::Method
@@ -852,7 +853,7 @@ fn class_field_span(field: ClassField<'_>) -> Span {
 }
 
 fn class_field_initializer_name(start: u32) -> String {
-    format!("\0rqj:field-initializer:{start}")
+    format!("\0quench:field-initializer:{start}")
 }
 
 fn class_field_value<'a>(field: ClassField<'a>) -> Option<&'a Expression<'a>> {
@@ -1124,5 +1125,5 @@ fn class_field_storage_name(compiler: &mut Compiler<'_>, key: &PropertyKey<'_>) 
 }
 
 pub(super) fn computed_field_key_name(start: u32) -> String {
-    format!("\0rqj:computed-field-key:{start}")
+    format!("\0quench:computed-field-key:{start}")
 }

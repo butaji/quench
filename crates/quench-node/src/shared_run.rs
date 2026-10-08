@@ -78,7 +78,7 @@ fn execute_shared_on_worker(
         }
     };
 
-    let host = NodeHost::new(argv).with_exec_argv(exec_argv);
+    let host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
     let host = match commonjs_entry {
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,
@@ -104,9 +104,11 @@ fn execute_shared_on_worker(
                 &mut runtime,
                 &program,
                 &host_state,
+                &error,
             );
             match exit {
-                Ok(()) => Err(message),
+                Ok(true) => Ok(()),
+                Ok(false) => Err(message),
                 Err(exit_error) => Err(format!("{message}; exit handler failed: {exit_error}")),
             }
         }
@@ -145,9 +147,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     }
 
     let input = match first.as_deref() {
-        Some("-e") | Some("--eval") => {
-            SharedInput::Eval(args.next().unwrap_or_default())
-        }
+        Some("-e") | Some("--eval") => SharedInput::Eval(args.next().unwrap_or_default()),
         Some(path) => SharedInput::File {
             path: PathBuf::from(path),
             exec_argv: Vec::new(),

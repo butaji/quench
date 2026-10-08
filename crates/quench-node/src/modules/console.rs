@@ -8,6 +8,8 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 use crate::modules::util::inspect;
 
+pub(crate) mod shared_vm;
+
 /// Build the `console` namespace object.
 pub fn build() -> Vec<(String, Value)> {
     vec![
@@ -221,8 +223,7 @@ pub fn log_named(
     let process = state
         .borrow()
         .process_module
-        .as_ref()
-        .and_then(crate::host::ProcessModule::legacy)
+        .clone()
         .unwrap_or_else(|| quench_runtime::vm::current_global_object());
     let stream_name = if is_error { "stderr" } else { "stdout" };
     let stream = quench_runtime::execute::get_property(&process, stream_name);

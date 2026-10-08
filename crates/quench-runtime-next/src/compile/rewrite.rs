@@ -124,9 +124,9 @@ pub(super) fn apply(
     while rewrite_once(function, methods, field_sites, superinstructions) {
         changed_passes += 1;
     }
-    if std::env::var_os("RQJ_REWRITE_STATS").is_some() {
+    if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
         eprintln!(
-            "{{\"kind\":\"rqj-rewrite\",\"input\":{input},\"output\":{},\"changed_passes\":{changed_passes},\"scans\":{}}}",
+            "{{\"kind\":\"quench-rewrite\",\"input\":{input},\"output\":{},\"changed_passes\":{changed_passes},\"scans\":{}}}",
             function.code.len(),
             changed_passes + 1
         );
@@ -194,6 +194,8 @@ fn rewrite_super_window(
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
+        &mut function.source_positions,
+        &old,
     );
     function.code = code;
     changed
@@ -322,6 +324,8 @@ fn rewrite_once(
         &mut function.handlers,
         &mut function.parameter_end_pc,
         &mut function.binding_sites,
+        &mut function.source_positions,
+        &old,
     );
     function.code = code;
     changed
@@ -350,8 +354,10 @@ pub(super) fn relocate(
     handlers: &mut [crate::bytecode::Handler],
     parameter_end_pc: &mut u32,
     binding_sites: &mut [crate::bytecode::BindingSite],
+    source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+    old_code: &[Instr],
 ) {
-    for instruction in code {
+    for instruction in code.iter_mut() {
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             let target = map[instruction.jump_target() as usize] as u32;
             assert!(instruction.try_set_jump_target(target));
@@ -371,6 +377,64 @@ pub(super) fn relocate(
     for site in binding_sites {
         site.resume_pc = map[site.resume_pc as usize] as u32;
     }
+    relocate_source_positions(code.len(), source_positions, old_code, map);
+}
+
+fn relocate_source_positions(
+    code_len: usize,
+    source_positions: &mut Vec<crate::bytecode::SourcePosition>,
+    old_code: &[Instr],
+    map: &[usize],
+) {
+    let surviving_positions = source_positions
+        .iter()
+        .copied()
+        .filter(|position| source_instruction_survives(position.pc as usize, old_code, map))
+        .collect::<Vec<_>>();
+    let mut relocated = Vec::with_capacity(surviving_positions.len());
+    let mut position_index = 0;
+    let mut origin_pc = 0;
+    let mut effective = None;
+    let mut previous_location = None;
+
+    for new_pc in 0..code_len {
+        while origin_pc < old_code.len()
+            && (!source_instruction_survives(origin_pc, old_code, map) || map[origin_pc] < new_pc)
+        {
+            origin_pc += 1;
+        }
+        assert_eq!(
+            map[origin_pc], new_pc,
+            "compacted instruction has an origin"
+        );
+        let anchor = origin_pc;
+        origin_pc += 1;
+        while surviving_positions
+            .get(position_index)
+            .is_some_and(|position| position.pc as usize <= anchor)
+        {
+            effective = surviving_positions.get(position_index).copied();
+            position_index += 1;
+        }
+        let Some(position) = effective else {
+            continue;
+        };
+        let location = (position.line, position.column);
+        if previous_location == Some(location) {
+            continue;
+        }
+        relocated.push(crate::bytecode::SourcePosition {
+            pc: new_pc as u32,
+            line: position.line,
+            column: position.column,
+        });
+        previous_location = Some(location);
+    }
+    *source_positions = relocated;
+}
+
+fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize]) -> bool {
+    old_code[old_pc].op() != Op::Nop || map[old_pc] != map[old_pc + 1]
 }
 
 #[cfg(test)]
@@ -521,6 +585,66 @@ mod tests {
         assert_eq!(
             sites[0].code.map(|instruction| instruction.op()),
             CONST_ARRAY_OBJECT2
+        );
+    }
+
+    #[test]
+    fn source_positions_follow_compaction_and_skip_removed_instructions() {
+        use crate::bytecode::SourcePosition;
+
+        let mut code = vec![Instr::new(Op::Return, 0, 0, 0, 0); 2];
+        let old_code = vec![
+            Instr::new(Op::Binary, 0, 0, 0, 0),
+            Instr::new(Op::Return, 0, 0, 0, 0),
+            Instr::new(Op::Nop, 0, 0, 0, 0),
+            Instr::new(Op::Return, 0, 0, 0, 0),
+        ];
+        let mut source_positions = vec![
+            SourcePosition {
+                pc: 0,
+                line: 1,
+                column: 1,
+            },
+            SourcePosition {
+                pc: 1,
+                line: 1,
+                column: 5,
+            },
+            SourcePosition {
+                pc: 2,
+                line: 1,
+                column: 9,
+            },
+        ];
+        let map = [0, 0, 1, 1, 2];
+        let mut parameter_end_pc = 0;
+        let mut handlers = vec![];
+        let mut binding_sites = vec![];
+
+        relocate(
+            &mut code,
+            &map,
+            &mut handlers,
+            &mut parameter_end_pc,
+            &mut binding_sites,
+            &mut source_positions,
+            &old_code,
+        );
+
+        assert_eq!(
+            source_positions,
+            vec![
+                SourcePosition {
+                    pc: 0,
+                    line: 1,
+                    column: 1,
+                },
+                SourcePosition {
+                    pc: 1,
+                    line: 1,
+                    column: 5,
+                },
+            ]
         );
     }
 }

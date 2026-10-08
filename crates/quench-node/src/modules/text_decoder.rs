@@ -10,13 +10,15 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+pub mod shared_vm;
+
 /// `new TextDecoder([label])`.
 pub fn new_text_decoder(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let label = match args.first() {
         None | Some(Value::Undefined) => "utf-8".to_string(),
         Some(value) => execute::to_js_string(value)?,
     };
-    let encoding = normalize_label(&label).ok_or_else(|| {
+    let encoding = canonical_encoding(&label).ok_or_else(|| {
         VmError::Thrown(host_api::object(vec![
             ("name".to_string(), Value::String("RangeError".to_string())),
             (
@@ -90,26 +92,30 @@ pub fn decode(
         receiver.map(|value| execute::get_property(value, "\0fatal")),
         Some(Value::Boolean(true))
     );
-    let text = if encoding == "windows-1252" {
-        // WHATWG-canonical windows-1252 decoder (encoding_rs).
-        encoding_rs::WINDOWS_1252.decode(&bytes).0.into_owned()
-    } else if fatal {
-        String::from_utf8(bytes).map_err(|_| {
-            VmError::Thrown(host_api::object(vec![
-                ("name".into(), Value::String("TypeError".into())),
-                (
-                    "message".into(),
-                    Value::String("The encoded data was not valid UTF-8".into()),
-                ),
-            ]))
-        })?
-    } else {
-        String::from_utf8_lossy(&bytes).into_owned()
-    };
+    let text = decode_bytes(&encoding, &bytes, fatal).map_err(|_| {
+        VmError::Thrown(host_api::object(vec![
+            ("name".into(), Value::String("TypeError".into())),
+            (
+                "message".into(),
+                Value::String("The encoded data was not valid UTF-8".into()),
+            ),
+        ]))
+    })?;
     Ok(Value::String(text))
 }
 
-fn normalize_label(label: &str) -> Option<&'static str> {
+pub(crate) fn decode_bytes(encoding: &str, bytes: &[u8], fatal: bool) -> Result<String, ()> {
+    if encoding == "windows-1252" {
+        // WHATWG-canonical windows-1252 decoder (encoding_rs).
+        Ok(encoding_rs::WINDOWS_1252.decode(bytes).0.into_owned())
+    } else if fatal {
+        String::from_utf8(bytes.to_vec()).map_err(|_| ())
+    } else {
+        Ok(String::from_utf8_lossy(bytes).into_owned())
+    }
+}
+
+pub(crate) fn canonical_encoding(label: &str) -> Option<&'static str> {
     match label.trim().to_ascii_lowercase().as_str() {
         "utf-8" | "utf8" | "unicode-1-1-utf-8" => Some("utf-8"),
         "windows-1252" | "latin1" | "iso-8859-1" | "us-ascii" | "ascii" => Some("windows-1252"),

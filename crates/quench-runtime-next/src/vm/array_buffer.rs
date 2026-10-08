@@ -75,12 +75,7 @@ impl<H: Host> Vm<H> {
         self.set_non_enumerable_property(array_buffer, "isView", true);
         self.set_builtin_function_name(is_view, "isView")?;
         self.install_array_buffer_getters(prototype, global, current_realm)?;
-        self.install_buffer_species(
-            array_buffer,
-            prototype,
-            global,
-            "ArrayBuffer",
-        )?;
+        self.install_buffer_species(array_buffer, prototype, global, "ArrayBuffer")?;
         Ok((array_buffer, prototype))
     }
 
@@ -134,12 +129,7 @@ impl<H: Host> Vm<H> {
             self.set_non_enumerable_property(prototype, name, true);
         }
         self.install_shared_array_buffer_getters(program, prototype, global, current_realm)?;
-        self.install_buffer_species(
-            constructor,
-            prototype,
-            global,
-            "SharedArrayBuffer",
-        )?;
+        self.install_buffer_species(constructor, prototype, global, "SharedArrayBuffer")?;
         Ok((constructor, prototype))
     }
 

@@ -52,11 +52,11 @@ impl FunctionCompiler<'_, '_> {
         }
         let raw_key = self.literal(Constant::String("raw".into()));
         self.call_template_intrinsic(
-            "\0rqj:object-define-property",
+            "\0quench:object-define-property",
             &[strings, raw_key, descriptor],
         );
-        self.call_template_intrinsic("\0rqj:object-freeze", &[raw_strings]);
-        self.call_template_intrinsic("\0rqj:object-freeze", &[strings]);
+        self.call_template_intrinsic("\0quench:object-freeze", &[raw_strings]);
+        self.call_template_intrinsic("\0quench:object-freeze", &[strings]);
         self.emit(Op::CacheTemplateObject, strings, 0, 0, site);
         self.patch(cached_template);
         // Evaluate substitutions before reserving the contiguous call-argument
@@ -145,7 +145,7 @@ impl FunctionCompiler<'_, '_> {
         for (index, expression) in template.expressions.iter().enumerate() {
             let expression_value = self.expression(expression);
             let expression_string =
-                self.call_template_intrinsic("\0rqj:to-string", &[expression_value]);
+                self.call_template_intrinsic("\0quench:to-string", &[expression_value]);
             result = self.emit_binary(
                 BinaryOperator::Addition as u32,
                 Operand::register(result),

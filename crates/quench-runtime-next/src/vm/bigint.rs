@@ -100,7 +100,7 @@ impl<H: Host> Vm<H> {
         if matches!(self.heap.get(this), Some(Cell::BigInt(_))) {
             return Ok(this);
         }
-        let value_atom = self.intern_atom("\0rqj:bigint-value");
+        let value_atom = self.intern_atom("\0quench:bigint-value");
         let value = self
             .own_property(this, value_atom)
             .unwrap_or(Value::UNDEFINED);

@@ -5,6 +5,22 @@ use super::*;
 const FUNCTION_PROTOTYPE_LENGTH: f64 = 0.0;
 const ERROR_OPTIONS_ARGUMENT: usize = 1;
 const SUPPRESSED_MESSAGE_ARGUMENT: usize = 2;
+const DEFAULT_STACK_TRACE_LIMIT: usize = 10;
+
+const CALL_SITE_METHODS: &[(&str, Native)] = &[
+    ("getFileName", Native::CallSiteGetFileName),
+    ("getThis", Native::CallSiteGetThis),
+    ("getFunctionName", Native::CallSiteGetFunctionName),
+    ("getLineNumber", Native::CallSiteGetLineNumber),
+    ("getColumnNumber", Native::CallSiteGetColumnNumber),
+    ("getTypeName", Native::CallSiteGetTypeName),
+    ("getMethodName", Native::CallSiteGetMethodName),
+    ("isEval", Native::CallSiteIsEval),
+    ("getEvalOrigin", Native::CallSiteGetEvalOrigin),
+    ("isConstructor", Native::CallSiteIsConstructor),
+    ("isNative", Native::CallSiteIsNative),
+    ("toString", Native::CallSiteToString),
+];
 
 const ERROR_CONSTRUCTORS: &[(&str, Native)] = &[
     ("Error", Native::Error),
@@ -21,8 +37,22 @@ const ERROR_CONSTRUCTORS: &[(&str, Native)] = &[
 pub(super) fn error_native_length(native: Native) -> Option<f64> {
     Some(match native {
         Native::ErrorIsError => 1.0,
+        Native::ErrorCaptureStackTrace => 2.0,
         Native::ErrorStackSetter => 1.0,
-        Native::ErrorToString | Native::ErrorStackGetter => 0.0,
+        Native::ErrorToString
+        | Native::ErrorStackGetter
+        | Native::CallSiteGetFileName
+        | Native::CallSiteGetThis
+        | Native::CallSiteGetFunctionName
+        | Native::CallSiteGetLineNumber
+        | Native::CallSiteGetColumnNumber
+        | Native::CallSiteGetTypeName
+        | Native::CallSiteGetMethodName
+        | Native::CallSiteIsEval
+        | Native::CallSiteGetEvalOrigin
+        | Native::CallSiteIsConstructor
+        | Native::CallSiteIsNative
+        | Native::CallSiteToString => 0.0,
         _ => return None,
     })
 }
@@ -51,6 +81,8 @@ enum ErrorDescription {
         eval_parser_diagnostic: bool,
     },
     WasmTrap(crate::WasmTrap),
+    WasmException,
+    WasmLink(String),
 }
 
 impl From<&str> for ErrorMessage {
@@ -76,8 +108,11 @@ impl From<String> for ErrorMessage {
 impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0.payload.description {
-            ErrorDescription::Text { message, .. } => f.write_str(message),
+            ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => {
+                f.write_str(message)
+            }
             ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
+            ErrorDescription::WasmException => f.write_str("uncaught Wasm exception"),
         }
     }
 }
@@ -124,11 +159,29 @@ impl JsError {
         self
     }
 
+    /// Inspect a thrown Wasm exception independently of guest traps and JS throws.
+    pub fn wasm_exception(&self) -> Option<Value> {
+        matches!(self.0.payload.description, ErrorDescription::WasmException)
+            .then_some(self.0.payload.thrown)
+            .flatten()
+    }
+
+    pub(crate) fn thrown_wasm_exception(value: Value) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmException,
+                thrown: Some(value),
+            }),
+        })
+    }
+
     /// Inspect a typed WebAssembly trap without treating it as a JS throw.
     pub fn wasm_trap(&self) -> Option<crate::WasmTrap> {
         match self.0.payload.description {
             ErrorDescription::WasmTrap(trap) => Some(trap),
-            ErrorDescription::Text { .. } => None,
+            ErrorDescription::Text { .. }
+            | ErrorDescription::WasmLink(_)
+            | ErrorDescription::WasmException => None,
         }
     }
 
@@ -136,6 +189,23 @@ impl JsError {
         Self(ErrorMessage {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::WasmTrap(trap),
+                thrown: None,
+            }),
+        })
+    }
+
+    /// Link failures are neither guest traps nor unsupported residual operations.
+    pub fn wasm_link_error(&self) -> Option<&str> {
+        match &self.0.payload.description {
+            ErrorDescription::WasmLink(message) => Some(message),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn wasm_link(message: impl Into<String>) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmLink(message.into()),
                 thrown: None,
             }),
         })
@@ -149,8 +219,9 @@ impl JsError {
 
     pub(super) fn into_message(self) -> String {
         match self.0.payload.description {
-            ErrorDescription::Text { message, .. } => message,
+            ErrorDescription::Text { message, .. } | ErrorDescription::WasmLink(message) => message,
             ErrorDescription::WasmTrap(trap) => trap.to_string(),
+            ErrorDescription::WasmException => "uncaught Wasm exception".into(),
         }
     }
 }
@@ -168,10 +239,263 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(receiver) {
             return Err(self.type_error(program, "Error stack getter requires an object".into()));
         }
-        if !self.error_is_error(receiver) {
-            return Ok(Value::UNDEFINED);
+        let Some(StackData::Captured(records)) = self
+            .object_data(receiver)
+            .and_then(Object::stack_data)
+            .cloned()
+        else {
+            return if self.error_is_error(receiver) {
+                self.error_to_string(program, receiver)
+            } else {
+                Ok(Value::UNDEFINED)
+            };
+        };
+
+        let receiver_root = self.heap.root(receiver);
+        let mut roots = Vec::with_capacity(2);
+        let outcome = (|| {
+            let global = self.realm.globals;
+            let error_atom = self.intern_atom("Error");
+            let constructor = self.get_property(program, global, error_atom)?;
+            roots.push(self.heap.root(constructor));
+            let prepare_atom = self.intern_atom("prepareStackTrace");
+            let prepare = self.get_property(program, constructor, prepare_atom)?;
+            roots.push(self.heap.root(prepare));
+            let result = (|| {
+                if self.is_function(prepare) {
+                    let sites = self.error_call_site_array(program, &records)?;
+                    let sites_root = self.heap.root(sites);
+                    let target = self.heap.root_value(receiver_root).unwrap();
+                    let constructor = self.heap.root_value(roots[0]).unwrap();
+                    let prepare = self.heap.root_value(roots[1]).unwrap();
+                    let sites = self.heap.root_value(sites_root).unwrap();
+                    let result = self.call_value(program, prepare, constructor, &[target, sites]);
+                    self.heap.release_root(sites_root);
+                    result
+                } else {
+                    self.error_default_stack(program, receiver_root, &records)
+                }
+            })();
+            result
+        })();
+        for root in roots {
+            self.heap.release_root(root);
         }
-        self.error_to_string(program, receiver)
+        self.heap.release_root(receiver_root);
+        outcome
+    }
+
+    fn error_default_stack(
+        &mut self,
+        program: &ResidualProgram,
+        receiver: RootId,
+        records: &[CallSiteRecord],
+    ) -> Result<Value, JsError> {
+        let target = self.heap.root_value(receiver).unwrap();
+        let mut stack = if self.error_is_error(target) {
+            let header = self.error_to_string(program, target)?;
+            self.to_string(program, header)?
+        } else {
+            "Error".to_owned()
+        };
+        for record in records {
+            stack.push_str("\n    at ");
+            stack.push_str(&Self::format_call_site(record));
+        }
+        Ok(self.heap.alloc(Cell::String(JsString::from_str(&stack))))
+    }
+
+    fn error_call_site_array(
+        &mut self,
+        program: &ResidualProgram,
+        records: &[CallSiteRecord],
+    ) -> Result<Value, JsError> {
+        let mut roots = Vec::with_capacity(records.len());
+        let result = (|| {
+            let mut sites = Vec::with_capacity(records.len());
+            for record in records {
+                let site = self
+                    .heap
+                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                let root = self.heap.root(site);
+                roots.push(root);
+                self.object_data_mut(site)
+                    .expect("CallSite is an ordinary object")
+                    .set_stack_data(StackData::CallSite(record.clone()));
+                for &(name, native) in CALL_SITE_METHODS {
+                    self.set_builtin_named(program, site, name, native)?;
+                }
+                sites.push(self.heap.root_value(root).unwrap());
+            }
+            Ok(self.heap.alloc(Cell::Array {
+                object: Self::empty_object(self.array_proto),
+                elements: Rc::new(sites),
+            }))
+        })();
+        for root in roots {
+            self.heap.release_root(root);
+        }
+        result
+    }
+
+    pub(super) fn error_capture_stack_trace(
+        &mut self,
+        program: &ResidualProgram,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let target = args.first().copied().unwrap_or(Value::UNDEFINED);
+        if !self.is_object_like(target) {
+            return Err(
+                self.type_error(program, "Error.captureStackTrace requires an object".into())
+            );
+        }
+        let constructor_opt = args.get(1).copied().unwrap_or(Value::UNDEFINED);
+        let trim_constructor =
+            constructor_opt != Value::UNDEFINED && self.is_function(constructor_opt);
+        let limit = self.error_stack_trace_limit(program)?;
+        let mut records = Vec::with_capacity(self.frames.len().min(limit));
+        for frame in self.frames.iter().rev() {
+            if records.len() >= limit {
+                break;
+            }
+            if frame.context == CallContext::Internal {
+                continue;
+            }
+            if trim_constructor && frame.context.callable() == Some(constructor_opt) {
+                break;
+            }
+            let Some(residual) = self.programs.get(frame.program) else {
+                continue;
+            };
+            let Some(function) = residual.functions.get(frame.function as usize) else {
+                continue;
+            };
+            // A PC without compiler-owned source metadata has no truthful JS location.
+            let pc = u32::try_from(frame.pc).unwrap_or(u32::MAX);
+            let position = function
+                .source_positions
+                .partition_point(|position| position.pc <= pc)
+                .checked_sub(1)
+                .and_then(|index| function.source_positions.get(index));
+            let Some(position) = position else {
+                continue;
+            };
+            let function_name = function
+                .name
+                .map(|atom| self.atom_name(atom).to_owned())
+                .filter(|name| !name.starts_with('\0'));
+            records.push(CallSiteRecord {
+                file_name: residual.source_name.clone(),
+                function_name,
+                this_value: frame.this,
+                line: position.line,
+                column: position.column,
+            });
+        }
+
+        let target_root = self.heap.root(target);
+        let result = (|| {
+            let target = self.heap.root_value(target_root).unwrap();
+            if self.object_data(target).is_none() {
+                return Err(self.type_error(
+                    program,
+                    "Error.captureStackTrace target must be an object".into(),
+                ));
+            }
+            let getter = self.native_with_realm(
+                Native::ErrorStackGetter,
+                self.realm.globals,
+                self.realm.globals,
+            );
+            let setter = self.native_with_realm(
+                Native::ErrorStackSetter,
+                self.realm.globals,
+                self.realm.globals,
+            );
+            let target = self.heap.root_value(target_root).unwrap();
+            let key = self.heap.alloc(Cell::String("stack".into()));
+            self.define_property_or_throw(
+                program,
+                target,
+                key,
+                PropertyDescriptorRecord {
+                    value: None,
+                    writable: None,
+                    enumerable: Some(false),
+                    configurable: Some(true),
+                    getter: Some(getter),
+                    setter: Some(setter),
+                },
+            )?;
+            self.object_data_mut(target)
+                .expect("captureStackTrace target remains object-like")
+                .set_stack_data(StackData::Captured(records));
+            Ok(Value::UNDEFINED)
+        })();
+        self.heap.release_root(target_root);
+        result
+    }
+
+    fn error_stack_trace_limit(&mut self, program: &ResidualProgram) -> Result<usize, JsError> {
+        let global = self.realm.globals;
+        let error_atom = self.intern_atom("Error");
+        let constructor = self.get_property(program, global, error_atom)?;
+        let limit_atom = self.intern_atom("stackTraceLimit");
+        let value = self.get_property(program, constructor, limit_atom)?;
+        let number = self.to_number(program, value)?;
+        Ok(if number.is_nan() || number <= 0.0 {
+            0
+        } else if !number.is_finite() {
+            usize::MAX
+        } else {
+            number.floor().min(usize::MAX as f64) as usize
+        })
+    }
+
+    fn format_call_site(record: &CallSiteRecord) -> String {
+        let location = format!("{}:{}:{}", record.file_name, record.line, record.column);
+        record
+            .function_name
+            .as_ref()
+            .map_or(location.clone(), |name| format!("{name} ({location})"))
+    }
+
+    pub(super) fn call_site_native(
+        &mut self,
+        program: &ResidualProgram,
+        native: Native,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        let record = match self.object_data(receiver).and_then(Object::stack_data) {
+            Some(StackData::CallSite(record)) => record.clone(),
+            _ => {
+                return Err(self.type_error(
+                    program,
+                    "CallSite method called on incompatible receiver".into(),
+                ));
+            }
+        };
+        match native {
+            Native::CallSiteGetFileName => {
+                Ok(self.heap.alloc(Cell::String(record.file_name.into())))
+            }
+            Native::CallSiteGetThis => Ok(record.this_value),
+            Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(record
+                .function_name
+                .map(|name| self.heap.alloc(Cell::String(name.into())))
+                .unwrap_or(Value::UNDEFINED)),
+            Native::CallSiteGetLineNumber => Ok(Value::number(f64::from(record.line))),
+            Native::CallSiteGetColumnNumber => Ok(Value::number(f64::from(record.column))),
+            Native::CallSiteIsEval => Ok(Value::FALSE),
+            Native::CallSiteIsConstructor | Native::CallSiteIsNative => Ok(Value::FALSE),
+            Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
+            Native::CallSiteToString => Ok(self
+                .heap
+                .alloc(Cell::String(Self::format_call_site(&record).into()))),
+            _ => Err(JsError::validation(
+                "invalid CallSite native dispatch".into(),
+            )),
+        }
     }
 
     pub(super) fn error_stack_setter(
@@ -219,6 +543,9 @@ impl<H: Host> Vm<H> {
                 if !self.set_property_with_receiver(program, target, atom, value, target)? {
                     return Err(self.type_error(program, "cannot set Error stack property".into()));
                 }
+            }
+            if let Some(object) = self.object_data_mut(target) {
+                object.clear_stack_data();
             }
             Ok(Value::UNDEFINED)
         })();
@@ -392,11 +719,11 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn box_primitive_object(&mut self, value: Value) -> Result<Value, JsError> {
         let marker = match self.heap.get(value) {
-            Some(Cell::String(_)) => "\0rqj:string-value",
-            Some(Cell::Symbol(_)) => "\0rqj:symbol-value",
-            Some(Cell::BigInt(_)) => "\0rqj:bigint-value",
-            _ if value.as_number().is_some() => "\0rqj:number-value",
-            _ if value.as_bool().is_some() => "\0rqj:boolean-value",
+            Some(Cell::String(_)) => "\0quench:string-value",
+            Some(Cell::Symbol(_)) => "\0quench:symbol-value",
+            Some(Cell::BigInt(_)) => "\0quench:bigint-value",
+            _ if value.as_number().is_some() => "\0quench:number-value",
+            _ if value.as_bool().is_some() => "\0quench:boolean-value",
             _ => return Ok(self.object()),
         };
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
@@ -454,7 +781,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| self.native_value(Native::BigInt));
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
-        let value_atom = self.intern_atom("\0rqj:bigint-value");
+        let value_atom = self.intern_atom("\0quench:bigint-value");
         self.set_property(object, value_atom, value)?;
         Ok(object)
     }
@@ -825,7 +1152,7 @@ impl<H: Host> Vm<H> {
             return Ok(self.heap.alloc(Cell::BigInt(i32::from(value).to_string())));
         }
         if let Some(Cell::String(text)) = self.heap.get(primitive) {
-            let parsed = crate::bigint::parse_string(&text.host_string());
+            let parsed = crate::bigint::parse_string(text.host_string());
             return match parsed {
                 Some(value) => Ok(self.heap.alloc(Cell::BigInt(value.to_string()))),
                 None => self.syntax_error_result(program, "invalid BigInt value"),
@@ -859,13 +1186,9 @@ impl<H: Host> Vm<H> {
             );
         }
         let type_error = self.native_with_realm(Native::RealmTypeError, global, global);
-        let error_prototype = self
-            .lookup_atom("prototype")
-            .and_then(|atom| self.own_property(self.native_value(Native::TypeError), atom))
-            .unwrap_or(Value::NULL);
         let type_error_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(error_prototype)));
+            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -1223,13 +1546,21 @@ impl<H: Host> Vm<H> {
         let (array_buffer, _) =
             self.install_array_buffer_for_realm(program, global, object_prototype)?;
         self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
-        let realm_error_prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let realm_error_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Error), realm_error_prototype);
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
-        self.set_named_constant(program, realm_error_constructor, "prototype", realm_error_prototype)?;
+        self.install_error_stack_api(program, realm_error_constructor)?;
+        self.set_named_constant(
+            program,
+            realm_error_constructor,
+            "prototype",
+            realm_error_prototype,
+        )?;
         self.set_builtin_value_named(
             realm_error_prototype,
             "constructor",
@@ -1262,9 +1593,19 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_function_name(realm_error_constructor, "Error")?;
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
-        self.set_realm_builtin_named(program, realm_error_prototype, "toString", Native::ErrorToString, Some(global))?;
-        self.object_data_mut(type_error_prototype).expect("realm TypeError prototype").proto = realm_error_prototype;
-        self.object_data_mut(type_error).expect("realm TypeError constructor").proto = realm_error_constructor;
+        self.set_realm_builtin_named(
+            program,
+            realm_error_prototype,
+            "toString",
+            Native::ErrorToString,
+            Some(global),
+        )?;
+        self.object_data_mut(type_error_prototype)
+            .expect("realm TypeError prototype")
+            .proto = realm_error_prototype;
+        self.object_data_mut(type_error)
+            .expect("realm TypeError constructor")
+            .proto = realm_error_constructor;
         self.set_builtin_function_name(type_error, "TypeError")?;
         for &(name, native) in ERROR_CONSTRUCTORS {
             if matches!(native, Native::Error | Native::TypeError) {
@@ -1391,7 +1732,7 @@ impl<H: Host> Vm<H> {
             };
             self.set_builtin_value_named(global, name, value)?;
         }
-        for name in ["Atomics", "JSON", "Math", "Reflect"] {
+        for name in ["Atomics", "Math", "Reflect"] {
             let atom = self.intern_atom(name);
             if self.own_property(global, atom).is_none()
                 && let Some(value) = self.own_property(source_global, atom)
@@ -1572,6 +1913,7 @@ impl<H: Host> Vm<H> {
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;
         let error_constructor = self.native_value(Native::Error);
+        self.install_error_stack_api(program, error_constructor)?;
         self.set_builtin_named(program, error_constructor, "isError", Native::ErrorIsError)?;
         let stack_getter = self.native_value(Native::ErrorStackGetter);
         let stack_setter = self.native_value(Native::ErrorStackSetter);
@@ -1609,6 +1951,25 @@ impl<H: Host> Vm<H> {
             self.global(program, name, self.native_value(native))?;
         }
         Ok(())
+    }
+
+    fn install_error_stack_api(
+        &mut self,
+        program: &ResidualProgram,
+        constructor: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_named(
+            program,
+            constructor,
+            "captureStackTrace",
+            Native::ErrorCaptureStackTrace,
+        )?;
+        self.set_builtin_value_named(
+            constructor,
+            "stackTraceLimit",
+            Value::number(DEFAULT_STACK_TRACE_LIMIT as f64),
+        )?;
+        self.set_builtin_value_named(constructor, "prepareStackTrace", Value::UNDEFINED)
     }
 
     pub(super) fn construct_error_native(

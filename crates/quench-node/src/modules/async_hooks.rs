@@ -4,6 +4,8 @@
 //! fields below are ordinary runtime data used by the capability handlers;
 //! no second JavaScript object model is introduced.
 
+pub(crate) mod shared_vm;
+
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -12,6 +14,7 @@ use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef};
 use quench_runtime::value::Value;
+use quench_runtime_next::RootId;
 
 use crate::host::HostState;
 
@@ -50,6 +53,37 @@ use crate::registry::{
     SPEC_ASYNC_RESOURCE_DOMAIN, SPEC_ASYNC_RESOURCE_ID, SPEC_ASYNC_RESOURCE_RUN,
     SPEC_ASYNC_RESOURCE_STATIC_BIND, SPEC_ASYNC_RESOURCE_TRIGGER, SPEC_ASYNC_TRIGGER_ID,
 };
+
+/// Rooted state owned exclusively by the shared-VM async-hooks adapter.
+/// Async identity counters remain in `AsyncHooksState` so legacy and shared
+/// adapters continue to use one ID sequence during the cutover.
+#[derive(Default)]
+pub(crate) struct SharedAsyncHooksState {
+    module: Option<RootId>,
+    local_stores: HashMap<(u64, u64), RootId>,
+    store_references: HashMap<RootId, usize>,
+}
+
+impl SharedAsyncHooksState {
+    pub(crate) fn retain_store(&mut self, store: RootId) {
+        let references = self.store_references.entry(store).or_default();
+        *references = references
+            .checked_add(1)
+            .expect("shared async store reference count overflow");
+    }
+
+    pub(crate) fn release_store(&mut self, store: RootId) -> bool {
+        let Some(references) = self.store_references.get_mut(&store) else {
+            return false;
+        };
+        if *references > 1 {
+            *references -= 1;
+            return false;
+        }
+        self.store_references.remove(&store);
+        true
+    }
+}
 
 #[derive(Debug)]
 pub struct AsyncHooksState {

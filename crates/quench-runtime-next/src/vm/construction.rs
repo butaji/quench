@@ -13,7 +13,7 @@ impl<H: Host> Vm<H> {
                 env,
                 ..
             }) => {
-                let target_atom = self.intern_atom("\0rqj:bound-target");
+                let target_atom = self.intern_atom("\0quench:bound-target");
                 let target = self
                     .own_property(env, target_atom)
                     .unwrap_or(Value::UNDEFINED);
@@ -82,8 +82,8 @@ impl<H: Host> Vm<H> {
         let current = self
             .own_property(function, name_atom)
             .unwrap_or(Value::UNDEFINED);
-        let inferred = matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty())
-            || matches!(self.heap.get(current), Some(Cell::String(value)) if value.to_string() == "\0rqj:arrow");
+        let inferred =
+            matches!(self.heap.get(current), Some(Cell::String(value)) if value.units().is_empty());
         if !inferred {
             return;
         }
@@ -114,7 +114,7 @@ impl<H: Host> Vm<H> {
                     let Cell::Function { env, .. } = cell else {
                         return false;
                     };
-                    self.lookup_atom("\0rqj:bound-target")
+                    self.lookup_atom("\0quench:bound-target")
                         .and_then(|atom| self.own_property(*env, atom))
                         .is_some_and(|target| self.is_constructable(p, target))
                 }
@@ -236,9 +236,7 @@ impl<H: Host> Vm<H> {
                 with_objects,
             });
         }
-        let is_arrow = p.functions[id as usize]
-            .name
-            .is_some_and(|atom| self.atom_name(atom) == "\0rqj:arrow");
+        let is_arrow = p.functions[id as usize].is_arrow;
         if is_arrow {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
@@ -343,17 +341,13 @@ impl<H: Host> Vm<H> {
             },
         );
         let name = self.intern_atom("name");
-        let name_value = if is_arrow {
-            self.heap.alloc(Cell::String(JsString::from_str("")))
-        } else {
-            p.functions[id as usize]
-                .name
-                .map(|atom| {
-                    self.heap
-                        .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
-                })
-                .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))))
-        };
+        let name_value = p.functions[id as usize]
+            .name
+            .map(|atom| {
+                self.heap
+                    .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
+            })
+            .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
         self.set_property(function, name, name_value)?;
         self.set_property_attributes(
             function,
@@ -509,8 +503,8 @@ impl<H: Host> Vm<H> {
                         Some(Cell::Function { env, .. }) => *env,
                         _ => return Err(vm.type_error(p, "invalid bound function".into())),
                     };
-                    let target_atom = vm.intern_atom("\0rqj:bound-target");
-                    let args_atom = vm.intern_atom("\0rqj:bound-args");
+                    let target_atom = vm.intern_atom("\0quench:bound-target");
+                    let args_atom = vm.intern_atom("\0quench:bound-args");
                     let target = vm
                         .own_property(env, target_atom)
                         .ok_or_else(|| vm.type_error(p, "invalid bound function".into()))?;
@@ -798,7 +792,7 @@ impl<H: Host> Vm<H> {
         if !self.is_constructable(p, superclass) {
             return Err(self.type_error(p, "superclass is not a constructor".into()));
         }
-        let new_target_atom = self.intern_atom("\0rqj:new-target");
+        let new_target_atom = self.intern_atom("\0quench:new-target");
         let new_target = self
             .frames
             .len()

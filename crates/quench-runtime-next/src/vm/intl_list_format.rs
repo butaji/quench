@@ -1,8 +1,8 @@
 use super::*;
 
-const LIST_FORMAT_LOCALE_SLOT: &str = "\0rqj:intl-list-format-locale";
-const LIST_FORMAT_TYPE_SLOT: &str = "\0rqj:intl-list-format-type";
-const LIST_FORMAT_STYLE_SLOT: &str = "\0rqj:intl-list-format-style";
+const LIST_FORMAT_LOCALE_SLOT: &str = "\0quench:intl-list-format-locale";
+const LIST_FORMAT_TYPE_SLOT: &str = "\0quench:intl-list-format-type";
+const LIST_FORMAT_STYLE_SLOT: &str = "\0quench:intl-list-format-style";
 
 struct ListPart {
     kind: &'static str,
@@ -20,9 +20,14 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_list_format_constructors
+        self.realm
+            .intrinsics
+            .intl_list_format_constructors
             .insert(global, constructor);
-        self.realm.intrinsics.intl_list_format_prototypes.insert(global, prototype);
+        self.realm
+            .intrinsics
+            .intl_list_format_prototypes
+            .insert(global, prototype);
         self.set_builtin_function_name(constructor, "ListFormat")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.intern_atom("prototype");
@@ -172,8 +177,8 @@ impl<H: Host> Vm<H> {
                             Some(Cell::String(value)) => Some(value.clone()),
                             _ => None,
                         }) else {
-                            let error =
-                                vm.type_error(p, "ListFormat iterable values must be strings".into());
+                            let error = vm
+                                .type_error(p, "ListFormat iterable values must be strings".into());
                             return Err(vm.iterator_abrupt(p, iterator, error));
                         };
                         items.push(item);
@@ -197,7 +202,6 @@ impl<H: Host> Vm<H> {
         self.hidden_string(object, slot)
             .ok_or_else(|| self.type_error(p, "not a ListFormat object".into()))
     }
-
 }
 
 fn list_format_immutable_attributes() -> PropertyAttributes {
@@ -264,7 +268,11 @@ pub(super) fn list_separator(
     if spanish {
         word
     } else if style == "short" {
-        if kind == "disjunction" { ", or " } else { ", & " }
+        if kind == "disjunction" {
+            ", or "
+        } else {
+            ", & "
+        }
     } else {
         match (kind, style) {
             ("disjunction", "short") => ", or ",

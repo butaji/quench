@@ -245,8 +245,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 None
             }
         } else {
-            let default_specifier =
-                if has_default_specifier { identifier_after_import } else { None };
+            let default_specifier = if has_default_specifier {
+                identifier_after_import
+            } else {
+                None
+            };
 
             Some(self.parse_import_declaration_specifiers(default_specifier, import_kind))
         };
@@ -267,7 +270,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         );
 
         if should_record_module_record {
-            self.module_record_builder.visit_import_declaration(&import_decl);
+            self.module_record_builder
+                .visit_import_declaration(&import_decl);
         }
 
         Statement::ImportDeclaration(import_decl)
@@ -406,7 +410,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
         }
 
-        Some(WithClause::boxed(self.end_span(start), keyword, with_entries, self))
+        Some(WithClause::boxed(
+            self.end_span(start),
+            keyword,
+            with_entries,
+            self,
+        ))
     }
 
     fn parse_import_attribute(&mut self) -> ImportAttribute<'a> {
@@ -480,7 +489,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                         self,
                     );
                     if self.ctx.has_top_level() {
-                        self.module_record_builder.visit_export_declaration(&export_decl);
+                        self.module_record_builder
+                            .visit_export_declaration(&export_decl);
                     }
                     ModuleDeclaration::ExportDeclaration(export_decl)
                 } else {
@@ -501,7 +511,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 let decl = Declaration::ClassDeclaration(class_decl);
                 let export_decl = ExportDeclaration::boxed(self.end_span(start), decl, self);
                 if self.ctx.has_top_level() {
-                    self.module_record_builder.visit_export_declaration(&export_decl);
+                    self.module_record_builder
+                        .visit_export_declaration(&export_decl);
                 }
                 ModuleDeclaration::ExportDeclaration(export_decl)
             }
@@ -588,7 +599,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     ModuleExportName::StringLiteral(literal) => {
                         let local = self.allocator().alloc_str(&specifier.local.to_string());
                         let exported = self.allocator().alloc_str(&specifier.exported.to_string());
-                        self.error(diagnostics::export_named_string(local, exported, literal.span));
+                        self.error(diagnostics::export_named_string(
+                            local,
+                            exported,
+                            literal.span,
+                        ));
                     }
                     // For each IdentifierName n in ReferencedBindings of NamedExports:
                     // It is a Syntax Error if StringValue of n is a ReservedWord or the StringValue of n
@@ -629,14 +644,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 self,
             );
             if self.ctx.has_top_level() {
-                self.module_record_builder.visit_export_from_declaration(&export_from_decl);
+                self.module_record_builder
+                    .visit_export_from_declaration(&export_from_decl);
             }
             ModuleDeclaration::ExportFromDeclaration(export_from_decl)
         } else {
             let export_named_decl =
                 ExportNamedDeclaration::boxed(span, specifiers, export_kind, self);
             if self.ctx.has_top_level() {
-                self.module_record_builder.visit_export_named_declaration(&export_named_decl);
+                self.module_record_builder
+                    .visit_export_named_declaration(&export_named_decl);
             }
             ModuleDeclaration::ExportNamedDeclaration(export_named_decl)
         }
@@ -650,15 +667,19 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ) -> ArenaBox<'a, ExportDeclaration<'a>> {
         let decl_start = self.cur_start();
         let reserved_ctx = self.ctx;
-        let modifiers =
-            if self.is_ts { self.eat_modifiers_before_declaration() } else { Modifiers::empty() };
+        let modifiers = if self.is_ts {
+            self.eat_modifiers_before_declaration()
+        } else {
+            Modifiers::empty()
+        };
         self.ctx = self.ctx.union_ambient_if(modifiers.contains_declare());
 
         let declaration = self.parse_declaration(decl_start, &modifiers, decorators);
         self.ctx = reserved_ctx;
         let export_decl = ExportDeclaration::boxed(self.end_span(start), declaration, self);
         if self.ctx.has_top_level() {
-            self.module_record_builder.visit_export_declaration(&export_decl);
+            self.module_record_builder
+                .visit_export_declaration(&export_decl);
         }
         export_decl
     }
@@ -690,8 +711,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let decl_start = self.cur_start();
 
         // export default /* @__NO_SIDE_EFFECTS__ */ ...
-        let no_side_effects_comments =
-            self.lexer.trivia_builder.previous_token_no_side_effects_comments();
+        let no_side_effects_comments = self
+            .lexer
+            .trivia_builder
+            .previous_token_no_side_effects_comments();
 
         // export default @decorator ...
         if self.at(Kind::At) {
@@ -744,7 +767,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     );
                     if let Some(comments) = no_side_effects_comments {
                         func.pure = true;
-                        self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                        self.lexer
+                            .trivia_builder
+                            .mark_no_side_effects_comments_applied(comments);
                     }
                     return ExportDefaultDeclarationKind::FunctionDeclaration(func);
                 }
@@ -787,7 +812,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             );
             if let Some(comments) = no_side_effects_comments {
                 func.pure = true;
-                self.lexer.trivia_builder.mark_no_side_effects_comments_applied(comments);
+                self.lexer
+                    .trivia_builder
+                    .mark_no_side_effects_comments_applied(comments);
             }
             return ExportDefaultDeclarationKind::FunctionDeclaration(func);
         }
@@ -818,7 +845,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let export_all_decl =
             ExportAllDeclaration::boxed(span, exported, source, with_clause, export_kind, self);
         if self.ctx.has_top_level() {
-            self.module_record_builder.visit_export_all_declaration(&export_all_decl);
+            self.module_record_builder
+                .visit_export_all_declaration(&export_all_decl);
         }
         export_all_decl
     }
@@ -1120,7 +1148,10 @@ mod test {
             let specifiers = decl.specifiers.as_ref().unwrap();
             assert_eq!(specifiers.len(), 1);
             assert_eq!(specifiers[0].name(), "from");
-            assert!(matches!(specifiers[0], ImportDeclarationSpecifier::ImportDefaultSpecifier(_)));
+            assert!(matches!(
+                specifiers[0],
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(_)
+            ));
         });
 
         let src = "import type type from 'bar';";
@@ -1131,7 +1162,10 @@ mod test {
             let specifiers = decl.specifiers.as_ref().unwrap();
             assert_eq!(specifiers.len(), 1);
             assert_eq!(specifiers[0].name(), "type");
-            assert!(matches!(specifiers[0], ImportDeclarationSpecifier::ImportDefaultSpecifier(_)));
+            assert!(matches!(
+                specifiers[0],
+                ImportDeclarationSpecifier::ImportDefaultSpecifier(_)
+            ));
         });
 
         let src = "import type { type } from 'bar';";
@@ -1351,7 +1385,10 @@ mod test {
                 assert_eq!(decl.import_kind, ImportOrExportKind::Value);
                 assert_eq!(decl.id.name, "foo");
             } else {
-                panic!("Expected TSImportEqualsDeclaration, found: {:?}", statements[0]);
+                panic!(
+                    "Expected TSImportEqualsDeclaration, found: {:?}",
+                    statements[0]
+                );
             }
         });
 
@@ -1363,7 +1400,10 @@ mod test {
                 assert_eq!(decl.import_kind, ImportOrExportKind::Type);
                 assert_eq!(decl.id.name, "foo");
             } else {
-                panic!("Expected TSImportEqualsDeclaration, found: {:?}", statements[0]);
+                panic!(
+                    "Expected TSImportEqualsDeclaration, found: {:?}",
+                    statements[0]
+                );
             }
         });
 
@@ -1373,7 +1413,10 @@ mod test {
                 assert_eq!(decl.import_kind, ImportOrExportKind::Type);
                 assert_eq!(decl.id.name, "from");
             } else {
-                panic!("Expected TSImportEqualsDeclaration, found: {:?}", statements[0]);
+                panic!(
+                    "Expected TSImportEqualsDeclaration, found: {:?}",
+                    statements[0]
+                );
             }
         });
 
@@ -1383,7 +1426,10 @@ mod test {
                 assert_eq!(decl.import_kind, ImportOrExportKind::Value);
                 assert_eq!(decl.id.name, "from");
             } else {
-                panic!("Expected TSImportEqualsDeclaration, found: {:?}", statements[0]);
+                panic!(
+                    "Expected TSImportEqualsDeclaration, found: {:?}",
+                    statements[0]
+                );
             }
         });
     }
@@ -1436,7 +1482,10 @@ mod test {
         let source_type = SourceType::default().with_typescript(true);
         let allocator = Allocator::default();
         let ret = Parser::new(&allocator, src, source_type).parse();
-        assert!(!ret.diagnostics.is_empty(), "Expected a parse error for source: {src:?}");
+        assert!(
+            !ret.diagnostics.is_empty(),
+            "Expected a parse error for source: {src:?}"
+        );
         f(ret.program.body.iter().collect::<Vec<_>>());
     }
 
@@ -1453,14 +1502,18 @@ mod test {
             "Failed to parse source: {src:?}, error: {:?}",
             ret.diagnostics
         );
-        let statements =
-            ret.program
-                .body
-                .iter()
-                .filter_map(|s| {
-                    if let Statement::ImportDeclaration(decl) = s { Some(decl) } else { None }
-                })
-                .collect::<Vec<_>>();
+        let statements = ret
+            .program
+            .body
+            .iter()
+            .filter_map(|s| {
+                if let Statement::ImportDeclaration(decl) = s {
+                    Some(decl)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         f(statements);
     }
 }

@@ -4,29 +4,30 @@ const DEFAULT_NUMBER_FORMAT_LOCALE: &str = "en-US";
 const NUMBER_FORMAT_MAX_FRACTION_DIGITS: f64 = 100.0;
 const NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS: f64 = 21.0;
 const NUMBER_FORMAT_LARGE_DECIMAL_THRESHOLD: f64 = 1e21;
-const NUMBER_FORMAT_LOCALE_SLOT: &str = "\0rqj:intl-number-format-locale";
-const NUMBER_FORMAT_STYLE_SLOT: &str = "\0rqj:intl-number-format-style";
-const NUMBER_FORMAT_CURRENCY_SLOT: &str = "\0rqj:intl-number-format-currency";
-const NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT: &str = "\0rqj:intl-number-format-numbering-system";
-const NUMBER_FORMAT_UNIT_SLOT: &str = "\0rqj:intl-number-format-unit";
-const NUMBER_FORMAT_UNIT_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-unit-display";
-const NUMBER_FORMAT_GROUPING_SLOT: &str = "\0rqj:intl-number-format-use-grouping";
-const NUMBER_FORMAT_MIN_INTEGER_SLOT: &str = "\0rqj:intl-number-format-min-integer";
-const NUMBER_FORMAT_SIGN_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-sign-display";
-const NUMBER_FORMAT_BOUND_SLOT: &str = "\0rqj:intl-number-format-bound";
-const NUMBER_FORMAT_MIN_FRACTION_SLOT: &str = "\0rqj:intl-number-format-min-fraction";
-const NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT: &str = "\0rqj:intl-number-format-max-significant";
-const NUMBER_FORMAT_MAX_FRACTION_SLOT: &str = "\0rqj:intl-number-format-max-fraction";
-const NUMBER_FORMAT_ROUNDING_MODE_SLOT: &str = "\0rqj:intl-number-format-rounding-mode";
-const NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-currency-display";
-const NUMBER_FORMAT_CURRENCY_SIGN_SLOT: &str = "\0rqj:intl-number-format-currency-sign";
-const NUMBER_FORMAT_NOTATION_SLOT: &str = "\0rqj:intl-number-format-notation";
-const NUMBER_FORMAT_COMPACT_DISPLAY_SLOT: &str = "\0rqj:intl-number-format-compact-display";
-const NUMBER_FORMAT_GROUPING_MODE_SLOT: &str = "\0rqj:intl-number-format-grouping-mode";
-const NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT: &str = "\0rqj:intl-number-format-rounding-increment";
-const NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT: &str = "\0rqj:intl-number-format-rounding-priority";
-const NUMBER_FORMAT_TRAILING_ZERO_SLOT: &str = "\0rqj:intl-number-format-trailing-zero-display";
-const NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT: &str = "\0rqj:intl-number-format-min-significant";
+const NUMBER_FORMAT_LOCALE_SLOT: &str = "\0quench:intl-number-format-locale";
+const NUMBER_FORMAT_STYLE_SLOT: &str = "\0quench:intl-number-format-style";
+const NUMBER_FORMAT_CURRENCY_SLOT: &str = "\0quench:intl-number-format-currency";
+const NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT: &str = "\0quench:intl-number-format-numbering-system";
+const NUMBER_FORMAT_UNIT_SLOT: &str = "\0quench:intl-number-format-unit";
+const NUMBER_FORMAT_UNIT_DISPLAY_SLOT: &str = "\0quench:intl-number-format-unit-display";
+const NUMBER_FORMAT_GROUPING_SLOT: &str = "\0quench:intl-number-format-use-grouping";
+const NUMBER_FORMAT_MIN_INTEGER_SLOT: &str = "\0quench:intl-number-format-min-integer";
+const NUMBER_FORMAT_SIGN_DISPLAY_SLOT: &str = "\0quench:intl-number-format-sign-display";
+const NUMBER_FORMAT_BOUND_SLOT: &str = "\0quench:intl-number-format-bound";
+const NUMBER_FORMAT_MIN_FRACTION_SLOT: &str = "\0quench:intl-number-format-min-fraction";
+const NUMBER_FORMAT_MAX_SIGNIFICANT_SLOT: &str = "\0quench:intl-number-format-max-significant";
+const NUMBER_FORMAT_MAX_FRACTION_SLOT: &str = "\0quench:intl-number-format-max-fraction";
+const NUMBER_FORMAT_ROUNDING_MODE_SLOT: &str = "\0quench:intl-number-format-rounding-mode";
+const NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT: &str = "\0quench:intl-number-format-currency-display";
+const NUMBER_FORMAT_CURRENCY_SIGN_SLOT: &str = "\0quench:intl-number-format-currency-sign";
+const NUMBER_FORMAT_NOTATION_SLOT: &str = "\0quench:intl-number-format-notation";
+const NUMBER_FORMAT_COMPACT_DISPLAY_SLOT: &str = "\0quench:intl-number-format-compact-display";
+const NUMBER_FORMAT_GROUPING_MODE_SLOT: &str = "\0quench:intl-number-format-grouping-mode";
+const NUMBER_FORMAT_ROUNDING_INCREMENT_SLOT: &str =
+    "\0quench:intl-number-format-rounding-increment";
+const NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT: &str = "\0quench:intl-number-format-rounding-priority";
+const NUMBER_FORMAT_TRAILING_ZERO_SLOT: &str = "\0quench:intl-number-format-trailing-zero-display";
+const NUMBER_FORMAT_MIN_SIGNIFICANT_SLOT: &str = "\0quench:intl-number-format-min-significant";
 
 struct NumberFormatOptions {
     style: String,
@@ -59,7 +60,10 @@ impl<H: Host> Vm<H> {
         value: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let constructor = self.realm.intrinsics.intl_number_format_constructors
+        let constructor = self
+            .realm
+            .intrinsics
+            .intl_number_format_constructors
             .get(&self.realm.globals)
             .copied()
             .ok_or_else(|| JsError("Intl.NumberFormat intrinsic is not installed".into()))?;
@@ -239,8 +243,11 @@ impl<H: Host> Vm<H> {
             if !fallback.is_undefined() {
                 return Ok(this);
             }
-            let formatter =
-                vm.intl_number_format_construct(p, args, vm.native_value(Native::IntlNumberFormat))?;
+            let formatter = vm.intl_number_format_construct(
+                p,
+                args,
+                vm.native_value(Native::IntlNumberFormat),
+            )?;
             vm.set_symbol_property(this, symbol, formatter)?;
             vm.set_property_attributes(
                 this,
@@ -258,17 +265,35 @@ impl<H: Host> Vm<H> {
         })
     }
 
-    fn number_format_legacy_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<bool, JsError> {
-        if !self.is_object_like(receiver) { return Ok(false); }
-        let constructor = self.realm.intrinsics.intl_number_format_constructors[&self.realm.globals];
+    fn number_format_legacy_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<bool, JsError> {
+        if !self.is_object_like(receiver) {
+            return Ok(false);
+        }
+        let constructor =
+            self.realm.intrinsics.intl_number_format_constructors[&self.realm.globals];
         self.ordinary_has_instance(p, constructor, receiver)
     }
 
-    fn number_format_unwrap_receiver(&mut self, p: &ResidualProgram, receiver: Value) -> Result<Value, JsError> {
+    fn number_format_unwrap_receiver(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
         self.with_call_roots([receiver], |vm| {
-            if !vm.is_object_like(receiver) { return Err(vm.type_error(p, "incompatible NumberFormat receiver".into())); }
-            if vm.hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT).is_some()
-                || !vm.number_format_legacy_receiver(p, receiver)? { return Ok(receiver); }
+            if !vm.is_object_like(receiver) {
+                return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
+            }
+            if vm
+                .hidden_string(receiver, NUMBER_FORMAT_LOCALE_SLOT)
+                .is_some()
+                || !vm.number_format_legacy_receiver(p, receiver)?
+            {
+                return Ok(receiver);
+            }
             let symbol = vm.realm.intrinsics.intl_number_format_fallback_symbols[&vm.realm.globals];
             vm.get_symbol_property_with_receiver(p, receiver, symbol, receiver)
         })
@@ -391,7 +416,8 @@ impl<H: Host> Vm<H> {
                     }
                     "currency" => {
                         let value = vm.to_string(p, value)?.to_ascii_uppercase();
-                        if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+                        if value.len() != 3 || !value.bytes().all(|byte| byte.is_ascii_alphabetic())
+                        {
                             return Err(vm.range_error(p, "invalid currency".into()));
                         }
                         currency = Some(value);
@@ -646,7 +672,8 @@ impl<H: Host> Vm<H> {
                 if maximum_fraction_digits.is_none() {
                     maximum_fraction_digits = Some(maximum_default.max(minimum_fraction_digits));
                 }
-                if maximum_fraction_digits.is_some_and(|maximum| maximum < minimum_fraction_digits) {
+                if maximum_fraction_digits.is_some_and(|maximum| maximum < minimum_fraction_digits)
+                {
                     return Err(vm.range_error(
                         p,
                         "maximumFractionDigits is less than minimumFractionDigits".into(),
@@ -745,7 +772,11 @@ impl<H: Host> Vm<H> {
             let compact_display = vm
                 .hidden_string(this, NUMBER_FORMAT_COMPACT_DISPLAY_SLOT)
                 .unwrap_or_else(|| "short".into());
-            let value = vm.to_primitive(p, args.first().copied().unwrap_or(Value::UNDEFINED), "number")?;
+            let value = vm.to_primitive(
+                p,
+                args.first().copied().unwrap_or(Value::UNDEFINED),
+                "number",
+            )?;
             let formatted = if let Some(Cell::BigInt(value)) = vm.heap.get(value) {
                 quench_intl::format_bigint(
                     value,
@@ -765,11 +796,9 @@ impl<H: Host> Vm<H> {
                 && let Some(formatted) = format_decimal_string(
                     raw.host_string(),
                     &locale,
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
                         .unwrap_or_else(|| "latn".into()),
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
                         .unwrap_or_else(|| "auto".into()),
                     vm.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
                         .and_then(Value::as_number)
@@ -786,26 +815,21 @@ impl<H: Host> Vm<H> {
                     number,
                     &style,
                     vm.hidden_string(this, NUMBER_FORMAT_UNIT_SLOT).as_deref(),
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_UNIT_DISPLAY_SLOT)
                         .unwrap_or_else(|| "short".into()),
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_NUMBERING_SYSTEM_SLOT)
                         .unwrap_or_else(|| "latn".into()),
                     &locale,
                     vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
                         .filter(|currency| !currency.is_empty())
                         .as_deref(),
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
                         .unwrap_or_else(|| "symbol".into()),
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SIGN_SLOT)
                         .unwrap_or_else(|| "standard".into()),
                     &notation,
                     &compact_display,
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_GROUPING_MODE_SLOT)
                         .unwrap_or_else(|| "auto".into()),
                     vm.hidden_value(this, NUMBER_FORMAT_MIN_INTEGER_SLOT)
                         .and_then(Value::as_number)
@@ -814,8 +838,7 @@ impl<H: Host> Vm<H> {
                     maximum_fraction_digits,
                     minimum_significant_digits,
                     maximum_significant_digits,
-                    &vm
-                        .hidden_string(this, NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT)
+                    &vm.hidden_string(this, NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT)
                         .unwrap_or_else(|| "auto".into()),
                     rounding_increment,
                     &rounding_mode,
@@ -831,7 +854,8 @@ impl<H: Host> Vm<H> {
                 .chars()
                 .filter(|character| character.is_ascii_digit())
                 .collect::<String>();
-            let rounded_zero = !digits.is_empty() && digits.chars().all(|character| character == '0');
+            let rounded_zero =
+                !digits.is_empty() && digits.chars().all(|character| character == '0');
             let formatted = match sign_display.as_str() {
                 "never" => formatted
                     .trim_start_matches('-')
@@ -870,7 +894,9 @@ impl<H: Host> Vm<H> {
             let Some(style) = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT) else {
                 return Err(vm.type_error(p, "incompatible NumberFormat receiver".into()));
             };
-            let result = vm.heap.alloc(Cell::Object(Self::empty_object(vm.realm_object_prototype(vm.realm.globals))));
+            let result = vm.heap.alloc(Cell::Object(Self::empty_object(
+                vm.realm_object_prototype(vm.realm.globals),
+            )));
             let locale_value = vm.heap.alloc(Cell::String(locale.clone().into()));
             vm.set_named(p, result, "locale", locale_value)?;
             let numbering_system = vm
@@ -914,7 +940,11 @@ impl<H: Host> Vm<H> {
             }
             for (name, slot, fallback) in [
                 ("minimumIntegerDigits", NUMBER_FORMAT_MIN_INTEGER_SLOT, 1.0),
-                ("minimumFractionDigits", NUMBER_FORMAT_MIN_FRACTION_SLOT, 0.0),
+                (
+                    "minimumFractionDigits",
+                    NUMBER_FORMAT_MIN_FRACTION_SLOT,
+                    0.0,
+                ),
             ] {
                 let value = vm
                     .hidden_value(this, slot)
@@ -939,8 +969,7 @@ impl<H: Host> Vm<H> {
                 .as_deref()
                 == Some("compact");
             if compact
-                || min_significant
-                .is_some_and(|value| !value.is_undefined())
+                || min_significant.is_some_and(|value| !value.is_undefined())
                 || max_significant.is_some_and(|value| !value.is_undefined())
             {
                 let minimum = min_significant
@@ -948,7 +977,11 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::number(1.0));
                 let maximum = max_significant
                     .filter(|value| !value.is_undefined())
-                    .unwrap_or(Value::number(if compact { 2.0 } else { NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS }));
+                    .unwrap_or(Value::number(if compact {
+                        2.0
+                    } else {
+                        NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS
+                    }));
                 vm.set_named(p, result, "minimumSignificantDigits", minimum)?;
                 vm.set_named(p, result, "maximumSignificantDigits", maximum)?;
             }
@@ -975,11 +1008,25 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(Value::number(1.0));
             vm.set_named(p, result, "roundingIncrement", increment)?;
             for (key, slot, default) in [
-                ("roundingMode", NUMBER_FORMAT_ROUNDING_MODE_SLOT, "halfExpand"),
-                ("roundingPriority", NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT, "auto"),
-                ("trailingZeroDisplay", NUMBER_FORMAT_TRAILING_ZERO_SLOT, "auto"),
+                (
+                    "roundingMode",
+                    NUMBER_FORMAT_ROUNDING_MODE_SLOT,
+                    "halfExpand",
+                ),
+                (
+                    "roundingPriority",
+                    NUMBER_FORMAT_ROUNDING_PRIORITY_SLOT,
+                    "auto",
+                ),
+                (
+                    "trailingZeroDisplay",
+                    NUMBER_FORMAT_TRAILING_ZERO_SLOT,
+                    "auto",
+                ),
             ] {
-                let text = vm.hidden_string(this, slot).unwrap_or_else(|| default.into());
+                let text = vm
+                    .hidden_string(this, slot)
+                    .unwrap_or_else(|| default.into());
                 vm.set_intl_string_property(result, key, &text)?;
             }
             Ok(result)
@@ -1027,7 +1074,9 @@ impl<H: Host> Vm<H> {
                         format!("~{first}")
                     }
                 } else {
-                    let style = vm.hidden_string(this, NUMBER_FORMAT_STYLE_SLOT).unwrap_or_default();
+                    let style = vm
+                        .hidden_string(this, NUMBER_FORMAT_STYLE_SLOT)
+                        .unwrap_or_default();
                     let separator = if locale.starts_with("pt") {
                         " - "
                     } else if style == "currency" {
@@ -1035,13 +1084,21 @@ impl<H: Host> Vm<H> {
                     } else {
                         "–"
                     };
-                    let collapsed_separator = if locale.starts_with("pt") { " - " } else { "–" };
+                    let collapsed_separator = if locale.starts_with("pt") {
+                        " - "
+                    } else {
+                        "–"
+                    };
                     let sign_display = vm
                         .hidden_string(this, NUMBER_FORMAT_SIGN_DISPLAY_SLOT)
                         .unwrap_or_else(|| "auto".into());
                     if style == "currency" {
-                        let currency = vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT).unwrap_or_default();
-                        let display = vm.hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT).unwrap_or_else(|| "symbol".into());
+                        let currency = vm
+                            .hidden_string(this, NUMBER_FORMAT_CURRENCY_SLOT)
+                            .unwrap_or_default();
+                        let display = vm
+                            .hidden_string(this, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
+                            .unwrap_or_else(|| "symbol".into());
                         let symbol = number_currency_symbol(&currency, &display, &locale);
                         let prefix = shared_prefix_before_number(&first, &second);
                         if sign_display == "always" && prefix.contains(&symbol) {
@@ -1049,10 +1106,16 @@ impl<H: Host> Vm<H> {
                         } else if first.ends_with(&symbol) && second.ends_with(&symbol) {
                             let suffix = shared_currency_suffix(&first, &second, &symbol);
                             let mut second = second[..second.len() - suffix.len()].to_owned();
-                            if sign_display == "always" && first.starts_with('+') && second.starts_with('+') {
+                            if sign_display == "always"
+                                && first.starts_with('+')
+                                && second.starts_with('+')
+                            {
                                 second.remove(0);
                             }
-                            format!("{}{collapsed_separator}{second}{suffix}", &first[..first.len() - suffix.len()])
+                            format!(
+                                "{}{collapsed_separator}{second}{suffix}",
+                                &first[..first.len() - suffix.len()]
+                            )
                         } else {
                             format!("{first}{separator}{second}")
                         }
@@ -1183,7 +1246,9 @@ impl<H: Host> Vm<H> {
         value: &str,
         unit: Option<&str>,
     ) -> Result<Value, JsError> {
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(self.realm_object_prototype(self.realm.globals))));
+        let object = self.heap.alloc(Cell::Object(Self::empty_object(
+            self.realm_object_prototype(self.realm.globals),
+        )));
         self.set_intl_string_property(object, "type", kind)?;
         self.set_intl_string_property(object, "value", value)?;
         if let Some(unit) = unit {
@@ -1209,10 +1274,18 @@ impl<H: Host> Vm<H> {
                 self.number_format_part("nan", nan, None)?,
             ]);
         }
-        let locale = self.hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT).unwrap_or_default();
-        let style = self.hidden_string(formatter, NUMBER_FORMAT_STYLE_SLOT).unwrap_or_default();
-        let unit = self.hidden_string(formatter, NUMBER_FORMAT_UNIT_SLOT).unwrap_or_default();
-        let currency = self.hidden_string(formatter, NUMBER_FORMAT_CURRENCY_SLOT).unwrap_or_default();
+        let locale = self
+            .hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT)
+            .unwrap_or_default();
+        let style = self
+            .hidden_string(formatter, NUMBER_FORMAT_STYLE_SLOT)
+            .unwrap_or_default();
+        let unit = self
+            .hidden_string(formatter, NUMBER_FORMAT_UNIT_SLOT)
+            .unwrap_or_default();
+        let currency = self
+            .hidden_string(formatter, NUMBER_FORMAT_CURRENCY_SLOT)
+            .unwrap_or_default();
         let currency_display = self
             .hidden_string(formatter, NUMBER_FORMAT_CURRENCY_DISPLAY_SLOT)
             .unwrap_or_else(|| "symbol".into());
@@ -1223,7 +1296,14 @@ impl<H: Host> Vm<H> {
             return Ok(vec![self.number_format_part("nan", text, None)?]);
         };
         if first_character == '∞' {
-            let mut parts = self.number_format_prefix_parts(formatter, &text[..number_start], &style, &currency, &currency_display, &unit)?;
+            let mut parts = self.number_format_prefix_parts(
+                formatter,
+                &text[..number_start],
+                &style,
+                &currency,
+                &currency_display,
+                &unit,
+            )?;
             parts.push(self.number_format_part("infinity", "∞", None)?);
             return Ok(parts);
         }
@@ -1244,11 +1324,12 @@ impl<H: Host> Vm<H> {
             &currency_display,
             &unit,
         )?;
-        let decimal = if !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt")) {
-            ','
-        } else {
-            '.'
-        };
+        let decimal =
+            if !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt")) {
+                ','
+            } else {
+                '.'
+            };
         let grouping = if decimal == ',' { '.' } else { ',' };
         let (mantissa, exponent) = number.split_once('E').unwrap_or((number, ""));
         let (integer, fraction) = mantissa.split_once(decimal).unwrap_or((mantissa, ""));
@@ -1281,7 +1362,15 @@ impl<H: Host> Vm<H> {
             }
             parts.push(self.number_format_part("exponentInteger", digits, None)?);
         }
-        self.number_format_suffix_parts(suffix, &style, &currency, &currency_display, &unit, &locale, &mut parts)?;
+        self.number_format_suffix_parts(
+            suffix,
+            &style,
+            &currency,
+            &currency_display,
+            &unit,
+            &locale,
+            &mut parts,
+        )?;
         Ok(parts)
     }
 
@@ -1301,7 +1390,9 @@ impl<H: Host> Vm<H> {
             rest = &rest[1..];
         }
         if style == "unit" {
-            let locale = self.hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT).unwrap_or_default();
+            let locale = self
+                .hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT)
+                .unwrap_or_default();
             let unit_prefix = if locale.starts_with("ja") && rest.starts_with("時速 ") {
                 Some(("時速", "時速 "))
             } else if locale.starts_with("ko") && rest.starts_with("시속 ") {
@@ -1318,12 +1409,22 @@ impl<H: Host> Vm<H> {
             }
         }
         if rest.starts_with('-') || rest.starts_with('+') {
-            let (kind, sign) = if rest.starts_with('-') { ("minusSign", "-") } else { ("plusSign", "+") };
+            let (kind, sign) = if rest.starts_with('-') {
+                ("minusSign", "-")
+            } else {
+                ("plusSign", "+")
+            };
             parts.push(self.number_format_part(kind, sign, None)?);
             rest = &rest[1..];
         }
         if style == "currency" && !rest.is_empty() {
-            let symbol = number_currency_symbol(currency, currency_display, &self.hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT).unwrap_or_default());
+            let symbol = number_currency_symbol(
+                currency,
+                currency_display,
+                &self
+                    .hidden_string(formatter, NUMBER_FORMAT_LOCALE_SLOT)
+                    .unwrap_or_default(),
+            );
             if let Some(index) = rest.find(&symbol) {
                 if index > 0 {
                     parts.push(self.number_format_part("literal", &rest[..index], None)?);
@@ -1369,7 +1470,10 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(());
             }
-            let separator = body.chars().take_while(|character| character.is_whitespace()).collect::<String>();
+            let separator = body
+                .chars()
+                .take_while(|character| character.is_whitespace())
+                .collect::<String>();
             if !separator.is_empty() {
                 parts.push(self.number_format_part("literal", &separator, None)?);
             }
@@ -1457,9 +1561,19 @@ impl<H: Host> Vm<H> {
         let scaled = exponent
             .map(|exponent| absolute / 10_f64.powi(exponent))
             .unwrap_or_else(|| {
-                if compact_scale == 0 { absolute } else { absolute / 10_f64.powi(compact_scale) }
+                if compact_scale == 0 {
+                    absolute
+                } else {
+                    absolute / 10_f64.powi(compact_scale)
+                }
             });
-        let default_fraction = if style == "currency" { 2 } else if style == "percent" { 0 } else { 3 };
+        let default_fraction = if style == "currency" {
+            2
+        } else if style == "percent" {
+            0
+        } else {
+            3
+        };
         let fraction_maximum = maximum_fraction_digits.unwrap_or_else(|| {
             if notation == "compact" && maximum_significant_digits.is_none() {
                 compact_fraction_digits(scaled)
@@ -1467,9 +1581,14 @@ impl<H: Host> Vm<H> {
                 default_fraction
             }
         });
-        let significant_maximum = maximum_significant_digits
-            .or_else(|| minimum_significant_digits.map(|_| NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS as usize));
-        let magnitude = if scaled == 0.0 { 0 } else { scaled.log10().floor() as i32 + 1 };
+        let significant_maximum = maximum_significant_digits.or_else(|| {
+            minimum_significant_digits.map(|_| NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS as usize)
+        });
+        let magnitude = if scaled == 0.0 {
+            0
+        } else {
+            scaled.log10().floor() as i32 + 1
+        };
         let significant_maximum_fraction = significant_maximum.map(|digits| {
             if scaled == 0.0 {
                 digits.saturating_sub(1) as i32
@@ -1499,22 +1618,32 @@ impl<H: Host> Vm<H> {
                 1,
             )
         } else {
-            (fraction_maximum as i32, minimum_fraction_digits, rounding_increment)
+            (
+                fraction_maximum as i32,
+                minimum_fraction_digits,
+                rounding_increment,
+            )
         };
         let maximum = precision.max(0) as usize;
-        let rounded = round_number_at_precision(scaled, precision, increment, rounding_mode, negative);
-        let mut rounded_text = if use_significant && scaled.abs() >= NUMBER_FORMAT_LARGE_DECIMAL_THRESHOLD {
-            format_significant_integer(
-                scaled.abs(),
-                significant_maximum.unwrap_or(NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS as usize),
-                rounding_mode,
-                negative,
-            )
-        } else {
-            format!("{rounded:.maximum$}")
-        };
+        let rounded =
+            round_number_at_precision(scaled, precision, increment, rounding_mode, negative);
+        let mut rounded_text =
+            if use_significant && scaled.abs() >= NUMBER_FORMAT_LARGE_DECIMAL_THRESHOLD {
+                format_significant_integer(
+                    scaled.abs(),
+                    significant_maximum.unwrap_or(NUMBER_FORMAT_MAX_SIGNIFICANT_DIGITS as usize),
+                    rounding_mode,
+                    negative,
+                )
+            } else {
+                format!("{rounded:.maximum$}")
+            };
         if let Some((integer, fraction)) = rounded_text.split_once('.') {
-            let fraction_end = fraction.trim_end_matches('0').len().max(minimum).min(fraction.len());
+            let fraction_end = fraction
+                .trim_end_matches('0')
+                .len()
+                .max(minimum)
+                .min(fraction.len());
             rounded_text = format!("{integer}.{}", &fraction[..fraction_end]);
         } else if minimum > 0 {
             rounded_text.push('.');
@@ -1533,13 +1662,12 @@ impl<H: Host> Vm<H> {
         } else {
             integer
         };
-        let decimal = if !locale.contains("-u-")
-            && (locale.starts_with("de") || locale.starts_with("pt"))
-        {
-            ","
-        } else {
-            "."
-        };
+        let decimal =
+            if !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt")) {
+                ","
+            } else {
+                "."
+            };
         let mut text = if fraction.is_empty() {
             integer
         } else {
@@ -1561,13 +1689,7 @@ impl<H: Host> Vm<H> {
         } else if style == "unit" {
             text = format_number_unit_locale(&text, unit.unwrap_or("unit"), unit_display, locale);
         } else if style == "currency" {
-            text = format_number_currency(
-                &text,
-                currency,
-                currency_display,
-                locale,
-                currency_sign,
-            );
+            text = format_number_currency(&text, currency, currency_display, locale, currency_sign);
         }
         quench_intl::localize_digits(text, numbering_system)
     }
@@ -1637,7 +1759,10 @@ fn sanitize_number_format_locale(locale: &str) -> String {
         let value = parts[index + 1..end].join("-");
         quench_intl::valid_numbering_system(&value).then_some(value)
     });
-    numbering.map_or_else(|| base.to_owned(), |numbering| format!("{base}-u-nu-{numbering}"))
+    numbering.map_or_else(
+        || base.to_owned(),
+        |numbering| format!("{base}-u-nu-{numbering}"),
+    )
 }
 
 pub(super) fn is_supported_locale(locale: &str) -> bool {
@@ -1703,11 +1828,19 @@ fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
     } else if locale.starts_with("ko") {
         &[8, 4, 3][..]
     } else if locale.starts_with("de") {
-        if display == "long" { &[6, 3][..] } else { &[6][..] }
+        if display == "long" {
+            &[6, 3][..]
+        } else {
+            &[6][..]
+        }
     } else {
         &[9, 6, 3][..]
     };
-    scales.iter().copied().find(|scale| magnitude >= *scale).unwrap_or(0)
+    scales
+        .iter()
+        .copied()
+        .find(|scale| magnitude >= *scale)
+        .unwrap_or(0)
 }
 
 fn compact_fraction_digits(value: f64) -> usize {
@@ -1745,7 +1878,10 @@ fn format_significant_integer(value: f64, maximum: usize, mode: &str, negative: 
             "halfTrunc" => first > '5' || first == '5' && tail_nonzero,
             "halfFloor" => first > '5' || first == '5' && (tail_nonzero || negative),
             "halfCeil" => first > '5' || first == '5' && (tail_nonzero || !negative),
-            "halfEven" => first > '5' || first == '5' && (tail_nonzero || (retained_last as u8 - b'0') % 2 == 1),
+            "halfEven" => {
+                first > '5'
+                    || first == '5' && (tail_nonzero || (retained_last as u8 - b'0') % 2 == 1)
+            }
             _ => first >= '5',
         };
         digits.truncate(maximum);
@@ -1811,7 +1947,13 @@ fn group_decimal_integer_locale(value: &str, locale: &str) -> String {
         let rest = digits.collect::<Vec<_>>();
         let mut groups = Vec::new();
         for pair in rest.chunks(2) {
-            groups.push(pair.iter().collect::<String>().chars().rev().collect::<String>());
+            groups.push(
+                pair.iter()
+                    .collect::<String>()
+                    .chars()
+                    .rev()
+                    .collect::<String>(),
+            );
         }
         return groups
             .into_iter()
@@ -1840,10 +1982,19 @@ fn format_decimal_string(
     maximum_fraction_digits: usize,
     rounding_mode: &str,
 ) -> Option<String> {
-    let (negative, unsigned) = value
-        .strip_prefix('-')
-        .map_or_else(|| value.strip_prefix('+').map_or((false, value), |rest| (false, rest)), |rest| (true, rest));
-    if unsigned.is_empty() || !unsigned.chars().all(|character| character.is_ascii_digit() || character == '.') {
+    let (negative, unsigned) = value.strip_prefix('-').map_or_else(
+        || {
+            value
+                .strip_prefix('+')
+                .map_or((false, value), |rest| (false, rest))
+        },
+        |rest| (true, rest),
+    );
+    if unsigned.is_empty()
+        || !unsigned
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.')
+    {
         return None;
     }
     let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
@@ -1889,16 +2040,21 @@ fn format_decimal_string(
         fraction.push('0');
     }
     if integer.len() < minimum_integer_digits {
-        integer = format!("{}{}", "0".repeat(minimum_integer_digits - integer.len()), integer);
+        integer = format!(
+            "{}{}",
+            "0".repeat(minimum_integer_digits - integer.len()),
+            integer
+        );
     }
     if should_group_integer(&integer, grouping_mode, locale) {
         integer = group_decimal_integer_locale(&integer, locale);
     }
-    let decimal = if !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt")) {
-        ","
-    } else {
-        "."
-    };
+    let decimal =
+        if !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt")) {
+            ","
+        } else {
+            "."
+        };
     let sign = if negative { "-" } else { "" };
     let text = if fraction.is_empty() {
         format!("{sign}{integer}")
@@ -1927,11 +2083,14 @@ fn format_number_currency(
     currency_sign: &str,
 ) -> String {
     let (sign, value) = text.strip_prefix('-').map_or_else(
-        || text.strip_prefix('+').map_or(("", text), |rest| ("+", rest)),
+        || {
+            text.strip_prefix('+')
+                .map_or(("", text), |rest| ("+", rest))
+        },
         |rest| ("-", rest),
     );
-    let plain_decimal_locale = !locale.contains("-u-")
-        && (locale.starts_with("de") || locale.starts_with("pt"));
+    let plain_decimal_locale =
+        !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt"));
     let value = value.to_owned();
     let symbol = number_currency_symbol(currency.unwrap_or("USD"), display, locale);
     let formatted = if plain_decimal_locale {
@@ -1967,8 +2126,12 @@ fn number_currency_symbol(currency: &str, display: &str, locale: &str) -> String
 }
 
 fn shared_prefix_before_number(first: &str, second: &str) -> String {
-    let first_end = first.find(|character: char| character.is_numeric()).unwrap_or(first.len());
-    let second_end = second.find(|character: char| character.is_numeric()).unwrap_or(second.len());
+    let first_end = first
+        .find(|character: char| character.is_numeric())
+        .unwrap_or(first.len());
+    let second_end = second
+        .find(|character: char| character.is_numeric())
+        .unwrap_or(second.len());
     first[..first_end]
         .chars()
         .zip(second[..second_end].chars())
@@ -2077,7 +2240,9 @@ fn format_number_unit_locale(text: &str, unit: &str, display: &str, locale: &str
     }
     let number = text
         .trim_start_matches(['-', '+'])
-        .trim_end_matches(|character: char| !character.is_ascii_digit() && character != '.' && character != ',');
+        .trim_end_matches(|character: char| {
+            !character.is_ascii_digit() && character != '.' && character != ','
+        });
     let value = number.parse::<f64>().unwrap_or_default();
     let label = format_number_unit(unit, display, value);
     if display == "narrow" {

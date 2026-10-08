@@ -1,10 +1,10 @@
 use super::*;
 
-const DISPLAY_NAMES_LOCALE_SLOT: &str = "\0rqj:intl-display-names-locale";
-const DISPLAY_NAMES_TYPE_SLOT: &str = "\0rqj:intl-display-names-type";
-const DISPLAY_NAMES_STYLE_SLOT: &str = "\0rqj:intl-display-names-style";
-const DISPLAY_NAMES_FALLBACK_SLOT: &str = "\0rqj:intl-display-names-fallback";
-const DISPLAY_NAMES_LANGUAGE_DISPLAY_SLOT: &str = "\0rqj:intl-display-names-language-display";
+const DISPLAY_NAMES_LOCALE_SLOT: &str = "\0quench:intl-display-names-locale";
+const DISPLAY_NAMES_TYPE_SLOT: &str = "\0quench:intl-display-names-type";
+const DISPLAY_NAMES_STYLE_SLOT: &str = "\0quench:intl-display-names-style";
+const DISPLAY_NAMES_FALLBACK_SLOT: &str = "\0quench:intl-display-names-fallback";
+const DISPLAY_NAMES_LANGUAGE_DISPLAY_SLOT: &str = "\0quench:intl-display-names-language-display";
 const DISPLAY_NAMES_OPTIONS: &[(&str, &str, &str)] = &[
     ("localeMatcher", "best fit", "lookup|best fit"),
     ("style", "long", "long|short|narrow"),
@@ -43,9 +43,13 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_display_names_constructors
+        self.realm
+            .intrinsics
+            .intl_display_names_constructors
             .insert(global, constructor);
-        self.realm.intrinsics.intl_display_names_prototypes
+        self.realm
+            .intrinsics
+            .intl_display_names_prototypes
             .insert(global, prototype);
         self.set_builtin_function_name(constructor, "DisplayNames")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;

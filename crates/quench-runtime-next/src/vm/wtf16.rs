@@ -118,6 +118,10 @@ impl JsString {
         &self.host
     }
 
+    pub(crate) fn has_lossless_host_string(&self) -> bool {
+        self.host.encode_utf16().eq(self.units.iter().copied())
+    }
+
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         self.units.len() * std::mem::size_of::<u16>() + self.host.capacity()
