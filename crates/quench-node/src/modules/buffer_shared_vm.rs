@@ -53,6 +53,50 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     return undefined;
   };
   const makeBuffer = (bytes) => new Buffer(bytes);
+  const bytesView = (input) => {
+    if (input instanceof ArrayBuffer ||
+        (typeof SharedArrayBuffer !== "undefined" && input instanceof SharedArrayBuffer)) {
+      try { return new Uint8Array(input); } catch (_) { return new Uint8Array(0); }
+    }
+    if (ArrayBuffer.isView(input)) {
+      try { return new Uint8Array(input.buffer, input.byteOffset, input.byteLength); }
+      catch (_) { return new Uint8Array(0); }
+    }
+    throw codedTypeError("The argument must be a Buffer, TypedArray, DataView, or ArrayBuffer", "ERR_INVALID_ARG_TYPE");
+  };
+  const isAscii = (input) => {
+    const bytes = bytesView(input);
+    for (const byte of bytes) if (byte > 0x7F) return false;
+    return true;
+  };
+  const isUtf8 = (input) => {
+    const bytes = bytesView(input);
+    for (let index = 0; index < bytes.length;) {
+      const first = bytes[index++];
+      if (first <= 0x7F) continue;
+      let continuation;
+      let secondMin = 0x80;
+      let secondMax = 0xBF;
+      if (first >= 0xC2 && first <= 0xDF) continuation = 1;
+      else if (first >= 0xE0 && first <= 0xEF) {
+        continuation = 2;
+        if (first === 0xE0) secondMin = 0xA0;
+        if (first === 0xED) secondMax = 0x9F;
+      } else if (first >= 0xF0 && first <= 0xF4) {
+        continuation = 3;
+        if (first === 0xF0) secondMin = 0x90;
+        if (first === 0xF4) secondMax = 0x8F;
+      } else return false;
+      if (index + continuation > bytes.length) return false;
+      const second = bytes[index++];
+      if (second < secondMin || second > secondMax) return false;
+      for (let count = 1; count < continuation; count++) {
+        const byte = bytes[index++];
+        if (byte < 0x80 || byte > 0xBF) return false;
+      }
+    }
+    return true;
+  };
 
   class Buffer extends Uint8Array {
     static from(value, encoding, length) {
@@ -164,6 +208,152 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
+  const numericMethods = [
+    ["UInt8", 1, "getUint8", "setUint8", false],
+    ["Int8", 1, "getInt8", "setInt8", false],
+    ["UInt16LE", 2, "getUint16", "setUint16", true],
+    ["UInt16BE", 2, "getUint16", "setUint16", false],
+    ["Int16LE", 2, "getInt16", "setInt16", true],
+    ["Int16BE", 2, "getInt16", "setInt16", false],
+    ["UInt32LE", 4, "getUint32", "setUint32", true],
+    ["UInt32BE", 4, "getUint32", "setUint32", false],
+    ["Int32LE", 4, "getInt32", "setInt32", true],
+    ["Int32BE", 4, "getInt32", "setInt32", false],
+    ["FloatLE", 4, "getFloat32", "setFloat32", true],
+    ["FloatBE", 4, "getFloat32", "setFloat32", false],
+    ["DoubleLE", 8, "getFloat64", "setFloat64", true],
+    ["DoubleBE", 8, "getFloat64", "setFloat64", false],
+  ];
+  const numericRangeError = (name, value, minimum, maximum) => {
+    const error = new RangeError(`The value of "${name}" is out of range. It must be >= ${minimum} and <= ${maximum}. Received ${value}`);
+    error.code = "ERR_OUT_OF_RANGE";
+    return error;
+  };
+  const checkNumericOffset = (buffer, offset, size) => {
+    if (typeof offset !== "number") {
+      throw codedTypeError('The "offset" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+    }
+    if (size > buffer.length) {
+      const error = new RangeError("Attempt to access memory outside buffer bounds");
+      error.code = "ERR_BUFFER_OUT_OF_BOUNDS";
+      throw error;
+    }
+    if (Number.isNaN(offset) || (Number.isFinite(offset) && !Number.isInteger(offset))) {
+      const error = new RangeError(`The value of "offset" is out of range. It must be an integer. Received ${offset}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isFinite(offset) || offset < 0 || offset > buffer.length - size) {
+      throw numericRangeError("offset", offset, 0, buffer.length - size);
+    }
+    return offset;
+  };
+  for (const [suffix, size, getter, setter, littleEndian] of numericMethods) {
+    const aliases = suffix.startsWith("UInt")
+      ? [suffix, suffix.replace("UInt", "Uint")]
+      : [suffix];
+    const readMethod = function(offset = 0) {
+      offset = checkNumericOffset(this, offset, size);
+      return new DataView(this.buffer, this.byteOffset, this.byteLength)[getter](offset, littleEndian);
+    };
+    const writeMethod = function(value, offset = 0) {
+      offset = checkNumericOffset(this, offset, size);
+      if (typeof value !== "number") {
+        throw codedTypeError('The "value" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+      }
+      if (getter.includes("Uint")) {
+        const maximum = size === 4 ? 0xFFFFFFFF : (2 ** (size * 8)) - 1;
+        if (value < 0 || value > maximum || !Number.isInteger(value)) {
+          throw numericRangeError("value", value, 0, maximum);
+        }
+      } else if (getter.includes("Int")) {
+        const maximum = (2 ** (size * 8 - 1)) - 1;
+        const minimum = -(2 ** (size * 8 - 1));
+        if (value < minimum || value > maximum || !Number.isInteger(value)) {
+          throw numericRangeError("value", value, minimum, maximum);
+        }
+      }
+      new DataView(this.buffer, this.byteOffset, this.byteLength)[setter](offset, value, littleEndian);
+      return offset + size;
+    };
+    for (const alias of aliases) {
+      Buffer.prototype[`read${alias}`] = readMethod;
+      Buffer.prototype[`write${alias}`] = writeMethod;
+    }
+  }
+  const variableIntegerLength = (byteLength) => {
+    if (typeof byteLength !== "number") {
+      throw codedTypeError('The "byteLength" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+    }
+    if (Number.isNaN(byteLength) || (Number.isFinite(byteLength) && !Number.isInteger(byteLength))) {
+      const error = new RangeError(`The value of "byteLength" is out of range. It must be an integer. Received ${byteLength}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (!Number.isFinite(byteLength) || byteLength < 1 || byteLength > 6) {
+      throw numericRangeError("byteLength", byteLength, 1, 6);
+    }
+    return byteLength;
+  };
+  const readVariableInteger = (buffer, offset, byteLength, littleEndian, signed) => {
+    byteLength = variableIntegerLength(byteLength);
+    offset = checkNumericOffset(buffer, offset, byteLength);
+    let value = 0;
+    for (let index = 0; index < byteLength; index++) {
+      const source = littleEndian ? index : byteLength - index - 1;
+      value += buffer[offset + source] * (2 ** (8 * index));
+    }
+    if (signed && value >= 2 ** (8 * byteLength - 1)) value -= 2 ** (8 * byteLength);
+    return value;
+  };
+  const writeVariableInteger = (buffer, value, offset, byteLength, littleEndian, signed) => {
+    byteLength = variableIntegerLength(byteLength);
+    offset = checkNumericOffset(buffer, offset, byteLength);
+    if (typeof value !== "number") {
+      throw codedTypeError('The "value" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+    }
+    const bits = 8 * byteLength;
+    const minimum = signed ? -(2 ** (bits - 1)) : 0;
+    const maximum = signed ? (2 ** (bits - 1)) - 1 : (2 ** bits) - 1;
+    if (!Number.isInteger(value) || value < minimum || value > maximum) {
+      const format = (number) => String(number).replace(/(\d)(?=(\d{3})+(?!\d))/g, "$1_");
+      const range = signed
+        ? byteLength > 4
+          ? `>= -(2 ** ${bits - 1}) and < 2 ** ${bits - 1}`
+          : `>= ${minimum} and <= ${maximum}`
+        : byteLength > 4
+          ? `>= 0 and < 2 ** ${bits}`
+          : `>= 0 and <= ${maximum}`;
+      const received = byteLength > 4 ? format(value) : String(value);
+      const error = new RangeError(`The value of "value" is out of range. It must be ${range}. Received ${received}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    let remaining = value < 0 ? value + 2 ** bits : value;
+    for (let index = 0; index < byteLength; index++) {
+      const target = littleEndian ? index : byteLength - index - 1;
+      buffer[offset + target] = remaining & 0xFF;
+      remaining = Math.floor(remaining / 256);
+    }
+    return offset + byteLength;
+  };
+  for (const [suffix, littleEndian, signed] of [
+    ["UIntLE", true, false], ["UIntBE", false, false],
+    ["IntLE", true, true], ["IntBE", false, true],
+  ]) {
+    const aliases = suffix.startsWith("UInt") ? [suffix, suffix.replace("UInt", "Uint")] : [suffix];
+    const readMethod = function(offset, byteLength) {
+      return readVariableInteger(this, offset, byteLength, littleEndian, signed);
+    };
+    const writeMethod = function(value, offset, byteLength) {
+      return writeVariableInteger(this, value, offset, byteLength, littleEndian, signed);
+    };
+    for (const alias of aliases) {
+      Buffer.prototype[`read${alias}`] = readMethod;
+      Buffer.prototype[`write${alias}`] = writeMethod;
+    }
+  }
+
   // Node exposes Buffer's static API as enumerable own properties. Packages
   // such as safer-buffer derive their constructor view with `for...in`.
   for (const name of Object.getOwnPropertyNames(Buffer)) {
@@ -171,7 +361,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     Object.defineProperty(Buffer, name, { enumerable: true });
   }
 
-  return { Buffer, SlowBuffer: Buffer };
+  return { Buffer, SlowBuffer: Buffer, isAscii, isUtf8 };
 }"#
 );
 
@@ -190,6 +380,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "Buffer", buffer)?;
     let slow_buffer = get(context, constructor, "SlowBuffer")?;
     set(context, module, "SlowBuffer", slow_buffer)?;
+    for name in ["isAscii", "isUtf8"] {
+        let value = get(context, constructor, name)?;
+        set(context, module, name, value)?;
+    }
     let global = context.global_root()?;
     for name in ["atob", "btoa"] {
         if let Some(value) = optional_get(context, global, name)? {
