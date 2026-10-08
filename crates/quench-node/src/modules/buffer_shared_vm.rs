@@ -10,6 +10,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     error.code = code;
     return error;
   };
+  const typedArraySet = Object.getPrototypeOf(Uint8Array.prototype).set;
   const normalizeEncoding = (encoding) => {
     const normalized = canonicalEncoding(String(encoding));
     if (normalized === undefined) {
@@ -330,7 +331,22 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       const targetBytes = new Uint8Array(target.buffer, target.byteOffset, target.byteLength);
       if (sourceEnd <= sourceStart || targetStart >= targetBytes.length) return 0;
       const length = Math.min(sourceEnd - sourceStart, targetBytes.length - targetStart);
-      targetBytes.set(new Uint8Array(this.buffer, this.byteOffset + sourceStart, length), targetStart);
+      try {
+        typedArraySet.call(
+          targetBytes,
+          new Uint8Array(this.buffer, this.byteOffset + sourceStart, length),
+          targetStart,
+        );
+      } catch (error) {
+        // Buffer.copy treats an immutable destination as a successful no-op.
+        // TypedArray.prototype.set is the shared runtime write boundary, so
+        // preserve every other error and translate only its immutable-store
+        // rejection here.
+        if (error instanceof TypeError && error.message === "typed array backing buffer is immutable") {
+          return 0;
+        }
+        throw error;
+      }
       return length;
     }
 
