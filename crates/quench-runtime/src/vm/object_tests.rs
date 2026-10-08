@@ -95,6 +95,7 @@ fn method_cache_program(mut program: ResidualProgram) -> ResidualProgram {
         crate::bytecode::Instr::new(Op::Return, 1, 0, 0, 0),
     ];
     function.parameter_end_pc = 0;
+    function.source_positions.clear();
     let methods = program
         .method_sites
         .iter()

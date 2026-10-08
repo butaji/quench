@@ -92,10 +92,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .collect::<Vec<_>>();
     let names = context.array_rooted(&names)?;
     set(context, module, "builtinModules", names)?;
-    let is_builtin = context.host_function(crate::host::shared_vm::operation("moduleIsBuiltin"))?;
+    let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
     let create_require =
-        context.host_function(crate::host::shared_vm::operation("moduleCreateRequire"))?;
+        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
     set(context, module, "createRequire", create_require)?;
     Ok(module)
 }
