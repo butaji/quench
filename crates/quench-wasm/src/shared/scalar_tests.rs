@@ -131,13 +131,18 @@ fn host_boundary_rejects_type_mismatches_and_i32_convenience_misuse() {
 }
 
 #[test]
-fn reference_types_fail_explicitly() {
-    let wat = r#"(module (func (export "f") (result externref) ref.null extern))"#;
-    assert!(matches!(
-        crate::Engine::new()
-            .compile_wat(wat)
-            .unwrap()
-            .lower_shared("f"),
-        Err(Error::Unsupported(_))
-    ));
+fn reference_types_round_trip_through_the_shared_runtime() {
+    let wat = r#"(module (func (export "f") (param externref) (result externref) local.get 0))"#;
+    let function = crate::Engine::new()
+        .compile_wat(wat)
+        .unwrap()
+        .lower_shared("f")
+        .unwrap();
+    let mut runtime = Runtime::new(SystemHost);
+    assert_eq!(
+        runtime
+            .execute_wasm(&function, &[WasmValue::ExternRef(Some(23))])
+            .unwrap(),
+        Some(WasmValue::ExternRef(Some(23)))
+    );
 }

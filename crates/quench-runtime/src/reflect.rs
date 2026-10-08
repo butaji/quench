@@ -507,9 +507,15 @@ fn execute_direct_eval(
 
 fn compilation_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
     if crate::compiler_stack::is_exhaustion(&errors) {
-        return realm.and_then(|realm| crate::vm::with_realm(realm, || {
-            crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
-        })).unwrap_or_else(|| crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE));
+        return realm
+            .and_then(|realm| {
+                crate::vm::with_realm(realm, || {
+                    crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+                })
+            })
+            .unwrap_or_else(|| {
+                crate::value::error::throw_range_error(quench_stack::STACK_EXHAUSTED_MESSAGE)
+            });
     }
     let error = crate::builtins::error(
         crate::ops::Builtin::SyntaxError,

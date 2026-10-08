@@ -2,7 +2,7 @@
 
 These are the Stage A framework targets, using unmodified packages pinned by
 `package-lock.json`. Their minimum shared Node behavior is represented by the
-43 official upstream fixtures tagged `profile=framework-core` in the single
+26 official upstream fixtures tagged `profile=framework-core` in the single
 [`parallel.txt` manifest](../../crates/quench-node-test/node-tests/parallel.txt).
 Run the selected fixtures with `run-parallel-next --profile framework-core` and
 the package scenarios with local Node as their oracle. The broader proposals in

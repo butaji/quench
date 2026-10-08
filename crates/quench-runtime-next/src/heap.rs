@@ -85,10 +85,12 @@ pub(crate) enum CellKind {
     TemporalZonedDateTime,
     TemporalInstant,
     WasmBits64,
+    WasmMultiValue,
+    WasmExceptionRef,
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 impl CellKind {
-    pub(crate) const COUNT: usize = Self::WasmBits64 as usize + 1;
+    pub(crate) const COUNT: usize = Self::WasmExceptionRef as usize + 1;
     #[cfg(feature = "profile-memory")]
     pub(crate) const NAMES: [&'static str; Self::COUNT] = [
         "object",
@@ -116,6 +118,8 @@ impl CellKind {
         "temporal_zoned_date_time",
         "temporal_instant",
         "wasm_bits64",
+        "wasm_multi_value",
+        "wasm_exception_ref",
     ];
 }
 #[derive(Default)]
@@ -682,6 +686,8 @@ impl Heap {
                 work.extend(with_objects.iter().copied());
             }
             Cell::BindingReference { environment, .. } => work.push(*environment),
+            Cell::WasmMultiValue(values) => work.extend(values.iter().copied()),
+            Cell::WasmExceptionRef { payload, .. } => work.extend(payload.iter().copied()),
             Cell::PromiseResolvingState { promise, .. } => work.push(*promise),
             Cell::Date { object: value, .. }
             | Cell::TemporalDuration { object: value, .. }
@@ -721,6 +727,8 @@ impl Heap {
             Cell::String(_) => CellKind::String,
             Cell::BigInt(_) => CellKind::BigInt,
             Cell::WasmBits64(_) => CellKind::WasmBits64,
+            Cell::WasmMultiValue(_) => CellKind::WasmMultiValue,
+            Cell::WasmExceptionRef { .. } => CellKind::WasmExceptionRef,
             Cell::Symbol(_) => CellKind::Symbol,
             Cell::Date { .. } => CellKind::Date,
             Cell::Error(_) => CellKind::Error,
@@ -757,6 +765,8 @@ impl Heap {
                 | Cell::FinalizationRegistry { .. }
                 | Cell::BindingReference { .. }
                 | Cell::WasmBits64(_) => 0,
+                Cell::WasmMultiValue(values) => values.capacity() * size_of::<Value>(),
+                Cell::WasmExceptionRef { payload, .. } => payload.capacity() * size_of::<Value>(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }

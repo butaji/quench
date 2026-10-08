@@ -50,7 +50,15 @@ enum ErrorDescription {
         message: String,
         eval_parser_diagnostic: bool,
     },
-    WasmTrap(crate::WasmTrap),
+    WasmTrap {
+        trap: crate::WasmTrap,
+        message: Option<String>,
+    },
+    WasmException {
+        tag: crate::WasmTagId,
+        values: Vec<crate::WasmValue>,
+        exception_ref: Option<Value>,
+    },
 }
 
 impl From<&str> for ErrorMessage {
@@ -77,7 +85,11 @@ impl fmt::Display for JsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0.payload.description {
             ErrorDescription::Text { message, .. } => f.write_str(message),
-            ErrorDescription::WasmTrap(trap) => fmt::Display::fmt(trap, f),
+            ErrorDescription::WasmTrap { trap, message } => match message {
+                Some(message) => f.write_str(message),
+                None => fmt::Display::fmt(trap, f),
+            },
+            ErrorDescription::WasmException { .. } => f.write_str("WebAssembly exception"),
         }
     }
 }
@@ -126,16 +138,86 @@ impl JsError {
 
     /// Inspect a typed WebAssembly trap without treating it as a JS throw.
     pub fn wasm_trap(&self) -> Option<crate::WasmTrap> {
-        match self.0.payload.description {
-            ErrorDescription::WasmTrap(trap) => Some(trap),
+        match &self.0.payload.description {
+            ErrorDescription::WasmTrap { trap, .. } => Some(*trap),
             ErrorDescription::Text { .. } => None,
+            ErrorDescription::WasmException { .. } => None,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn wasm_exception(&self) -> Option<(crate::WasmTagId, &[crate::WasmValue])> {
+        match &self.0.payload.description {
+            ErrorDescription::WasmException { tag, values, .. } => Some((*tag, values)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn wasm_exception_details(
+        &self,
+    ) -> Option<(crate::WasmTagId, &[crate::WasmValue], Option<Value>)> {
+        match &self.0.payload.description {
+            ErrorDescription::WasmException {
+                tag,
+                values,
+                exception_ref,
+            } => Some((*tag, values, *exception_ref)),
+            _ => None,
         }
     }
 
     pub(crate) fn wasm_trap_error(trap: crate::WasmTrap) -> Self {
         Self(ErrorMessage {
             payload: Box::new(ErrorPayload {
-                description: ErrorDescription::WasmTrap(trap),
+                description: ErrorDescription::WasmTrap {
+                    trap,
+                    message: None,
+                },
+                thrown: None,
+            }),
+        })
+    }
+
+    pub(crate) fn wasm_trap_error_with_message(trap: crate::WasmTrap, message: String) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmTrap {
+                    trap,
+                    message: Some(message),
+                },
+                thrown: None,
+            }),
+        })
+    }
+
+    pub(crate) fn wasm_exception_error(
+        tag: crate::WasmTagId,
+        values: Vec<crate::WasmValue>,
+    ) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmException {
+                    tag,
+                    values,
+                    exception_ref: None,
+                },
+                thrown: None,
+            }),
+        })
+    }
+
+    pub(crate) fn wasm_exception_ref_error(
+        tag: crate::WasmTagId,
+        values: Vec<crate::WasmValue>,
+        exception_ref: Value,
+    ) -> Self {
+        Self(ErrorMessage {
+            payload: Box::new(ErrorPayload {
+                description: ErrorDescription::WasmException {
+                    tag,
+                    values,
+                    exception_ref: Some(exception_ref),
+                },
                 thrown: None,
             }),
         })
@@ -150,7 +232,10 @@ impl JsError {
     pub(super) fn into_message(self) -> String {
         match self.0.payload.description {
             ErrorDescription::Text { message, .. } => message,
-            ErrorDescription::WasmTrap(trap) => trap.to_string(),
+            ErrorDescription::WasmTrap { trap, message } => {
+                message.unwrap_or_else(|| trap.to_string())
+            }
+            ErrorDescription::WasmException { .. } => "WebAssembly exception".into(),
         }
     }
 }
@@ -1223,13 +1308,20 @@ impl<H: Host> Vm<H> {
         let (array_buffer, _) =
             self.install_array_buffer_for_realm(program, global, object_prototype)?;
         self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
-        let realm_error_prototype = self.heap.alloc(Cell::Object(Self::empty_object(object_prototype)));
+        let realm_error_prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::Error), realm_error_prototype);
         let realm_error_constructor = self.native_with_realm(Native::Error, global, global);
-        self.set_named_constant(program, realm_error_constructor, "prototype", realm_error_prototype)?;
+        self.set_named_constant(
+            program,
+            realm_error_constructor,
+            "prototype",
+            realm_error_prototype,
+        )?;
         self.set_builtin_value_named(
             realm_error_prototype,
             "constructor",
@@ -1262,9 +1354,19 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_function_name(realm_error_constructor, "Error")?;
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
-        self.set_realm_builtin_named(program, realm_error_prototype, "toString", Native::ErrorToString, Some(global))?;
-        self.object_data_mut(type_error_prototype).expect("realm TypeError prototype").proto = realm_error_prototype;
-        self.object_data_mut(type_error).expect("realm TypeError constructor").proto = realm_error_constructor;
+        self.set_realm_builtin_named(
+            program,
+            realm_error_prototype,
+            "toString",
+            Native::ErrorToString,
+            Some(global),
+        )?;
+        self.object_data_mut(type_error_prototype)
+            .expect("realm TypeError prototype")
+            .proto = realm_error_prototype;
+        self.object_data_mut(type_error)
+            .expect("realm TypeError constructor")
+            .proto = realm_error_constructor;
         self.set_builtin_function_name(type_error, "TypeError")?;
         for &(name, native) in ERROR_CONSTRUCTORS {
             if matches!(native, Native::Error | Native::TypeError) {

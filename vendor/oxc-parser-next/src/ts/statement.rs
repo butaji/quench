@@ -122,7 +122,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         self.bump_any(); // bump ':'
         let type_annotation = self.parse_ts_type();
-        Some(TSTypeAnnotation::boxed(self.end_span(start), type_annotation, self))
+        Some(TSTypeAnnotation::boxed(
+            self.end_span(start),
+            type_annotation,
+            self,
+        ))
     }
 
     pub(crate) fn parse_ts_type_alias_declaration(
@@ -217,7 +221,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 | "object"
                 | "undefined"
         ) {
-            self.error(diagnostics::reserved_type_name(id.span, id.name.as_str(), syntax_name));
+            self.error(diagnostics::reserved_type_name(
+                id.span,
+                id.name.as_str(),
+                syntax_name,
+            ));
         }
     }
 
@@ -333,7 +341,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             let ident = self.parse_identifier_reference();
             TSTypeName::new_identifier_reference(ident.span, ident.name, self)
         };
-        if self.at(Kind::Dot) { self.parse_ts_qualified_type_name(start, left) } else { left }
+        if self.at(Kind::Dot) {
+            self.parse_ts_qualified_type_name(start, left)
+        } else {
+            left
+        }
     }
 
     fn parse_invalid_ts_interface_heritage_type_name(&mut self) -> TSTypeName<'a> {
@@ -589,7 +601,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.expect(Kind::Global);
         let keyword_span = self.end_span(keyword_start);
 
-        let body = self.parse_ts_module_block(/* in_ts_namespace_body */ false).unbox();
+        let body = self
+            .parse_ts_module_block(/* in_ts_namespace_body */ false)
+            .unbox();
 
         self.verify_modifiers(
             modifiers,
@@ -766,7 +780,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let expression = self.parse_simple_unary_expression(lhs_start);
         let span = self.end_span(start);
 
-        if matches!(self.source_type.extension(), Some(FileExtension::Mts | FileExtension::Cts)) {
+        if matches!(
+            self.source_type.extension(),
+            Some(FileExtension::Mts | FileExtension::Cts)
+        ) {
             self.error(diagnostics::jsx_type_assertion_in_mts_cts(span));
         }
 
@@ -836,8 +853,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let left = TSTypeName::new_identifier_reference(ident.span, ident.name, self);
 
         // Parse qualified name: foo.bar.baz
-        let type_name =
-            if self.at(Kind::Dot) { self.parse_ts_qualified_type_name(start, left) } else { left };
+        let type_name = if self.at(Kind::Dot) {
+            self.parse_ts_qualified_type_name(start, left)
+        } else {
+            left
+        };
 
         // Convert TSTypeName to TSModuleReference
         match type_name {
@@ -881,7 +901,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             }
             // `global { … }`  `global export …`  (`global` + `{` / `export` / ident)
             Kind::Global => {
-                matches!(self.lexer.peek_token().kind(), Kind::Ident | Kind::LCurly | Kind::Export)
+                matches!(
+                    self.lexer.peek_token().kind(),
+                    Kind::Ident | Kind::LCurly | Kind::Export
+                )
             }
             // `import x`  `import "m"`  `import *`  `import {`  (`import` + string / `*` / `{` / ident)
             Kind::Import => {

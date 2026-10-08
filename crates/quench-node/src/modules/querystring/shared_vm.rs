@@ -3,9 +3,7 @@
 use crate::host::NodeHost;
 use rqj::{NativeContext, RootId, RootedError};
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let parse = context.host_function(crate::host::shared_vm::operation("querystringParse"))?;
     set(context, module, "parse", parse)?;

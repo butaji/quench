@@ -67,7 +67,10 @@ struct Args {
 
 fn main() -> ExitCode {
     let arguments = env::args().skip(1).collect::<Vec<_>>();
-    if arguments.first().is_some_and(|argument| argument == "--reports") {
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--reports")
+    {
         return compare_saved_reports(&arguments[1..]);
     }
     if let Err(error) = required_timeout() {
@@ -235,7 +238,7 @@ fn run_sequential(root: &Path, files: &[TestSource]) -> Outcomes {
     println!("mode=sequential starting");
     let start = Instant::now();
     let mut outcomes = Outcomes::default();
-    let mut runner = Test262Runner::new(RuntimeHost);
+    let mut runner = Test262Runner::new(RuntimeHost::default());
     let mut cache = HarnessCache::new(root.join("harness"));
     for fixture in files {
         let outcome = dispatch_one(&mut runner, &mut cache, fixture);
@@ -264,7 +267,7 @@ fn run_parallel(root: &Path, files: &[TestSource], threads: usize) -> Outcomes {
         let aggregated = Arc::clone(&aggregated);
         let harness_root = harness_root.clone();
         let handle = thread::Builder::new()
-            .stack_size(quench_runtime::WORKER_STACK_SIZE)
+            .stack_size(rqj::WORKER_STACK_SIZE)
             .spawn(move || loop {
                 let start = {
                     let mut guard = next.lock().unwrap();
@@ -327,9 +330,9 @@ fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<Tes
     let harness_root = harness_root.to_path_buf();
     let (sender, receiver) = std::sync::mpsc::channel();
     let handle = thread::Builder::new()
-        .stack_size(quench_runtime::WORKER_STACK_SIZE)
+        .stack_size(rqj::WORKER_STACK_SIZE)
         .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeHost);
+            let mut runner = Test262Runner::new(RuntimeHost::default());
             let mut cache = HarnessCache::new(harness_root);
             let result = dispatch_one(&mut runner, &mut cache, &fixture);
             let _ = sender.send(result);
@@ -486,18 +489,27 @@ fn fail<T: AsRef<str>>(message: T) -> ExitCode {
 }
 
 fn compare_saved_reports(arguments: &[String]) -> ExitCode {
-    let [before, after] = arguments else { return fail("usage: compare-runs --reports BEFORE AFTER"); };
+    let [before, after] = arguments else {
+        return fail("usage: compare-runs --reports BEFORE AFTER");
+    };
     let read = |path: &str| -> Result<serde_json::Value, String> {
         let bytes = fs::read(path).map_err(|error| format!("read {path}: {error}"))?;
         serde_json::from_slice(&bytes).map_err(|error| format!("parse {path}: {error}"))
     };
-    let verdict = read(before).and_then(|before| read(after).and_then(|after|
-        quench_test262::reporting::compare_reports(&before, &after)));
+    let verdict = read(before).and_then(|before| {
+        read(after).and_then(|after| quench_test262::reporting::compare_reports(&before, &after))
+    });
     match verdict {
         Ok(regressions) => {
             println!("regressions={}", regressions.len());
-            for path in &regressions { eprintln!("regression: {path}"); }
-            if regressions.is_empty() { ExitCode::SUCCESS } else { ExitCode::from(1) }
+            for path in &regressions {
+                eprintln!("regression: {path}");
+            }
+            if regressions.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
         }
         Err(error) => fail(error),
     }

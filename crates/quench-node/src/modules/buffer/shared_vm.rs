@@ -130,6 +130,14 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
+  for (const name of [
+    'from', 'alloc', 'allocUnsafe', 'allocUnsafeSlow', 'concat',
+    'byteLength', 'isBuffer', 'isEncoding',
+  ]) {
+    const descriptor = Object.getOwnPropertyDescriptor(Buffer, name);
+    Object.defineProperty(Buffer, name, { ...descriptor, enumerable: true });
+  }
+
   return { Buffer, SlowBuffer: Buffer };
 }"#
 );

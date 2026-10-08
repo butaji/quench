@@ -2,9 +2,9 @@ use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -153,6 +153,8 @@ struct HostRecord {
     rustc: String,
     model: Option<String>,
     memory_bytes: Option<u64>,
+    memory_limit_bytes: Option<u64>,
+    cpu_quota: Option<String>,
 }
 
 struct Options {
@@ -211,7 +213,7 @@ fn main() {
         && pinned.pinned_revision == pinned.checkout_revision
         && !source_dirty;
     let report = SuiteRecord {
-        schema: 3,
+        schema: 4,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
@@ -251,7 +253,7 @@ impl EngineSpec {
             version: self.version.clone(),
             argv: self.argv.clone(),
             environment: self.env.clone(),
-            inherits_environment: true,
+            inherits_environment: false,
             jit_mode: self.jit_mode,
             jit_proof_command: self.jit_proof_command.clone(),
             jit_proof: self.jit_proof.clone(),
@@ -573,30 +575,52 @@ fn outputs_equal(rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
 
 fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
     let started = Instant::now();
-    let timeout_seconds = format!("{:.3}", timeout_ms as f64 / 1000.0);
-    let output = Command::new("timeout")
-        .args([
-            "--signal=TERM",
-            "--kill-after=1",
-            &timeout_seconds,
-            "/usr/bin/time",
-            "-l",
-        ])
-        .arg(&engine.executable)
+    let mut command = Command::new(&engine.executable);
+    command
         .args(&engine.argv)
         .arg(source)
         .env_clear()
         .envs(&engine.env)
-        .output();
-    let (status, stdout, stderr) = match output {
-        Ok(output) => (
-            output.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&output.stdout).into_owned(),
-            String::from_utf8_lossy(&output.stderr).into_owned(),
-        ),
-        Err(error) => (-1, String::new(), error.to_string()),
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return invalid_sample(started, error.to_string()),
     };
-    let timed_out = matches!(status, 124 | 137);
+    let stdout_reader = child.stdout.take().expect("piped stdout");
+    let stderr_reader = child.stderr.take().expect("piped stderr");
+    let stdout_thread = std::thread::spawn(move || read_pipe(stdout_reader));
+    let stderr_thread = std::thread::spawn(move || read_pipe(stderr_reader));
+    let waited = wait_child(child.id(), timeout_ms);
+    // `wait4` reaps the process directly to return its resource counters.
+    // Child has no Drop behavior that waits or kills a reaped process.
+    drop(child);
+    let stdout_result = stdout_thread.join();
+    let stderr_result = stderr_thread.join();
+    let (status, timed_out, usage) = match waited {
+        Ok(result) => result,
+        Err(error) => {
+            return invalid_sample(started, format!("waiting for engine failed: {error}"));
+        }
+    };
+    let (stdout, stdout_error) = match stdout_result {
+        Ok(result) => result,
+        Err(_) => return invalid_sample(started, "stdout reader panicked".into()),
+    };
+    let (stderr, stderr_error) = match stderr_result {
+        Ok(result) => result,
+        Err(_) => return invalid_sample(started, "stderr reader panicked".into()),
+    };
+    let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
+    if let Some(error) = stdout_error {
+        stderr.push_str(&format!("\nstdout read failed: {error}"));
+    }
+    if let Some(error) = stderr_error {
+        stderr.push_str(&format!("\nstderr read failed: {error}"));
+    }
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
     let score = stdout
         .lines()
         .find_map(|line| line.strip_prefix("Score: "))
@@ -605,15 +629,115 @@ fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         status,
         timed_out,
         wall_ns: started.elapsed().as_nanos(),
-        peak_rss_bytes: time_metric(&stderr, "maximum resident set size"),
+        peak_rss_bytes: usage.peak_rss_bytes,
         score,
-        instructions: time_metric(&stderr, "instructions retired"),
-        cycles: time_metric(&stderr, "cycles elapsed"),
-        page_faults: time_metric(&stderr, "page faults"),
-        page_reclaims: time_metric(&stderr, "page reclaims"),
-        involuntary_context_switches: time_metric(&stderr, "involuntary context switches"),
+        instructions: None,
+        cycles: None,
+        page_faults: Some(usage.page_faults),
+        page_reclaims: Some(usage.page_reclaims),
+        involuntary_context_switches: Some(usage.involuntary_context_switches),
         stdout,
         stderr,
+    }
+}
+
+fn read_pipe(mut reader: impl Read) -> (Vec<u8>, Option<String>) {
+    let mut output = Vec::new();
+    let error = reader
+        .read_to_end(&mut output)
+        .err()
+        .map(|error| error.to_string());
+    (output, error)
+}
+
+struct ProcessUsage {
+    peak_rss_bytes: Option<u64>,
+    page_faults: u64,
+    page_reclaims: u64,
+    involuntary_context_switches: u64,
+}
+
+fn wait_child(child_id: u32, timeout_ms: u64) -> std::io::Result<(i32, bool, ProcessUsage)> {
+    use std::{os::unix::process::ExitStatusExt, time::Duration};
+
+    let pid = libc::pid_t::try_from(child_id).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "child process id is out of range",
+        )
+    })?;
+    let timeout = Duration::from_millis(timeout_ms);
+    let started = Instant::now();
+    let mut timed_out = false;
+    let mut sent_term_at = None;
+    loop {
+        let mut status = 0;
+        // SAFETY: wait4 writes its status and usage outputs to these live values.
+        let mut raw_usage: libc::rusage = unsafe { std::mem::zeroed() };
+        let result = unsafe { libc::wait4(pid, &mut status, libc::WNOHANG, &mut raw_usage) };
+        if result == pid {
+            let peak_rss_bytes = peak_rss_bytes(raw_usage.ru_maxrss);
+            let usage = ProcessUsage {
+                peak_rss_bytes,
+                page_faults: nonnegative(raw_usage.ru_majflt)
+                    .saturating_add(nonnegative(raw_usage.ru_minflt)),
+                page_reclaims: nonnegative(raw_usage.ru_minflt),
+                involuntary_context_switches: nonnegative(raw_usage.ru_nivcsw),
+            };
+            let exit_status = std::process::ExitStatus::from_raw(status);
+            return Ok((exit_status.code().unwrap_or(-1), timed_out, usage));
+        }
+        if result == -1 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+
+        if !timed_out && started.elapsed() >= timeout {
+            timed_out = true;
+            sent_term_at = Some(Instant::now());
+            // SAFETY: `pid` is the process-group ID established before spawn.
+            unsafe { libc::kill(-pid, libc::SIGTERM) };
+        } else if let Some(term_at) = sent_term_at {
+            if term_at.elapsed() >= Duration::from_secs(1) {
+                // SAFETY: terminate any process in this benchmark's process group.
+                unsafe { libc::kill(-pid, libc::SIGKILL) };
+                sent_term_at = None;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn nonnegative(value: libc::c_long) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
+fn peak_rss_bytes(raw_rss: libc::c_long) -> Option<u64> {
+    let rss = u64::try_from(raw_rss).ok()?;
+    if cfg!(target_os = "linux") {
+        rss.checked_mul(1024)
+    } else {
+        Some(rss)
+    }
+}
+
+fn invalid_sample(started: Instant, error: String) -> Sample {
+    Sample {
+        status: -1,
+        timed_out: false,
+        wall_ns: started.elapsed().as_nanos(),
+        peak_rss_bytes: None,
+        score: None,
+        instructions: None,
+        cycles: None,
+        page_faults: None,
+        page_reclaims: None,
+        involuntary_context_switches: None,
+        stdout: String::new(),
+        stderr: error,
     }
 }
 
@@ -666,14 +790,6 @@ fn materialize(file: &Path) -> PathBuf {
     source.extend_from_slice(RUNNER.as_bytes());
     fs::write(&path, source).unwrap_or_else(|error| fail(&error.to_string()));
     path
-}
-
-fn time_metric(stderr: &str, suffix: &str) -> Option<u64> {
-    stderr.lines().find_map(|line| {
-        line.trim()
-            .strip_suffix(suffix)
-            .and_then(|value| value.trim().parse().ok())
-    })
 }
 
 fn semantic_output(stdout: &str) -> String {
@@ -759,16 +875,43 @@ fn host_identity() -> HostRecord {
                 .next()
                 .map(str::to_string)
         });
-    let memory_bytes = command_output("sysctl", &["-n", "hw.memsize"])
-        .trim()
-        .parse()
-        .ok();
+    let memory_bytes = host_memory_bytes();
     HostRecord {
         uname: command_output("uname", &["-a"]).trim().to_string(),
         rustc: command_output("rustc", &["-Vv"]).trim().to_string(),
         model,
         memory_bytes,
+        memory_limit_bytes: cgroup_memory_limit_bytes(),
+        cpu_quota: fs::read_to_string("/sys/fs/cgroup/cpu.max")
+            .ok()
+            .map(|value| value.trim().to_string()),
     }
+}
+
+fn host_memory_bytes() -> Option<u64> {
+    if cfg!(target_os = "linux") {
+        return fs::read_to_string("/proc/meminfo")
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix("MemTotal:"))?
+            .split_whitespace()
+            .next()?
+            .parse::<u64>()
+            .ok()?
+            .checked_mul(1024);
+    }
+    command_output("sysctl", &["-n", "hw.memsize"])
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn cgroup_memory_limit_bytes() -> Option<u64> {
+    fs::read_to_string("/sys/fs/cgroup/memory.max")
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn artifact(path: &Path) -> Artifact {
@@ -827,4 +970,46 @@ fn usage(message: &str) -> ! {
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{peak_rss_bytes, wait_child};
+    use std::process::Command;
+
+    #[test]
+    fn converts_wait4_peak_rss_to_bytes() {
+        let raw_rss = 1234;
+        let expected: u64 = if cfg!(target_os = "linux") {
+            1_263_616
+        } else {
+            raw_rss as u64
+        };
+        assert_eq!(peak_rss_bytes(raw_rss), Some(expected));
+    }
+
+    #[test]
+    fn wait4_reports_exit_status_and_resource_usage() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("exit 7");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command.spawn().expect("spawn shell");
+        let (status, timed_out, usage) = wait_child(child.id(), 5000).expect("wait4 child");
+        assert_eq!(status, 7);
+        assert!(!timed_out);
+        assert!(usage.peak_rss_bytes.is_some_and(|rss| rss > 0));
+    }
+
+    #[test]
+    fn timeout_terminates_the_process_group() {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg("sleep 5");
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        let child = command.spawn().expect("spawn shell");
+        let (status, timed_out, _) = wait_child(child.id(), 5).expect("wait4 child");
+        assert_eq!(status, -1);
+        assert!(timed_out);
+    }
 }

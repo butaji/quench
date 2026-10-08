@@ -46,7 +46,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         &mut self,
         func_kind: FunctionKind,
         params_kind: FormalParameterKind,
-    ) -> (Option<ArenaBox<'a, TSThisParameter<'a>>>, ArenaBox<'a, FormalParameters<'a>>) {
+    ) -> (
+        Option<ArenaBox<'a, TSThisParameter<'a>>>,
+        ArenaBox<'a, FormalParameters<'a>>,
+    ) {
         let start = self.cur_start();
         let opening_span = self.cur_token().span();
         self.expect(Kind::LParen);
@@ -71,7 +74,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         &mut self,
         func_kind: FunctionKind,
         opening_span: Span,
-    ) -> (ArenaVec<'a, FormalParameter<'a>>, Option<ArenaBox<'a, FormalParameterRest<'a>>>) {
+    ) -> (
+        ArenaVec<'a, FormalParameter<'a>>,
+        Option<ArenaBox<'a, FormalParameterRest<'a>>>,
+    ) {
         let mut list = ArenaVec::new_in(self);
         let rest = self.parse_formal_parameters_list_into(&mut list, func_kind, opening_span);
         (list, rest)
@@ -138,12 +144,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
             if self.at(Kind::Dot3) {
                 let rest_element = self.parse_rest_element_for_formal_parameter();
-                let type_annotation =
-                    if self.is_ts { self.parse_ts_type_annotation() } else { None };
+                let type_annotation = if self.is_ts {
+                    self.parse_ts_type_annotation()
+                } else {
+                    None
+                };
 
-                let are_decorators_allowed =
-                    matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::Constructor)
-                        && self.is_ts;
+                let are_decorators_allowed = matches!(
+                    func_kind,
+                    FunctionKind::ClassMethod | FunctionKind::Constructor
+                ) && self.is_ts;
                 if !are_decorators_allowed {
                     for decorator in &decorators {
                         self.error(diagnostics::decorators_are_not_valid_here(decorator.span));
@@ -214,12 +224,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         // Now parse the initializer if present
         let init = if self.eat(Kind::Eq) {
-            let init =
-                self.context_add(Context::In, ParserImpl::parse_assignment_expression_or_higher);
+            let init = self.context_add(
+                Context::In,
+                ParserImpl::parse_assignment_expression_or_higher,
+            );
             if optional {
-                self.error(diagnostics::a_parameter_cannot_have_question_mark_and_initializer(
-                    pattern.span(),
-                ));
+                self.error(
+                    diagnostics::a_parameter_cannot_have_question_mark_and_initializer(
+                        pattern.span(),
+                    ),
+                );
             }
             Some(ArenaBox::new_in(init, self))
         } else {
@@ -237,16 +251,16 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                     ));
                 }
             } else {
-                self.error(diagnostics::parameter_property_cannot_be_binding_pattern(Span::new(
-                    start,
-                    self.prev_token_end,
-                )));
+                self.error(diagnostics::parameter_property_cannot_be_binding_pattern(
+                    Span::new(start, self.prev_token_end),
+                ));
             }
         }
 
-        let are_decorators_allowed =
-            matches!(func_kind, FunctionKind::ClassMethod | FunctionKind::Constructor)
-                && self.is_ts;
+        let are_decorators_allowed = matches!(
+            func_kind,
+            FunctionKind::ClassMethod | FunctionKind::Constructor
+        ) && self.is_ts;
         if !are_decorators_allowed {
             for decorator in &decorators {
                 self.error(diagnostics::decorators_are_not_valid_here(decorator.span));
@@ -287,7 +301,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             .and_new_target(true);
         let type_parameters = self.parse_ts_type_parameters();
         let (this_param, params) = self.parse_formal_parameters(func_kind, param_kind);
-        let return_type = if self.is_ts { self.parse_ts_return_type_annotation() } else { None };
+        let return_type = if self.is_ts {
+            self.parse_ts_return_type_annotation()
+        } else {
+            None
+        };
         let body = if self.at(Kind::LCurly) || func_kind == FunctionKind::Expression {
             Some(self.parse_function_body())
         } else {
@@ -343,14 +361,20 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             )
             && let Some(body) = &body
         {
-            self.error(diagnostics::implementation_in_ambient(Span::empty(body.span.start)));
+            self.error(diagnostics::implementation_in_ambient(Span::empty(
+                body.span.start,
+            )));
         }
 
         if let Some(generator) = generator {
             if ctx.has_ambient() {
-                self.error(diagnostics::generator_in_ambient_context(self.end_span(generator)));
+                self.error(diagnostics::generator_in_ambient_context(
+                    self.end_span(generator),
+                ));
             } else if body.is_none() {
-                self.error(diagnostics::overload_signature_generator(self.end_span(start)));
+                self.error(diagnostics::overload_signature_generator(
+                    self.end_span(start),
+                ));
             }
         }
         self.verify_modifiers(

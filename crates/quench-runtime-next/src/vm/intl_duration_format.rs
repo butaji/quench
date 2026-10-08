@@ -72,9 +72,13 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_duration_format_constructors
+        self.realm
+            .intrinsics
+            .intl_duration_format_constructors
             .insert(global, constructor);
-        self.realm.intrinsics.intl_duration_format_prototypes
+        self.realm
+            .intrinsics
+            .intl_duration_format_prototypes
             .insert(global, prototype);
         self.set_builtin_function_name(constructor, "DurationFormat")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
@@ -111,11 +115,13 @@ impl<H: Host> Vm<H> {
         new_target: Value,
     ) -> Result<Value, JsError> {
         self.with_call_roots(args.iter().copied().chain([new_target]), |vm| {
-            let prototype = vm.intl_instance_prototype(p, new_target, Native::IntlDurationFormat)?;
+            let prototype =
+                vm.intl_instance_prototype(p, new_target, Native::IntlDurationFormat)?;
             vm.with_call_roots([prototype], |vm| {
                 let locales = vm.canonical_locale_list(p, args.first().copied())?;
                 let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
-                let options = vm.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
+                let options =
+                    vm.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
                 let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
                 vm.write_duration_format_slots(instance, &options)?;
                 Ok(instance)
@@ -440,7 +446,6 @@ impl<H: Host> Vm<H> {
         self.hidden_string(formatter, DURATION_FORMAT_LOCALE_SLOT)
             .ok_or_else(|| self.type_error(p, "not a DurationFormat object".into()))
     }
-
 }
 
 fn immutable_duration_property() -> PropertyAttributes {

@@ -111,7 +111,9 @@ impl EventLoop {
     }
 
     pub fn queue_shared_immediate(&mut self, id: u64, callback: SharedCallback) {
-        self.shared.immediates.push_back(SharedImmediate { id, callback });
+        self.shared
+            .immediates
+            .push_back(SharedImmediate { id, callback });
     }
 
     pub fn shared_immediate_cutoff(&self) -> Option<u64> {
@@ -128,7 +130,11 @@ impl EventLoop {
     }
 
     pub fn cancel_shared_immediate(&mut self, id: u64) -> Option<SharedCallback> {
-        let index = self.shared.immediates.iter().position(|item| item.id == id)?;
+        let index = self
+            .shared
+            .immediates
+            .iter()
+            .position(|item| item.id == id)?;
         self.shared
             .immediates
             .remove(index)

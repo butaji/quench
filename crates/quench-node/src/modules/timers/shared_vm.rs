@@ -79,12 +79,12 @@ fn schedule_timer(
         args: callback_args,
     };
     let interval = repeating.then_some(delay);
-    context.host_mut().state().borrow_mut().event_loop.queue_shared_timer(
-        id,
-        delay,
-        interval,
-        callback,
-    );
+    context
+        .host_mut()
+        .state()
+        .borrow_mut()
+        .event_loop
+        .queue_shared_timer(id, delay, interval, callback);
     Ok(handle)
 }
 
@@ -173,11 +173,14 @@ pub(crate) fn set_immediate(
         .state()
         .borrow_mut()
         .event_loop
-        .queue_shared_immediate(id, SharedCallback {
-            callback,
-            receiver,
-            args,
-        });
+        .queue_shared_immediate(
+            id,
+            SharedCallback {
+                callback,
+                receiver,
+                args,
+            },
+        );
     Ok(handle)
 }
 
@@ -254,10 +257,7 @@ fn invalid_callback(
     Err(context.throw(error))
 }
 
-fn release_callback(
-    context: &mut NativeContext<'_, NodeHost>,
-    callback: SharedCallback,
-) {
+fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedCallback) {
     context.release_root(callback.callback);
     context.release_root(callback.receiver);
     for argument in callback.args {

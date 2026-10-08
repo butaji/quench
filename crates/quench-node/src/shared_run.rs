@@ -146,9 +146,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     }
 
     let input = match first.as_deref() {
-        Some("-e") | Some("--eval") => {
-            SharedInput::Eval(args.next().unwrap_or_default())
-        }
+        Some("-e") | Some("--eval") => SharedInput::Eval(args.next().unwrap_or_default()),
         Some(path) => SharedInput::File {
             path: PathBuf::from(path),
             exec_argv: Vec::new(),

@@ -96,9 +96,7 @@ impl Method {
     }
 }
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     if let Some(module) = context.host_mut().state().borrow().path_module {
         return Ok(module);
     }
@@ -138,15 +136,11 @@ fn namespace(
     get(context, module, flavor.name())
 }
 
-pub(crate) fn posix(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn posix(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     namespace(context, Flavor::Posix)
 }
 
-pub(crate) fn win32(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn win32(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     namespace(context, Flavor::Win32)
 }
 
@@ -270,12 +264,9 @@ fn apply(
             let cwd = process_cwd(context)?;
             let from = paths.first().map(String::as_str).unwrap_or("undefined");
             let to = paths.get(1).map(String::as_str).unwrap_or("undefined");
-            crate::modules::path_win32_extra::relative_strings(
-                from,
-                to,
-                &cwd,
-                |device| process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone()),
-            )
+            crate::modules::path_win32_extra::relative_strings(from, to, &cwd, |device| {
+                process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone())
+            })
         }
         (Flavor::Posix, Method::Basename) => {
             crate::modules::path_parts::basename_str(&paths[0], suffix.as_deref(), false)
@@ -407,7 +398,9 @@ fn set(
     if context.set_property_rooted(object, key, value, object)? {
         Ok(())
     } else {
-        Err(RootedError::host(format!("cannot install Path property {name}")))
+        Err(RootedError::host(format!(
+            "cannot install Path property {name}"
+        )))
     }
 }
 

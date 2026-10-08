@@ -1,6 +1,6 @@
 //! The checked-in Node `test/parallel` manifest is the profile selection authority.
 
-use crate::case_process::{RunResult, observe_parallel_case};
+use crate::case_process::{observe_parallel_case, RunResult};
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
 const PARALLEL_DIR: &str = "tests/node/test/parallel";

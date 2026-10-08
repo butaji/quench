@@ -38,16 +38,10 @@ pub(crate) fn relative_strings(
     if from == to {
         return String::new();
     }
-    let from_orig = crate::modules::path_win32::resolve_strings(
-        &[from.to_owned()],
-        cwd,
-        &mut drive_cwd,
-    );
-    let to_orig = crate::modules::path_win32::resolve_strings(
-        &[to.to_owned()],
-        cwd,
-        &mut drive_cwd,
-    );
+    let from_orig =
+        crate::modules::path_win32::resolve_strings(&[from.to_owned()], cwd, &mut drive_cwd);
+    let to_orig =
+        crate::modules::path_win32::resolve_strings(&[to.to_owned()], cwd, &mut drive_cwd);
     if from_orig == to_orig {
         return String::new();
     }
@@ -61,17 +55,12 @@ pub(crate) fn relative_strings(
     {
         return relative_split(&from_orig, &to_orig);
     }
-    relative_scan(
-        &from_orig,
-        &to_orig,
-        &from_lower,
-        &to_lower,
-    )
+    relative_scan(&from_orig, &to_orig, &from_lower, &to_lower)
 }
 
 fn drive_cwd(state: &Rc<RefCell<HostState>>, device: &str) -> String {
-    let path = shared::js_env(state, &format!("={device}"))
-        .unwrap_or_else(|| shared::js_cwd(state));
+    let path =
+        shared::js_env(state, &format!("={device}")).unwrap_or_else(|| shared::js_cwd(state));
     let chars: Vec<char> = path.chars().collect();
     let drive_matches = chars.len() >= 2
         && chars[..2]

@@ -127,13 +127,13 @@ impl<H: Host> Vm<H> {
                 }
                 PropertyKey::string(atom)
             };
-            let Some((_, slot)) = vm
-                .object_property_slot(target, property_key)
-                .filter(|(_, slot)| {
-                    vm.object_data(target)
-                        .and_then(|object| vm.heap.property_get(object, *slot))
-                        .is_some()
-                })
+            let Some((_, slot)) =
+                vm.object_property_slot(target, property_key)
+                    .filter(|(_, slot)| {
+                        vm.object_data(target)
+                            .and_then(|object| vm.heap.property_get(object, *slot))
+                            .is_some()
+                    })
             else {
                 return Ok(Value::TRUE);
             };
@@ -215,7 +215,9 @@ impl<H: Host> Vm<H> {
                     return self.object_get_prototype_of(p, self.heap.root_value(target).unwrap());
                 }
                 if !self.is_function(trap) {
-                    return Err(self.type_error(p, "proxy getPrototypeOf trap is not callable".into()));
+                    return Err(
+                        self.type_error(p, "proxy getPrototypeOf trap is not callable".into())
+                    );
                 }
                 let result = self.call_value(
                     p,
@@ -315,7 +317,9 @@ impl<H: Host> Vm<H> {
                     );
                 }
                 if !self.is_function(trap) {
-                    return Err(self.type_error(p, "proxy setPrototypeOf trap is not callable".into()));
+                    return Err(
+                        self.type_error(p, "proxy setPrototypeOf trap is not callable".into())
+                    );
                 }
                 let result = self.call_value(
                     p,
@@ -521,7 +525,9 @@ impl<H: Host> Vm<H> {
                     return self.object_is_extensible(p, &[self.heap.root_value(target).unwrap()]);
                 }
                 if !self.is_function(trap) {
-                    return Err(self.type_error(p, "proxy isExtensible trap is not callable".into()));
+                    return Err(
+                        self.type_error(p, "proxy isExtensible trap is not callable".into())
+                    );
                 }
                 let result = self.call_value(
                     p,
@@ -570,7 +576,8 @@ impl<H: Host> Vm<H> {
                 let is_data = if freeze {
                     let target = self.heap.root_value(object).unwrap();
                     let property = self.heap.root_value(key).unwrap();
-                    let current = self.object_get_own_property_descriptor(p, &[target, property])?;
+                    let current =
+                        self.object_get_own_property_descriptor(p, &[target, property])?;
                     if current.is_undefined() {
                         continue;
                     }
@@ -799,5 +806,4 @@ impl<H: Host> Vm<H> {
         }
         outcome
     }
-
 }

@@ -85,6 +85,8 @@ fn write_field(
         | FieldLayout::ReadWriteRegister
         | FieldLayout::OptionalRegister
         | FieldLayout::FunctionIndex
+        | FieldLayout::WasmMemoryKind
+        | FieldLayout::WasmIndirectSite
         | FieldLayout::ElementCount
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
@@ -238,11 +240,28 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmI32UnaryOperator
         | ImmediateRole::WasmI64BinaryOperator
         | ImmediateRole::WasmI64UnaryOperator
+        | ImmediateRole::WasmWideArithmeticOperator
         | ImmediateRole::WasmScalarConversionOperator
         | ImmediateRole::WasmF32BinaryOperator
         | ImmediateRole::WasmF32UnaryOperator
         | ImmediateRole::WasmF64BinaryOperator
         | ImmediateRole::WasmF64UnaryOperator
+        | ImmediateRole::WasmGlobalIndex
+        | ImmediateRole::WasmTagIndex
+        | ImmediateRole::WasmMemoryIndex
+        | ImmediateRole::WasmMemoryOffset
+        | ImmediateRole::WasmTableIndex
+        | ImmediateRole::WasmMemoryPair
+        | ImmediateRole::WasmMemoryInitImmediate
+        | ImmediateRole::WasmDataIndex
+        | ImmediateRole::WasmTablePair
+        | ImmediateRole::WasmTableInitImmediate
+        | ImmediateRole::WasmElementIndex
+        | ImmediateRole::WasmMultiValueIndex
+        | ImmediateRole::WasmGcTypeIndex
+        | ImmediateRole::WasmGcFieldIndex
+        | ImmediateRole::WasmV128Site
+        | ImmediateRole::WasmAtomicSite
         | ImmediateRole::JumpTarget => write_scalar_value(output, instruction),
     }
 }
@@ -296,6 +315,8 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             " definition={:?}",
             instruction.property_definition_mode()
         ),
+        ImmediateRole::WasmGlobalIndex => write!(output, " global={}", instruction.imm()),
+        ImmediateRole::WasmTagIndex => write!(output, " tag={}", instruction.imm()),
         ImmediateRole::BooleanFlag => write!(output, " flag={:?}", instruction.boolean_flag()),
         ImmediateRole::ArrayIndex => write!(output, " index={}", instruction.array_index()),
         ImmediateRole::BinaryOperator
@@ -312,6 +333,11 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             output,
             " operator={:?}",
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm())
+        ),
+        ImmediateRole::WasmWideArithmeticOperator => write!(
+            output,
+            " operator={:?}",
+            crate::wasm::wide::WideArithmeticOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmScalarConversionOperator => write!(
             output,

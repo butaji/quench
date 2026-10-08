@@ -54,7 +54,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.realm.intrinsics.intl_plural_rules_prototypes.insert(global, prototype);
+        self.realm
+            .intrinsics
+            .intl_plural_rules_prototypes
+            .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_non_writable_property(constructor, "prototype");
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -167,7 +170,8 @@ impl<H: Host> Vm<H> {
             Some(value) => self.box_object(value)?,
         };
         self.with_call_roots([options], |vm| {
-            let locale_matcher = vm.plural_option_string(p, options, "localeMatcher", "best fit")?;
+            let locale_matcher =
+                vm.plural_option_string(p, options, "localeMatcher", "best fit")?;
             validate_plural_option(p, &locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
             let rule_type = vm.plural_option_string(p, options, "type", "cardinal")?;
             validate_plural_option(p, &rule_type, &["cardinal", "ordinal"], "type")?;
@@ -226,7 +230,8 @@ impl<H: Host> Vm<H> {
                     MAXIMUM_ROUNDING_INCREMENT,
                 )?
                 .unwrap_or(DEFAULT_ROUNDING_INCREMENT);
-            let rounding_mode = vm.plural_option_string(p, options, "roundingMode", "halfExpand")?;
+            let rounding_mode =
+                vm.plural_option_string(p, options, "roundingMode", "halfExpand")?;
             validate_plural_option(
                 p,
                 &rounding_mode,
@@ -243,7 +248,8 @@ impl<H: Host> Vm<H> {
                 ],
                 "roundingMode",
             )?;
-            let rounding_priority = vm.plural_option_string(p, options, "roundingPriority", "auto")?;
+            let rounding_priority =
+                vm.plural_option_string(p, options, "roundingPriority", "auto")?;
             validate_plural_option(
                 p,
                 &rounding_priority,

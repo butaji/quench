@@ -44,10 +44,8 @@ impl<H: Host> Vm<H> {
                 self.call_value(p, target, this, &arguments)
             }
             Native::ReflectGet => {
-                let key = self.to_property_key(
-                    p,
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )?;
+                let key =
+                    self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = args.get(2).copied().unwrap_or(target);
                 if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
                     return self.get_symbol_property_with_receiver(p, target, key, receiver);
@@ -69,10 +67,8 @@ impl<H: Host> Vm<H> {
             }
             Native::ReflectIsExtensible => self.object_is_extensible(p, args),
             Native::ReflectSet | Native::SuperSet => {
-                let key = self.to_property_key(
-                    p,
-                    args.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )?;
+                let key =
+                    self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = args.get(3).copied().unwrap_or(target);
                 let strict_super = native == Native::SuperSet
                     && args.get(4).is_some_and(|flag| self.truthy(*flag));

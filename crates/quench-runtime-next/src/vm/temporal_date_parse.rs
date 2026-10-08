@@ -139,7 +139,9 @@ fn parse_calendar_time(text: &str) -> Option<()> {
     let second = if let Some(second) = fields.next() {
         let (second, fraction) = second
             .split_once(['.', ','])
-            .map_or((second, None), |(second, fraction)| (second, Some(fraction)));
+            .map_or((second, None), |(second, fraction)| {
+                (second, Some(fraction))
+            });
         if fraction.is_some_and(|fraction| {
             fraction.is_empty()
                 || fraction.len() > MAX_FRACTION_DIGITS

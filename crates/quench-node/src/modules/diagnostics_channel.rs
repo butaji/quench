@@ -22,6 +22,8 @@ use crate::registry::{
     SPEC_DIAGNOSTICS_TRACING_UNSUBSCRIBE, SPEC_DIAGNOSTICS_UNSUBSCRIBE,
 };
 
+pub(crate) mod shared_vm;
+
 const ID: &str = "\0quench:diagnostics_channel:id";
 const NAME: &str = "\0quench:diagnostics_channel:name";
 const TRACE: &str = "\0quench:diagnostics_channel:tracing";

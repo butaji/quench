@@ -387,6 +387,59 @@ mod tests {
     }
 
     #[test]
+    fn mutable_global_updates_survive_repeated_invocation() {
+        let report = run_wast(
+            "global-state.wast",
+            r#"
+(module
+  (global $counter (export "counter") (mut i32) (i32.const 1))
+  (func (export "increment")
+    (global.set $counter (i32.add (global.get $counter) (i32.const 1)))
+  )
+  (func (export "read") (result i32) (global.get $counter))
+)
+(assert_return (invoke "read") (i32.const 1))
+(invoke "increment")
+(assert_return (invoke "read") (i32.const 2))
+(assert_return (get "counter") (i32.const 2))
+"#,
+        );
+        assert!(
+            report.results.iter().all(|result| result.passed),
+            "{:?}",
+            report.results
+        );
+    }
+
+    #[test]
+    fn imported_mutable_globals_share_identity_across_modules() {
+        let report = run_wast(
+            "global-link.wast",
+            r#"
+(module $owner
+  (global $counter (export "counter") (mut i32) (i32.const 3))
+)
+(module $borrower
+  (import "owner" "counter" (global $counter (mut i32)))
+  (export "counter" (global $counter))
+  (func (export "increment")
+    (global.set $counter (i32.add (global.get $counter) (i32.const 1)))
+  )
+)
+(assert_return (get $owner "counter") (i32.const 3))
+(invoke $borrower "increment")
+(assert_return (get $owner "counter") (i32.const 4))
+(assert_return (get $borrower "counter") (i32.const 4))
+"#,
+        );
+        assert!(
+            report.results.iter().all(|result| result.passed),
+            "{:?}",
+            report.results
+        );
+    }
+
+    #[test]
     fn valid_module_accepted_without_running() {
         let source = r#"(module (func (export "answer") (result i32) i32.const 42))"#;
         let report = run_wast("module.wast", source);

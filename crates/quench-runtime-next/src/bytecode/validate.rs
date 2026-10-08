@@ -94,6 +94,8 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::FieldLookupCacheSiteIndex => true,
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
+            FieldLayout::WasmMemoryKind => value & 31 <= 22,
+            FieldLayout::WasmIndirectSite => true,
             FieldLayout::ElementCount => instruction
                 .constant_index()
                 .checked_add(usize::from(value))
@@ -171,6 +173,9 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmI64BinaryOperator => {
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm()).is_some()
         }
+        super::ImmediateRole::WasmWideArithmeticOperator => {
+            crate::wasm::wide::WideArithmeticOperator::from_tag(instruction.imm()).is_some()
+        }
         super::ImmediateRole::WasmScalarConversionOperator => {
             crate::wasm::conversion::ScalarConversionOperator::from_tag(instruction.imm()).is_some()
         }
@@ -215,6 +220,22 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::FieldLookup
         | super::ImmediateRole::LayoutEncoded
         | super::ImmediateRole::TemplateSiteIndex
+        | super::ImmediateRole::WasmGlobalIndex
+        | super::ImmediateRole::WasmTagIndex
+        | super::ImmediateRole::WasmMemoryIndex
+        | super::ImmediateRole::WasmMemoryOffset
+        | super::ImmediateRole::WasmTableIndex
+        | super::ImmediateRole::WasmMemoryPair
+        | super::ImmediateRole::WasmMemoryInitImmediate
+        | super::ImmediateRole::WasmDataIndex
+        | super::ImmediateRole::WasmTablePair
+        | super::ImmediateRole::WasmTableInitImmediate
+        | super::ImmediateRole::WasmElementIndex
+        | super::ImmediateRole::WasmMultiValueIndex
+        | super::ImmediateRole::WasmGcTypeIndex
+        | super::ImmediateRole::WasmGcFieldIndex
+        | super::ImmediateRole::WasmV128Site
+        | super::ImmediateRole::WasmAtomicSite
         | super::ImmediateRole::Unused
         | super::ImmediateRole::WideInstructionIndex => true,
     }

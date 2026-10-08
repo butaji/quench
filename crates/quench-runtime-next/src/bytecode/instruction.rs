@@ -70,6 +70,11 @@ impl WideInstruction {
         self.c = value;
     }
 
+    pub(crate) fn set_returns_from_frame(&mut self) {
+        debug_assert!(self.op.result_layout().allows_return());
+        self.a |= RETURN_REGISTER;
+    }
+
     pub(crate) fn set_imm(&mut self, imm: u32) {
         self.imm = imm;
     }
@@ -663,7 +668,7 @@ impl Instr {
     // Keep the packed instruction at 64 bits while allowing the opcode set to
     // grow. The explicit Wide form carries full-width operands when this
     // slightly smaller narrow immediate is insufficient.
-    const OP_BITS: u32 = 7;
+    const OP_BITS: u32 = 8;
     const FIELD_BITS: u32 = 14;
     const FIELD_MASK: u64 = (1 << Self::FIELD_BITS) - 1;
     const FIELD_TAG_BITS: u32 = 2;
@@ -866,7 +871,12 @@ impl Instr {
             if high > PACKED_PAIR_HIGH_MASK || low > PACKED_PAIR_LOW_MASK {
                 return None;
             }
-            Some(((high as u16) << PACKED_PAIR_LOW_BITS) | low as u16)
+            let packed = ((high as u16) << PACKED_PAIR_LOW_BITS) | low as u16;
+            if packed as u32 <= Self::NARROW_IMMEDIATE_MASK {
+                Some(packed)
+            } else {
+                None
+            }
         } else if value <= Self::NARROW_IMMEDIATE_MASK {
             Some(value as u16)
         } else {
@@ -932,8 +942,13 @@ mod tests {
         for base in [Instr::FIELD_SENTINEL_START, u16::MAX] {
             assert_eq!(Instr::new(Op::GetField, 0, base, 0, 0).b(), base);
         }
-        let compound = (PACKED_PAIR_HIGH_MASK << PACKED_PAIR_SOURCE_SHIFT) | PACKED_PAIR_LOW_MASK;
-        assert_eq!(Instr::new(Op::Call, 0, 0, 0, compound).imm(), compound);
+        let highest_narrow_pair = ((Instr::NARROW_IMMEDIATE_MASK >> PACKED_PAIR_LOW_BITS)
+            << PACKED_PAIR_SOURCE_SHIFT)
+            | PACKED_PAIR_LOW_MASK;
+        assert_eq!(
+            Instr::new(Op::Call, 0, 0, 0, highest_narrow_pair).imm(),
+            highest_narrow_pair
+        );
     }
 
     #[test]
@@ -952,12 +967,13 @@ mod tests {
             )
             .is_none()
         );
+        assert!(Instr::try_new(Op::Call, 0, 0, 0, 64 << PACKED_PAIR_SOURCE_SHIFT).is_none());
         assert!(Instr::try_new(Op::Call, 0, 0, 0, PACKED_PAIR_LOW_MASK + 1).is_none());
     }
 
     #[test]
     fn wide_marker_round_trips_the_full_side_table_index() {
-        let index = (1_usize << 56) | (0x1234 << 28) | (0x2345 << 14) | 0x3456;
+        let index = (1_usize << 55) | (0x1234 << 28) | (0x2345 << 14) | 0x3456;
         let instruction = Instr::wide(index).unwrap();
         assert!(instruction.is_wide());
         assert_eq!(instruction.wide_index(), index);
