@@ -81,6 +81,11 @@ impl<H: Host> Vm<H> {
         self.root(value)
     }
 
+    pub(crate) fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
+        let value = self.heap.alloc(Cell::String(JsString::from_units(units)));
+        self.root(value)
+    }
+
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         self.call_object_native(&program, Native::ObjectCreate, &[self.object_proto])
