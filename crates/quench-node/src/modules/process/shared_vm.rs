@@ -417,10 +417,10 @@ pub(crate) fn cwd(
 ) -> Result<RootId, RootedError> {
     let cwd = context
         .host_mut()
-        .state()
+        .shared_state()
         .borrow()
-        .process
         .cwd
+        .path()
         .to_string_lossy()
         .into_owned();
     Ok(context.string_rooted(&cwd))
@@ -437,8 +437,8 @@ pub(crate) fn chdir(
     let Some(directory) = context.string_text(directory)? else {
         return Err(chdir_type_error(context)?);
     };
-    let state = context.host_mut().state();
-    match crate::modules::process::change_directory(&state, &directory) {
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    match crate::modules::process::change_directory_cwd(&cwd, &directory) {
         Ok(()) => Ok(context.undefined()),
         Err(error) => {
             let exception = context.error_rooted(&error.message)?;

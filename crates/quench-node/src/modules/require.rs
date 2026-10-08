@@ -1602,7 +1602,7 @@ fn resolve_base(
             ),
         ])));
     };
-    let cwd = state.borrow().process.cwd.clone();
+    let cwd = state.borrow().process.cwd.path();
     Ok(cwd.join(path).to_string_lossy().into_owned())
 }
 
@@ -1769,7 +1769,7 @@ fn resolve_global_module_path(
     spec: &str,
 ) -> Option<std::path::PathBuf> {
     let paths = execute::get_property(&module_api(state), "globalPaths");
-    let cwd = state.borrow().process.cwd.clone();
+    let cwd = state.borrow().process.cwd.path();
     for key in execute::own_enumerable_keys(&paths) {
         let root = value_to_string(&execute::get_property(&paths, &key));
         let root = std::path::Path::new(&root);

@@ -173,7 +173,7 @@ pub(crate) fn resolve_shared_path(
     if candidate.is_absolute() || path.starts_with("tests/node/test/") {
         return path;
     }
-    let cwd = context.host_mut().state().borrow().process.cwd.clone();
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
     cwd.join(candidate).to_string_lossy().into_owned()
 }
 
