@@ -11,6 +11,26 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     throw new TypeError(`AbortSignal.prototype.${name} called on an incompatible receiver`);
   };
 
+  if (typeof globalThis.DOMException !== "function") {
+    const codes = { IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4,
+      InvalidCharacterError: 5, NoModificationAllowedError: 7, NotFoundError: 8,
+      NotSupportedError: 9, InUseAttributeError: 10, InvalidStateError: 11,
+      SyntaxError: 12, InvalidModificationError: 13, NamespaceError: 14,
+      TypeMismatchError: 17, SecurityError: 18, NetworkError: 19, AbortError: 20,
+      URLMismatchError: 21, QuotaExceededError: 22, TimeoutError: 23,
+      InvalidNodeTypeError: 24, DataCloneError: 25 };
+    Object.defineProperty(globalThis, "DOMException", {
+      configurable: true,
+      value: class DOMException extends Error {
+        constructor(message = "", name = "Error") {
+          super(message);
+          this.name = name;
+          this.code = codes[name] || 0;
+        }
+      },
+    });
+  }
+
   const signalState = (signal, name) => {
     const state = signalStates.get(signal);
     if (!state) invalidReceiver(name);
@@ -18,9 +38,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
   };
 
   const makeAbortReason = () => {
-    const error = new Error("This operation was aborted");
-    error.name = "AbortError";
-    return error;
+    return new DOMException("This operation was aborted", "AbortError");
   };
 
   const invokeListener = (listener, signal, event) => {
@@ -31,15 +49,14 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
   };
 
-  const abortEvent = (signal) => ({
-      type: "abort",
-      target: signal,
-      currentTarget: signal,
-      defaultPrevented: false,
-      preventDefault() { this.defaultPrevented = true; },
-      stopPropagation() {},
-      stopImmediatePropagation() { this.__stopped = true; },
-    });
+  const abortEvent = (signal) => {
+    const event = new Event("abort");
+    event.target = signal;
+    event.currentTarget = signal;
+    event._quenchIsTrusted = true;
+    event.__stopped = false;
+    return event;
+  };
 
   const dispatchListeners = (signal, state, event) => {
     for (const entry of state.listeners.slice()) {
@@ -146,8 +163,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       }
       const controller = new AbortController();
       globalThis.setTimeout(() => {
-        const error = new Error("The operation was aborted due to timeout");
-        error.name = "TimeoutError";
+        const error = new DOMException("The operation was aborted due to timeout", "TimeoutError");
         controller.abort(error);
       }, milliseconds);
       return controller.signal;
@@ -174,6 +190,26 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       dispatchAbort(signal, state);
     }
   }
+
+  const inspectCustom = Symbol.for("nodejs.util.inspect.custom");
+  Object.defineProperty(AbortSignal.prototype, inspectCustom, {
+    configurable: true,
+    value(depth) {
+      const state = signalState(this, "[nodejs.util.inspect.custom]");
+      if (depth < 0) return "[AbortSignal]";
+      return `AbortSignal { aborted: ${state.aborted} }`;
+    },
+  });
+  Object.defineProperty(AbortController.prototype, inspectCustom, {
+    configurable: true,
+    value(depth, options) {
+      const signal = controllerSignals.get(this);
+      if (!signal) throw new TypeError("AbortController.prototype.signal called on an incompatible receiver");
+      if (depth < 0 || options?.depth === 1) return "AbortController { signal: [AbortSignal] }";
+      const state = signalState(signal, "[nodejs.util.inspect.custom]");
+      return `AbortController { signal: AbortSignal { aborted: ${state.aborted} } }`;
+    },
+  });
 
   Object.defineProperty(AbortSignal.prototype, Symbol.toStringTag, { value: "AbortSignal" });
   Object.defineProperty(AbortController.prototype, Symbol.toStringTag, { value: "AbortController" });
@@ -221,6 +257,15 @@ if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   writable: true,
   configurable: true,
 });
+
+if (typeof globalThis.Event === "function" &&
+    !Object.getOwnPropertyDescriptor(Event.prototype, "isTrusted")?.get) {
+  Object.defineProperty(Event.prototype, "isTrusted", {
+    configurable: true,
+    enumerable: true,
+    get() { return this._quenchIsTrusted === true; },
+  });
+}
 
 if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "EventTarget", {
   value: class EventTarget {
