@@ -1,7 +1,7 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
+use super::numeric::{selectors, NumericResult};
 use super::WasmValue;
-use super::numeric::{NumericResult, selectors};
 
 macro_rules! binary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,
@@ -40,7 +40,31 @@ macro_rules! unary_family {
                 type $bits_alias = $bits;
                 const $sign: $bits_alias = super::numeric::sign_mask($bits_alias::BITS) as $bits_alias;
                 let value: $float = match self { $(Self::$name => $body,)+ };
-                WasmValue::$variant(value.to_bits())
+                const EXPONENT_MASK: $bits_alias = <$float_alias>::INFINITY.to_bits();
+                const QUIET_NAN_BIT: $bits_alias =
+                    (super::numeric::canonical_nan_bits(
+                        <$float_alias>::MANTISSA_DIGITS,
+                        <$float_alias>::INFINITY.to_bits() as u64,
+                    ) as $bits_alias)
+                        ^ EXPONENT_MASK;
+                const MANTISSA_MASK: $bits_alias =
+                    ((1 as $bits_alias) << (<$float_alias>::MANTISSA_DIGITS - 1)) - 1;
+                let bits = value.to_bits();
+                let bits = if matches!(
+                    self,
+                    Self::Ceiling
+                        | Self::Floor
+                        | Self::Truncate
+                        | Self::Nearest
+                        | Self::SquareRoot
+                ) && bits & EXPONENT_MASK == EXPONENT_MASK
+                    && bits & MANTISSA_MASK != 0
+                {
+                    bits | QUIET_NAN_BIT
+                } else {
+                    bits
+                };
+                WasmValue::$variant(bits)
             }
         }
     };
