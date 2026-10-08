@@ -45,6 +45,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathToNamespacedPath" (1) => crate::modules::path_shared_vm::to_namespaced_path_operation,
         method "pathParse" (1) => crate::modules::path_shared_vm::parse_operation,
         method "pathFormat" (1) => crate::modules::path_shared_vm::format_operation,
+        method "pathMatchesGlob" (2) => crate::modules::path_shared_vm::matches_glob_operation,
         method "urlParse" (3) => crate::modules::url_shared_vm::parse,
         method "urlFormat" (2) => crate::modules::url_shared_vm::format,
         method "domainToASCII" (1) => crate::modules::url_shared_vm::domain_to_ascii,
