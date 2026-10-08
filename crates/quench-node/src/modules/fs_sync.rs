@@ -254,8 +254,9 @@ pub fn read_file_sync(
         let fd = super::fs::descriptor_arg(args.first())?;
         let options = parse_options(args.get(1))?;
         let bytes = {
-            let mut host = state.borrow_mut();
-            let descriptor = host.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+            let host = state.borrow();
+            let mut descriptors = host.fs.descriptors_mut();
+            let descriptor = descriptors.get_mut(&fd).ok_or_else(|| {
                 crate::modules::fs_error::fs_error(
                     "read",
                     None,
@@ -306,8 +307,9 @@ pub fn write_file_sync(
             args.get(1).unwrap_or(&Value::Undefined),
             options.encoding.as_deref(),
         )?;
-        let mut host = state.borrow_mut();
-        let descriptor = host.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+        let host = state.borrow();
+        let mut descriptors = host.fs.descriptors_mut();
+        let descriptor = descriptors.get_mut(&fd).ok_or_else(|| {
             super::fs_error::fs_error("write", None, &std::io::Error::from_raw_os_error(9))
         })?;
         descriptor
@@ -385,8 +387,9 @@ pub fn append_file_sync(
             options.encoding.as_deref(),
         )?;
         {
-            let mut host = state.borrow_mut();
-            let descriptor = host.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+            let host = state.borrow();
+            let mut descriptors = host.fs.descriptors_mut();
+            let descriptor = descriptors.get_mut(&fd).ok_or_else(|| {
                 super::fs_error::fs_error("write", None, &std::io::Error::from_raw_os_error(9))
             })?;
             descriptor

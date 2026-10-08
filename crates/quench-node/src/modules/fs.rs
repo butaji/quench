@@ -2,7 +2,7 @@
 //! errors, `Stats`/`Dirent` values, and async variants whose
 //! callbacks run on the host event loop.
 
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
@@ -22,9 +22,13 @@ pub(crate) mod ops;
 #[path = "fs/shared_vm.rs"]
 pub(crate) mod shared_vm;
 
-pub struct FsState {
+/// A handle to the one host-owned descriptor table shared by both Node adapters.
+#[derive(Clone)]
+pub struct FsState(Rc<RefCell<FsStateData>>);
+
+struct FsStateData {
     next_fd: i32,
-    pub(crate) descriptors: HashMap<i32, FileDescriptor>,
+    descriptors: HashMap<i32, FileDescriptor>,
 }
 
 pub(crate) struct FileDescriptor {
@@ -44,19 +48,27 @@ impl Default for FsState {
 
 impl FsState {
     pub fn new() -> Self {
-        Self {
+        Self(Rc::new(RefCell::new(FsStateData {
             next_fd: 3,
             descriptors: HashMap::new(),
-        }
+        })))
     }
 
-    pub(crate) fn open_read_stream(&mut self, path: String) -> std::io::Result<i32> {
+    pub(crate) fn descriptors(&self) -> Ref<'_, HashMap<i32, FileDescriptor>> {
+        Ref::map(self.0.borrow(), |state| &state.descriptors)
+    }
+
+    pub(crate) fn descriptors_mut(&self) -> RefMut<'_, HashMap<i32, FileDescriptor>> {
+        RefMut::map(self.0.borrow_mut(), |state| &mut state.descriptors)
+    }
+
+    pub(crate) fn open_read_stream(&self, path: String) -> std::io::Result<i32> {
         let file = std::fs::File::open(&path)?;
         self.insert_descriptor(file, path)
     }
 
     pub(crate) fn open_write_stream(
-        &mut self,
+        &self,
         path: String,
         flags: Option<&str>,
     ) -> std::io::Result<i32> {
@@ -64,17 +76,20 @@ impl FsState {
         self.insert_descriptor(file, path)
     }
 
-    fn insert_descriptor(&mut self, file: std::fs::File, path: String) -> std::io::Result<i32> {
-        let fd = self.next_fd;
-        self.next_fd = self.next_fd.checked_add(1).ok_or_else(|| {
+    fn insert_descriptor(&self, file: std::fs::File, path: String) -> std::io::Result<i32> {
+        let mut state = self.0.borrow_mut();
+        let fd = state.next_fd;
+        let next_fd = fd.checked_add(1).ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::Other, "file descriptor space exhausted")
         })?;
-        self.descriptors.insert(fd, FileDescriptor { file, path });
+        state.next_fd = next_fd;
+        state.descriptors.insert(fd, FileDescriptor { file, path });
         Ok(fd)
     }
 
-    pub(crate) fn write_stream_chunk(&mut self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
-        let descriptor = self
+    pub(crate) fn write_stream_chunk(&self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut state = self.0.borrow_mut();
+        let descriptor = state
             .descriptors
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
@@ -82,19 +97,22 @@ impl FsState {
         Ok(bytes.len())
     }
 
-    pub(crate) fn close_stream(&mut self, fd: i32) -> std::io::Result<String> {
-        self.descriptors
+    pub(crate) fn close_stream(&self, fd: i32) -> std::io::Result<String> {
+        self.0
+            .borrow_mut()
+            .descriptors
             .remove(&fd)
             .map(|descriptor| descriptor.path)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))
     }
 
     pub(crate) fn read_stream_chunk(
-        &mut self,
+        &self,
         fd: i32,
         size: usize,
     ) -> std::io::Result<Option<Vec<u8>>> {
-        let descriptor = self
+        let mut state = self.0.borrow_mut();
+        let descriptor = state
             .descriptors
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
@@ -107,8 +125,8 @@ impl FsState {
         Ok(Some(bytes))
     }
 
-    pub(crate) fn close_read_stream(&mut self, fd: i32) {
-        self.descriptors.remove(&fd);
+    pub(crate) fn close_read_stream(&self, fd: i32) {
+        self.0.borrow_mut().descriptors.remove(&fd);
     }
 }
 
@@ -683,17 +701,11 @@ pub fn open_sync(
             let file = open_numeric_options(*flags)?
                 .open(&path)
                 .map_err(|error| crate::modules::fs_error::fs_error("open", Some(&path), &error))?;
-            let mut fs = state.borrow_mut();
-            let fd = fs.fs.next_fd;
-            fs.fs.next_fd += 1;
-            fs.fs.descriptors.insert(
-                fd,
-                FileDescriptor {
-                    file,
-                    path: path.clone(),
-                },
-            );
-            drop(fs);
+            let fd = state
+                .borrow()
+                .fs
+                .insert_descriptor(file, path.clone())
+                .map_err(|error| crate::modules::fs_error::fs_error("open", Some(&path), &error))?;
             if let Some(mode) = mode {
                 ops::apply_mode(&path, Some(mode));
             }
@@ -709,17 +721,11 @@ pub fn open_sync(
     let file = open_options(flags)?
         .open(&path)
         .map_err(|error| crate::modules::fs_error::fs_error("open", Some(&path), &error))?;
-    let mut fs = state.borrow_mut();
-    let fd = fs.fs.next_fd;
-    fs.fs.next_fd += 1;
-    fs.fs.descriptors.insert(
-        fd,
-        FileDescriptor {
-            file,
-            path: path.clone(),
-        },
-    );
-    drop(fs);
+    let fd = state
+        .borrow()
+        .fs
+        .insert_descriptor(file, path.clone())
+        .map_err(|error| crate::modules::fs_error::fs_error("open", Some(&path), &error))?;
     if let Some(mode) = mode {
         ops::apply_mode(&path, Some(mode));
     }
@@ -757,7 +763,7 @@ pub fn close_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
-    if state.borrow_mut().fs.descriptors.remove(&fd).is_none() {
+    if state.borrow().fs.descriptors_mut().remove(&fd).is_none() {
         return Err(crate::modules::fs_error::fs_error(
             "close",
             None,
@@ -1657,10 +1663,9 @@ pub fn read_sync(
     }
     let mut bytes = vec![0; length];
     let count = {
-        let mut fs = state.borrow_mut();
-        let descriptor = fs
-            .fs
-            .descriptors
+        let fs = state.borrow();
+        let mut descriptors = fs.fs.descriptors_mut();
+        let descriptor = descriptors
             .get_mut(&fd)
             .ok_or_else(|| invalid_fd_error("read"))?;
         if let Some(position) = position {
@@ -1705,10 +1710,9 @@ pub fn write_sync(
         }
     }
     let count = {
-        let mut fs = state.borrow_mut();
-        let descriptor = fs
-            .fs
-            .descriptors
+        let fs = state.borrow();
+        let mut descriptors = fs.fs.descriptors_mut();
+        let descriptor = descriptors
             .get_mut(&fd)
             .ok_or_else(|| invalid_fd_error("write"))?;
         if let Some(position) = position {
@@ -1783,7 +1787,7 @@ pub fn fstat_sync(
     let path = state
         .borrow()
         .fs
-        .descriptors
+        .descriptors()
         .get(&fd)
         .map(|descriptor| descriptor.path.clone())
         // Node exposes the inherited stdio descriptors even though they are
@@ -1828,8 +1832,9 @@ pub fn ftruncate_sync(
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
     let length = crate::modules::fs_sync::truncate_length(args.get(1))?;
-    let mut fs = state.borrow_mut();
-    let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+    let fs = state.borrow();
+    let mut descriptors = fs.fs.descriptors_mut();
+    let descriptor = descriptors.get_mut(&fd).ok_or_else(|| {
         crate::modules::fs_error::fs_error("ftruncate", None, &std::io::Error::from_raw_os_error(9))
     })?;
     descriptor.file.set_len(length).map_err(|error| {
@@ -1861,10 +1866,9 @@ pub fn fchmod_sync(
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
     let mode = chmod_mode(args.get(1))?;
-    let mut host = state.borrow_mut();
-    let descriptor = host
-        .fs
-        .descriptors
+    let host = state.borrow();
+    let mut descriptors = host.fs.descriptors_mut();
+    let descriptor = descriptors
         .get_mut(&fd)
         .ok_or_else(|| invalid_fd_error("fchmod"))?;
     #[cfg(unix)]
@@ -1954,7 +1958,7 @@ pub fn fchown_sync(
     let path = state
         .borrow()
         .fs
-        .descriptors
+        .descriptors()
         .get(&fd)
         .map(|d| d.path.clone())
         .ok_or_else(|| invalid_fd_error("fchown"))?;
@@ -1994,14 +1998,15 @@ pub fn futimes_sync(
     let fd = descriptor_arg(args.first())?;
     let atime = crate::modules::fs_sync::unix_timestamp(args.get(1), "atime")?;
     let mtime = crate::modules::fs_sync::unix_timestamp(args.get(2), "mtime")?;
-    if !state.borrow().fs.descriptors.contains_key(&fd) {
+    if !state.borrow().fs.descriptors().contains_key(&fd) {
         return Err(invalid_fd_error("futime"));
     }
     #[cfg(unix)]
     {
         use std::os::fd::AsRawFd;
         let host = state.borrow();
-        let descriptor = host.fs.descriptors.get(&fd).expect("validated descriptor");
+        let descriptors = host.fs.descriptors();
+        let descriptor = descriptors.get(&fd).expect("validated descriptor");
         let to_timespec = |seconds: f64| libc::timespec {
             tv_sec: seconds.trunc() as libc::time_t,
             tv_nsec: (seconds.fract() * 1_000_000_000.0) as libc::c_long,
@@ -2196,8 +2201,9 @@ fn sync_file(
     syscall: &str,
 ) -> Result<Value, VmError> {
     let fd = descriptor_arg(args.first())?;
-    let mut fs = state.borrow_mut();
-    let descriptor = fs.fs.descriptors.get_mut(&fd).ok_or_else(|| {
+    let fs = state.borrow();
+    let mut descriptors = fs.fs.descriptors_mut();
+    let descriptor = descriptors.get_mut(&fd).ok_or_else(|| {
         crate::modules::fs_error::fs_error(syscall, None, &std::io::Error::from_raw_os_error(9))
     })?;
     descriptor.file.sync_all().map_err(|error| {
@@ -2737,7 +2743,7 @@ pub fn file_handle_read_file(
     let path = state
         .borrow()
         .fs
-        .descriptors
+        .descriptors()
         .get(&fd)
         .map(|descriptor| descriptor.path.clone())
         .ok_or_else(|| invalid_fd_error("read"))?;
@@ -3899,7 +3905,7 @@ pub fn read_stream_open(
             Value::Number(fd) => state
                 .borrow()
                 .fs
-                .descriptors
+                .descriptors()
                 .get(&(fd as i32))
                 .map(|descriptor| descriptor.path.clone())
                 .unwrap_or_default(),
@@ -4101,7 +4107,7 @@ pub fn validate_write_stream_options(
         let path = state
             .borrow()
             .fs
-            .descriptors
+            .descriptors()
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
