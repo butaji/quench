@@ -10,4 +10,4 @@ quench-stack = { path = "../quench-stack" }
 icu_casemap = { version = "2.2", features = ["compiled_data"] }
 icu_properties = { version = "2.3", features = ["compiled_data"] }
 oxc = { workspace = true }
-regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }
+regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl", "perf-literal", "perf-onepass", "perf-backtrack"] }
