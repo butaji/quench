@@ -30,6 +30,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
+    let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
+    install(context, process, "exit", exit)?;
     let stdout = create_stream(context, STDOUT_FD)?;
     install(context, process, "stdout", stdout)?;
     let stderr = create_stream(context, STDERR_FD)?;
@@ -338,6 +340,39 @@ pub(crate) fn exit_code_set(
         .process_control
         .set_exit_code(Some(number as i64 as i32));
     Ok(context.undefined())
+}
+
+pub(crate) fn exit(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let process_control = context.host_mut().shared_state().borrow().process_control.clone();
+    let code = match args.first().copied() {
+        None => process_control.exit_code().unwrap_or(0),
+        Some(value_root) => {
+            let value = context
+                .rooted_value(value_root)
+                .ok_or_else(|| RootedError::host("invalid process.exit code value root"))?;
+            let number = if let Some(number) = value.as_number() {
+                Some(number)
+            } else if let Some(string) = context.string_text(value_root)? {
+                let number = parse_exit_code_string(&string);
+                (!number.is_nan()).then_some(number)
+            } else {
+                None
+            };
+            let Some(number) = number else {
+                return invalid_exit_code_type(context);
+            };
+            if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
+                return exit_code_range_error(context, number);
+            }
+            number as i64 as i32
+        }
+    };
+    process_control.request_exit(code);
+    Err(RootedError::host("process.exit"))
 }
 
 fn parse_exit_code_string(value: &str) -> f64 {
