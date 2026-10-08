@@ -27,7 +27,7 @@
     {
       "url": "https://docs.rs/smallvec/latest/smallvec/",
       "accessed": "2026-10-08",
-      "finding": "The current docs describe inline storage with heap fallback and note that the optional union feature removes one machine-word tag. The implementation here remains pinned to smallvec 1.15.2; the newer feature is not enabled without a separate measurement."
+      "finding": "The docs describe inline storage with heap fallback and note that union removes one machine-word tag. The runtime manifest does not request union directly, but a follow-up Cargo feature-tree audit found it already enabled transitively through ICU/OXC dependencies in the workspace build; see task61-smallvec-union-linux-2026-10-08.json."
     },
     {
       "url": "https://github.com/google/benchmark/blob/main/docs/reducing_variance.md",
