@@ -161,6 +161,124 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   };
 }"#;
 
+const UV_FS_SYMLINK_DIR: i32 = 1;
+const UV_FS_SYMLINK_JUNCTION: i32 = 2;
+const UV_DIRENT_UNKNOWN: i32 = 0;
+const UV_DIRENT_FILE: i32 = 1;
+const UV_DIRENT_DIR: i32 = 2;
+const UV_DIRENT_LINK: i32 = 3;
+const UV_DIRENT_FIFO: i32 = 4;
+const UV_DIRENT_SOCKET: i32 = 5;
+const UV_DIRENT_CHAR: i32 = 6;
+const UV_DIRENT_BLOCK: i32 = 7;
+const UV_FS_O_FILEMAP: i32 = 0;
+const UV_FS_COPYFILE_EXCL: i32 = 1;
+const UV_FS_COPYFILE_FICLONE: i32 = 2;
+const UV_FS_COPYFILE_FICLONE_FORCE: i32 = 4;
+#[cfg(not(target_os = "linux"))]
+const S_IRUSR: i32 = 0o400;
+#[cfg(not(target_os = "linux"))]
+const S_IWUSR: i32 = 0o200;
+
+#[cfg(target_os = "linux")]
+const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
+    ("UV_FS_SYMLINK_DIR", UV_FS_SYMLINK_DIR),
+    ("UV_FS_SYMLINK_JUNCTION", UV_FS_SYMLINK_JUNCTION),
+    ("O_RDONLY", libc::O_RDONLY),
+    ("O_WRONLY", libc::O_WRONLY),
+    ("O_RDWR", libc::O_RDWR),
+    ("UV_DIRENT_UNKNOWN", UV_DIRENT_UNKNOWN),
+    ("UV_DIRENT_FILE", UV_DIRENT_FILE),
+    ("UV_DIRENT_DIR", UV_DIRENT_DIR),
+    ("UV_DIRENT_LINK", UV_DIRENT_LINK),
+    ("UV_DIRENT_FIFO", UV_DIRENT_FIFO),
+    ("UV_DIRENT_SOCKET", UV_DIRENT_SOCKET),
+    ("UV_DIRENT_CHAR", UV_DIRENT_CHAR),
+    ("UV_DIRENT_BLOCK", UV_DIRENT_BLOCK),
+    ("S_IFMT", libc::S_IFMT as i32),
+    ("S_IFREG", libc::S_IFREG as i32),
+    ("S_IFDIR", libc::S_IFDIR as i32),
+    ("S_IFCHR", libc::S_IFCHR as i32),
+    ("S_IFBLK", libc::S_IFBLK as i32),
+    ("S_IFIFO", libc::S_IFIFO as i32),
+    ("S_IFLNK", libc::S_IFLNK as i32),
+    ("S_IFSOCK", libc::S_IFSOCK as i32),
+    ("O_CREAT", libc::O_CREAT),
+    ("O_EXCL", libc::O_EXCL),
+    ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("O_NOCTTY", libc::O_NOCTTY),
+    ("O_TRUNC", libc::O_TRUNC),
+    ("O_APPEND", libc::O_APPEND),
+    ("O_DIRECTORY", libc::O_DIRECTORY),
+    ("O_NOATIME", libc::O_NOATIME),
+    ("O_NOFOLLOW", libc::O_NOFOLLOW),
+    ("O_SYNC", libc::O_SYNC),
+    ("O_DSYNC", libc::O_DSYNC),
+    ("O_DIRECT", libc::O_DIRECT),
+    ("O_NONBLOCK", libc::O_NONBLOCK),
+    ("S_IRWXU", libc::S_IRWXU as i32),
+    ("S_IRUSR", libc::S_IRUSR as i32),
+    ("S_IWUSR", libc::S_IWUSR as i32),
+    ("S_IXUSR", libc::S_IXUSR as i32),
+    ("S_IRWXG", libc::S_IRWXG as i32),
+    ("S_IRGRP", libc::S_IRGRP as i32),
+    ("S_IWGRP", libc::S_IWGRP as i32),
+    ("S_IXGRP", libc::S_IXGRP as i32),
+    ("S_IRWXO", libc::S_IRWXO as i32),
+    ("S_IROTH", libc::S_IROTH as i32),
+    ("S_IWOTH", libc::S_IWOTH as i32),
+    ("S_IXOTH", libc::S_IXOTH as i32),
+    ("F_OK", libc::F_OK),
+    ("R_OK", libc::R_OK),
+    ("W_OK", libc::W_OK),
+    ("X_OK", libc::X_OK),
+    ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
+    ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
+    ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
+    ("COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
+    ("UV_FS_COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
+    ("COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
+];
+
+#[cfg(not(target_os = "linux"))]
+const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
+    ("UV_FS_SYMLINK_DIR", UV_FS_SYMLINK_DIR),
+    ("UV_FS_SYMLINK_JUNCTION", UV_FS_SYMLINK_JUNCTION),
+    ("UV_DIRENT_UNKNOWN", UV_DIRENT_UNKNOWN),
+    ("UV_DIRENT_FILE", UV_DIRENT_FILE),
+    ("UV_DIRENT_DIR", UV_DIRENT_DIR),
+    ("UV_DIRENT_LINK", UV_DIRENT_LINK),
+    ("UV_DIRENT_FIFO", UV_DIRENT_FIFO),
+    ("UV_DIRENT_SOCKET", UV_DIRENT_SOCKET),
+    ("UV_DIRENT_CHAR", UV_DIRENT_CHAR),
+    ("UV_DIRENT_BLOCK", UV_DIRENT_BLOCK),
+    ("S_IRUSR", S_IRUSR),
+    ("S_IWUSR", S_IWUSR),
+    ("UV_FS_O_FILEMAP", UV_FS_O_FILEMAP),
+    ("UV_FS_COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
+    ("COPYFILE_EXCL", UV_FS_COPYFILE_EXCL),
+    ("UV_FS_COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
+    ("COPYFILE_FICLONE", UV_FS_COPYFILE_FICLONE),
+    ("UV_FS_COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
+    ("COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
+];
+
+fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let global = context.global_root()?;
+    let object = get(context, global, "Object")?;
+    let create = get(context, object, "create")?;
+    let null = context.null();
+    let constants = context.call_rooted(create, object, &[null])?;
+    for &(name, value) in FS_CONSTANT_VALUES {
+        let key = context.string_rooted(name);
+        let value = context.number(value as f64);
+        if !context.set_property_rooted(constants, key, value, constants)? {
+            return Err(RootedError::host("cannot set fs.constants property"));
+        }
+    }
+    Ok(constants)
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -186,7 +304,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let undefined = context.undefined();
     let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
     set(context, module, "realpath", realpath)?;
-    let promises = promises_module(context)?;
+    let constants = fs_constants(context)?;
+    set(context, module, "constants", constants)?;
+    let promises = promises_module(context, constants)?;
     set(context, module, "promises", promises)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
@@ -219,6 +339,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
 pub(crate) fn promises_module(
     context: &mut NativeContext<'_, NodeHost>,
+    constants: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -228,11 +349,13 @@ pub(crate) fn promises_module(
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     let undefined = context.undefined();
-    context.call_rooted(
+    let promises = context.call_rooted(
         factory,
         undefined,
         &[read_file, stat, lstat, readdir, readlink, realpath],
-    )
+    )?;
+    set(context, promises, "constants", constants)?;
+    Ok(promises)
 }
 
 fn get(
