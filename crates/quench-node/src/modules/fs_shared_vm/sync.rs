@@ -44,6 +44,9 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     error.code = "ERR_INVALID_ARG_TYPE";
     throw error;
   };
+  const descriptorArgument = (path) =>
+    typeof path === "number" ? path :
+      path && typeof path === "object" && typeof path.fd === "number" ? path.fd : null;
   const validateReadWriteRange = (buffer, offset, length) => {
     for (const [name, value] of [["offset", offset], ["length", length]]) {
       if (value != null && typeof value !== "number") {
@@ -85,15 +88,17 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
       return rmSync(normalizePath(path), options);
     },
     writeFileSync(path, data, options) {
-      if (typeof path === "number") {
-        writeDescriptor(path, writeBytes(data, options), null);
+      const fd = descriptorArgument(path);
+      if (fd !== null) {
+        writeDescriptor(fd, writeBytes(data, options), null);
         return undefined;
       }
       return writeFileSync(normalizePath(path), writeBytes(data, options), options);
     },
     appendFileSync(path, data, options) {
-      if (typeof path === "number") {
-        writeDescriptor(path, writeBytes(data, options), null);
+      const fd = descriptorArgument(path);
+      if (fd !== null) {
+        writeDescriptor(fd, writeBytes(data, options), null);
         return undefined;
       }
       const settings = typeof options === "string"
