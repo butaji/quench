@@ -27,13 +27,18 @@ try {
 
 fs.open(__filename, (error, openedFd) => {
   assert.ifError(error);
-  fs.close(openedFd, (closeError) => assert.ifError(closeError));
+  fs.fstat(openedFd, (statError, stats) => {
+    assert.ifError(statError);
+    assert.strictEqual(stats.isFile(), true);
+    fs.close(openedFd, (closeError) => assert.ifError(closeError));
+  });
 });
 
 fs.promises.open(__filename).then(async (handle) => {
   const output = Buffer.alloc(5);
   const result = await handle.read(output, 0, output.length, 0);
   assert.strictEqual(result.bytesRead, output.length);
+  assert.strictEqual((await handle.stat()).isFile(), true);
   await handle.close();
 });
 
