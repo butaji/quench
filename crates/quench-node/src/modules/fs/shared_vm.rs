@@ -265,11 +265,12 @@ pub(crate) fn read_stream_open(
         .transpose()?
         .unwrap_or_else(|| "undefined".to_owned());
     let path = resolve_shared_path(context, path);
-    let result = {
-        let state = context.host_mut().state();
-        let result = state.borrow_mut().fs.open_read_stream(path.clone());
-        result
-    };
+    let result = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .open_read_stream(path.clone());
     match result {
         Ok(fd) => Ok(context.number(fd as f64)),
         Err(error) => Err(stream_io_error(context, error, "open", &path)?),
@@ -291,11 +292,11 @@ pub(crate) fn read_stream_read(
         .unwrap_or(READ_STREAM_CHUNK_LIMIT as f64) as usize;
     let size = requested.min(READ_STREAM_CHUNK_LIMIT);
     let (result, path) = {
-        let state = context.host_mut().state();
-        let mut state = state.borrow_mut();
+        let shared_state = context.host_mut().shared_state();
+        let state = shared_state.borrow();
         let path = state
             .fs
-            .descriptors
+            .descriptors()
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
@@ -315,8 +316,12 @@ pub(crate) fn read_stream_close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let fd = integer_arg(context, args.first().copied(), "file descriptor")?;
-    let state = context.host_mut().state();
-    state.borrow_mut().fs.close_read_stream(fd);
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .close_read_stream(fd);
     Ok(context.undefined())
 }
 
