@@ -40,6 +40,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "pathDirname" (1) => crate::modules::path_shared_vm::dirname_operation,
         method "pathExtname" (1) => crate::modules::path_shared_vm::extname_operation,
         method "pathNormalize" (1) => crate::modules::path_shared_vm::normalize_operation,
+        method "pathIsAbsolute" (1) => crate::modules::path_shared_vm::is_absolute_operation,
         method "urlParse" (3) => crate::modules::url_shared_vm::parse,
         method "urlFormat" (2) => crate::modules::url_shared_vm::format,
         method "domainToASCII" (1) => crate::modules::url_shared_vm::domain_to_ascii,

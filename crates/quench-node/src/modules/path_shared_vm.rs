@@ -18,6 +18,7 @@ enum Method {
     Dirname,
     Extname,
     Normalize,
+    IsAbsolute,
 }
 
 impl Flavor {
@@ -46,7 +47,7 @@ impl Flavor {
 }
 
 impl Method {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Join,
         Self::Resolve,
         Self::Relative,
@@ -54,6 +55,7 @@ impl Method {
         Self::Dirname,
         Self::Extname,
         Self::Normalize,
+        Self::IsAbsolute,
     ];
 
     fn name(self) -> &'static str {
@@ -65,6 +67,7 @@ impl Method {
             Self::Dirname => "dirname",
             Self::Extname => "extname",
             Self::Normalize => "normalize",
+            Self::IsAbsolute => "isAbsolute",
         }
     }
 
@@ -77,12 +80,14 @@ impl Method {
             Self::Dirname => "pathDirname",
             Self::Extname => "pathExtname",
             Self::Normalize => "pathNormalize",
+            Self::IsAbsolute => "pathIsAbsolute",
         }
     }
 
     fn argument_count(self, available: usize) -> usize {
         match self {
             Self::Join | Self::Resolve => available,
+            Self::IsAbsolute => available.min(1),
             Self::Relative | Self::Basename => available.min(2),
             Self::Dirname | Self::Extname | Self::Normalize => available.min(1),
         }
@@ -90,7 +95,11 @@ impl Method {
 
     fn path_count(self, available: usize) -> usize {
         match self {
-            Self::Basename | Self::Dirname | Self::Extname | Self::Normalize => available.min(1),
+            Self::Basename
+            | Self::Dirname
+            | Self::Extname
+            | Self::Normalize
+            | Self::IsAbsolute => available.min(1),
             Self::Join | Self::Resolve | Self::Relative => available,
         }
     }
@@ -200,6 +209,14 @@ pub(crate) fn normalize_operation(
     apply(context, function, args, Method::Normalize)
 }
 
+pub(crate) fn is_absolute_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::IsAbsolute)
+}
+
 fn apply(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -215,7 +232,11 @@ fn apply(
     let path_arguments = &arguments[..method.path_count(arguments.len())];
     if matches!(
         method,
-        Method::Basename | Method::Dirname | Method::Extname | Method::Normalize
+        Method::Basename
+            | Method::Dirname
+            | Method::Extname
+            | Method::Normalize
+            | Method::IsAbsolute
     ) && path_arguments.is_empty()
     {
         return Err(path_type_error(context, "path", "undefined")?);
@@ -225,6 +246,11 @@ fn apply(
         .enumerate()
         .map(|(index, argument)| argument_string(context, *argument, index, method))
         .collect::<Result<Vec<_>, _>>()?;
+    if matches!(method, Method::IsAbsolute) {
+        let windows = matches!(flavor, Flavor::Win32);
+        let result = crate::modules::path_algorithms::common::is_absolute(&paths[0], windows);
+        return Ok(context.boolean(result));
+    }
     let suffix = if matches!(method, Method::Basename) {
         match arguments.get(1).copied() {
             Some(argument)
@@ -301,6 +327,7 @@ fn apply(
         (Flavor::Win32, Method::Normalize) => {
             crate::modules::path_algorithms::win32_normalize::normalize_str(&paths[0])
         }
+        (_, Method::IsAbsolute) => unreachable!("handled before string path dispatch"),
     };
     Ok(context.string_rooted(&result))
 }
@@ -324,6 +351,7 @@ fn argument_string(
     }
     let name = match (method, index) {
         (Method::Basename | Method::Dirname | Method::Extname | Method::Normalize, 0) => "path",
+        (Method::IsAbsolute, 0) => "path",
         (Method::Basename, _) => "suffix",
         (_, 0) => "paths[0]",
         (_, 1) => "paths[1]",
