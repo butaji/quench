@@ -7,7 +7,7 @@ Quench implements JavaScript semantics and Node-compatible APIs.
 - Share semantics across interpreter, specialized, and native execution. Optimizations require proven assumptions or runtime guards with exact fallback.
 - Verify changed Node behavior against the local Node oracle and relevant upstream source: values, descriptors, identity, ordering, errors, exit status and host effects.
 - Production behavior must never depend on benchmark identity, fixture source, scores, checksums, suite markers or the comparison engine.
-- Target Apple M4/macOS for performance qualification; preserve existing platform behavior.
+- Qualify performance on the available execution host; record its exact platform and resource limits, and preserve existing platform behavior.
 - Resolve static structure before execution. Justify allocations, metadata, caches and generated code by semantic necessity or measured benefit.
 
 ## Lisp mindset manifesto
