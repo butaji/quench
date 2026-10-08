@@ -214,14 +214,12 @@ pub(crate) fn open(
         set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
-    let result = {
-        let state = context.host_mut().state();
-        let result = state
-            .borrow_mut()
-            .fs
-            .open_write_stream(path.clone(), flags.as_deref());
-        result
-    };
+    let result = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .open_write_stream(path.clone(), flags.as_deref());
     match result {
         Ok(fd) => Ok(context.number(fd as f64)),
         Err(error) => Err(stream_io_error(context, error, "open", &path)?),
@@ -236,11 +234,11 @@ pub(crate) fn write(
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
     let bytes = super::sync::byte_view(context, args.get(1).copied())?;
     let (result, path) = {
-        let state = context.host_mut().state();
-        let mut state = state.borrow_mut();
+        let shared_state = context.host_mut().shared_state();
+        let state = shared_state.borrow();
         let path = state
             .fs
-            .descriptors
+            .descriptors()
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
@@ -259,11 +257,12 @@ pub(crate) fn close(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
-    let result = {
-        let state = context.host_mut().state();
-        let result = state.borrow_mut().fs.close_stream(fd);
-        result
-    };
+    let result = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .fs
+        .close_stream(fd);
     match result {
         Ok(_) => Ok(context.undefined()),
         Err(error) => Err(stream_io_error(context, error, "close", "")?),
