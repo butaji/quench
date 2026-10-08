@@ -56,7 +56,7 @@ pub(crate) struct CommonJsEntry {
 /// transitional and disappears with the legacy runtime at task 27.
 pub enum ProcessModule {
     Legacy(Value),
-    Shared(rqj::RootId),
+    Shared(quench_runtime_next::RootId),
 }
 
 impl ProcessModule {
@@ -71,7 +71,7 @@ impl ProcessModule {
 /// The active engine owns one cache. The legacy projection is removed at cutover.
 pub enum ModuleCache {
     Legacy(std::collections::HashMap<String, Value>),
-    Shared(std::collections::HashMap<String, rqj::RootId>),
+    Shared(std::collections::HashMap<String, quench_runtime_next::RootId>),
 }
 
 impl std::ops::Deref for ModuleCache {
@@ -113,7 +113,6 @@ pub struct HostState {
     pub stopped_events: HashSet<u64>,
     pub dispatching_events: HashSet<u64>,
     pub output: Option<OutputSink>,
-    pub realm: RealmId,
     /// Directory stack for the CJS loader: top is the requiring module's dir.
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
@@ -152,10 +151,10 @@ pub struct HostState {
     /// Canonical `require("process")` module and global process identity.
     pub process_module: Option<ProcessModule>,
     /// One retained shared-VM export for `assert` and its `node:` alias.
-    pub assert_module: Option<rqj::RootId>,
+    pub assert_module: Option<quench_runtime_next::RootId>,
     /// Canonical retained shared-VM `path` namespace; `posix` and `win32`
     /// projections are derived from its cross-linked properties.
-    pub path_module: Option<rqj::RootId>,
+    pub path_module: Option<quench_runtime_next::RootId>,
     /// Canonical `require("module")` namespace for this realm.
     pub module_api: Option<Value>,
     /// Canonical `require.extensions` table for this realm.
@@ -199,7 +198,7 @@ pub struct PendingModule {
 }
 
 impl NodeHost {
-    pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
+    pub fn new(argv: Vec<String>) -> Self {
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Materialize that parent at host construction so fixtures can create
         // files there even when the helper's JS-side refresh hook is absent
@@ -225,7 +224,6 @@ impl NodeHost {
             stopped_events: HashSet::new(),
             dispatching_events: HashSet::new(),
             output: None,
-            realm,
             dir_stack: Vec::new(),
             module_cache: ModuleCache::Legacy(std::collections::HashMap::new()),
             pending_module: None,
@@ -268,7 +266,7 @@ impl NodeHost {
     }
 
     /// Select Node's Script/Module parse goal from its filename and package type.
-    pub fn source_kind(path: &std::path::Path) -> Result<rqj::SourceKind, String> {
+    pub fn source_kind(path: &std::path::Path) -> Result<quench_runtime_next::SourceKind, String> {
         shared_vm::source_kind(path)
     }
 
@@ -389,23 +387,21 @@ fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
 /// Build a `VmContext` with the Node host pre-installed and every
 /// standard Node global/module wired in. The single canonical entry
 /// point callers use.
-pub fn install(realm: RealmId) -> (Rc<NodeHost>, VmContext) {
-    install_with_sink(realm, std::sync::Arc::new(|_| {}))
+pub fn install() -> (Rc<NodeHost>, VmContext) {
+    install_with_sink(std::sync::Arc::new(|_| {}))
 }
 
 /// Install the host as if invoked as `node <script>`: `process.argv`
 /// becomes `[execPath, scriptPath]`.
 pub fn install_script(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     script: &str,
 ) -> (Rc<NodeHost>, VmContext) {
     let exec_path = host_exec_path();
-    install_with_argv(realm, sink, vec![exec_path, script.to_string()])
+    install_with_argv(sink, vec![exec_path, script.to_string()])
 }
 
 pub fn install_script_with_args(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     script: &str,
     args: &[String],
@@ -416,7 +412,7 @@ pub fn install_script_with_args(
         .chain(std::iter::once(script.to_string()))
         .chain(args.iter().cloned())
         .collect();
-    install_with_argv_and_title_and_exec_argv(realm, sink, argv, "quench-node", exec_argv)
+    install_with_argv_and_title_and_exec_argv(sink, argv, "quench-node", exec_argv)
 }
 
 fn host_exec_path() -> String {
@@ -467,38 +463,34 @@ pub(crate) fn command_uses_host_exec(command: &str) -> bool {
 /// Same as `install`, but provides a host-side output sink that
 /// receives `console.log/info/...` lines.
 pub fn install_with_sink(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
 ) -> (Rc<NodeHost>, VmContext) {
-    install_with_argv(realm, sink, std::env::args().collect())
+    install_with_argv(sink, std::env::args().collect())
 }
 
 pub fn install_with_argv(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
-    install_with_argv_and_title(realm, sink, argv, "quench-node")
+    install_with_argv_and_title(sink, argv, "quench-node")
 }
 
 /// Install the host with an explicit `process.title` fact. The title is
 /// part of the process namespace constructed at install time, so aliases
 /// obtained through `require("process")` observe the same value.
 pub fn install_with_argv_and_title(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
     title: &str,
 ) -> (Rc<NodeHost>, VmContext) {
     let exec_argv = crate::modules::process::inherited_exec_argv();
-    install_with_argv_and_title_and_exec_argv(realm, sink, argv, title, &exec_argv)
+    install_with_argv_and_title_and_exec_argv(sink, argv, title, &exec_argv)
 }
 
 /// Install a host with explicit Node invocation flags.  `execArgv` is an
 /// input fact distinct from `process.argv`; callers such as the upstream test
 /// runner use this to carry `// Flags:` metadata before bootstrap executes.
 pub fn install_with_argv_and_title_and_exec_argv(
-    realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
     title: &str,
@@ -521,7 +513,7 @@ pub fn install_with_argv_and_title_and_exec_argv(
     // Node schedules every async-function continuation as a microtask,
     // including awaits whose operand is already fulfilled.
     quench_runtime::module_bindings::defer_fulfilled_await(true);
-    let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink.clone()));
+    let host = Rc::new(NodeHost::new(argv).with_output_sink(sink.clone()));
     host.state.borrow_mut().process.title = title.to_string();
     crate::modules::process::set_abort_on_uncaught_exception(&host.state, exec_argv);
     crate::modules::process::configure_permissions(&host.state, exec_argv);

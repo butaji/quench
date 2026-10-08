@@ -18,7 +18,6 @@ fn externalizable_surface(exec_argv: &[String]) -> &'static str {
         .unwrap_or("")
 }
 
-use quench_runtime::ops::RealmId;
 use quench_runtime::value::Value;
 use quench_runtime::vm::{execute_code_with_context, OutputSink, VmContext, VmError};
 
@@ -80,13 +79,8 @@ pub fn run_script_with_exec_argv(
     sink: OutputSink,
 ) -> RunOutcome {
     let script_str = script.to_string_lossy().into_owned();
-    let (host, context) = crate::host::install_script_with_args(
-        RealmId::ROOT,
-        sink,
-        &script_str,
-        script_args,
-        exec_argv,
-    );
+    let (host, context) =
+        crate::host::install_script_with_args(sink, &script_str, script_args, exec_argv);
     let context = context
         .with_source_text(source.to_owned())
         .with_source_name(script_str.clone());
@@ -178,8 +172,7 @@ pub fn eval_script_with_exec_argv(
     module_mode: bool,
     exec_argv: &[String],
 ) -> RunOutcome {
-    let (host, context) =
-        crate::host::install_script_with_args(RealmId::ROOT, sink, "<eval>", &[], exec_argv);
+    let (host, context) = crate::host::install_script_with_args(sink, "<eval>", &[], exec_argv);
     let context = context
         .with_source_text(source.to_owned())
         .with_source_name("<eval>");

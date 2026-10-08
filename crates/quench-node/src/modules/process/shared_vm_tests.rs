@@ -1,6 +1,5 @@
 use super::*;
-use quench_runtime::ops::RealmId;
-use rqj::{Engine, Runtime};
+use quench_runtime_next::{Engine, Runtime};
 
 #[test]
 fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() {
@@ -10,7 +9,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
     let filename = directory.join("main.cjs");
     std::fs::write(&filename, "module.exports = { answer: 42 };").unwrap();
     let host =
-        NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]).with_commonjs_entry(filename);
+        NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);
     let state = host.state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize("", "module-root-lifecycle.js").unwrap();
@@ -47,7 +46,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
 
 #[test]
 fn canonical_process_root_survives_global_replacement_and_refreshes_with_the_vm() {
-    let host = NodeHost::new(RealmId::ROOT, vec!["quench-node".into()]);
+    let host = NodeHost::new(vec!["quench-node".into()]);
     let state = host.state();
     let mut runtime = Runtime::new(host);
     let program = Engine::specialize(
