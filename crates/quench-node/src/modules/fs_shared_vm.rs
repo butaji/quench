@@ -578,7 +578,7 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
   };
 }"#;
 
-const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost) => {
+const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost, fchmodHost) => {
   const validatePath = (path) => {
     if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
     const received = path === null || path === undefined
@@ -624,6 +624,35 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost) => {
     queueMicrotask(() => {
       try {
         chmodHost(normalizePath(path), normalizedMode);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) {
+        Reflect.apply(callback, undefined, [error]);
+      }
+    });
+  }
+  function fchmodSync(fd, mode) {
+    if (typeof fd !== 'number') {
+      const error = new TypeError('The "fd" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    return fchmodHost(fd, normalizeMode(mode));
+  }
+  function fchmod(fd, mode, callback) {
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (typeof fd !== 'number') {
+      const error = new TypeError('The "fd" argument must be of type number.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const normalizedMode = normalizeMode(mode);
+    queueMicrotask(() => {
+      try {
+        fchmodHost(fd, normalizedMode);
         Reflect.apply(callback, undefined, [null]);
       } catch (error) {
         Reflect.apply(callback, undefined, [error]);
@@ -680,7 +709,7 @@ const EXISTS_API: &str = r#"(statSync, accessHost, chmodHost) => {
       }
     });
   }
-  return { access, accessSync, chmod, chmodSync, exists, existsSync };
+  return { access, accessSync, chmod, chmodSync, exists, existsSync, fchmod, fchmodSync };
 }"#;
 
 const UV_FS_SYMLINK_DIR: i32 = 1;
@@ -839,10 +868,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let undefined = context.undefined();
     let access_host = context.host_function(crate::host::shared_vm::operation("fsAccessSync"))?;
     let chmod_host = context.host_function(crate::host::shared_vm::operation("fsChmodSync"))?;
+    let fchmod_host = context.host_function(crate::host::shared_vm::operation("fsFchmodSync"))?;
     let exists_api = context.call_rooted(
         exists_factory,
         undefined,
-        &[stat_sync, access_host, chmod_host],
+        &[stat_sync, access_host, chmod_host, fchmod_host],
     )?;
     let exists = get(context, exists_api, "exists")?;
     let exists_sync = get(context, exists_api, "existsSync")?;
@@ -850,12 +880,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let access_sync = get(context, exists_api, "accessSync")?;
     let chmod = get(context, exists_api, "chmod")?;
     let chmod_sync = get(context, exists_api, "chmodSync")?;
+    let fchmod = get(context, exists_api, "fchmod")?;
+    let fchmod_sync = get(context, exists_api, "fchmodSync")?;
     set(context, module, "exists", exists)?;
     set(context, module, "existsSync", exists_sync)?;
     set(context, module, "access", access)?;
     set(context, module, "accessSync", access_sync)?;
     set(context, module, "chmod", chmod)?;
     set(context, module, "chmodSync", chmod_sync)?;
+    set(context, module, "fchmod", fchmod)?;
+    set(context, module, "fchmodSync", fchmod_sync)?;
     let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
     set(context, module, "lstatSync", lstat_sync)?;
     let readdir_sync = make_readdir_sync(context)?;
