@@ -17,6 +17,12 @@ const noExecute = path.join(process.cwd(), `quench-access-${process.pid}`);
 fs.writeFileSync(noExecute, 'x', { mode: 0o600 });
 assert.throws(() => fs.accessSync(noExecute, fs.constants.X_OK), { code: 'EACCES' });
 fs.rmSync(noExecute);
+const chmodTarget = path.join(process.cwd(), `quench-chmod-${process.pid}`);
+const chmodPromiseTarget = path.join(process.cwd(), `quench-chmod-promise-${process.pid}`);
+fs.writeFileSync(chmodTarget, 'x');
+fs.writeFileSync(chmodPromiseTarget, 'x');
+fs.chmodSync(chmodTarget, 0o600);
+assert.equal(fs.statSync(chmodTarget).mode & 0o777, 0o600);
 
 let callbacks = 0;
 fs.exists(manifest, (exists) => {
@@ -34,4 +40,15 @@ fs.access(manifest, (error) => {
 fs.promises.access(manifest).then(() => {
   callbacks++;
 });
-setImmediate(() => assert.equal(callbacks, 4));
+fs.chmod(chmodTarget, '640', (error) => {
+  assert.ifError(error);
+  assert.equal(fs.statSync(chmodTarget).mode & 0o777, 0o640);
+  callbacks++;
+});
+fs.promises.chmod(chmodPromiseTarget, 0o604).then(() => {
+  assert.equal(fs.statSync(chmodPromiseTarget).mode & 0o777, 0o604);
+  callbacks++;
+  fs.rmSync(chmodTarget);
+  fs.rmSync(chmodPromiseTarget);
+});
+setImmediate(() => assert.equal(callbacks, 6));
