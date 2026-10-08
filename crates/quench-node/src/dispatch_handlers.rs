@@ -9154,7 +9154,7 @@ pub fn cp_spawn_output_emit(
                 let path = execute::get_property(&cwd, "pathname");
                 format!("{}\n", execute::to_js_string(&path).unwrap_or_default())
             }
-            _ => format!("{}\n", state.borrow().process.cwd.display()),
+            _ => format!("{}\n", state.borrow().process.cwd.path().display()),
         }
     } else if matches!(command, Value::String(ref value) if value == &state.borrow().process.exec_path)
     {
@@ -11672,7 +11672,7 @@ pub fn cp_async(
         } else if matches!(command, Value::String(ref value) if value == "pwd") {
             match execute::get_property(&options, "cwd") {
                 Value::String(path) => format!("{path}\n"),
-                _ => format!("{}\n", state.borrow().process.cwd.display()),
+                _ => format!("{}\n", state.borrow().process.cwd.path().display()),
             }
         } else if let Some(value) = command_text.strip_prefix("echo ") {
             format!("{value}\n")

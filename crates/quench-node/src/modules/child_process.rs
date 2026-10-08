@@ -207,7 +207,15 @@ pub fn spawn_sync(
     if command == "pwd" {
         let cwd = options
             .and_then(|value| opt_str(value, "cwd"))
-            .unwrap_or_else(|| state.borrow().process.cwd.to_string_lossy().into_owned());
+            .unwrap_or_else(|| {
+                state
+                    .borrow()
+                    .process
+                    .cwd
+                    .path()
+                    .to_string_lossy()
+                    .into_owned()
+            });
         let stdout = output_value(format!("{cwd}\n").as_bytes(), options);
         let stderr = output_value(&[], options);
         return Ok(host_api::object(vec![
@@ -285,7 +293,7 @@ pub fn spawn_sync(
                 options
                     .and_then(|value| opt_str(value, "cwd"))
                     .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| state.borrow().process.cwd.clone())
+                    .unwrap_or_else(|| state.borrow().process.cwd.path())
                     .join(entry_path)
             };
             if !resolved.exists() {

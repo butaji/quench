@@ -345,10 +345,10 @@ fn process_cwd(context: &mut NativeContext<'_, NodeHost>) -> Result<String, Root
     }
     Ok(context
         .host_mut()
-        .state()
+        .shared_state()
         .borrow()
-        .process
         .cwd
+        .path()
         .to_string_lossy()
         .into_owned())
 }

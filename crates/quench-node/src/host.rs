@@ -61,6 +61,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) async_hooks: crate::modules::async_hooks::SharedAsyncHooksState,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs::FsState,
+    pub(crate) cwd: crate::modules::process::ProcessCwd,
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime_next::RootId>,
     pub(crate) process_module: Option<quench_runtime_next::RootId>,
     pub(crate) assert_module: Option<quench_runtime_next::RootId>,
@@ -74,11 +75,12 @@ pub(crate) struct SharedNodeState {
 }
 
 impl SharedNodeState {
-    fn new(fs: crate::modules::fs::FsState) -> Self {
+    fn new(fs: crate::modules::fs::FsState, cwd: crate::modules::process::ProcessCwd) -> Self {
         Self {
             async_hooks: crate::modules::async_hooks::SharedAsyncHooksState::default(),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
+            cwd,
             module_cache: std::collections::HashMap::new(),
             process_module: None,
             assert_module: None,
@@ -200,11 +202,13 @@ impl NodeHost {
         let tmp = std::path::PathBuf::from(format!("/tmp/quench-node-{}", std::process::id()));
         let _ = std::fs::create_dir_all(tmp);
         let fs = crate::modules::fs::FsState::new();
+        let process = crate::modules::process::ProcessState::new(argv);
+        let cwd = process.cwd.clone();
         let state = HostState {
             async_hooks: crate::modules::async_hooks::AsyncHooksState::new(),
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::event_loop::EventLoop::new(),
-            process: crate::modules::process::ProcessState::new(argv),
+            process,
             exec_argv: Vec::new(),
             fs: fs.clone(),
             net: crate::modules::net::NetState::new(),
@@ -253,7 +257,7 @@ impl NodeHost {
         };
         Self {
             state: Rc::new(RefCell::new(state)),
-            shared_state: Rc::new(RefCell::new(SharedNodeState::new(fs))),
+            shared_state: Rc::new(RefCell::new(SharedNodeState::new(fs, cwd))),
             commonjs_entry: None,
         }
     }
