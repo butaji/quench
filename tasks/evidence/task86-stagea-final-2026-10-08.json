@@ -1,0 +1,130 @@
+{
+  "schema": 1,
+  "task": "86",
+  "kind": "final_stage_a_production_qualification",
+  "recorded_at": "2026-10-08",
+  "result": "complete",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "dirty_at_test262_run": true,
+    "host": "macos-aarch64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo_lock_sha256": "37e715f90be78ded35f57b95760fe24ac8485577ba0f175a7e07a9dbed8aa837",
+    "workspace_manifest_sha256": "b5474b59a8158d02cd4905f13c68662c0154ecaf9cb5df2c522bceb04ebc3c8a"
+  },
+  "single_vm_audit": {
+    "runtime_package": "quench-runtime",
+    "vm_implementation": "crates/quench-runtime/src/vm.rs",
+    "vm_implementation_count": 1,
+    "legacy_execution_cores": 0,
+    "node_host": "quench-node owns Node APIs and registers shared adapters",
+    "compatibility_helpers_are_not_vm_cores": ["url_legacy", "legacy_try"]
+  },
+  "oxc_audit": {
+    "coordinated_release": "0.153.0",
+    "workspace_pinned_packages": [
+      "oxc",
+      "oxc_allocator",
+      "oxc_ast",
+      "oxc_ast_visit",
+      "oxc_parser",
+      "oxc_regular_expression",
+      "oxc_semantic",
+      "oxc_span",
+      "oxc_syntax"
+    ],
+    "separately_versioned_packages": {
+      "oxc_resolver": "2.1.1",
+      "oxc_index": "5.0.0"
+    },
+    "lockfile_sha256": "37e715f90be78ded35f57b95760fe24ac8485577ba0f175a7e07a9dbed8aa837"
+  },
+  "inputs": {
+    "test262": {
+      "submodule": "tests/test262",
+      "revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+      "stage_manifest": "docs/STAGES.md",
+      "stage_manifest_sha256": "4cb13c366db7ed8d7ae0a1b7fe63eb18f93def77fd09231630ba5050f7d7d3d2"
+    },
+    "wasm": {
+      "submodule": "crates/quench-wasm-test/testsuite",
+      "revision": "67c8b9dc32c47d61c05a1681df349d01c85fa8ff"
+    },
+    "node": {
+      "submodule": "tests/node",
+      "revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+      "framework_core_manifest": "crates/quench-node-test/node-tests/parallel.txt",
+      "framework_core_manifest_sha256": "0209917422a2f0f3fa241d941ec4bc88c9917d5322b69014ab1a662a52e9dfca"
+    },
+    "framework_packages": {
+      "package_manifest_sha256": "5f82b6f9cf2dd1e2ad385afebeda3627ac952366004c76350e4f87b0bac170d5",
+      "package_lock_sha256": "fb752f9a87781cc8132c88ced58a8c17ebaacc1789d244b8b7c4a6c9888d5759",
+      "scenario_sha256": {
+        "tests/frameworks/scenarios/express.cjs": "85eebbbc5c9cfaa01f2f16b6c7e181a4c4bc2e308bd1bb179f49c5d9700f8158",
+        "tests/frameworks/scenarios/koa.cjs": "962e4c326df72b30eed4306494e2218475456c7c816220a6e46a898b040185f9",
+        "tests/frameworks/scenarios/fastify.cjs": "1ff4fc87e2a4c792761c286bc0f255d0ab9be27e810dbf98938a1ac717d1ba6a"
+      }
+    }
+  },
+  "node_oracle": {
+    "executable": "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+    "version": "v26.10.0",
+    "sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+    "waiver_evidence": "tasks/evidence/task20-node-oracle-current-2026-10-07.json",
+    "waiver_evidence_sha256": "3c8c16f113ad27eb135db377ad1c44ce00e923e79e34db11c9dcbe8071e28f24",
+    "waived_raw_failure": {
+      "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+      "stage": 94,
+      "fixture_sha256": "8a225aefbeb41d9a8f5630403141e3b718330d1e946c15a9fb35678da9a90d01",
+      "node_exit_code": 1,
+      "accounting": "Preserved as a raw failure and excluded from the pass count; Node 26.10.0 reproduces the pinned-harness assertion failure."
+    }
+  },
+  "gates": {
+    "test262": {
+      "report": "target/production/task86-stagea/test262-post-parser.json",
+      "report_sha256": "1561c3b6177086e02e3dd7335d16f93e0867d5beb65ae508f3acf8b6861d0c8f",
+      "binary": "target/production/run-stages",
+      "binary_sha256": "e0cd6c56397149cfb8f80cc80323f1978b5d78052fb059087f0e8c0cd8377d57",
+      "host": "macos-aarch64",
+      "timeout_ms": 900000,
+      "jobs": 8,
+      "stages": 116,
+      "stage_range": [0, 115],
+      "total": 53406,
+      "passed": 53405,
+      "raw_failed": 1,
+      "waived_raw_failures": 1
+    },
+    "wasm": {
+      "report": "target/production/task86-stagea/wasm-post-parser.json",
+      "report_sha256": "e08076e26964f35f483e6c59032abe8c324571938ab3dbb1915db62fe6d8a90f",
+      "binary": "target/production/run",
+      "binary_sha256": "6f09dd2c71a2af5b4a61a84c5f6c880b21d6b734b4613d75f103b579e0bf0108",
+      "inputs": 288,
+      "directives": 67124,
+      "passed": 67124,
+      "failed": 0,
+      "inventory_complete": true
+    },
+    "node_frameworks": {
+      "report": "target/production/task86-stagea/frameworks-final.json",
+      "report_sha256": "cc0cc0d89517242966fe0b56c4ae62c62cddb5e187b50da7958fc012ab3989db",
+      "framework_core_runner": "target/production/run-parallel",
+      "framework_core_runner_sha256": "01d30b93c6937bea7292131fd297a9cca58f1dd0abc986358e3b149968658e3c",
+      "quench_node": "target/production/quench-node",
+      "quench_node_sha256": "d90c69735d6a7275e8ed3c6501097a12a569d06760c465307eab2599fdc0b336",
+      "profile_total": 43,
+      "profile_passed": 43,
+      "profile_skipped": 0,
+      "profile_failed": 0,
+      "profile_timed_out": 0,
+      "profile_crashed": 0,
+      "profile_unclassified": 0,
+      "node_version": "v26.10.0",
+      "node_sha256": "4ca2a42d6d55a834b04d0892c5bc646a6869fcebec57f91c849dac0aa1031610",
+      "exact_scenarios": ["express", "koa", "fastify"]
+    }
+  },
+  "next_stage_task": "62"
+}

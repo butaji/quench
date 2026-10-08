@@ -2,9 +2,9 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
 pub const RATCHET_SCHEMA_VERSION: u64 = 1;
-pub const RATCHET_ENGINE: &str = "next";
+pub const RATCHET_ENGINE: &str = "quench";
 
-pub const DEFAULT_RATCHET: &str = "target/test262-next-ratchet.json";
+pub const DEFAULT_RATCHET: &str = "target/test262-quench-ratchet.json";
 
 /// Stable test identity used by reports and both ratchet scopes.
 pub fn relative_test_path(path: &Path, test_root: &Path) -> String {
@@ -72,7 +72,7 @@ mod tests {
     #[test]
     fn focused_scope_detects_failed_and_deleted_expected_paths() {
         let baseline = PassSet::from_json(&serde_json::json!({
-            "schema":1,"engine":"next","passes":["Array/keep.js","Array/deleted.js","Array/failed.js","Promise/other.js"]
+            "schema":1,"engine":"quench","passes":["Array/keep.js","Array/deleted.js","Array/failed.js","Promise/other.js"]
         })).unwrap();
         let current = HashSet::from(["Array/keep.js".into(), "Array/new.js".into()]);
         assert_eq!(
@@ -89,9 +89,9 @@ mod tests {
     fn invalid_expectations_are_rejected_even_outside_a_selected_scope() {
         for baseline in [
             serde_json::json!({"schema":1,"engine":"legacy","passes":[]}),
-            serde_json::json!({"schema":1,"engine":"next"}),
-            serde_json::json!({"schema":1,"engine":"next","passes":[]}),
-            serde_json::json!({"schema":1,"engine":"next","passes":["keep.js",42]}),
+            serde_json::json!({"schema":1,"engine":"quench"}),
+            serde_json::json!({"schema":1,"engine":"quench","passes":[]}),
+            serde_json::json!({"schema":1,"engine":"quench","passes":["keep.js",42]}),
         ] {
             assert!(PassSet::from_json(&baseline).is_err());
         }

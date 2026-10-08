@@ -1,7 +1,7 @@
 //! Decode validated modules for the shared VM. There is no executor here.
 
 use crate::{Error, Module};
-use quench_runtime_next::{
+use quench_runtime::{
     Engine, WasmData, WasmDataMode, WasmFunction, WasmFunctionBody, WasmGlobal,
     WasmGlobalInitializer, WasmI32Function, WasmMemory, WasmModule, WasmType, WasmTypes,
 };
@@ -81,7 +81,7 @@ impl Module {
                 Payload::ImportSection(reader) => {
                     for (index, import) in reader.into_imports().enumerate() {
                         let import = import.map_err(parse_error)?;
-                        let name = quench_runtime_next::WasmImportName {
+                        let name = quench_runtime::WasmImportName {
                             index: u32::try_from(index)
                                 .map_err(|_| Error::Unsupported("too many Wasm imports".into()))?,
                             module: import.module.to_owned(),
@@ -90,24 +90,20 @@ impl Module {
                         match import.ty {
                             wasmparser::TypeRef::Func(index)
                             | wasmparser::TypeRef::FuncExact(index) => {
-                                function_imports.push(quench_runtime_next::WasmFunctionImport {
+                                function_imports.push(quench_runtime::WasmFunctionImport {
                                     exact: matches!(import.ty, wasmparser::TypeRef::FuncExact(_)),
-                                    ty: quench_runtime_next::WasmCallableType::Declared(index),
+                                    ty: quench_runtime::WasmCallableType::Declared(index),
                                     name,
                                 })
                             }
-                            wasmparser::TypeRef::Tag(ty) => {
-                                tags.push(quench_runtime_next::WasmTag {
-                                    ty: ty.func_type_idx,
-                                    import: Some(name),
-                                })
-                            }
+                            wasmparser::TypeRef::Tag(ty) => tags.push(quench_runtime::WasmTag {
+                                ty: ty.func_type_idx,
+                                import: Some(name),
+                            }),
                             wasmparser::TypeRef::Table(ty) => {
-                                tables.push(quench_runtime_next::WasmTable {
+                                tables.push(quench_runtime::WasmTable {
                                     ty,
-                                    initializer: quench_runtime_next::WasmTableInitializer::Import(
-                                        name,
-                                    ),
+                                    initializer: quench_runtime::WasmTableInitializer::Import(name),
                                 })
                             }
                             wasmparser::TypeRef::Memory(ty) => memories.push(WasmMemory {
@@ -139,7 +135,7 @@ impl Module {
                 }
                 Payload::TagSection(reader) => {
                     for tag in reader {
-                        tags.push(quench_runtime_next::WasmTag {
+                        tags.push(quench_runtime::WasmTag {
                             ty: tag.map_err(parse_error)?.func_type_idx,
                             import: None,
                         });
@@ -167,7 +163,7 @@ impl Module {
                         let table = table.map_err(parse_error)?;
                         let initializer = match table.init {
                             wasmparser::TableInit::RefNull => {
-                                quench_runtime_next::WasmReferenceInitializer::Null
+                                quench_runtime::WasmReferenceInitializer::Null
                             }
                             wasmparser::TableInit::Expr(expression) => reference_initializer(
                                 table.ty.element_type,
@@ -176,7 +172,7 @@ impl Module {
                                 &types,
                             )?,
                         };
-                        tables.push(quench_runtime_next::WasmTable {
+                        tables.push(quench_runtime::WasmTable {
                             ty: table.ty,
                             initializer: initializer.into(),
                         });
@@ -252,7 +248,7 @@ impl Module {
                 locals.resize(length, ty);
             }
             inputs.push(WasmFunctionBody {
-                ty: quench_runtime_next::WasmCallableType::Declared(type_index),
+                ty: quench_runtime::WasmCallableType::Declared(type_index),
                 locals,
                 operators: body.get_operators_reader().map_err(parse_error)?,
             });
@@ -283,7 +279,7 @@ fn reference_initializer(
     expression: wasmparser::ConstExpr<'_>,
     globals: &[WasmGlobal],
     types: &WasmTypes,
-) -> Result<quench_runtime_next::WasmReferenceInitializer, Error> {
+) -> Result<quench_runtime::WasmReferenceInitializer, Error> {
     let operators = expression
         .get_operators_reader()
         .into_iter()
@@ -291,10 +287,10 @@ fn reference_initializer(
         .map_err(parse_error)?;
     match operators.as_slice() {
         [wasmparser::Operator::RefNull { .. }, wasmparser::Operator::End] => {
-            return Ok(quench_runtime_next::WasmReferenceInitializer::Null)
+            return Ok(quench_runtime::WasmReferenceInitializer::Null)
         }
         [wasmparser::Operator::RefFunc { function_index }, wasmparser::Operator::End] => {
-            return Ok(quench_runtime_next::WasmReferenceInitializer::Function(
+            return Ok(quench_runtime::WasmReferenceInitializer::Function(
                 *function_index,
             ))
         }
@@ -309,17 +305,17 @@ fn reference_initializer(
         globals,
         operators.into_iter().map(Ok),
     )
-    .map(quench_runtime_next::WasmReferenceInitializer::Expression)
+    .map(quench_runtime::WasmReferenceInitializer::Expression)
     .map_err(|error| Error::Unsupported(error.to_string()))
 }
 
 fn decode_elements(
     reader: wasmparser::ElementSectionReader<'_>,
     globals: &[WasmGlobal],
-    tables: &[quench_runtime_next::WasmTable],
+    tables: &[quench_runtime::WasmTable],
     types: &WasmTypes,
-) -> Result<Vec<quench_runtime_next::WasmElement>, Error> {
-    use quench_runtime_next::{WasmElement, WasmElementMode, WasmReferenceInitializer};
+) -> Result<Vec<quench_runtime::WasmElement>, Error> {
+    use quench_runtime::{WasmElement, WasmElementMode, WasmReferenceInitializer};
     let mut elements = Vec::new();
     for element in reader {
         let element = element.map_err(parse_error)?;
@@ -421,7 +417,7 @@ fn parse_error(error: wasmparser::BinaryReaderError) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quench_runtime_next::{ExecutionRequest, Host, Runtime};
+    use quench_runtime::{ExecutionRequest, Host, Runtime};
 
     #[derive(Default)]
     struct TestHost;
@@ -654,7 +650,7 @@ mod tests {
 
     #[test]
     fn shared_integer_traps_are_typed_and_runtime_recovers() {
-        use quench_runtime_next::WasmTrap;
+        use quench_runtime::WasmTrap;
 
         let divide = lower(
             "(module (func (export \"f\") (param i32 i32) (result i32) local.get 0 local.get 1 i32.div_s))",
@@ -683,8 +679,7 @@ mod tests {
         assert_eq!(error.wasm_trap(), None);
 
         let program =
-            quench_runtime_next::Engine::specialize("throw new Error('guest');", "throw.js")
-                .unwrap();
+            quench_runtime::Engine::specialize("throw new Error('guest');", "throw.js").unwrap();
         assert_eq!(runtime.execute(&program).unwrap_err().wasm_trap(), None);
     }
 }

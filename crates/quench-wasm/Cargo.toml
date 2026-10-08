@@ -6,6 +6,6 @@ description = "WebAssembly frontend for Quench: parse, validate, and wast scorin
 license = "MIT"
 
 [dependencies]
-quench-runtime-next = { path = "../quench-runtime-next" }
+quench-runtime = { path = "../quench-runtime" }
 wasmparser = "0.247"
 wast = "247"

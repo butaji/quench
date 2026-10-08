@@ -1,0 +1,588 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -82,0 +83,3 @@
++
++[dependencies.quench-stack]
++path = "../../crates/quench-stack"
+--- a/src/diagnostics.rs
++++ b/src/diagnostics.rs
+@@ -6,0 +7,7 @@
++pub fn stack_exhausted(span: Span) -> OxcDiagnostic {
++    OxcDiagnostic::error(quench_stack::STACK_EXHAUSTED_MESSAGE)
++        .with_error_code_num(crate::STACK_EXHAUSTION_ERROR_CODE)
++        .with_label(span)
++}
++
++#[cold]
+@@ -29,3 +36,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Invalid unicode flags combination `u` and `v`"))
+-        .with_label(span)
+-        .with_help("The `v` flag is a superset of `u`. Use only either of them")
++    OxcDiagnostic::error(format!(
++        "{PREFIX} Invalid unicode flags combination `u` and `v`"
++    ))
++    .with_label(span)
++    .with_help("The `v` flag is a superset of `u`. Use only either of them")
+@@ -59,3 +68,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Lone quantifier found, expected with `{kind}`"))
+-        .with_label(span)
+-        .with_help("Quantifiers must follow an expression. To match literally, escape it with `\\`")
++    OxcDiagnostic::error(format!(
++        "{PREFIX} Lone quantifier found, expected with `{kind}`"
++    ))
++    .with_label(span)
++    .with_help("Quantifiers must follow an expression. To match literally, escape it with `\\`")
+@@ -87,2 +98,3 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Invalid indexed reference")).with_label(span).with_help(
+-        match max {
++    OxcDiagnostic::error(format!("{PREFIX} Invalid indexed reference"))
++        .with_label(span)
++        .with_help(match max {
+@@ -92,2 +104 @@
+-        },
+-    )
++        })
+@@ -125,3 +136,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Invalid character class with strings unicode property"))
+-        .with_label(span)
+-        .with_help("Properties that match string related unicode properties require the `v` flag")
++    OxcDiagnostic::error(format!(
++        "{PREFIX} Invalid character class with strings unicode property"
++    ))
++    .with_label(span)
++    .with_help("Properties that match string related unicode properties require the `v` flag")
+@@ -167,3 +180,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Unexpected `&` inside of class intersection"))
+-        .with_label(span)
+-        .with_help("A third `&` is not allowed after `&&`. Did you mean `[a&&[b]]`?")
++    OxcDiagnostic::error(format!(
++        "{PREFIX} Unexpected `&` inside of class intersection"
++    ))
++    .with_label(span)
++    .with_help("A third `&` is not allowed after `&&`. Did you mean `[a&&[b]]`?")
+@@ -197,3 +212,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Numbers out of order in braced quantifier"))
+-        .with_label(span)
+-        .with_help("In `{n,m}`, the minimum `n` must be less than or equal to the maximum `m`")
++    OxcDiagnostic::error(format!(
++        "{PREFIX} Numbers out of order in braced quantifier"
++    ))
++    .with_label(span)
++    .with_help("In `{n,m}`, the minimum `n` must be less than or equal to the maximum `m`")
+@@ -237,3 +254,5 @@
+-    OxcDiagnostic::error(format!("{PREFIX} Invalid surrogate pair")).with_label(span).with_help(
+-        "A high surrogate (0xD800-0xDBFF) must be followed by a low surrogate (0xDC00-0xDFFF)",
+-    )
++    OxcDiagnostic::error(format!("{PREFIX} Invalid surrogate pair"))
++        .with_label(span)
++        .with_help(
++            "A high surrogate (0xD800-0xDBFF) must be followed by a low surrogate (0xDC00-0xDFFF)",
++        )
+@@ -267,2 +286,5 @@
+-        .with_help(format!("Valid modifiers are: {}", valid_modifiers.join(", ")))
+-}
++        .with_help(format!(
++            "Valid modifiers are: {}",
++            valid_modifiers.join(", ")
++        ))
++}
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -7,0 +8,7 @@
++
++const STACK_EXHAUSTION_ERROR_CODE: &str = "quench-stack-exhausted";
++
++/// Resource faults remain distinct from invalid RegExp syntax.
++pub fn is_stack_exhaustion(error: &oxc_diagnostics::OxcDiagnostic) -> bool {
++    error.code.number.as_deref() == Some(STACK_EXHAUSTION_ERROR_CODE)
++}
+--- a/src/parser/pattern_parser/pattern_parser_impl.rs
++++ b/src/parser/pattern_parser/pattern_parser_impl.rs
+@@ -41,0 +42,7 @@
++    fn enter_stack(&self) -> Result<quench_stack::StackGuard> {
++        quench_stack::StackGuard::enter().map_err(|()| {
++            let offset = self.reader.offset();
++            diagnostics::stack_exhausted(self.span_factory.create(offset, offset))
++        })
++    }
++
+@@ -66,2 +73,3 @@
+-        self.state.initialize_with_parsing(&mut self.reader, self.allocator).map_err(
+-            |offsets| {
++        self.state
++            .initialize_with_parsing(&mut self.reader, self.allocator)
++            .map_err(|offsets| {
+@@ -74,2 +82 @@
+-            },
+-        )?;
++            })?;
+@@ -83 +90,3 @@
+-            return Err(diagnostics::too_may_capturing_groups(self.span_factory.create(0, 0)));
++            return Err(diagnostics::too_may_capturing_groups(
++                self.span_factory.create(0, 0),
++            ));
+@@ -108,0 +118 @@
++        let _stack = self.enter_stack()?;
+@@ -340 +350,5 @@
+-        if let Some(cp) = self.reader.peek().filter(|&cp| !character::is_syntax_character(cp)) {
++        if let Some(cp) = self
++            .reader
++            .peek()
++            .filter(|&cp| !character::is_syntax_character(cp))
++        {
+@@ -370 +384,4 @@
+-            return Ok(Some(ast::Term::CharacterClass(ArenaBox::new_in(character_class, self))));
++            return Ok(Some(ast::Term::CharacterClass(ArenaBox::new_in(
++                character_class,
++                self,
++            ))));
+@@ -376 +393,4 @@
+-            return Ok(Some(ast::Term::CapturingGroup(ArenaBox::new_in(capturing_group, self))));
++            return Ok(Some(ast::Term::CapturingGroup(ArenaBox::new_in(
++                capturing_group,
++                self,
++            ))));
+@@ -383 +403,4 @@
+-            return Ok(Some(ast::Term::IgnoreGroup(ArenaBox::new_in(ignore_group, self))));
++            return Ok(Some(ast::Term::IgnoreGroup(ArenaBox::new_in(
++                ignore_group,
++                self,
++            ))));
+@@ -418 +441,6 @@
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == 'c' as u32) {
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == 'c' as u32)
++            {
+@@ -436 +464,4 @@
+-            return Ok(Some(ast::Term::CharacterClass(ArenaBox::new_in(character_class, self))));
++            return Ok(Some(ast::Term::CharacterClass(ArenaBox::new_in(
++                character_class,
++                self,
++            ))));
+@@ -442 +473,4 @@
+-            return Ok(Some(ast::Term::CapturingGroup(ArenaBox::new_in(capturing_group, self))));
++            return Ok(Some(ast::Term::CapturingGroup(ArenaBox::new_in(
++                capturing_group,
++                self,
++            ))));
+@@ -449 +483,4 @@
+-            return Ok(Some(ast::Term::IgnoreGroup(ArenaBox::new_in(ignore_group, self))));
++            return Ok(Some(ast::Term::IgnoreGroup(ArenaBox::new_in(
++                ignore_group,
++                self,
++            ))));
+@@ -545 +582,4 @@
+-            return Ok(Some(ast::Term::Character(ArenaBox::new_in(character_escape, self))));
++            return Ok(Some(ast::Term::Character(ArenaBox::new_in(
++                character_escape,
++                self,
++            ))));
+@@ -555,2 +595,6 @@
+-                    let names: Vec<&str> =
+-                        self.state.capturing_group_names.iter().map(Str::as_str).collect();
++                    let names: Vec<&str> = self
++                        .state
++                        .capturing_group_names
++                        .iter()
++                        .map(Str::as_str)
++                        .collect();
+@@ -707,2 +751,10 @@
+-        if self.reader.peek().as_ref().is_some_and(|&cp| cp == '0' as u32)
+-            && self.reader.peek2().as_ref().is_none_or(|&cp| !character::is_decimal_digit(cp))
++        if self
++            .reader
++            .peek()
++            .as_ref()
++            .is_some_and(|&cp| cp == '0' as u32)
++            && self
++                .reader
++                .peek2()
++                .as_ref()
++                .is_none_or(|&cp| !character::is_decimal_digit(cp))
+@@ -821,2 +873,5 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
++        let _stack = self.enter_stack()?;
+@@ -828 +883,4 @@
+-            return Ok((ast::CharacterClassContentsKind::Union, ArenaVec::new_in(self)));
++            return Ok((
++                ast::CharacterClassContentsKind::Union,
++                ArenaVec::new_in(self),
++            ));
+@@ -853,2 +911,4 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
+@@ -911,8 +971,10 @@
+-                body.push(ast::CharacterClassContents::CharacterClassRange(ArenaBox::new_in(
+-                    ast::CharacterClassRange {
+-                        span: from.span.merge(to.span),
+-                        min: **from,
+-                        max: **to,
+-                    },
+-                    self,
+-                )));
++                body.push(ast::CharacterClassContents::CharacterClassRange(
++                    ArenaBox::new_in(
++                        ast::CharacterClassRange {
++                            span: from.span.merge(to.span),
++                            min: **from,
++                            max: **to,
++                        },
++                        self,
++                    ),
++                ));
+@@ -930 +992,2 @@
+-                    self.span_factory.create(range_span_start, self.reader.offset()),
++                    self.span_factory
++                        .create(range_span_start, self.reader.offset()),
+@@ -954,8 +1017,10 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                ast::Character {
+-                    span: self.span_factory.create(span_start, self.reader.offset()),
+-                    kind: ast::CharacterKind::Symbol,
+-                    value: '-' as u32,
+-                },
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(
++                    ast::Character {
++                        span: self.span_factory.create(span_start, self.reader.offset()),
++                        kind: ast::CharacterKind::Symbol,
++                        value: '-' as u32,
++                    },
++                    self,
++                ),
++            )));
+@@ -985,13 +1050,2 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                ast::Character {
+-                    span: self.span_factory.create(span_start, self.reader.offset()),
+-                    kind,
+-                    value: cp,
+-                },
+-                self,
+-            ))));
+-        }
+-
+-        if self.reader.eat('\\') {
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == 'c' as u32) {
+-                return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(
+@@ -1000,2 +1054,2 @@
+-                        kind: ast::CharacterKind::Symbol,
+-                        value: '\\' as u32,
++                        kind,
++                        value: cp,
+@@ -1004 +1058,21 @@
+-                ))));
++                ),
++            )));
++        }
++
++        if self.reader.eat('\\') {
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == 'c' as u32)
++            {
++                return Ok(Some(ast::CharacterClassContents::Character(
++                    ArenaBox::new_in(
++                        ast::Character {
++                            span: self.span_factory.create(span_start, self.reader.offset()),
++                            kind: ast::CharacterKind::Symbol,
++                            value: '\\' as u32,
++                        },
++                        self,
++                    ),
++                )));
+@@ -1038,8 +1112,10 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                ast::Character {
+-                    span: self.span_factory.create(span_start, self.reader.offset()),
+-                    kind: ast::CharacterKind::SingleEscape,
+-                    value: 0x08,
+-                },
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(
++                    ast::Character {
++                        span: self.span_factory.create(span_start, self.reader.offset()),
++                        kind: ast::CharacterKind::SingleEscape,
++                        value: 0x08,
++                    },
++                    self,
++                ),
++            )));
+@@ -1050,8 +1126,10 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                ast::Character {
+-                    span: self.span_factory.create(span_start, self.reader.offset()),
+-                    kind: ast::CharacterKind::SingleEscape,
+-                    value: '-' as u32,
+-                },
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(
++                    ast::Character {
++                        span: self.span_factory.create(span_start, self.reader.offset()),
++                        kind: ast::CharacterKind::SingleEscape,
++                        value: '-' as u32,
++                    },
++                    self,
++                ),
++            )));
+@@ -1072,8 +1150,10 @@
+-                    return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                        ast::Character {
+-                            span: self.span_factory.create(span_start, self.reader.offset()),
+-                            kind: ast::CharacterKind::ControlLetter,
+-                            value: cp,
+-                        },
+-                        self,
+-                    ))));
++                    return Ok(Some(ast::CharacterClassContents::Character(
++                        ArenaBox::new_in(
++                            ast::Character {
++                                span: self.span_factory.create(span_start, self.reader.offset()),
++                                kind: ast::CharacterKind::ControlLetter,
++                                value: cp,
++                            },
++                            self,
++                        ),
++                    )));
+@@ -1088,4 +1168,3 @@
+-            return Ok(Some(ast::CharacterClassContents::CharacterClassEscape(ArenaBox::new_in(
+-                character_class_escape,
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::CharacterClassEscape(
++                ArenaBox::new_in(character_class_escape, self),
++            )));
+@@ -1096,4 +1175,3 @@
+-            return Ok(Some(ast::CharacterClassContents::UnicodePropertyEscape(ArenaBox::new_in(
+-                unicode_property_escape,
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::UnicodePropertyEscape(
++                ArenaBox::new_in(unicode_property_escape, self),
++            )));
+@@ -1104,4 +1182,3 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                character_escape,
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(character_escape, self),
++            )));
+@@ -1121,2 +1198,4 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
+@@ -1130,2 +1209,10 @@
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == '&' as u32)
+-                && self.reader.peek2().as_ref().is_some_and(|&cp| cp == '&' as u32)
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == '&' as u32)
++                && self
++                    .reader
++                    .peek2()
++                    .as_ref()
++                    .is_some_and(|&cp| cp == '&' as u32)
+@@ -1136,2 +1223,10 @@
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == '-' as u32)
+-                && self.reader.peek2().as_ref().is_some_and(|&cp| cp == '-' as u32)
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == '-' as u32)
++                && self
++                    .reader
++                    .peek2()
++                    .as_ref()
++                    .is_some_and(|&cp| cp == '-' as u32)
+@@ -1160,2 +1255,4 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
+@@ -1189,2 +1286,4 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
+@@ -1195 +1294,6 @@
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == ']' as u32) {
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == ']' as u32)
++            {
+@@ -1231,2 +1335,4 @@
+-    ) -> Result<(ast::CharacterClassContentsKind, ArenaVec<'a, ast::CharacterClassContents<'a>>)>
+-    {
++    ) -> Result<(
++        ast::CharacterClassContentsKind,
++        ArenaVec<'a, ast::CharacterClassContents<'a>>,
++    )> {
+@@ -1237 +1343,6 @@
+-            if self.reader.peek().as_ref().is_some_and(|&cp| cp == ']' as u32) {
++            if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == ']' as u32)
++            {
+@@ -1278,8 +1389,10 @@
+-            return Ok(Some(ast::CharacterClassContents::CharacterClassRange(ArenaBox::new_in(
+-                ast::CharacterClassRange {
+-                    span: class_set_character.span.merge(class_set_character_to.span),
+-                    min: class_set_character,
+-                    max: class_set_character_to,
+-                },
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::CharacterClassRange(
++                ArenaBox::new_in(
++                    ast::CharacterClassRange {
++                        span: class_set_character.span.merge(class_set_character_to.span),
++                        min: class_set_character,
++                        max: class_set_character_to,
++                    },
++                    self,
++                ),
++            )));
+@@ -1331,4 +1444,3 @@
+-            return Ok(Some(ast::CharacterClassContents::Character(ArenaBox::new_in(
+-                class_set_character,
+-                self,
+-            ))));
++            return Ok(Some(ast::CharacterClassContents::Character(
++                ArenaBox::new_in(class_set_character, self),
++            )));
+@@ -1499,2 +1611,4 @@
+-            if let Some(cp) =
+-                self.reader.peek().filter(|&cp| character::is_class_set_reserved_punctuator(cp))
++            if let Some(cp) = self
++                .reader
++                .peek()
++                .filter(|&cp| character::is_class_set_reserved_punctuator(cp))
+@@ -1575 +1689,6 @@
+-            let modifiers = if self.reader.peek().as_ref().is_some_and(|&cp| cp == ':' as u32) {
++            let modifiers = if self
++                .reader
++                .peek()
++                .as_ref()
++                .is_some_and(|&cp| cp == ':' as u32)
++            {
+@@ -1620 +1739,5 @@
+-        while self.reader.peek().as_ref().is_none_or(|&cp| !(cp == ':' as u32 || cp == '-' as u32))
++        while self
++            .reader
++            .peek()
++            .as_ref()
++            .is_none_or(|&cp| !(cp == ':' as u32 || cp == '-' as u32))
+@@ -1652 +1775,6 @@
+-            while self.reader.peek().as_ref().is_none_or(|&cp| cp != ':' as u32) {
++            while self
++                .reader
++                .peek()
++                .as_ref()
++                .is_none_or(|&cp| cp != ':' as u32)
++            {
+@@ -1805 +1933,5 @@
+-        while let Some(cp) = self.reader.peek().filter(|&cp| character::is_decimal_digit(cp)) {
++        while let Some(cp) = self
++            .reader
++            .peek()
++            .filter(|&cp| character::is_decimal_digit(cp))
++        {
+@@ -1837 +1969,5 @@
+-        while let Some(cp) = self.reader.peek().filter(|&cp| character::is_decimal_digit(cp)) {
++        while let Some(cp) = self
++            .reader
++            .peek()
++            .filter(|&cp| character::is_decimal_digit(cp))
++        {
+@@ -1901 +2037,5 @@
+-                return Ok(Some(("General_Category".into(), Some(name_or_value), false)));
++                return Ok(Some((
++                    "General_Category".into(),
++                    Some(name_or_value),
++                    false,
++                )));
+@@ -1998 +2138,6 @@
+-            if self.reader.str(part_start, part_end).as_str().starts_with('\\') {
++            if self
++                .reader
++                .str(part_start, part_end)
++                .as_str()
++                .starts_with('\\')
++            {
+@@ -2028 +2173,5 @@
+-        if let Some(cp) = self.reader.peek().filter(|&cp| character::is_identifier_start_char(cp)) {
++        if let Some(cp) = self
++            .reader
++            .peek()
++            .filter(|&cp| character::is_identifier_start_char(cp))
++        {
+@@ -2055,4 +2204,8 @@
+-            if let Some(lead_surrogate) =
+-                self.reader.peek().filter(|&cp| surrogate_pair::is_lead_surrogate(cp))
+-                && let Some(trail_surrogate) =
+-                    self.reader.peek2().filter(|&cp| surrogate_pair::is_trail_surrogate(cp))
++            if let Some(lead_surrogate) = self
++                .reader
++                .peek()
++                .filter(|&cp| surrogate_pair::is_lead_surrogate(cp))
++                && let Some(trail_surrogate) = self
++                    .reader
++                    .peek2()
++                    .filter(|&cp| surrogate_pair::is_trail_surrogate(cp))
+@@ -2086 +2239,5 @@
+-        if let Some(cp) = self.reader.peek().filter(|&cp| character::is_identifier_part_char(cp)) {
++        if let Some(cp) = self
++            .reader
++            .peek()
++            .filter(|&cp| character::is_identifier_part_char(cp))
++        {
+@@ -2113,4 +2270,8 @@
+-            if let Some(lead_surrogate) =
+-                self.reader.peek().filter(|&cp| surrogate_pair::is_lead_surrogate(cp))
+-                && let Some(trail_surrogate) =
+-                    self.reader.peek2().filter(|&cp| surrogate_pair::is_trail_surrogate(cp))
++            if let Some(lead_surrogate) = self
++                .reader
++                .peek()
++                .filter(|&cp| surrogate_pair::is_lead_surrogate(cp))
++                && let Some(trail_surrogate) = self
++                    .reader
++                    .peek2()
++                    .filter(|&cp| surrogate_pair::is_trail_surrogate(cp))

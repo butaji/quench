@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use quench_runtime_next::WasmValue;
+use quench_runtime::WasmValue;
 use wasmparser::WasmFeatures;
 use wast::{WastExecute, WastInvoke, WastRet, Wat};
 

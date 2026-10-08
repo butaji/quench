@@ -7985,7 +7985,6 @@
           "crates/quench-node/src/dispatch_handlers.rs",
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/buffer_from.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -8338,8 +8337,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/vm_api.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.types predicates recognize the VM module namespace and handle empty key-predicate arguments."
@@ -8900,8 +8898,8 @@
           "crates/quench-node/src/modules/buffer_methods.rs",
           "crates/quench-node/src/modules/buffer_enc.rs",
           "crates/quench-node/src/modules/buffer/shared_vm.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs"
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs"
         ],
         "obligations": [
           "toString encoding coercion, start/end clamp, UTF-16 code-unit preservation and ERR_UNKNOWN_ENCODING."
@@ -10066,8 +10064,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/vm_api.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.types recognizes arguments, Float16/Uint16 arrays and VM module namespaces."
@@ -12407,8 +12404,7 @@
           "crates/quench-node/src/modules/util.rs",
           "crates/quench-node/src/registry.rs",
           "crates/quench-node/src/dispatch.rs",
-          "crates/quench-node/src/dispatch_handlers.rs",
-          "crates/quench-node/src/modules/vm_api.rs"
+          "crates/quench-node/src/dispatch_handlers.rs"
         ],
         "obligations": [
           "util.inspect renders the module namespace before and after evaluation."
@@ -14766,15 +14762,9 @@
         "node:vm"
       ],
       "implementation": {
-        "status": "included",
-        "owners": [
-          "crates/quench-node/src/modules/vm_api.rs",
-          "crates/quench-node/src/modules/string_decoder.rs",
-          "crates/quench-node/src/modules/require.rs",
-          "crates/quench-node/src/modules/console.rs"
-        ],
-        "obligations": [
-          "Require returns vm namespace and callable StringDecoder constructor; this case checks shape only and does not imply all vm APIs are implemented."
+        "status": "excluded",
+        "missing_capabilities": [
+          "The legacy node:vm facade was removed; NodeHost does not expose a node:vm builtin namespace."
         ]
       }
     },
@@ -17553,7 +17543,6 @@
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
           "crates/quench-node/src/modules/crypto.rs"
         ],
         "obligations": [
@@ -17889,7 +17878,6 @@
           "crates/quench-node/src/dispatch_handlers.rs",
           "crates/quench-node/src/modules/buffer.rs",
           "crates/quench-node/src/modules/process.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
@@ -18114,8 +18102,7 @@
           "crates/quench-node/src/modules/buffer_enc.rs",
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
-          "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
-          "crates/quench-node/src/modules/vm_api.rs"
+          "crates/quench-runtime/src/vm/vm_builtin_errors.rs"
         ],
         "obligations": [
           "String wrappers/ToPrimitive, cross-realm String, typed arrays/ArrayBuffers, copyBytesFrom snapshot/range and argument errors."
@@ -23803,11 +23790,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "tracePromise start/end and asyncStart/asyncEnd ordering, callback receiver/arguments, fulfilled result payload and native Promise reaction behavior."
@@ -23836,11 +23823,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "tracePromise publishes the rejected Promise error, preserves the rejection, and orders the async lifecycle events."
@@ -23868,11 +23855,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "Subscribing after tracePromise starts does not publish any tracing events for that Promise."
@@ -23901,11 +23888,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs",
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs",
           "crates/quench-node/src/modules/process/shared_vm.rs"
         ],
         "obligations": [
@@ -23935,11 +23922,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "tracePromise follows a generic thenable for tracing while returning the original thenable identity and retaining its custom method."
@@ -23968,11 +23955,11 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/api_native.rs",
-          "crates/quench-runtime-next/src/vm/embedding.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/api_native.rs",
+          "crates/quench-runtime/src/vm/embedding.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "tracePromise preserves subclass Promise identity and custom methods when the instance constructor is spoofed to Promise."
@@ -24078,9 +24065,9 @@
           "crates/quench-node/src/modules/async_hooks.rs",
           "crates/quench-node/src/modules/async_hooks/shared_vm.rs",
           "crates/quench-runtime/src/promise.rs",
-          "crates/quench-runtime-next/src/host.rs",
-          "crates/quench-runtime-next/src/vm/promise.rs",
-          "crates/quench-runtime-next/src/vm/promise_jobs.rs"
+          "crates/quench-runtime/src/host.rs",
+          "crates/quench-runtime/src/vm/promise.rs",
+          "crates/quench-runtime/src/vm/promise_jobs.rs"
         ],
         "obligations": [
           "AsyncLocalStorage.enterWith around await and Promise.then isolates callback stores and preserves the documented pre-await propagation behavior."
@@ -27153,7 +27140,6 @@
           "crates/quench-runtime/src/value_buffer.rs",
           "crates/quench-runtime/src/typed_array_ops.rs",
           "crates/quench-runtime/src/vm/vm_builtin_errors.rs",
-          "crates/quench-node/src/modules/vm_api.rs",
           "crates/quench-node/src/polyfills/bootstrap/api_head.rs"
         ],
         "obligations": [

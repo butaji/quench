@@ -21,7 +21,7 @@ use std::{
 };
 
 use quench_test262::{
-    discover_js_files, HarnessCache, RuntimeNextHost, Test262Runner, TestMetadata, TestOutcome,
+    discover_js_files, HarnessCache, Test262Runner, Test262RuntimeHost, TestMetadata, TestOutcome,
 };
 
 const WORK_BATCH: usize = 32;
@@ -264,7 +264,7 @@ fn run_sequential(root: &Path, files: &[TestSource]) -> Outcomes {
     println!("mode=sequential starting");
     let start = Instant::now();
     let mut outcomes = Outcomes::default();
-    let mut runner = Test262Runner::new(RuntimeNextHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut cache = HarnessCache::new(root.join("harness"));
     for fixture in files {
         let outcome = dispatch_one(&mut runner, &mut cache, fixture);
@@ -293,7 +293,7 @@ fn run_parallel(root: &Path, files: &[TestSource], threads: usize) -> Outcomes {
         let aggregated = Arc::clone(&aggregated);
         let harness_root = harness_root.clone();
         let handle = thread::Builder::new()
-            .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(move || loop {
                 let start = {
                     let mut guard = next.lock().unwrap();
@@ -336,7 +336,7 @@ fn run_parallel(root: &Path, files: &[TestSource], threads: usize) -> Outcomes {
 }
 
 fn dispatch_one(
-    runner: &mut Test262Runner<RuntimeNextHost>,
+    runner: &mut Test262Runner<Test262RuntimeHost>,
     cache: &mut HarnessCache,
     fixture: &TestSource,
 ) -> Result<TestOutcome, String> {
@@ -352,9 +352,9 @@ fn dispatch_with_timeout(harness_root: &Path, fixture: TestSource) -> Result<Tes
     let harness_root = harness_root.to_path_buf();
     let (sender, receiver) = std::sync::mpsc::channel();
     let handle = thread::Builder::new()
-        .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(move || {
-            let mut runner = Test262Runner::new(RuntimeNextHost::default());
+            let mut runner = Test262Runner::new(Test262RuntimeHost::default());
             let mut cache = HarnessCache::new(harness_root);
             let result = dispatch_one(&mut runner, &mut cache, &fixture);
             let _ = sender.send(result);

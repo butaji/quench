@@ -1,7 +1,7 @@
 //! CommonJS host policy. Guest code, objects and calls belong to the shared VM.
 
 use crate::host::{EntryGoal, NodeHost};
-use quench_runtime_next::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -11,10 +11,10 @@ const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, _
 const WRAPPER_SUFFIX: &str = "\n});";
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
-pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime_next::SourceKind, String> {
+pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
-        Some("mjs") => return Ok(quench_runtime_next::SourceKind::Module),
-        Some("cjs") => return Ok(quench_runtime_next::SourceKind::Script),
+        Some("mjs") => return Ok(quench_runtime::SourceKind::Module),
+        Some("cjs") => return Ok(quench_runtime::SourceKind::Script),
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
@@ -31,9 +31,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime_next::SourceKind
         == Some("module");
     Ok(
         if path.extension().is_some_and(|extension| extension == "js") && module {
-            quench_runtime_next::SourceKind::Module
+            quench_runtime::SourceKind::Module
         } else {
-            quench_runtime_next::SourceKind::Script
+            quench_runtime::SourceKind::Script
         },
     )
 }
@@ -51,8 +51,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         context.release_root(root);
     }
     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
-    crate::modules::buffer::shared_vm::install_global(context, buffer_module)?;
-    crate::modules::url::shared_vm::install_global(context)?;
+    crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
+    crate::modules::url_shared_vm::install_global(context)?;
     install_shared_web_globals(context, buffer_module)?;
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
@@ -96,7 +96,7 @@ fn install_shared_web_globals(
     let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
     let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
     context.release_root(root);
-    crate::modules::buffer::shared_vm::install_blob_export(context, buffer_module)
+    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)
 }
 
 pub(super) fn require(
@@ -116,21 +116,21 @@ pub(super) fn require(
         }
         Some(BuiltinModule::Assert) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
-            return crate::modules::assert::shared_vm::module(context, util);
+            return crate::modules::assert_shared_vm::module(context, util);
         }
         Some(BuiltinModule::AssertStrict) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
-            let module = crate::modules::assert::shared_vm::module(context, util)?;
+            let module = crate::modules::assert_shared_vm::module(context, util)?;
             return get(context, module, "strict");
         }
         Some(BuiltinModule::Path) => {
-            return crate::modules::path::shared_vm::module(context);
+            return crate::modules::path_shared_vm::module(context);
         }
         Some(BuiltinModule::PathPosix) => {
-            return crate::modules::path::shared_vm::posix(context);
+            return crate::modules::path_shared_vm::posix(context);
         }
         Some(BuiltinModule::PathWin32) => {
-            return crate::modules::path::shared_vm::win32(context);
+            return crate::modules::path_shared_vm::win32(context);
         }
         Some(BuiltinModule::Url) => {
             return cached_builtin(context, BuiltinModule::Url);
@@ -154,10 +154,10 @@ pub(super) fn require(
             return cached_builtin(context, BuiltinModule::V8);
         }
         Some(BuiltinModule::AsyncHooks) => {
-            return crate::modules::async_hooks::shared_vm::module(context);
+            return crate::modules::async_hooks_shared_vm::module(context);
         }
         Some(BuiltinModule::DiagnosticsChannel) => {
-            return crate::modules::diagnostics_channel::shared_vm::module(context);
+            return crate::modules::diagnostics_channel_shared_vm::module(context);
         }
         Some(BuiltinModule::Dns) => {
             return cached_builtin(context, BuiltinModule::Dns);
@@ -398,14 +398,14 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
-        BuiltinModule::Fs => crate::modules::fs::shared_vm::module(context),
-        BuiltinModule::Net => crate::modules::net::shared_vm::module(context),
-        BuiltinModule::Http => crate::modules::http::shared_vm::module(context),
-        BuiltinModule::Os => crate::modules::os::shared_vm::module(context),
-        BuiltinModule::Buffer => crate::modules::buffer::shared_vm::module(context),
+        BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
+        BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
+        BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
+        BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
+        BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
         BuiltinModule::Stream => {
             let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
-            crate::modules::stream::shared_vm::module(context, decoder)
+            crate::modules::stream_shared_vm::module(context, decoder)
         }
         BuiltinModule::StreamPromises => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
@@ -415,38 +415,36 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let global = context.global_root()?;
             get(context, global, "__quenchWebStreams")
         }
-        BuiltinModule::StringDecoder => crate::modules::string_decoder::shared_vm::module(context),
+        BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
-            crate::modules::timers::shared_vm::timers_module(context, promises)
+            crate::modules::timers_shared_vm::timers_module(context, promises)
         }
-        BuiltinModule::TimersPromises => {
-            crate::modules::timers::shared_vm::promises_module(context)
-        }
-        BuiltinModule::NodeTest => crate::modules::test::shared_vm::module(context),
+        BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
+        BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
             let module = context.object_rooted()?;
             let is_main = context.boolean(true);
             set(context, module, "isMainThread", is_main)?;
             Ok(module)
         }
-        BuiltinModule::Url => crate::modules::url::shared_vm::module(context),
-        BuiltinModule::Querystring => crate::modules::querystring::shared_vm::module(context),
-        BuiltinModule::Events => crate::modules::events::shared_vm::module(context),
-        BuiltinModule::Console => crate::modules::console::shared_vm::module(context),
-        BuiltinModule::Tty => crate::modules::tty::shared_vm::module(context),
-        BuiltinModule::Dns => crate::modules::dns::shared_vm::module(context),
+        BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
+        BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
+        BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
+        BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
+        BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
+        BuiltinModule::Dns => crate::modules::dns_shared_vm::module(context),
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Zlib => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            crate::modules::zlib::shared_vm::module(context, stream)
+            crate::modules::zlib_shared_vm::module(context, stream)
         }
-        BuiltinModule::Crypto => crate::modules::crypto::shared_vm::module(context),
-        BuiltinModule::V8 => crate::modules::v8::shared_vm::module(context),
+        BuiltinModule::Crypto => crate::modules::crypto_shared_vm::module(context),
+        BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
         BuiltinModule::AsyncHooks | BuiltinModule::DiagnosticsChannel => Err(RootedError::host(
             "stateful builtin passed to generic shared module builder",
         )),
-        BuiltinModule::Util => crate::modules::util::shared_vm::module(context),
+        BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
         BuiltinModule::ChildProcess => context.object_rooted(),
         // Fastify imports both alternatives at module initialization. Its
         // selected HTTP/1 path does not access these TLS-only exports.
@@ -677,7 +675,7 @@ fn load(
             _ => {
                 if goal == EntryGoal::Node
                     && source_kind(filename).map_err(RootedError::host)?
-                        == quench_runtime_next::SourceKind::Module
+                        == quench_runtime::SourceKind::Module
                 {
                     return Err(RootedError::host(
                         "requiring an ES module is not implemented on the shared VM",

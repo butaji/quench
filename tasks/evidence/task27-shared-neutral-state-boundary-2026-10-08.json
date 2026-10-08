@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_neutral_state_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "e3d3e40a93033cb7d2f16b0bd8c9823d3827d079",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "snapshot_algorithm": "SHA-256 over sorted UTF-8 relative path, NUL, file SHA-256 hex, newline records",
+    "snapshot_file_count": 1026,
+    "snapshot_sha256": "ee427ebe87115503564d5cb730b0d9f8f94f5fa0c2870240a561c441c50fb339",
+    "snapshot_roots": [
+      "crates/quench-node/src",
+      "crates/quench-node-test/src",
+      "crates/quench-runtime-next/src",
+      "crates/quench-runtime/src",
+      "vendor/oxc-parser-next/src"
+    ],
+    "snapshot_additional_files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/quench-node/Cargo.toml",
+      "crates/quench-node-test/Cargo.toml",
+      "crates/quench-runtime-next/Cargo.toml",
+      "crates/quench-runtime/Cargo.toml",
+      "vendor/oxc-parser-next/Cargo.toml",
+      "crates/quench-node-test/node-tests/parallel.txt"
+    ]
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "node": {
+      "version": "v26.10.0",
+      "executable": "/opt/homebrew/bin/node"
+    }
+  },
+  "binary_sha256": {
+    "target/iteration/run-parallel": "a5ea76efceb4b845b0680c45ab59f73f0f39d0b91afd9a24314b6734a340877c",
+    "target/iteration/quench-node": "a3d3e5799cbf068b2dbe2441d4244e17ec1bc0c022f7ffaeeacc0e504366f7f0"
+  },
+  "changes": [
+    "SharedNodeState now names the neutral fs_state, process_state, and async_hooks_state owners directly; legacy adapters re-export those same state types where still needed.",
+    "Network-family timeout policy has one neutral owner in modules/net_config.rs.",
+    "The shared TCP transport now lives in modules/net_shared_vm.rs; modules/net re-exports it for remaining adapter paths.",
+    "Filesystem descriptor state no longer opens write streams through the legacy fs::ops adapter; the shared stream adapter opens the file and inserts it into the shared descriptor table.",
+    "The legacy readline adapter and readline-promises source fragment were removed outside the selected framework gate. Existing broader diagnostic inventory rows remain unchanged and are not qualified by this record."
+  ],
+  "validation": {
+    "commands": [
+      {
+        "command": "cargo check -p quench-node",
+        "exit_status": 0
+      },
+      {
+        "command": "cargo build --profile iteration -p quench-node --bin quench-node -p quench-node-test --bin run-parallel",
+        "exit_status": 0
+      }
+    ],
+    "framework_core": {
+      "command": "target/iteration/run-parallel --profile framework-core",
+      "exit_status": 0,
+      "pass": 43,
+      "skip": 0,
+      "fail": 0,
+      "timeout": 0,
+      "crash": 0,
+      "unclassified": 0,
+      "total": 43,
+      "stdout_artifact": "target/iteration/task27-neutral-state-2026-10-08/framework-core.stdout",
+      "stdout_sha256": "2f2d921dcfce7bd620f630e927555625fcd4e20465e3fc2110af3973bf050cc9",
+      "stderr_artifact": "target/iteration/task27-neutral-state-2026-10-08/framework-core.stderr",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "framework_scenarios": {
+      "command_pattern": "tests/frameworks: /opt/homebrew/bin/node driver.cjs scenarios/{express,koa,fastify}.cjs; ../../target/iteration/quench-node driver.cjs scenarios/{express,koa,fastify}.cjs",
+      "comparison": "Each package ran serially in Node and Quench; exit statuses and raw stdout/stderr were compared with cmp.",
+      "exit_status": 0,
+      "exact_match": true,
+      "stdout_bytes": 29,
+      "stdout_sha256": "6a8388b87cdb9dc7618e136828b626c2213b937ea1645882ef0c33bedf95b54d",
+      "stderr_bytes": 0,
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_artifacts_directory": "target/iteration/task27-neutral-state-2026-10-08/"
+    }
+  },
+  "qualification_limit": "These checks bind the current shared Node adapter changes to the framework gate. No unit tests, full Test262 run, Wasm run, or production-profile build was run. quench-node still directly depends on quench-runtime and compiles legacy value adapters, so Task 27 and Stage A remain open."
+}

@@ -13,7 +13,7 @@ use std::{
 
 use quench_test262::ratchet::{relative_test_path, PassSet, DEFAULT_RATCHET};
 use quench_test262::{
-    discover_js_files, resolve_stages, HarnessCache, RuntimeNextHost, Test262Runner, TestOutcome,
+    discover_js_files, resolve_stages, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome,
 };
 use wait_timeout::ChildExt;
 
@@ -46,7 +46,7 @@ fn main() -> ExitCode {
         }
         return match thread::Builder::new()
             .name("test262-case".into())
-            .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+            .stack_size(quench_runtime::WORKER_STACK_SIZE)
             .spawn(run_test_worker)
         {
             Ok(worker) => worker.join().unwrap_or(ExitCode::from(1)),
@@ -437,7 +437,7 @@ fn run_test_worker() -> ExitCode {
     let root = env::var_os("TEST262_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
-    let mut runner = Test262Runner::new(RuntimeNextHost::default());
+    let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
     match runner.run_file_with_cache(path, &mut harness) {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,

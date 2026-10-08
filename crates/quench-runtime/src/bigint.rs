@@ -1,86 +1,14 @@
-//! Canonical BigInt arithmetic helpers backed by `num-bigint`.
-
 use num_bigint::{BigInt, Sign};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    DivisionByZero,
-    NegativeExponent,
-    ExponentTooLarge,
-    InvalidDecimal,
-}
+pub(crate) const IEEE754_FRACTION_BITS: u32 = f64::MANTISSA_DIGITS - 1;
+pub(crate) const IEEE754_EXPONENT_BIAS: i32 = 1023;
+pub(crate) const IEEE754_MAX_EXPONENT_BITS: u64 = 0x7ff;
+pub(crate) const IEEE754_SUBNORMAL_EXPONENT: i32 = -1074;
 
-pub fn add(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left + right))
-}
-
-pub fn subtract(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left - right))
-}
-
-pub fn multiply(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left * right))
-}
-
-pub fn divide(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| {
-        if right == BigInt::from(0) {
-            return Err(Error::DivisionByZero);
-        }
-        Ok(left / right)
-    })
-}
-
-pub fn remainder(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| {
-        if right == BigInt::from(0) {
-            return Err(Error::DivisionByZero);
-        }
-        Ok(left % right)
-    })
-}
-
-pub fn exponentiate(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| {
-        if right.sign() == Sign::Minus {
-            return Err(Error::NegativeExponent);
-        }
-        let exponent = right
-            .to_str_radix(10)
-            .parse::<u32>()
-            .map_err(|_| Error::ExponentTooLarge)?;
-        Ok(left.pow(exponent))
-    })
-}
-
-pub fn negate(a: &str) -> Result<String, Error> {
-    parse(a).map(|value| render(-value))
-}
-
-pub fn bitwise_and(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left & right))
-}
-
-pub fn bitwise_or(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left | right))
-}
-
-pub fn bitwise_xor(a: &str, b: &str) -> Result<String, Error> {
-    binary(a, b, |left, right| Ok(left ^ right))
-}
-
-pub fn shift_left(a: &str, b: &str) -> Result<String, Error> {
-    shift(a, b, true)
-}
-
-pub fn shift_right(a: &str, b: &str) -> Result<String, Error> {
-    shift(a, b, false)
-}
-
-pub fn parse_string(value: &str) -> Option<BigInt> {
+pub(crate) fn parse_string(value: &str) -> Option<BigInt> {
     let value = value.trim();
     if value.is_empty() {
-        return Some(0.into());
+        return Some(BigInt::from(0));
     }
     let (radix, digits) = match value.as_bytes() {
         [b'0', b'x' | b'X', digits @ ..] => (16, digits),
@@ -91,35 +19,62 @@ pub fn parse_string(value: &str) -> Option<BigInt> {
     BigInt::parse_bytes(digits, radix)
 }
 
-fn shift(a: &str, b: &str, left: bool) -> Result<String, Error> {
-    let value = parse(a)?;
-    let count = parse(b)?;
-    let reverse = count.sign() == Sign::Minus;
-    let magnitude = render(if reverse { -count } else { count })
-        .parse::<usize>()
-        .map_err(|_| Error::ExponentTooLarge)?;
-    let shift_left = left != reverse;
-    Ok(render(if shift_left {
-        value << magnitude
+pub(crate) fn number_as_bigint(value: f64) -> Option<BigInt> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return None;
+    }
+    if value == 0.0 {
+        return Some(BigInt::from(0));
+    }
+    let bits = value.abs().to_bits();
+    let exponent =
+        i32::from(u16::try_from((bits >> IEEE754_FRACTION_BITS) & IEEE754_MAX_EXPONENT_BITS).ok()?)
+            - IEEE754_EXPONENT_BIAS;
+    let significand =
+        (bits & ((1_u64 << IEEE754_FRACTION_BITS) - 1)) | (1_u64 << IEEE754_FRACTION_BITS);
+    let mut integer = if exponent >= IEEE754_FRACTION_BITS as i32 {
+        BigInt::from(significand)
+            << usize::try_from(exponent - IEEE754_FRACTION_BITS as i32).ok()?
     } else {
-        value >> magnitude
-    }))
+        BigInt::from(significand >> u32::try_from(IEEE754_FRACTION_BITS as i32 - exponent).ok()?)
+    };
+    if value.is_sign_negative() {
+        integer = -integer;
+    }
+    Some(integer)
 }
 
-fn binary(
-    a: &str,
-    b: &str,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Error {
+    DivisionByZero,
+    NegativeExponent,
+    ExponentTooLarge,
+    InvalidDecimal,
+}
+
+pub(crate) fn binary(
+    left: &str,
+    right: &str,
     operation: impl FnOnce(BigInt, BigInt) -> Result<BigInt, Error>,
 ) -> Result<String, Error> {
-    let left = parse(a)?;
-    let right = parse(b)?;
-    operation(left, right).map(render)
+    let left = left.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
+    let right = right.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
+    operation(left, right).map(|value| value.to_str_radix(10))
 }
 
-fn parse(value: &str) -> Result<BigInt, Error> {
-    value.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)
-}
-
-fn render(value: BigInt) -> String {
-    value.to_str_radix(10)
+pub(crate) fn shift(left: &str, right: &str, left_shift: bool) -> Result<String, Error> {
+    let value = left.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
+    let count = right.parse::<BigInt>().map_err(|_| Error::InvalidDecimal)?;
+    let reverse = count.sign() == Sign::Minus;
+    let magnitude = (-&count)
+        .max(count.clone())
+        .to_str_radix(10)
+        .parse::<usize>()
+        .map_err(|_| Error::ExponentTooLarge)?;
+    let shift_left = left_shift != reverse;
+    Ok(if shift_left {
+        (value << magnitude).to_str_radix(10)
+    } else {
+        (value >> magnitude).to_str_radix(10)
+    })
 }

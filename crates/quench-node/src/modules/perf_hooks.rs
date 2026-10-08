@@ -1,7 +1,7 @@
 //! Shared `perf_hooks` projection for APIs used by Node packages.
 
 use crate::host::NodeHost;
-use quench_runtime_next::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;

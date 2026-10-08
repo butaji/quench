@@ -9,5 +9,5 @@ description = "Shared ECMAScript regular-expression parser and matcher"
 quench-stack = { path = "../quench-stack" }
 icu_casemap = { version = "2.2", features = ["compiled_data"] }
 icu_properties = { version = "2.3", features = ["compiled_data"] }
-oxc = { version = "0.47", features = ["semantic"] }
+oxc = { workspace = true }
 regex = { version = "1.11", default-features = false, features = ["std", "unicode-perl"] }

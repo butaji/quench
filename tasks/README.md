@@ -21,9 +21,9 @@ Stage membership remains separate because a lane can span both stages.
   surviving authority. CLI and suite runners compose these layers; extracting
   them into new crates adds no completion gate.
 
-  The shared VM and legacy engine still have separate package and binary
-  identities. [Task 27](27.md) folds the shared VM into the canonical runtime
-  and removes transitional second-engine identifiers.
+  [Task 27](27.md) completed the cutover and removed legacy execution. The
+  final single-VM source audit and Task 86 qualification are recorded in
+  [Stage A evidence](evidence/task86-stagea-final-2026-10-08.json).
 
 - Remove legacy execution, migration adapters and audited unused clutter.
 - Keep unit tests only for internals or scenarios absent from the pinned suites.
@@ -44,30 +44,24 @@ The three package scenarios define the Stage A framework target. Do not expand
 the Node gate to unrelated upstream APIs or the broader proposals in
 [88](88.md)/[89](89.md).
 
-Stage A remains open because production cutover and final cleanup remain.
-Task 24 records the initial same-build qualification; Task 86 owns final
-requalification after cleanup. Test262 conflicts follow the Node-oracle rule:
-Node agrees with both Stage 114 Annex B fixtures, while the contradictory
-Stage 94 fixture remains a raw failure and explicit waiver. The current
-source-bound resolution is in [Task 20](20.md#current-conflict-resolution).
-The shared-VM Wasm and framework Node gates have current source-bound passes;
-Task 24 provides the initial full-inventory baseline for the final gate.
+Stage A is closed. Task 86 records the final production qualification: all
+67,124 Wasm directives pass, all 43 `framework-core` cases pass, and the
+Express, Koa, and Fastify scenarios match Node exactly. Test262 passes 53,405
+of 53,406 cases across all 116 stages. Its only raw failure is the unchanged
+Stage 94 Annex B fixture contradicted by local Node; Task 20 records the
+Node-arbitrated waiver, which remains outside the pass count. Stage 114 passes
+all 1,482 cases. See the [final evidence](evidence/task86-stagea-final-2026-10-08.json)
+and [Task 20 resolution](20.md#current-conflict-resolution).
 
-The remaining critical-path work is:
+The active critical-path work is:
 
-- [27](27.md): promote the shared VM and delete legacy execution; [86](86.md):
-  remove audited clutter and close Stage A on the final production build.
+- [62](62.md): add no-JIT reference engines to the V8-v7 runner.
+- [61](61.md): lead the reference engines on all eight V8-v7 benchmarks.
+- [28](28.md): record final per-benchmark Score and maximum RSS.
 
-Prioritize failing suite cases, missing shared-VM execution paths and production
-cutover blockers. Do not start discretionary architecture or new host
-capabilities. Task 48's report/ratchet tooling is complete independently of the
-100% suite gate. The existing parallel manifest and package lock are the fixed
-Node target. Audit support tasks against required suite behavior and necessary
-internal invariants. Close satisfied obligations with evidence and implement
-only actual gaps. Historical plans, host rewrites, runner-speed targets, new
-APIs and broad architecture proposals add no gates. Final performance
-qualification is not required in A; limited diagnostics may identify measured
-bottlenecks before the gate closes.
+Stage A's final source, inventory, binary, and report provenance is captured by
+Task 86. Stage B qualification begins with Task 62; measured optimization
+work follows the evidence and correctness requirements below.
 
 Task 24 is the sole initial full-inventory campaign and owns the same-build
 reports for all raw Test262 outcomes plus the adjudicated pass count, Wasm and
@@ -86,17 +80,13 @@ and checks, including existing specialization fallbacks, roots, host re-entry
 and exhaustion; completing their historical plans is not an extra gate. Phase
 task lists identify ownership, not mandatory implementation checklists.
 
-**Only task 86 closes Stage A and enables Stage B qualification.** Provisional
-pre-gate diagnostics may run now: V8-v7 preflight, one matched all-fixture
-round, and focused paired experiments on the current candidate. They do not
-complete tasks 62/61, establish performance leadership, or close Stage A.
-Partial or historical suite passes do not establish the Stage A gate. Once
-verified, proceed directly to tasks 62/61 qualification.
+Task 86 closed Stage A and enabled Stage B qualification. Task 62 is active;
+its reference-engine setup feeds Task 61's baseline and qualification, followed
+by final closure in Task 28.
 
 ## Stage B — performance
 
-Stage B diagnostics may start before Stage A closes as specified above. After
-Stage A, run every V8-v7 benchmark on Apple M4/macOS: Crypto, DeltaBlue,
+Run every V8-v7 benchmark on Apple M4/macOS: Crypto, DeltaBlue,
 EarleyBoyer, NavierStokes, RayTrace, RegExp, Richards and Splay. On **each
 benchmark**, Quench must have both the best Score and the lowest maximum RSS
 against QuickJS, Bun/JSC with JIT disabled and Node/V8 `--jitless`. An aggregate

@@ -1,7 +1,7 @@
 //! Shared-VM entry execution used by the development CLI and inventory worker.
 
 use crate::host::NodeHost;
-use quench_runtime_next::{Engine, ExecutionRequest, Runtime, SourceKind};
+use quench_runtime::{Engine, ExecutionRequest, Runtime, SourceKind};
 use std::{path::PathBuf, process::ExitCode};
 
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
@@ -45,7 +45,7 @@ pub enum SharedInput {
 pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCompletion, String> {
     std::thread::Builder::new()
         .name("quench-node-shared-exec".into())
-        .stack_size(quench_runtime_next::WORKER_STACK_SIZE)
+        .stack_size(quench_runtime::WORKER_STACK_SIZE)
         .spawn(move || execute_shared_on_worker(input, argv))
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
@@ -91,7 +91,6 @@ fn execute_shared_on_worker(
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,
     };
-    let host_state = host.state();
     let shared_state = host.shared_state();
     let mut runtime = Runtime::new(host);
     let program = Engine::compile(ExecutionRequest {
@@ -102,17 +101,12 @@ fn execute_shared_on_worker(
     .map_err(|error| format!("{error:?}"))?;
     let execution = runtime.execute_deferred_jobs(&program);
     let completion = match execution {
-        Ok(()) => crate::modules::process::shared_vm::finish_execution(
-            &mut runtime,
-            &program,
-            &host_state,
-        ),
+        Ok(()) => crate::modules::process_shared_vm::finish_execution(&mut runtime, &program),
         Err(error) => {
             let message = runtime.format_error(&program, &error);
-            let exit = crate::modules::process::shared_vm::finish_after_uncaught_error(
+            let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
                 &mut runtime,
                 &program,
-                &host_state,
                 &error,
             );
             match exit {
