@@ -2841,7 +2841,6 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "quench-node",
- "quench-runtime",
  "serde",
  "serde_json",
  "sha2 0.10.9",

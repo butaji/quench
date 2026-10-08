@@ -1,7 +1,7 @@
 # `quench-node-test`
 
-The test runner executes Node compatibility fixtures through `quench-runtime`
-and `quench-node`. It owns discovery, execution, and outcome classification.
+The test runner executes Node compatibility fixtures through the shared Quench
+VM and `quench-node`. It owns discovery, execution, and outcome classification.
 
 ## Rules
 
