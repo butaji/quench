@@ -70,6 +70,7 @@ pub mod stream;
 pub mod stream_consumers;
 pub(crate) mod stream_source;
 pub mod string_decoder;
+pub(crate) mod string_decoder_codec;
 pub mod test;
 pub mod text_decoder;
 pub mod text_encoder;

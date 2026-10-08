@@ -125,7 +125,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let global = context.global_root()?;
     let buffer_name = context.string_rooted("Buffer");
     let buffer = context.get_property_rooted(global, buffer_name)?;
-    let max_string_bytes = context.number(crate::modules::string_decoder::MAX_STRING_BYTES as f64);
+    let max_string_bytes =
+        context.number(crate::modules::string_decoder_codec::MAX_STRING_BYTES as f64);
     let undefined = context.undefined();
     context.call_rooted(
         factory,
@@ -152,12 +153,16 @@ pub(crate) fn decode_chunk(
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
     let mode = if final_input {
-        crate::modules::string_decoder::DecodeMode::Final
+        crate::modules::string_decoder_codec::DecodeMode::Final
     } else {
-        crate::modules::string_decoder::DecodeMode::Streaming
+        crate::modules::string_decoder_codec::DecodeMode::Streaming
     };
-    let decoded =
-        crate::modules::string_decoder::decode_chunk_units(&prior_pending, &input, &encoding, mode);
+    let decoded = crate::modules::string_decoder_codec::decode_chunk_units(
+        &prior_pending,
+        &input,
+        &encoding,
+        mode,
+    );
     let object = context.object_rooted()?;
     let units = decoded
         .units

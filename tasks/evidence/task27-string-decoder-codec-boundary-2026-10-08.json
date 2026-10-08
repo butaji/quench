@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "task": "27",
+  "kind": "shared_string_decoder_codec_boundary",
+  "recorded_on": "2026-10-08",
+  "source": {
+    "revision": "0565c3849",
+    "worktree_dirty": true,
+    "platform": "Darwin arm64",
+    "node": "v26.10.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+    "files_sha256": {
+      "crates/quench-node/src/modules/mod.rs": "4d6b9cc13c8f6641596aa3987afe7c82c00f77f21db3e5144c82b957377c0a8f",
+      "crates/quench-node/src/modules/string_decoder.rs": "952bf8a01988d307188e08d1c0572c721b72983f0481b8e8435657ce080a5d95",
+      "crates/quench-node/src/modules/string_decoder/shared_vm.rs": "8ccd32a3d1f3422d7cea079fd515601c97414f459f5cdf89a262f690e8c00b1f",
+      "crates/quench-node/src/modules/string_decoder_codec.rs": "56d41545031538525ef194c66d35e715228b09ef98175f0deba56c61833d1f53"
+    },
+    "binaries_sha256": {
+      "target/iteration/run-parallel": "738e652936496b0dd44cdd93c6969a6af73bb712883cea3479c845dd8131eaa0"
+    },
+    "fixtures_sha256": {
+      "tests/node/test/parallel/test-string-decoder.js": "f556e3745ae83dd118dc38f740fcf23da9b8db9a2c7c301d1938e38f97884393",
+      "tests/node/test/parallel/test-string-decoder-end.js": "7c7a2001863059594d112a8450e3808e891f6c8e06d0f62e57920411545a8cb9",
+      "tests/node/test/parallel/test-string-decoder-fuzz.js": "a3e665a923c69dcfe39c0992ec670adcd4d418b53a91aa93d8957f59666b0c28",
+      "tests/node/test/parallel/test-stream-decoder-objectmode.js": "4a211b658bb1a06db91b77b7f23f2af228c7a6ef49526f5b5625bdfced60735a"
+    }
+  },
+  "change": {
+    "shared_owner": "crates/quench-node/src/modules/string_decoder_codec.rs",
+    "moved": [
+      "streaming and final decode modes",
+      "pending UTF-8 and UTF-16 code-unit handling",
+      "ASCII, Latin-1, hex and Base64 chunk decoding",
+      "StringDecoder maximum output-size limit"
+    ],
+    "legacy_adapter": "string_decoder.rs retains runtime Value conversion and host state, delegating decoding to the shared codec",
+    "shared_adapter": "string_decoder/shared_vm.rs calls the same codec directly",
+    "legacy_package_dependency_removed": false
+  },
+  "verification": {
+    "cargo_check_workspace_iteration": "passed",
+    "cargo_build_run_parallel_iteration": "passed",
+    "upstream_parallel": {
+      "runner": "target/iteration/run-parallel --one PATH",
+      "passed": [
+        "test-string-decoder.js",
+        "test-string-decoder-end.js",
+        "test-string-decoder-fuzz.js (4 runs)",
+        "test-stream-decoder-objectmode.js"
+      ],
+      "failed": 0,
+      "timeouts": 0,
+      "crashes": 0
+    },
+    "unit_tests": "not run"
+  }
+}
