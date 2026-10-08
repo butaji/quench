@@ -255,12 +255,20 @@ struct ProcessControlCells {
 
 impl ProcessControl {
     pub(crate) fn new() -> Self {
+        #[cfg(unix)]
+        let umask = unsafe {
+            let current = libc::umask(0);
+            libc::umask(current);
+            current as u32
+        };
+        #[cfg(not(unix))]
+        let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
             exit_code: Cell::new(None),
             requested_exit_code: Cell::new(None),
             exit_emitting: Cell::new(false),
-            umask: Cell::new(INITIAL_UMASK),
+            umask: Cell::new(umask),
         }))
     }
 
@@ -298,9 +306,15 @@ impl ProcessControl {
     }
 
     pub(crate) fn update_umask(&self, mask: u32) -> u32 {
-        self.0.umask.replace(mask & UMASK_BITS)
+        let mask = mask & UMASK_BITS;
+        #[cfg(unix)]
+        unsafe {
+            libc::umask(mask as libc::mode_t);
+        }
+        self.0.umask.replace(mask)
     }
 }
 
+#[cfg(not(unix))]
 const INITIAL_UMASK: u32 = 0o022;
 const UMASK_BITS: u32 = 0o777;
