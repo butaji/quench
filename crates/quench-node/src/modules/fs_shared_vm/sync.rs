@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -24,6 +24,17 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     if (type === undefined || type === 'file' || type === 'dir' || type === 'junction') return;
     const error = new TypeError('The "type" argument must be one of: "dir", "file", "junction".');
     error.code = typeof type === 'string' ? 'ERR_INVALID_ARG_VALUE' : 'ERR_INVALID_ARG_VALUE';
+    throw error;
+  };
+  const validateRenamePath = (path, name) => {
+    if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
+    const received = path === null || path === undefined
+      ? ` Received ${path}`
+      : typeof path === 'object'
+        ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof path} (${String(path)})`;
+    const error = new TypeError(`The "${name}" argument must be of type string or an instance of Buffer or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   };
   const writeBytes = (data, options) => {
@@ -149,6 +160,11 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateSymlinkType(type);
       return symlinkSync(normalizePath(target), normalizePath(path), type);
     },
+    renameSync(oldPath, newPath) {
+      validateRenamePath(oldPath, 'oldPath');
+      validateRenamePath(newPath, 'newPath');
+      return renameSync(normalizePath(oldPath), normalizePath(newPath));
+    },
     writeFileSync(path, data, options) {
       const fd = descriptorArgument(path);
       if (fd !== null) {
@@ -261,6 +277,7 @@ pub(crate) fn install(
     let mkdtemp = context.host_function(crate::host::shared_vm::operation("fsMkdtempSync"))?;
     let copy_file = context.host_function(crate::host::shared_vm::operation("fsCopyFileSync"))?;
     let symlink = context.host_function(crate::host::shared_vm::operation("fsSymlinkSync"))?;
+    let rename = context.host_function(crate::host::shared_vm::operation("fsRenameSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -280,6 +297,7 @@ pub(crate) fn install(
             rm,
             copy_file,
             symlink,
+            rename,
             write,
             open,
             close,
@@ -294,6 +312,7 @@ pub(crate) fn install(
         ("mkdtempSync", "mkdtempSync"),
         ("copyFileSync", "copyFileSync"),
         ("symlinkSync", "symlinkSync"),
+        ("renameSync", "renameSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),
@@ -605,6 +624,26 @@ pub(crate) fn symlink_sync(
             &ops::OperationError::Io {
                 syscall: "symlink",
                 path: link_path,
+                error,
+            },
+        ),
+    }
+}
+
+pub(crate) fn rename_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let old_path = path_argument(context, args.first().copied())?;
+    let new_path = path_argument(context, args.get(1).copied())?;
+    match std::fs::rename(&old_path, &new_path) {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => throw_operation_error(
+            context,
+            &ops::OperationError::Io {
+                syscall: "rename",
+                path: old_path,
                 error,
             },
         ),
