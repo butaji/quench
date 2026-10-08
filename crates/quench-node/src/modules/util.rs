@@ -239,6 +239,7 @@ pub fn get_call_sites(
         .borrow()
         .process
         .argv
+        .as_slice()
         .get(1)
         .cloned()
         .unwrap_or_default();
