@@ -9527,13 +9527,20 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
             var replacements = ["", "x-foo", "de-u-co", "en-US"];
             for (var index = 0; index < replacements.length; index++) {
                 String.prototype[Symbol.split] = function() { return [replacements[index]]; };
-                var formatted = Intl.DateTimeFormat("de", {}).format(86400000);
+                var formatted = Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(86400000);
                 print(formatted);
                 print(possibleAnswers.includes(formatted));
             }
             "#,
             &[
-                "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
             ],
         );
     }

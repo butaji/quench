@@ -10,6 +10,12 @@ for (const name of expected) {
 const Module = require('node:module');
 if (Module !== require('module')) throw new Error('builtin module identity');
 if (!Array.isArray(Module.builtinModules)) throw new Error('builtinModules: bad type');
+if (Module.isBuiltin.name !== 'isBuiltin' || Module.isBuiltin.length !== 1) {
+  throw new Error('isBuiltin function shape');
+}
+if (Module.createRequire.name !== 'createRequire' || Module.createRequire.length !== 1) {
+  throw new Error('createRequire function shape');
+}
 for (const name of ['fs', 'fs/promises', 'path/posix', 'assert/strict', 'module']) {
   if (!Module.builtinModules.includes(name)) throw new Error('missing builtin: ' + name);
   if (!Module.isBuiltin(name)) throw new Error('isBuiltin(' + name + ')');
