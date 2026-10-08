@@ -106,7 +106,7 @@ pub fn dynamic_import_rejection(reason: Value) -> Value {
     dynamic_rejection(reason)
 }
 
-const BUILTIN_MODULES: &str = "assert assert/strict async_hooks buffer child_process cluster console crypto dgram diagnostics_channel dns domain events fs http http2 https module net os path path/posix path/win32 perf_hooks process punycode querystring readline repl stream stream/consumers string_decoder sys timers timers/promises tls tty url util util/types v8 vm worker_threads zlib inspector trace_events wasi node:test";
+const BUILTIN_MODULES: &str = "assert assert/strict async_hooks buffer child_process cluster console crypto dgram diagnostics_channel dns domain events fs http http2 https module net os path path/posix path/win32 perf_hooks process punycode querystring readline repl stream stream/consumers string_decoder sys timers timers/promises tls tty url util util/types v8 vm worker_threads zlib trace_events wasi node:test";
 const INTERNAL_BUILTIN_MODULES: &str =
     "vfs sqlite _http_server internal/js_stream_socket internal/net";
 
@@ -3082,7 +3082,6 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 Some(crate::modules::cluster::build(state))
             }
         }
-        "inspector" => Some(crate::modules::inspector::build()),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
         "trace_events" => Some(crate::modules::trace_events::build()),
         "repl" => Some(crate::modules::repl::build()),
