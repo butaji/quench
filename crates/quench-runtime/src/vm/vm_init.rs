@@ -97,6 +97,7 @@ impl<H: Host> Vm<H> {
             buffer_atom: u32::MAX,
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
+            runtime_atoms: RuntimeAtoms::default(),
             method_caches: vec![],
             megamorphic_methods: vec![],
             #[cfg(feature = "profile-aggregate")]
