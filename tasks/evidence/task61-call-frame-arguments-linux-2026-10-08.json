@@ -98,6 +98,30 @@
       "runner_sha256": "89067d2fa81e57f11e3bbb568a2920e88e7fa7a062b76ec328eac7e191b1cd90"
     }
   },
+  "all_eight_screen": {
+    "kind": "one-round, four-engine diagnostic",
+    "path": "target/stageb-candidates/call-arguments-smallvec/all-eight-one-round-candidate.json",
+    "sha256": "d6527e4aa49f002c8b334fc1ec938381a5c176c065ddb2638cdd19ef54e25ee6",
+    "candidate_binary_sha256": "4141420eb899e0fb5f1d8a214bfbb6cba9b66f8e0145e12e3da003c3efe13f74",
+    "source_revision": "8d1faeb6b3c83dd2f74e10bd114fab885a363d53",
+    "source_dirty_at_start": true,
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "complete": true,
+    "all_samples_valid": true,
+    "all_outputs_equal": true,
+    "qualification_ready": false,
+    "ranks": "Quench ranked fourth in Score on all eight; maximum-RSS ranks were second on Crypto, DeltaBlue and RayTrace; third on EarleyBoyer, NavierStokes, Richards and Splay; fourth on RegExp.",
+    "quench_samples": {
+      "crypto": {"score": 75.9, "max_rss_bytes": 20533248},
+      "deltablue": {"score": 69.1, "max_rss_bytes": 20262912},
+      "earley_boyer": {"score": 135, "max_rss_bytes": 58064896},
+      "navier_stokes": {"score": 25.9, "max_rss_bytes": 26939392},
+      "raytrace": {"score": 166, "max_rss_bytes": 22278144},
+      "regexp": {"score": 16.8, "max_rss_bytes": 42590208},
+      "richards": {"score": 113, "max_rss_bytes": 18755584},
+      "splay": {"score": 863, "max_rss_bytes": 255533056}
+    }
+  },
   "correctness": {
     "cargo_check": "cargo check -p quench-runtime passed",
     "test262": {
