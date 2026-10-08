@@ -2,9 +2,9 @@ use crate::host::NodeHost;
 use crate::modules::{fs_error_details, fs_ops as ops, fs_shared_vm as shared_vm};
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 
-const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync) => {
+const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync, fstatSync) => {
   const normalizePath = (path) =>
-    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path;
+    typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : path instanceof URL ? path.pathname : path;
   const writeBytes = (data, options) => {
     const encoding = typeof options === 'string' ? options : options?.encoding;
     if (typeof data === 'string') return Buffer.from(data, encoding);
@@ -17,6 +17,33 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
     }
     return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   };
+  const normalizeMode = (mode) => {
+    if (typeof mode === "string") {
+      const parsed = Number.parseInt(mode, 8);
+      if (Number.isNaN(parsed)) {
+        const error = new TypeError('The "mode" argument must be a valid integer');
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return parsed;
+    }
+    if (mode != null && typeof mode !== "number") {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return mode;
+  };
+  const validateFd = (fd) => {
+    if (typeof fd === "number") return;
+    let received;
+    if (fd === null || fd === undefined) received = ` Received ${fd}`;
+    else if (typeof fd === "object") received = ` Received an instance of ${Array.isArray(fd) ? "Array" : "Object"}`;
+    else received = ` Received type ${typeof fd} (${typeof fd === "string" ? `'${fd}'` : String(fd)})`;
+    const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  };
   return {
     mkdirSync(path, options) {
       return mkdirSync(normalizePath(path), options);
@@ -28,10 +55,15 @@ const SYNC_API: &str = r#"(mkdirSync, rmSync, writeFileSync, openSync, closeSync
       return writeFileSync(normalizePath(path), writeBytes(data, options), options);
     },
     openSync(path, flags, mode) {
-      return openSync(normalizePath(path), flags, mode);
+      return openSync(normalizePath(path), flags, normalizeMode(mode));
     },
     closeSync(fd) {
+      validateFd(fd);
       return closeSync(fd);
+    },
+    fstatSync(fd) {
+      validateFd(fd);
+      return fstatSync(fd);
     },
   };
 }"#;
@@ -45,15 +77,17 @@ pub(crate) fn install(
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
+    let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
     let undefined = context.undefined();
-    let api = context.call_rooted(factory, undefined, &[mkdir, rm, write, open, close])?;
+    let api = context.call_rooted(factory, undefined, &[mkdir, rm, write, open, close, fstat])?;
     for (name, method) in [
         ("mkdirSync", "mkdirSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("openSync", "openSync"),
         ("closeSync", "closeSync"),
+        ("fstatSync", "fstatSync"),
     ] {
         let key = context.string_rooted(method);
         let function = context.get_property_rooted(api, key)?;
@@ -76,6 +110,9 @@ pub(crate) fn open_sync(
         .and_then(Value::as_number)
         .map(|value| value as u32);
     let opened = match flags {
+        Some(value) if context.rooted_value(value).is_some_and(Value::is_undefined) => {
+            ops::open(&path, None, mode)
+        }
         Some(value) if context.string_text(value)?.is_some() => {
             let flag = context.string_text(value)?.unwrap_or_default();
             ops::open(&path, Some(&flag), mode)

@@ -8,14 +8,106 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
   lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
   readdir: (...args) => Promise.resolve().then(() => readdir(...args)),
   readlink: (...args) => Promise.resolve().then(() => readlink(...args)),
   realpath: (...args) => Promise.resolve().then(() => realpath(...args)),
+  open: (...args) => Promise.resolve().then(() => {
+    if (Buffer.isBuffer(args[0])) args[0] = args[0].toString();
+    else if (args[0] instanceof URL) args[0] = args[0].pathname;
+    if (typeof args[2] === "string") {
+      args[2] = Number.parseInt(args[2], 8);
+      if (Number.isNaN(args[2])) {
+        const error = new TypeError('The "mode" argument must be a valid integer');
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+    } else if (args[2] != null && typeof args[2] !== "number") {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = typeof args[2] === "string" ? "ERR_INVALID_ARG_VALUE" : "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const fd = openSync(...args);
+    return { fd, close: () => Promise.resolve().then(() => closeSync(fd)) };
+  }),
 })"#);
+
+const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync) => {
+  const validatePath = (path) => {
+    if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+  };
+  const normalizeMode = (mode) => {
+    if (typeof mode === "string") {
+      const parsed = Number.parseInt(mode, 8);
+      if (Number.isNaN(parsed)) {
+        const error = new TypeError('The "mode" argument must be a valid integer');
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return parsed;
+    }
+    if (mode != null && typeof mode !== "number") {
+      const error = new TypeError('The "mode" argument must be of type number.');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return mode;
+  };
+  const validateFd = (fd) => {
+    if (typeof fd === "number") return;
+    let received;
+    if (fd === null || fd === undefined) received = ` Received ${fd}`;
+    else if (typeof fd === "object") received = ` Received an instance of ${Array.isArray(fd) ? "Array" : "Object"}`;
+    else received = ` Received type ${typeof fd} (${typeof fd === "string" ? `'${fd}'` : String(fd)})`;
+    const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  };
+  return {
+  open(path, flags, mode, callback) {
+    if (typeof flags === "function") {
+      callback = flags;
+      flags = undefined;
+      mode = undefined;
+    } else if (typeof mode === "function") {
+      callback = mode;
+      mode = undefined;
+    }
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    validatePath(path);
+    mode = normalizeMode(mode);
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, openSync(path, flags, mode)]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  },
+  close(fd, callback) {
+    validateFd(fd);
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    queueMicrotask(() => {
+      try {
+        closeSync(fd);
+        Reflect.apply(callback, undefined, [null]);
+      } catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  },
+  };
+}"#);
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
   if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
@@ -368,6 +460,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "promises", promises)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
+    let open_sync = get(context, module, "openSync")?;
+    let close_sync = get(context, module, "closeSync")?;
+    let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
+    let undefined = context.undefined();
+    let open_close = context.call_rooted(factory, undefined, &[open_sync, close_sync])?;
+    let open = get(context, open_close, "open")?;
+    let close = get(context, open_close, "close")?;
+    set(context, module, "open", open)?;
+    set(context, module, "close", close)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
     let readable = get(context, streams, "Readable")?;
@@ -406,11 +507,15 @@ pub(crate) fn promises_module(
     let readdir = make_readdir_sync(context)?;
     let readlink = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let realpath = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
+    let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let undefined = context.undefined();
     let promises = context.call_rooted(
         factory,
         undefined,
-        &[read_file, stat, lstat, readdir, readlink, realpath],
+        &[
+            read_file, stat, lstat, readdir, readlink, realpath, open, close,
+        ],
     )?;
     set(context, promises, "constants", constants)?;
     Ok(promises)

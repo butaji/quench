@@ -185,6 +185,33 @@ pub(crate) fn read_dir_sync(
     context.array_rooted(&names)
 }
 
+pub(crate) fn fstat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let descriptor = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let descriptor = state.fs.descriptors().get(&fd).map(|descriptor| {
+            (
+                descriptor.file.metadata(),
+                descriptor.path.clone(),
+            )
+        });
+        descriptor
+    };
+    let Some((metadata, path)) = descriptor else {
+        let error = io::Error::from_raw_os_error(libc::EBADF);
+        return Err(super::stream_io_error(context, error, "fstat", "")?);
+    };
+    match metadata {
+        Ok(metadata) => stats(context, &metadata),
+        Err(error) => Err(super::stream_io_error(context, error, "fstat", &path)?),
+    }
+}
+
 pub(crate) fn read_link_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
