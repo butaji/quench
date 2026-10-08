@@ -47,6 +47,7 @@ pub(crate) mod test_shared_vm;
 pub(crate) mod text_decoder_codec;
 pub(crate) mod text_decoder_shared_vm;
 pub(crate) mod timers_shared_vm;
+pub(crate) mod tls_shared_vm;
 pub(crate) mod tty_shared_vm;
 pub(crate) mod tty_state;
 pub(crate) mod url_legacy;
