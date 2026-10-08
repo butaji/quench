@@ -249,7 +249,13 @@ fn pop_segment(res: &mut Vec<char>, last_segment_length: &mut usize, sep: char) 
 pub fn js_cwd(state: &Rc<RefCell<HostState>>) -> String {
     match eval_scriptlet("process.cwd()") {
         Ok(value) => value_to_string(&value),
-        Err(_) => state.borrow().process.cwd.to_string_lossy().into_owned(),
+        Err(_) => state
+            .borrow()
+            .process
+            .cwd
+            .path()
+            .to_string_lossy()
+            .into_owned(),
     }
 }
 

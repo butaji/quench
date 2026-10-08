@@ -12,6 +12,32 @@ use crate::host::HostState;
 
 pub(crate) const NODE_VERSION: &str = "22.0.0";
 
+/// The logical working directory shared by both Node adapters.
+///
+/// The legacy process state and the shared host keep shallow handles to this
+/// owner so cwd changes are visible to every path consumer without passing
+/// runtime values across the VM boundary.
+#[derive(Clone)]
+pub struct ProcessCwd(Rc<RefCell<std::path::PathBuf>>);
+
+impl ProcessCwd {
+    pub fn new(path: std::path::PathBuf) -> Self {
+        Self(Rc::new(RefCell::new(path)))
+    }
+
+    pub fn path(&self) -> std::path::PathBuf {
+        self.0.borrow().clone()
+    }
+
+    pub fn set_path(&self, path: std::path::PathBuf) {
+        *self.0.borrow_mut() = path;
+    }
+
+    pub fn join(&self, path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+        self.0.borrow().join(path)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnhandledRejectionMode {
     Throw,
@@ -67,7 +93,7 @@ pub struct ProcessState {
     /// This is carried in the host state so child re-execs observe the same
     /// process-level flag without inspecting fixture names or source text.
     pub abort_on_uncaught_exception: bool,
-    pub cwd: std::path::PathBuf,
+    pub cwd: ProcessCwd,
     pub umask: u32,
     pub title: String,
     /// Host-simulated child identities visible to `process.kill`.
@@ -120,7 +146,7 @@ impl ProcessState {
             exit_code: None,
             exit_requested: false,
             abort_on_uncaught_exception: false,
-            cwd,
+            cwd: ProcessCwd::new(cwd),
             umask: 0o022,
             title: "quench-node".into(),
             alive_pids: HashSet::from([std::process::id() as i64]),
@@ -1251,7 +1277,13 @@ fn kill_einval() -> VmError {
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let s = state.borrow().process.cwd.to_string_lossy().into_owned();
+    let s = state
+        .borrow()
+        .process
+        .cwd
+        .path()
+        .to_string_lossy()
+        .into_owned();
     Ok(Value::String(s))
 }
 
@@ -1283,11 +1315,8 @@ pub(crate) struct ChdirError {
     pub message: String,
 }
 
-pub(crate) fn change_directory(
-    state: &Rc<RefCell<HostState>>,
-    destination: &str,
-) -> Result<(), ChdirError> {
-    let previous = state.borrow().process.cwd.clone();
+pub(crate) fn change_directory_cwd(cwd: &ProcessCwd, destination: &str) -> Result<(), ChdirError> {
+    let previous = cwd.path();
     let destination_path = std::path::Path::new(destination);
     let requested = lexical_cwd(&previous, destination_path);
     let metadata = std::fs::metadata(&requested)
@@ -1299,7 +1328,7 @@ pub(crate) fn change_directory(
             std::io::Error::from_raw_os_error(libc::ENOTDIR),
         ));
     }
-    state.borrow_mut().process.cwd = requested;
+    cwd.set_path(requested);
     Ok(())
 }
 
@@ -1307,11 +1336,12 @@ fn change_directory_os(
     state: &Rc<RefCell<HostState>>,
     destination: &str,
 ) -> Result<(), ChdirError> {
-    let previous = state.borrow().process.cwd.clone();
+    let cwd = state.borrow().process.cwd.clone();
+    let previous = cwd.path();
     let destination_path = std::path::Path::new(destination);
     match std::env::set_current_dir(destination) {
         Ok(()) => {
-            state.borrow_mut().process.cwd = lexical_cwd(&previous, destination_path);
+            cwd.set_path(lexical_cwd(&previous, destination_path));
             Ok(())
         }
         Err(error) => Err(chdir_error(&previous, destination, error)),
