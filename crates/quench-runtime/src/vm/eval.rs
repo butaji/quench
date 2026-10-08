@@ -455,9 +455,9 @@ impl<H: Host> Vm<H> {
             let parent = if direct_eval && (root_scope || field_initializer) {
                 let dynamic_bindings = if field_initializer {
                     vec![
-                        (self.intern_atom("\0quench:new-target"), Value::UNDEFINED),
+                        (self.runtime_atoms.new_target, Value::UNDEFINED),
                         (
-                            self.intern_atom("\0quench:lexical-this"),
+                            self.runtime_atoms.lexical_this,
                             self.frames
                                 .last()
                                 .map_or(self.realm.globals, |frame| frame.this),
@@ -674,7 +674,7 @@ impl<H: Host> Vm<H> {
         if self.in_class_field_initializer(p) {
             return true;
         }
-        let new_target = self.intern_atom("\0quench:new-target");
+        let new_target = self.runtime_atoms.new_target;
         self.frames
             .len()
             .checked_sub(1)
@@ -733,7 +733,7 @@ impl<H: Host> Vm<H> {
             if self.direct_eval && self.in_class_field_initializer(p) {
                 return Ok(Value::UNDEFINED);
             }
-            let atom = self.intern_atom("\0quench:new-target");
+            let atom = self.runtime_atoms.new_target;
             return Ok(self
                 .frames
                 .len()
@@ -1100,7 +1100,7 @@ impl<H: Host> Vm<H> {
             .get(self.frames[frame].function as usize)?
             .super_home_atom;
         let field_initializer = self.in_class_field_initializer(p);
-        let atom = self.intern_atom("\0quench:lexical-this");
+        let atom = self.runtime_atoms.lexical_this;
         let super_calls = home_atom.is_some()
             && !field_initializer
             && self
