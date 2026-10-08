@@ -368,10 +368,6 @@ node_api! {
     (SPEC_ASYNC_LOCAL_SNAPSHOT, "async_hooks:AsyncLocalStorage.snapshot", 0x1F3E),
     (SPEC_ASYNC_LOCAL_SNAPSHOT_CALL, "async_hooks:AsyncLocalStorage.snapshot:call", 0x1F3F),
     (SPEC_ASYNC_WORKER_RESOURCE, "async_hooks:workerResource", 0x1F35),
-    (SPEC_WASI_CONSTRUCTOR, "wasi:WASI", 0x1C00),
-    (SPEC_WASI_START, "wasi:WASI:start", 0x1C01),
-    (SPEC_WASI_INITIALIZE, "wasi:WASI:initialize", 0x1C02),
-    (SPEC_WASI_IMPORT_OBJECT, "wasi:WASI:getImportObject", 0x1C03),
 }
 
 node_api! {
@@ -2257,10 +2253,6 @@ pub const CAP_VM_SCRIPT_RUN_IN_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_CONTEXT.ca
 pub const CAP_VM_SCRIPT_RUN_IN_NEW_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_NEW_CONTEXT.cap;
 pub const CAP_VM_SCRIPT_CREATE_CACHED_DATA: CapId = SPEC_VM_SCRIPT_CREATE_CACHED_DATA.cap;
 pub const CAP_VM_SCRIPT_RUN_IN_THIS_CONTEXT: CapId = SPEC_VM_SCRIPT_RUN_IN_THIS_CONTEXT.cap;
-pub const CAP_WASI_CONSTRUCTOR: CapId = SPEC_WASI_CONSTRUCTOR.cap;
-pub const CAP_WASI_IMPORT_OBJECT: CapId = SPEC_WASI_IMPORT_OBJECT.cap;
-pub const CAP_WASI_INITIALIZE: CapId = SPEC_WASI_INITIALIZE.cap;
-pub const CAP_WASI_START: CapId = SPEC_WASI_START.cap;
 pub const CAP_ZLIB_DEFLATE: CapId = SPEC_ZLIB_DEFLATE.cap;
 pub const CAP_ZLIB_DEFLATE_RAW: CapId = SPEC_ZLIB_DEFLATE_RAW.cap;
 pub const CAP_ZLIB_GUNZIP: CapId = SPEC_ZLIB_GUNZIP.cap;
