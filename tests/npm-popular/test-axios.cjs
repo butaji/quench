@@ -21,6 +21,10 @@ assert.strictEqual(
   axios.getUri({ url: 'https://example.test/search', params: search }),
   'https://example.test/search?q=node+compatibility&page=2',
 );
+assert.strictEqual(URL.canParse('https://example.test/search'), true);
+assert.strictEqual(URL.canParse('/search', 'https://example.test'), true);
+assert.strictEqual(URL.canParse('/search'), false);
+assert.throws(() => URL.canParse(), { code: 'ERR_MISSING_ARGS' });
 
 const controller = new AbortController();
 let abortEvent;
