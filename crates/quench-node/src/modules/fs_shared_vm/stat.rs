@@ -2,6 +2,8 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 #[cfg(not(unix))]
 const S_IF_DIRECTORY: f64 = 0o040000 as f64;
@@ -95,6 +97,44 @@ pub(crate) fn stat_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     sync_metadata(context, args, false)
+}
+
+pub(crate) fn access_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as i32;
+    #[cfg(unix)]
+    let result = match CString::new(std::path::Path::new(&path).as_os_str().as_bytes()) {
+        Ok(path_string) => {
+            let status = unsafe { libc::access(path_string.as_ptr(), mode) };
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        }
+        Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(access_error(context, error, &path)?),
+    }
 }
 
 pub(crate) fn lstat_sync(
@@ -371,6 +411,28 @@ fn stat_error(
     let exception = context.error_rooted(&format!("{code}: {description}, stat '{path}'"))?;
     set_string(context, exception, "code", code)?;
     set_string(context, exception, "syscall", "stat")?;
+    set_string(context, exception, "path", path)?;
+    if let Some(errno) = error.raw_os_error() {
+        set_number(context, exception, "errno", -f64::from(errno))?;
+    }
+    Ok(context.throw(exception))
+}
+
+fn access_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: io::Error,
+    path: &str,
+) -> Result<RootedError, RootedError> {
+    let code = error_code(&error);
+    let description = match error.kind() {
+        io::ErrorKind::NotFound => "no such file or directory",
+        io::ErrorKind::PermissionDenied => "permission denied",
+        io::ErrorKind::NotADirectory => "not a directory",
+        _ => "input/output error",
+    };
+    let exception = context.error_rooted(&format!("{code}: {description}, access '{path}'"))?;
+    set_string(context, exception, "code", code)?;
+    set_string(context, exception, "syscall", "access")?;
     set_string(context, exception, "path", path)?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
