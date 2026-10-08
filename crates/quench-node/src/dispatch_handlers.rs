@@ -8776,7 +8776,7 @@ fn cp_run_host_child(
     crate::modules::child_process::clear_worker_markers(&mut process);
     process
         .args(&args)
-        .env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        .env(crate::shared_run::CHILD_RUNNER_ENV, "1");
     if let Value::String(cwd) = execute::get_property(options, "cwd") {
         process.current_dir(cwd);
     }
@@ -8797,7 +8797,7 @@ fn cp_run_host_child(
             }
         }
         process.env_clear().envs(values);
-        process.env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        process.env(crate::shared_run::CHILD_RUNNER_ENV, "1");
     }
     if let Some(eval_index) = args.iter().position(|arg| arg == "-e" || arg == "--eval") {
         let exec_argv = serde_json::to_string(&args[..eval_index]).unwrap_or_else(|_| "[]".into());

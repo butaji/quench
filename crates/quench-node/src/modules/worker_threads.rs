@@ -670,7 +670,7 @@ fn launch(
     }
     command
         .env("QUENCH_WORKER", "1")
-        .env(crate::modules::process::CHILD_RUNNER_ENV, "1");
+        .env(crate::shared_run::CHILD_RUNNER_ENV, "1");
     if !matches!(message, Value::Undefined) {
         command.env(
             "QUENCH_WORKER_MESSAGE",

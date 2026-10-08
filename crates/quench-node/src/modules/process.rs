@@ -1606,9 +1606,6 @@ fn prepend_other_handler(state: &Rc<RefCell<HostState>>, event: &str, handler: &
     }
 }
 
-/// Explicit subprocess invocation selects the real OS output channels.
-pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
-
 /// `process.stdout.write(chunk)` / `process.stderr.write(chunk)` —
 /// writes the chunk to the host output sink and returns true.
 pub fn stream_write(
@@ -1621,7 +1618,7 @@ pub fn stream_write(
     // stdout/stderr boundary there so `exec()`/`spawn()` capture raw chunks
     // instead of the line-oriented parent test sink. In the parent in-process
     // runner, retain the configured sink used by tests and APIs.
-    if std::env::var_os(CHILD_RUNNER_ENV).is_some() {
+    if std::env::var_os(crate::shared_run::CHILD_RUNNER_ENV).is_some() {
         use std::io::Write as _;
         if is_error {
             let mut stream = std::io::stderr();

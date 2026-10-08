@@ -18,6 +18,7 @@ use quench_runtime::value::Value;
 use quench_runtime::vm::{Host, OutputSink};
 
 use crate::registry::{CapId, NodeSpec};
+use crate::shared_run::EntryGoal;
 
 pub fn scheduler_capability(kind: u16) -> Value {
     host_api::capability_function(HostCapabilityRef {
@@ -39,12 +40,6 @@ pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
     shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EntryGoal {
-    Node,
-    CommonJs,
 }
 
 #[derive(Clone)]

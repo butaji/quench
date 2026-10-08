@@ -26,5 +26,6 @@ pub mod registry;
 pub mod shared_run;
 
 pub use envelope::{NodeObject, NodeShared};
-pub use host::{EntryGoal, NodeHost};
+pub use host::NodeHost;
 pub use registry::{NodeSpec, NodeSymbol};
+pub use shared_run::EntryGoal;
