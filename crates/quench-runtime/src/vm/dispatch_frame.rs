@@ -473,7 +473,31 @@ impl<H: Host> Vm<H> {
             return self.frames[frame].env;
         }
         let parent = self.frames[frame].env;
-        let slots = std::mem::take(&mut self.frames[frame].locals);
+        let function = self.frames[frame].function as usize;
+        let selective_capture_slots = self
+            .programs
+            .get(self.frames[frame].program)
+            .and_then(|program| {
+                program
+                    .functions
+                    .get(function)
+                    .and_then(|function| function.selective_capture_slots.clone())
+            });
+        let slots = if let Some(captured) = selective_capture_slots {
+            let mut slots = self.frames[frame].locals.clone();
+            for slot in 0..slots.len() {
+                if u16::try_from(slot)
+                    .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+                {
+                    self.frames[frame].locals[slot] = Value::DELETED;
+                } else {
+                    slots[slot] = Value::DELETED;
+                }
+            }
+            slots
+        } else {
+            std::mem::take(&mut self.frames[frame].locals)
+        };
         let env = self.heap.alloc(Cell::Environment {
             parent,
             program: Some(self.frames[frame].program.raw()),
@@ -739,7 +763,7 @@ impl<H: Host> Vm<H> {
             if wasm {
                 self.frames[frame].locals[usize::from(slot)] = value;
             } else {
-                self.initialize_handler_binding(frame, slot, value)?;
+                self.initialize_handler_binding(program, frame, slot, value)?;
             }
         }
         Ok(handler.target as usize)

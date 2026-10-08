@@ -771,6 +771,8 @@ impl Engine {
                 locals: lowering.locals + lowering.temporary_locals,
                 local_atoms: vec![],
                 environment_atoms: vec![],
+                selective_capture_slots: None,
+                inherited_with_scope: false,
                 lexical_atoms: vec![],
                 global_lexical_atoms: vec![],
                 global_var_atoms: vec![],

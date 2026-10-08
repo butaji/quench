@@ -313,6 +313,7 @@ impl ResidualProgram {
         if self.register_roots.len() > u32::MAX as usize {
             return Err("register root table is too large".into());
         }
+        let selective_capture_scope_unsafe = selective_capture_scope_unsafe(&self.functions);
         for (index, function) in self.functions.iter().enumerate() {
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
@@ -360,6 +361,24 @@ impl ResidualProgram {
                 .is_some_and(|p| p as usize >= self.functions.len())
             {
                 return Err(format!("function {index} has an invalid parent"));
+            }
+            if let Some(captured) = &function.selective_capture_slots
+                && (index == 0
+                    || function.parent.is_none()
+                    || captured.iter().any(|slot| *slot >= function.locals)
+                    || captured.windows(2).any(|pair| pair[0] >= pair[1]))
+            {
+                return Err(format!(
+                    "function {index} has an invalid selective capture layout"
+                ));
+            }
+            if function.selective_capture_slots.is_some()
+                && (selective_capture_scope_unsafe[index]
+                    || !selective_capture_layout_is_eligible(function, index, &self.atoms))
+            {
+                return Err(format!(
+                    "function {index} has an ineligible selective capture layout"
+                ));
             }
             let mut tdz_slots = vec![false; usize::from(function.locals)];
             for instruction in &function.code {
@@ -570,6 +589,45 @@ impl ResidualProgram {
                         "function {index} has an unproven plain-local operation"
                     ));
                 }
+                if let Some(captured) = &function.selective_capture_slots {
+                    let slot = instruction.local_slot();
+                    let environment_op = matches!(
+                        instruction.op(),
+                        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
+                    );
+                    if environment_op
+                        && !u16::try_from(slot)
+                            .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+                    {
+                        return Err(format!(
+                            "function {index} has an environment-local operation for an uncaptured slot"
+                        ));
+                    }
+                    if instruction
+                        .numeric_local_target()
+                        .is_some_and(|target| captured.binary_search(&target).is_ok())
+                        || function.dispatch == super::DispatchClass::Numeric
+                            && ((instruction.op() == super::Op::StoreLocal
+                                && u16::try_from(slot)
+                                    .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
+                                || instruction.op() == super::Op::LoadLocal
+                                    && instruction.numeric_local_store_target().is_some()
+                                    && u16::try_from(slot)
+                                        .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
+                        || function.dispatch == super::DispatchClass::Numeric
+                            && instruction.op() == super::Op::GetIndex
+                            && [instruction.operand_b(), instruction.operand_c()]
+                                .into_iter()
+                                .any(|operand| {
+                                    operand.kind() == Some(OperandKind::Local)
+                                        && captured.binary_search(&operand.payload()).is_ok()
+                                })
+                    {
+                        return Err(format!(
+                            "function {index} has a numeric local fast path for an environment-owned slot"
+                        ));
+                    }
+                }
                 if instruction.op() == super::Op::Binary
                     && instruction.numeric_local_target().is_some_and(|slot| {
                         function.dispatch != super::DispatchClass::Numeric
@@ -641,6 +699,7 @@ impl ResidualProgram {
                 }
             }
         }
+        self.validate_selective_capture_owners()?;
         for site in &self.method_sites {
             if !atom_in_bounds(site.atom, self.atoms.len())
                 || !cache_in_bounds(site.cache, self.cache_sites)
@@ -689,6 +748,146 @@ impl ResidualProgram {
         }
         Ok(())
     }
+
+    fn validate_selective_capture_owners(&self) -> Result<(), String> {
+        for (function_id, function) in self.functions.iter().enumerate() {
+            for instruction in function
+                .code
+                .iter()
+                .filter_map(|packed| instruction_at(function, *packed))
+                .chain(function.wide.iter().copied())
+            {
+                if !matches!(
+                    instruction.op(),
+                    super::Op::LoadCapture | super::Op::StoreCapture
+                ) {
+                    continue;
+                }
+                let mut owner = function_id;
+                let depth = usize::from(instruction.capture_depth()) + 1;
+                for _ in 0..depth {
+                    let Some(parent) = self.functions[owner].parent else {
+                        return Err(format!(
+                            "function {function_id} captures outside its ancestor chain"
+                        ));
+                    };
+                    owner = parent as usize;
+                }
+                if usize::from(instruction.capture_slot())
+                    >= usize::from(self.functions[owner].locals)
+                {
+                    return Err(format!(
+                        "function {function_id} captures an out-of-range slot in function {owner}"
+                    ));
+                }
+                if let Some(captured) = &self.functions[owner].selective_capture_slots
+                    && captured.binary_search(&instruction.capture_slot()).is_err()
+                {
+                    return Err(format!(
+                        "function {function_id} captures a slot omitted by function {owner}'s selective layout"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
+    let mut inherited_dynamic_scope = vec![false; functions.len()];
+    for (id, function) in functions.iter().enumerate() {
+        if let Some(parent) = function.parent.map(|parent| parent as usize) {
+            inherited_dynamic_scope[id] =
+                inherited_dynamic_scope[parent] || !functions[parent].binding_sites.is_empty();
+        }
+    }
+    let mut unsafe_layout = vec![false; functions.len()];
+    for (id, function) in functions.iter().enumerate() {
+        if !has_dynamic_scope_access(function) && !inherited_dynamic_scope[id] {
+            continue;
+        }
+        let mut current = Some(id);
+        while let Some(owner) = current {
+            unsafe_layout[owner] = true;
+            current = functions[owner].parent.map(|parent| parent as usize);
+        }
+    }
+    unsafe_layout
+}
+
+fn has_dynamic_scope_access(function: &super::Function) -> bool {
+    function.inherited_with_scope
+        || !function.binding_sites.is_empty()
+        || function
+            .code
+            .iter()
+            .filter_map(|packed| instruction_at(function, *packed))
+            .chain(function.wide.iter().copied())
+            .any(|instruction| {
+                matches!(
+                    instruction.op(),
+                    super::Op::ResolveName | super::Op::CallDirectEvalArray
+                ) || (instruction.op() == super::Op::Call
+                    && (super::ImmediateLayout::direct_eval(instruction.imm())
+                        || super::ImmediateLayout::parameter_eval(instruction.imm())))
+            })
+}
+
+fn selective_capture_layout_is_eligible(
+    function: &super::Function,
+    index: usize,
+    atoms: &super::AtomTable,
+) -> bool {
+    let has_closure = function
+        .code
+        .iter()
+        .filter_map(|packed| instruction_at(function, *packed))
+        .chain(function.wide.iter().copied())
+        .any(|instruction| instruction.op() == super::Op::MakeClosure);
+    let local_atoms_are_static = function.local_atoms.len() == usize::from(function.locals)
+        && function.local_atoms.iter().all(|atom| {
+            usize::try_from(*atom)
+                .ok()
+                .filter(|atom| *atom < atoms.len())
+                .is_some_and(|atom| !atoms[atom].starts_with('\0'))
+        });
+    let has_unsupported_local_lifecycle = function
+        .code
+        .iter()
+        .filter_map(|packed| instruction_at(function, *packed))
+        .chain(function.wide.iter().copied())
+        .any(|instruction| {
+            matches!(
+                instruction.op(),
+                super::Op::InitializeTdz | super::Op::CloneEnv
+            )
+        });
+    let captured = function
+        .selective_capture_slots
+        .as_deref()
+        .unwrap_or_default();
+    let mapped_parameter_is_captured =
+        function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+    let mapped_arguments_are_captured = !mapped_parameter_is_captured
+        || function
+            .arguments_slot
+            .is_some_and(|slot| captured.binary_search(&slot).is_ok());
+
+    index != 0
+        && function.parent.is_some()
+        && has_closure
+        && !function.is_async
+        && !function.is_generator
+        && !function.is_class_constructor
+        && !function.derived_constructor
+        && !function.class_field_initializer
+        && function.simple_parameters
+        && function.self_binding_slot.is_none()
+        && function.environment_clones.is_empty()
+        && function.lexical_atoms.is_empty()
+        && local_atoms_are_static
+        && !has_unsupported_local_lifecycle
+        && mapped_arguments_are_captured
 }
 
 #[cfg(test)]
@@ -809,6 +1008,8 @@ mod tests {
             locals: 0,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],

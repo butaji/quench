@@ -12,7 +12,7 @@ impl<H: Host> Vm<H> {
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return fallback;
         };
-        let arguments = if self.frames[frame].captured {
+        let arguments = if self.local_slot_is_environment_owned(p, frame, argument_slot) {
             self.heap
                 .environment_slot(self.frames[frame].env, argument_slot)
                 .unwrap_or(Value::UNDEFINED)
@@ -47,7 +47,7 @@ impl<H: Host> Vm<H> {
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
-        let arguments = if self.frames[frame].captured {
+        let arguments = if self.local_slot_is_environment_owned(p, frame, argument_slot) {
             self.heap
                 .environment_slot(self.frames[frame].env, argument_slot)
                 .unwrap_or(Value::UNDEFINED)
@@ -73,6 +73,9 @@ impl<H: Host> Vm<H> {
         let Some(argument_slot) = mapped_arguments_slot(function, slot) else {
             return;
         };
+        if !function.local_slot_uses_environment(argument_slot) {
+            return;
+        }
         let arguments = self
             .heap
             .environment_slot(environment, argument_slot)

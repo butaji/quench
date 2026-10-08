@@ -108,32 +108,6 @@ impl Compiler<'_> {
                 function.emit(Op::Return, result, 0, 0, 0);
             }
         }
-        let captures_locals = function
-            .code
-            .iter()
-            .any(|instruction| instruction.op() == Op::MakeClosure)
-            || function
-                .wide
-                .iter()
-                .any(|instruction| instruction.op() == Op::MakeClosure);
-        if captures_locals {
-            for instruction in &mut function.code {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-            for instruction in &mut function.wide {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-        }
         let name_bindings = function.name_bindings();
         let result = BcFunction {
             parent,
@@ -166,6 +140,8 @@ impl Compiler<'_> {
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
             environment_atoms,
+            selective_capture_slots: None,
+            inherited_with_scope: with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),

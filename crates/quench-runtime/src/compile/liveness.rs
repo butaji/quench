@@ -297,6 +297,8 @@ mod tests {
             locals: 0,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],

@@ -209,6 +209,14 @@ pub(super) fn write_program(
                 out.u16(*slot);
             }
         }
+        match &function.selective_capture_slots {
+            Some(slots) => {
+                out.u8(1);
+                out.u16s(slots);
+            }
+            None => out.u8(0),
+        }
+        out.u8(u8::from(function.inherited_with_scope));
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
             out.u32(*atom);
@@ -486,6 +494,16 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let environment_atoms = input.list(|input| input.u32())?;
         let name_bindings = input.list(read_eval_binding)?;
         let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
+        let selective_capture_slots = match input.u8()? {
+            0 => None,
+            1 => Some(input.u16s()?),
+            _ => return Err("invalid selective capture layout".into()),
+        };
+        let inherited_with_scope = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid inherited with-scope flag".into()),
+        };
         let lexical_atoms = input.list(|input| input.u32())?;
         let global_lexical_atoms = input.list(|input| input.u32())?;
         let global_var_atoms = input.list(|input| input.u32())?;
@@ -590,6 +608,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             locals,
             local_atoms,
             environment_atoms,
+            selective_capture_slots,
+            inherited_with_scope,
             environment_clones,
             name_bindings,
             lexical_atoms,
