@@ -1001,11 +1001,12 @@ pub(crate) fn response_finish(
         set(context, message, "response", response)?;
         set(context, message, "server", server)?;
         set(context, message, "socket", socket)?;
-        let host_state = context.host_mut().state();
         let shared_state = context.host_mut().shared_state();
         let result = {
-            let _scope =
-                crate::modules::async_hooks::shared_vm::enter_context(&host_state, async_id);
+            let _scope = crate::modules::async_hooks::shared_vm::enter_context(
+                &shared_state,
+                async_id,
+            );
             crate::modules::diagnostics_channel::shared_vm::publish_named(
                 context,
                 "http.server.response.finish",
