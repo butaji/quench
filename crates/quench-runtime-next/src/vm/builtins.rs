@@ -1001,33 +1001,30 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(self.object_proto)))
     }
     pub(super) fn lookup_atom(&self, name: &str) -> Option<Atom> {
-        let hash = Self::atom_hash(name);
-        let primary = self.atoms.get(&hash).copied()?;
-        if self.atom_name(primary) == name {
-            return Some(primary);
-        }
-        self.atom_collisions.get(&hash).and_then(|atoms| {
-            atoms
-                .iter()
-                .copied()
-                .find(|atom| self.atom_name(*atom) == name)
+        self.find_atom(Self::atom_hash_str(name), |atom| {
+            self.atom_units_equal_str(atom, name)
         })
     }
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
-        self.intern_js_atom(&JsString::from_str(name))
+        let hash = Self::atom_hash_str(name);
+        if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {
+            return atom;
+        }
+        self.insert_dynamic_atom(JsString::from_str(name), hash)
     }
     pub(super) fn intern_js_atom(&mut self, name: &JsString) -> Atom {
         if let Some(atom) = self.lookup_js_atom(name) {
             return atom;
         }
+        let hash = Self::atom_hash_units(name.units());
+        self.insert_dynamic_atom(name.clone(), hash)
+    }
+    fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
-        self.dynamic_atoms.push(name.clone());
-        self.index_atom(Self::atom_hash_units(name.units()), atom);
+        self.dynamic_atoms.push(name);
+        self.index_atom(hash, atom);
         self.profile.dynamic_atom();
         atom
-    }
-    pub(super) fn atom_hash(name: &str) -> u64 {
-        Self::atom_hash_units(&name.encode_utf16().collect::<Vec<_>>())
     }
     pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {

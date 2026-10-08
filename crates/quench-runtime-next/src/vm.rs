@@ -941,7 +941,7 @@ impl<H: Host> Vm<H> {
         self.string_concats = None;
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
-            self.index_atom(Self::atom_hash(name), id as Atom);
+            self.index_atom(Self::atom_hash_str(name), id as Atom);
         }
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
