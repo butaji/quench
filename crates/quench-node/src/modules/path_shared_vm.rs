@@ -22,6 +22,7 @@ enum Method {
     ToNamespacedPath,
     Parse,
     Format,
+    MatchesGlob,
 }
 
 impl Flavor {
@@ -50,7 +51,7 @@ impl Flavor {
 }
 
 impl Method {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
         Self::Join,
         Self::Resolve,
         Self::Relative,
@@ -62,6 +63,7 @@ impl Method {
         Self::ToNamespacedPath,
         Self::Parse,
         Self::Format,
+        Self::MatchesGlob,
     ];
 
     fn name(self) -> &'static str {
@@ -77,6 +79,7 @@ impl Method {
             Self::ToNamespacedPath => "toNamespacedPath",
             Self::Parse => "parse",
             Self::Format => "format",
+            Self::MatchesGlob => "matchesGlob",
         }
     }
 
@@ -93,6 +96,7 @@ impl Method {
             Self::ToNamespacedPath => "pathToNamespacedPath",
             Self::Parse => "pathParse",
             Self::Format => "pathFormat",
+            Self::MatchesGlob => "pathMatchesGlob",
         }
     }
 
@@ -102,6 +106,7 @@ impl Method {
             Self::IsAbsolute => available.min(1),
             Self::ToNamespacedPath => available.min(1),
             Self::Parse | Self::Format => available.min(1),
+            Self::MatchesGlob => available.min(2),
             Self::Relative | Self::Basename => available.min(2),
             Self::Dirname | Self::Extname | Self::Normalize => available.min(1),
         }
@@ -117,6 +122,7 @@ impl Method {
             Self::ToNamespacedPath => available.min(1),
             Self::Parse => available.min(1),
             Self::Format => 0,
+            Self::MatchesGlob => available.min(2),
             Self::Join | Self::Resolve | Self::Relative => available,
         }
     }
@@ -261,6 +267,14 @@ pub(crate) fn format_operation(
     apply(context, function, args, Method::Format)
 }
 
+pub(crate) fn matches_glob_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    function: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    apply(context, function, args, Method::MatchesGlob)
+}
+
 fn apply(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -315,6 +329,22 @@ fn apply(
     }
     if matches!(method, Method::Format) {
         return format_operation_result(context, args.first().copied(), flavor);
+    }
+    if matches!(method, Method::MatchesGlob) {
+        let windows = matches!(flavor, Flavor::Win32);
+        let mut values = Vec::with_capacity(2);
+        for (index, argument) in args.iter().take(2).enumerate() {
+            let Some(value) = context.string_text(*argument)? else {
+                let name = if index == 0 { "path" } else { "pattern" };
+                return Err(path_type_error(context, name, "an instance of Object")?);
+            };
+            values.push(value);
+        }
+        if values.len() < 2 {
+            let name = if values.is_empty() { "path" } else { "pattern" };
+            return Err(path_type_error(context, name, "undefined")?);
+        }
+        return Ok(context.boolean(path_matches_glob(&values[0], &values[1], windows)));
     }
     let arguments = &args[..method.argument_count(args.len())];
     let path_arguments = &arguments[..method.path_count(arguments.len())];
@@ -418,12 +448,64 @@ fn apply(
         }
         (
             _,
-            Method::IsAbsolute | Method::ToNamespacedPath | Method::Parse | Method::Format,
+            Method::IsAbsolute | Method::ToNamespacedPath | Method::Parse | Method::Format | Method::MatchesGlob,
         ) => {
             unreachable!("handled before string path dispatch")
         }
     };
     Ok(context.string_rooted(&result))
+}
+
+fn path_matches_glob(path: &str, pattern: &str, windows: bool) -> bool {
+    let (path, pattern) = if windows {
+        (path.replace('\\', "/"), pattern.replace('\\', "/"))
+    } else {
+        (path.to_owned(), pattern.to_owned())
+    };
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut regex = String::from("^");
+    let mut index = 0;
+    while index < chars.len() {
+        match chars[index] {
+            '*' => {
+                if chars.get(index + 1) == Some(&'*') {
+                    regex.push_str(".*");
+                    index += 1;
+                } else {
+                    regex.push_str("[^/]*");
+                }
+            }
+            '?' => regex.push_str("[^/]"),
+            '[' => {
+                let end = chars[index + 1..].iter().position(|ch| *ch == ']');
+                if let Some(end) = end {
+                    let end = index + 1 + end;
+                    regex.push('[');
+                    let mut start = index + 1;
+                    if chars.get(start) == Some(&'!') {
+                        regex.push('^');
+                        start += 1;
+                    } else if chars.get(start) == Some(&'^') {
+                        regex.push('\\');
+                    }
+                    for ch in &chars[start..end] {
+                        if *ch == '\\' { regex.push_str("\\\\"); } else { regex.push(*ch); }
+                    }
+                    regex.push(']');
+                    index = end;
+                } else {
+                    regex.push_str("\\[");
+                }
+            }
+            ch => {
+                if ".+()|{}^$\\".contains(ch) { regex.push('\\'); }
+                regex.push(ch);
+            }
+        }
+        index += 1;
+    }
+    regex.push('$');
+    regex::Regex::new(&regex).is_ok_and(|matcher| matcher.is_match(&path))
 }
 
 fn parse_flavor(name: String) -> Option<Flavor> {
