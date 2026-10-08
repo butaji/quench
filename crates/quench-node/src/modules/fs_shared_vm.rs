@@ -10,9 +10,10 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeFileSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeFileSync, appendFileSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
+  appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
   lstat: (...args) => Promise.resolve().then(() => lstat(...args)),
   readdir: (...args) => Promise.resolve().then(() => readdir(...args)),
@@ -376,8 +377,40 @@ const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(writeFil
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = path.pathname;
   queueMicrotask(() => {
+    if (options?.signal?.aborted) {
+      const error = new Error('The operation was aborted');
+      error.name = "AbortError";
+      error.code = "ABORT_ERR";
+      Reflect.apply(callback, undefined, [error]);
+      return;
+    }
     try {
       writeFileSync(path, data, options);
+      Reflect.apply(callback, undefined, [null]);
+    } catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#);
+
+const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(appendFileSync) => function appendFile(path, data, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== "function") {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (typeof data !== "string" && !ArrayBuffer.isView(data)) {
+    const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = path.pathname;
+  queueMicrotask(() => {
+    try {
+      appendFileSync(path, data, options);
       Reflect.apply(callback, undefined, [null]);
     } catch (error) { Reflect.apply(callback, undefined, [error]); }
   });
@@ -738,6 +771,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let write_file = context.call_rooted(write_file_factory, undefined, &[write_file_sync])?;
     set(context, module, "writeFile", write_file)?;
+    let append_file_sync = get(context, module, "appendFileSync")?;
+    let append_file_factory = context.evaluate_script_rooted(
+        ASYNC_APPEND_FILE_FACTORY,
+        "node:fs/shared-async-append-file.js",
+    )?;
+    let append_file = context.call_rooted(append_file_factory, undefined, &[append_file_sync])?;
+    set(context, module, "appendFile", append_file)?;
     let promises = promises_module(
         context,
         constants,
@@ -745,6 +785,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         close_sync,
         read_sync,
         write_file_sync,
+        append_file_sync,
     )?;
     set(context, module, "promises", promises)?;
 
@@ -781,6 +822,7 @@ pub(crate) fn promises_module(
     close_sync: RootId,
     read_sync: RootId,
     write_file_sync: RootId,
+    append_file_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -804,6 +846,7 @@ pub(crate) fn promises_module(
             close_sync,
             read_sync,
             write_file_sync,
+            append_file_sync,
         ],
     )?;
     set(context, promises, "constants", constants)?;
@@ -857,7 +900,11 @@ pub(crate) fn read_file_sync(
         .transpose()?
         .unwrap_or_else(|| "undefined".to_owned());
     let path = resolve_shared_path(context, path);
-    let (encoding, flag) = if let Some(options) = args.get(1).copied() {
+    let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
+        context
+            .rooted_value(*options)
+            .is_none_or(|value| !value.is_undefined() && !value.is_null())
+    }) {
         if let Some(encoding) = context.string_text(options)? {
             (Some(encoding), None)
         } else {
