@@ -847,7 +847,7 @@ impl<H: Host> Vm<H> {
                     Ok(vm.heap.alloc(Cell::Iterator {
                         object: Self::empty_object(vm.regexp_string_iterator_proto),
                         source: matcher,
-                        next_method: None,
+                        next_method: Value::DELETED,
                         helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
                             input,
                             global: flags.contains('g'),
@@ -1002,9 +1002,9 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { source, .. })) => {
-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
-            }
+            (Native::RegExpSource, Some(Cell::RegExp { source, .. })) => Ok(self
+                .heap
+                .alloc(Cell::String(escape_regexp_source(source.as_ref())))),
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -1176,7 +1176,7 @@ impl<H: Host> Vm<H> {
             let input = if let Some(Cell::RegExp { source, flags, .. }) = vm.heap.get(pattern_value)
             {
                 RegExpConstructorInput::Internal {
-                    source: source.clone(),
+                    source: source.as_ref().clone(),
                     original_flags: flags_omitted.then(|| flags.clone()),
                 }
             } else {
@@ -1287,7 +1287,7 @@ impl<H: Host> Vm<H> {
         let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
         let object = self.heap.alloc(Cell::RegExp {
             object: Box::new(Self::empty_object(prototype)),
-            source,
+            source: Box::new(source),
             flags,
             matcher,
             legacy_constructor,
@@ -1342,7 +1342,7 @@ impl<H: Host> Vm<H> {
                             "flags cannot be supplied when pattern is a RegExp".into(),
                         ));
                     }
-                    (source.clone(), original_flags.clone())
+                    (source.as_ref().clone(), original_flags.clone())
                 } else {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
@@ -1364,7 +1364,7 @@ impl<H: Host> Vm<H> {
                 else {
                     unreachable!("RegExp receiver slot was validated before compilation")
                 };
-                *current_source = source;
+                *current_source = Box::new(source);
                 *current_flags = flags;
                 *current_matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");

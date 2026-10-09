@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
         self.validate_duration_fields(p, &fields)?;
         Ok(self.heap.alloc(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
-            fields,
+            fields: Box::new(fields),
         }))
     }
 
@@ -340,7 +340,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<[f64; 10], JsError> {
         match self.heap.get(value) {
-            Some(Cell::TemporalDuration { fields, .. }) => Ok(*fields),
+            Some(Cell::TemporalDuration { fields, .. }) => Ok(**fields),
             _ => Err(self.type_error(
                 p,
                 "Temporal.Duration method called on incompatible receiver".into(),
@@ -545,7 +545,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<[f64; 10], JsError> {
         if let Some(Cell::TemporalDuration { fields, .. }) = self.heap.get(value) {
-            return Ok(*fields);
+            return Ok(**fields);
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
             return quench_temporal::parse_duration(text.host_string())
@@ -588,7 +588,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let value = self.heap.alloc(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
-            fields,
+            fields: Box::new(fields),
         });
         if let Some(Cell::TemporalDuration { object, .. }) = self.heap.get_mut(value) {
             object.proto = prototype;
@@ -638,7 +638,7 @@ impl<H: Host> Vm<H> {
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
             epoch_nanoseconds: relative.epoch_nanoseconds,
-            time_zone: relative.time_zone.clone(),
+            time_zone: Box::new(relative.time_zone.clone()),
             calendar: relative.calendar.clone(),
         });
         let mut fields = [Value::number(0.0); 10];
@@ -683,7 +683,7 @@ impl<H: Host> Vm<H> {
             let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
                 epoch_nanoseconds: zoned.epoch_nanoseconds,
-                time_zone: zoned.time_zone.clone(),
+                time_zone: Box::new(zoned.time_zone.clone()),
                 calendar: zoned.calendar.clone(),
             });
             let result = self.temporal_zoned_date_time_arithmetic(
@@ -898,7 +898,7 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
                     epoch_nanoseconds: *epoch_nanoseconds,
-                    time_zone: time_zone.clone(),
+                    time_zone: time_zone.as_ref().clone(),
                     calendar: calendar.clone(),
                 }),
                 _ => None,
@@ -1387,7 +1387,7 @@ impl<H: Host> Vm<H> {
             let start = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
                 epoch_nanoseconds: zoned.epoch_nanoseconds,
-                time_zone: zoned.time_zone.clone(),
+                time_zone: Box::new(zoned.time_zone.clone()),
                 calendar: zoned.calendar.clone(),
             });
             let date_endpoint = self.temporal_zoned_date_time_arithmetic(

@@ -6,13 +6,11 @@ impl Heap {
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
             Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(_),
-                ..
-            } => Some(environment),
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Shared(owner),
-                ..
-            } => Some(*owner),
+                dynamic_bindings, ..
+            } => match dynamic_bindings.as_ref() {
+                EnvironmentBindings::Owned(_) => Some(environment),
+                EnvironmentBindings::Shared(owner) => Some(*owner),
+            },
             _ => None,
         }
     }
@@ -21,9 +19,11 @@ impl Heap {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
             Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+                dynamic_bindings, ..
+            } => match dynamic_bindings.as_ref() {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
     }
@@ -35,9 +35,11 @@ impl Heap {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
             Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+                dynamic_bindings, ..
+            } => match dynamic_bindings.as_mut() {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
     }

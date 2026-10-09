@@ -1,5 +1,7 @@
 use crate::value::Value;
 use crate::value_vec::ValueArena;
+#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
+use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 mod access;
 mod cell;
@@ -632,7 +634,9 @@ impl Heap {
             } => {
                 object(value);
                 work.push(*source);
-                work.extend(*next_method);
+                if !next_method.is_deleted() {
+                    work.push(*next_method);
+                }
                 if let Some(helper) = helper {
                     match helper.as_ref() {
                         IteratorHelper::Map { callback, .. }
@@ -717,7 +721,7 @@ impl Heap {
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                match dynamic_bindings {
+                match dynamic_bindings.as_ref() {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
                     }
@@ -816,12 +820,10 @@ impl Heap {
                 Cell::Object(_)
                 | Cell::ShadowRealm { .. }
                 | Cell::Iterator { .. }
-                | Cell::ArrayFromAsyncState(_)
                 | Cell::Proxy { .. }
                 | Cell::Date { .. }
                 | Cell::PromiseResolvingState { .. }
                 | Cell::BindingReference { .. }
-                | Cell::TemporalDuration { .. }
                 | Cell::TemporalInstant { .. }
                 | Cell::TypedArray { .. }
                 | Cell::DataView { .. }
@@ -833,6 +835,8 @@ impl Heap {
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
+                Cell::ArrayFromAsyncState(_) => size_of::<ArrayFromAsyncState>(),
+                Cell::TemporalDuration { .. } => size_of::<[f64; 10]>(),
                 Cell::WasmHostFunction { signature, .. } => {
                     size_of::<crate::WasmSignature>()
                         + (signature.params.capacity() + signature.results.capacity())
@@ -851,14 +855,18 @@ impl Heap {
                     time_zone,
                     calendar,
                     ..
-                } => time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+                } => size_of::<String>() + time_zone.capacity() + calendar.capacity(),
+                Cell::RegExp { source, flags, .. } => {
+                    size_of::<JsString>() + source.capacity() + flags.capacity()
+                }
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-                Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
+                Cell::WeakMap { entries, .. } => {
+                    size_of::<WeakMapEntries>() + entries.allocated_bytes()
+                }
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
                 Cell::Environment {
@@ -866,7 +874,8 @@ impl Heap {
                     with_objects,
                     ..
                 } => {
-                    slots.len() * size_of::<EnvironmentSlot>()
+                    size_of::<EnvironmentBindings>()
+                        + slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),

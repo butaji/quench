@@ -2631,7 +2631,7 @@ impl<H: Host> Vm<H> {
             binding_site_pc: None,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: Vec::new().into(),
+            dynamic_bindings: Box::new(Vec::new().into()),
             with_objects: Box::default(),
         });
         self.programs

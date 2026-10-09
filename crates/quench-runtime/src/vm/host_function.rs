@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
                     binding_site_pc: None,
                     function: HOST_ENVIRONMENT_FUNCTION,
                     slots: slots.into_boxed_slice().into(),
-                    dynamic_bindings: Vec::new().into(),
+                    dynamic_bindings: Box::new(Vec::new().into()),
                     with_objects: Box::default(),
                 })
             }

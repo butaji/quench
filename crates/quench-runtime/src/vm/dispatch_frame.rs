@@ -559,7 +559,9 @@ impl<H: Host> Vm<H> {
             binding_site_pc: None,
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+            dynamic_bindings: Box::new(
+                std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+            ),
             with_objects: Box::default(),
         });
         self.frames[frame].env = env;
@@ -603,7 +605,7 @@ impl<H: Host> Vm<H> {
             binding_site_pc: *binding_site_pc,
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+            dynamic_bindings: Box::new(crate::heap::EnvironmentBindings::Shared(owner)),
             with_objects: with_objects.clone(),
         };
         let env = self.heap.alloc(environment);

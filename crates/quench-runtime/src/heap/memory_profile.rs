@@ -1,5 +1,6 @@
-use super::{Cell, CellKind, Heap};
+use super::{ArrayFromAsyncState, Cell, CellKind, EnvironmentBindings, Heap, WeakMapEntries};
 use crate::value::Value;
+use crate::vm::wtf16::JsString;
 use std::mem::size_of;
 
 const KINDS: usize = CellKind::NAMES.len();
@@ -197,7 +198,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::Function { .. }
             | Cell::ShadowRealm { .. }
             | Cell::PromiseResolvingState { .. }
-            | Cell::TemporalDuration { .. }
             | Cell::TemporalInstant { .. }
             | Cell::TypedArray { .. }
             | Cell::DataView { .. }
@@ -205,7 +205,6 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::FinalizationRegistry { .. }
             | Cell::Iterator { .. }
             | Cell::Proxy { .. }
-            | Cell::ArrayFromAsyncState(_)
             | Cell::WasmBits64(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
@@ -219,7 +218,9 @@ fn cell_bytes(cell: &Cell) -> usize {
                 time_zone,
                 calendar,
                 ..
-            } => time_zone.capacity() + calendar.capacity(),
+            } => size_of::<String>() + time_zone.capacity() + calendar.capacity(),
+            Cell::TemporalDuration { .. } => size_of::<[f64; 10]>(),
+            Cell::ArrayFromAsyncState(_) => size_of::<ArrayFromAsyncState>(),
             Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
@@ -234,20 +235,26 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
+            Cell::WeakMap { entries, .. } => {
+                size_of::<WeakMapEntries>() + entries.allocated_bytes()
+            }
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::Environment {
                 slots,
+                dynamic_bindings: _,
                 with_objects,
                 ..
             } => {
-                slots.len() * size_of::<super::EnvironmentSlot>()
+                size_of::<EnvironmentBindings>()
+                    + slots.len() * size_of::<super::EnvironmentSlot>()
                     + with_objects.len() * size_of::<Value>()
             }
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
             Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
             Cell::Date { .. } => 0,
-            Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+            Cell::RegExp { source, flags, .. } => {
+                size_of::<JsString>() + source.capacity() + flags.capacity()
+            }
         }
 }
