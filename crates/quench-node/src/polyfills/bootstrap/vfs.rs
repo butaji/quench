@@ -1339,6 +1339,21 @@ class __QuenchVirtualFileSystem {
   }
   createWriteStream(path, options = {}) {
     const flags = options.flags || "w";
+    const suppliedFd = typeof options.fd === "number";
+    const autoClose = options.autoClose !== false;
+    let closed = false;
+    const closeDescriptor = () => {
+      if (closed || stream.fd === null) return;
+      const fd = stream.fd;
+      if (autoClose || explicitClose) this.closeSync(fd);
+      if (autoClose || explicitClose) {
+        stream.fd = null;
+        closed = true;
+        stream.closed = true;
+        stream.emit("close");
+      }
+    };
+    let explicitClose = false;
     const stream = new globalThis.__nodeStream.Writable({
       write: (chunk, encoding, callback) => {
         try {
@@ -1346,15 +1361,11 @@ class __QuenchVirtualFileSystem {
             typeof chunk === "string" ? chunk : __quenchVfsBuffer.from(chunk);
           if (stream.fd === null) {
             stream.fd = this.openSync(path, flags);
-            if (options.start !== undefined && !flags.includes("a")) {
-              this.__fdPositions.set(stream.fd, Number(options.start));
-            }
           }
-          if (flags.includes("a")) {
-            this.writeSync(stream.fd, data, 0, data.length, null);
-          } else {
-            this.writeSync(stream.fd, data, 0, data.length, null);
+          if (stream.bytesWritten === 0 && options.start !== undefined && !flags.includes("a")) {
+            this.__fdPositions.set(stream.fd, Number(options.start));
           }
+          this.writeSync(stream.fd, data, 0, data.length, null);
           stream.bytesWritten += data.length;
           stream.pending = false;
           callback();
@@ -1367,25 +1378,39 @@ class __QuenchVirtualFileSystem {
     stream.fd = typeof options.fd === "number" ? options.fd : null;
     stream.pending = true;
     stream.bytesWritten = 0;
-    stream.autoClose = options.autoClose !== false;
+    stream.closed = false;
+    stream.autoClose = autoClose;
+    stream.close = (callback) => {
+      explicitClose = true;
+      const finishClose = () => {
+        try {
+          closeDescriptor();
+          if (typeof callback === "function") queueMicrotask(() => callback());
+        } catch (error) {
+          if (typeof callback === "function") queueMicrotask(() => callback(error));
+          else stream.emit("error", error);
+        }
+      };
+      if (stream.writableFinished) finishClose();
+      else stream.once("finish", finishClose);
+      if (!stream.writableEnded) stream.end();
+      return stream;
+    };
     stream.once("finish", () => {
-      if (!stream.autoClose || stream.fd === null || options.fd !== undefined) {
-        return;
-      }
-      try {
-        this.closeSync(stream.fd);
-      } catch (_) {}
-      stream.fd = null;
-      stream.emit("close");
+      if (autoClose) closeDescriptor();
     });
     setTimeout(() => {
       try {
-        if (stream.fd === null) stream.fd = this.openSync(path, flags);
-        if (options.start !== undefined && !flags.includes("a")) {
+        if (stream.fd === null) {
+          stream.fd = this.openSync(path, flags);
+          if (options.start !== undefined && !flags.includes("a")) {
+            this.__fdPositions.set(stream.fd, Number(options.start));
+          }
+        } else if (options.start !== undefined && !flags.includes("a")) {
           this.__fdPositions.set(stream.fd, Number(options.start));
         }
         stream.pending = false;
-        stream.emit("open", stream.fd);
+        if (!suppliedFd) stream.emit("open", stream.fd);
         stream.emit("ready");
       } catch (error) {
         stream.emit("error", error);
