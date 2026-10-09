@@ -202,6 +202,29 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
 }
 
 #[test]
+fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
+    let mut heap = Heap::new();
+    let array = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    let slot = array.heap_index().unwrap();
+    let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+    heap.sparse_set(array, index, Value::number(7.0));
+    assert_eq!(heap.sparse_get(array, index), Some(Value::number(7.0)));
+
+    heap.collect([]);
+
+    let reused = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    assert_eq!(reused.heap_index(), Some(slot));
+    assert_eq!(heap.sparse_get(reused, index), None);
+    assert_eq!(heap.sparse_length(reused), None);
+}
+
+#[test]
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
