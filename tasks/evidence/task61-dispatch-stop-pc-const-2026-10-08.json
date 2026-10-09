@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Const-specialize the interpreter loop on stop_pc presence",
+  "decision": "reject: all 11 paired production runs increased retired instructions; __TEXT also grew 32 KiB",
+  "hypothesis": "Ordinary frames always pass stop_pc=None, so a const-generic loop could remove its per-op boundary comparison while generator parameter initialization kept a checked specialization.",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)"
+  },
+  "source": {
+    "base_revision": "6ff0786f6",
+    "candidate_owner_file": "crates/quench-runtime/src/vm/dispatch_frame.rs",
+    "candidate_owner_file_sha256": "f4b1bc5f470f9273a83cafc17eacb22c936ec88bf55fb33d34d9e2a9a7b45de0",
+    "candidate_binary_sha256": "ffd9f5fb2b41180ce905fb4e8b39dfaef5e86e3075692d90fdd6c102c29b5be8",
+    "baseline_binary_sha256": "3c9ca59daca63d0d79ea963859cc826a5143a55f636d0216372bc80c33cde869",
+    "profile": "production"
+  },
+  "measurement": {
+    "fixture": "tasks/evidence/task61-dispatch-binding-site-loop-10m-2026-10-08.cjs",
+    "fixture_sha256": "f6ee2b318578823e134223942530b90fc1506f7435eec7824513ad88f6a9ac2f",
+    "pairs": 11,
+    "order": "alternating candidate-first on odd pairs",
+    "raw_csv": {
+      "path": "tasks/evidence/task61-dispatch-stop-pc-const-pairs-2026-10-08.csv",
+      "sha256": "93c0e433890f8557b9bb2e75672fd08fa151a6df71ff6df354b0f83e5fe85bf4"
+    },
+    "instructions": {
+      "baseline_median": 9973037250,
+      "candidate_median": 10742892197,
+      "paired_median_delta_percent": 7.718692002713262,
+      "paired_bootstrap_95_percentile_interval": [
+        7.71579381147338,
+        7.7236093393903635
+      ],
+      "bootstrap_replicates": 100000,
+      "seed": 610823,
+      "candidate_higher_pairs": 11,
+      "paired_delta_range_percent": [
+        7.595836122347295,
+        7.725288231753042
+      ]
+    },
+    "elapsed_seconds": {
+      "baseline_median": 0.27,
+      "candidate_median": 0.31,
+      "paired_median_delta_percent": 14.814814814814806,
+      "note": "Wall time is noisy at this loop duration; instruction counts drive the decision."
+    },
+    "maximum_rss": {
+      "baseline_median_bytes": 19808256,
+      "candidate_median_bytes": 19775488,
+      "paired_median_delta_bytes": -32768,
+      "paired_bootstrap_95_percentile_interval_bytes": [
+        -212992,
+        114688
+      ]
+    }
+  },
+  "binary_size": {
+    "baseline_text_bytes": 10354688,
+    "candidate_text_bytes": 10387456,
+    "text_delta_bytes": 32768,
+    "baseline_text_section_bytes": 7105744,
+    "candidate_text_section_bytes": 7139344,
+    "text_section_delta_bytes": 33600
+  },
+  "interpretation": "The measured candidate regressed despite removal of a condition in the ordinary specialization. It duplicates the large interpreter loop and increases text size; code growth is a plausible contributor, not proven causation. Keep the shared loop and try a representation/control-flow change that does not monomorphize its full body.",
+  "correctness": "Not run: rejected on the primary performance metric before correctness qualification; no code was retained."
+}
