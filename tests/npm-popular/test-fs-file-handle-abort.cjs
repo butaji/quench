@@ -11,6 +11,7 @@ const path = require('node:path');
     await assert.rejects(handle.writeFile(Buffer.alloc(6 * 1024 * 1024), { signal: controller.signal }), { name: 'AbortError' });
   } finally {
     await handle.close();
+    await handle.close();
     fs.rmSync(file, { force: true });
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
