@@ -23,12 +23,26 @@ pub(crate) fn poll(
     };
     if !pending_writes.is_empty() || !pending_ends.is_empty() {
         let mut host = shared_state.borrow_mut();
+        let mut deferred_writes = Vec::new();
+        let mut deferred_ends = Vec::new();
         for (socket, bytes) in pending_writes {
-            net_shared_vm::write(&mut host.tcp, socket, &bytes)?;
+            if net_shared_vm::is_connected(&host.tcp, socket) {
+                net_shared_vm::write(&mut host.tcp, socket, &bytes)?;
+            } else if host.net_sockets.contains_key(&socket) {
+                deferred_writes.push((socket, bytes));
+            }
         }
         for socket in pending_ends {
-            net_shared_vm::end(&mut host.tcp, socket)?;
+            if net_shared_vm::is_connected(&host.tcp, socket) {
+                net_shared_vm::end(&mut host.tcp, socket)?;
+            } else if host.net_sockets.contains_key(&socket) {
+                deferred_ends.push(socket);
+            }
         }
+        drop(host);
+        let host = runtime.host_mut();
+        host.net_pending_writes.extend(deferred_writes);
+        host.net_pending_ends.extend(deferred_ends);
     }
     let destroyed = {
         let mut host = shared_state.borrow_mut();
@@ -50,7 +64,6 @@ pub(crate) fn poll(
             .collect::<Vec<_>>()
     };
     for (socket, server) in destroyed {
-        queue_net_event(runtime, shared_state, socket, "close", &[])?;
         runtime.release_root(socket);
         if let Some(server) = server {
             queue_net_event(runtime, shared_state, server, "close", &[])?;
@@ -165,13 +178,15 @@ pub(crate) fn poll(
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
                 } else {
-                    let net_socket = shared_state.borrow_mut().net_sockets.remove(&socket);
-                    if let Some(net_socket) = net_socket {
+                    let net_root = shared_state
+                        .borrow()
+                        .net_sockets
+                        .get(&socket)
+                        .map(|net_socket| net_socket.root);
+                    if let Some(net_root) = net_root {
                         let error = net_socket_error(runtime, &message)?;
-                        queue_net_event(runtime, shared_state, net_socket.root, "error", &[error])?;
-                        queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
+                        queue_net_method(runtime, shared_state, net_root, "destroy", &[error])?;
                         runtime.release_root(error);
-                        runtime.release_root(net_socket.root);
                     }
                 }
                 progressed = true;
@@ -181,9 +196,8 @@ pub(crate) fn poll(
                     (socket.root, socket.encoding.clone().unwrap_or_default())
                 });
                 if let Some((root, _encoding)) = net_socket {
-                    let text = String::from_utf8_lossy(&bytes);
-                    let chunk = runtime.string_rooted(&text);
-                    queue_net_event(runtime, shared_state, root, "data", &[chunk])?;
+                    let chunk = buffer_from_bytes(runtime, &bytes)?;
+                    queue_net_method(runtime, shared_state, root, "push", &[chunk])?;
                     runtime.release_root(chunk);
                     progressed = true;
                     continue;
@@ -465,7 +479,9 @@ pub(crate) fn poll(
                         .map(|socket| socket.root)
                 };
                 if let Some(root) = net_root {
-                    queue_net_event(runtime, shared_state, root, "end", &[])?;
+                    let eof = runtime.root(Value::NULL);
+                    queue_net_method(runtime, shared_state, root, "push", &[eof])?;
+                    runtime.release_root(eof);
                     runtime.host_mut().net_pending_ends.push(socket);
                     progressed = true;
                     continue;
@@ -552,44 +568,26 @@ pub(crate) fn poll(
                 }
             }
             net_shared_vm::TransportEvent::Closed { socket } => {
-                let (net_socket, closed_server) = {
-                    let mut host = shared_state.borrow_mut();
-                    let net_socket = host.net_sockets.remove(&socket);
-                    let closed_server = net_socket
-                        .as_ref()
-                        .and_then(|net_socket| net_socket.parent_server)
-                        .and_then(|server_id| {
-                            let should_close = host.net_servers.get_mut(&server_id).is_some_and(
-                                |server| {
-                                    server.connections.remove(&socket);
-                                    server.closing && server.connections.is_empty()
-                                },
-                            );
-                            should_close
-                                .then(|| host.net_servers.remove(&server_id).map(|server| server.root))
-                                .flatten()
-                        });
-                    (net_socket, closed_server)
-                };
-                if let Some(net_socket) = net_socket {
-                    queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
-                    runtime.release_root(net_socket.root);
-                    progressed = true;
-                }
-                if let Some(server_root) = closed_server {
-                    queue_net_event(runtime, shared_state, server_root, "close", &[])?;
-                    runtime.release_root(server_root);
+                let net_root = shared_state
+                    .borrow()
+                    .net_sockets
+                    .get(&socket)
+                    .map(|socket| socket.root);
+                if let Some(net_root) = net_root {
+                    queue_net_method(runtime, shared_state, net_root, "destroy", &[])?;
                     progressed = true;
                 }
             }
             net_shared_vm::TransportEvent::Error { socket, message } => {
-                let net_socket = shared_state.borrow_mut().net_sockets.remove(&socket);
-                if let Some(net_socket) = net_socket {
-                    let error = runtime.string_rooted(&message);
-                    queue_net_event(runtime, shared_state, net_socket.root, "error", &[error])?;
-                    queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
+                let net_root = shared_state
+                    .borrow()
+                    .net_sockets
+                    .get(&socket)
+                    .map(|socket| socket.root);
+                if let Some(net_root) = net_root {
+                    let error = net_socket_error(runtime, &message)?;
+                    queue_net_method(runtime, shared_state, net_root, "destroy", &[error])?;
                     runtime.release_root(error);
-                    runtime.release_root(net_socket.root);
                     progressed = true;
                     continue;
                 }
@@ -1085,7 +1083,23 @@ fn queue_net_event(
     name: &str,
     args: &[RootId],
 ) -> Result<(), String> {
-    let key = runtime.string_rooted("emit");
+    let event = runtime.string_rooted(name);
+    let mut event_args = Vec::with_capacity(args.len() + 1);
+    event_args.push(event);
+    event_args.extend_from_slice(args);
+    let result = queue_net_method(runtime, shared_state, receiver, "emit", &event_args);
+    runtime.release_root(event);
+    result
+}
+
+fn queue_net_method(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    receiver: RootId,
+    method: &str,
+    args: &[RootId],
+) -> Result<(), String> {
+    let key = runtime.string_rooted(method);
     let callback = runtime
         .get_property_rooted(receiver, key)
         .map_err(|error| error.to_string())?;
@@ -1100,8 +1114,7 @@ fn queue_net_event(
             .rooted_value(receiver)
             .ok_or("net socket is unavailable")?,
     );
-    let event = runtime.string_rooted(name);
-    let mut retained_args = vec![event];
+    let mut retained_args = Vec::with_capacity(args.len());
     for arg in args {
         retained_args.push(runtime.root(
             runtime
@@ -1118,6 +1131,31 @@ fn queue_net_event(
             args: retained_args,
         });
     Ok(())
+}
+
+fn buffer_from_bytes(runtime: &mut Runtime<NodeHost>, bytes: &[u8]) -> Result<RootId, String> {
+    let global = runtime.global_root().map_err(|error| error.to_string())?;
+    let buffer_key = runtime.string_rooted("Buffer");
+    let buffer = runtime
+        .get_property_rooted(global, buffer_key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(buffer_key);
+    runtime.release_root(global);
+    let from_key = runtime.string_rooted("from");
+    let from = runtime
+        .get_property_rooted(buffer, from_key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(from_key);
+    let text = runtime.string_rooted(&latin1_text(bytes));
+    let encoding = runtime.string_rooted("latin1");
+    let chunk = runtime
+        .call_rooted(from, buffer, &[text, encoding])
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(encoding);
+    runtime.release_root(text);
+    runtime.release_root(from);
+    runtime.release_root(buffer);
+    Ok(chunk)
 }
 
 fn emit(
