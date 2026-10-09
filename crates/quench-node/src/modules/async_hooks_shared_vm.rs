@@ -30,9 +30,41 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
         throw error;
       }
       initializeResource.call(this, type, options);
+      this["\0quench:async_hooks:type"] = type;
+      globalThis["\0quench:async_hooks:emit_init"]?.(
+        this, type, this["\0quench:async_hooks:id"]);
     }
     runInAsyncScope(fn, thisArg, ...args) {
-      return runInAsyncScope.call(this, fn, thisArg, ...args);
+      const previous = currentAsyncId;
+      currentAsyncId = this["\0quench:async_hooks:id"];
+      try { return runInAsyncScope.call(this, fn, thisArg, ...args); }
+      finally { currentAsyncId = previous; }
+    }
+    asyncId() { return this["\0quench:async_hooks:id"]; }
+    triggerAsyncId() { return this["\0quench:async_hooks:trigger"]; }
+    asyncResourceType() { return this["\0quench:async_hooks:type"]; }
+    bind(fn, thisArg) {
+      if (typeof fn !== "function") {
+        const error = new TypeError("The \"fn\" argument must be of type function.");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const resource = this;
+      const hasThisArg = arguments.length > 1;
+      const bound = function(...args) {
+        return resource.runInAsyncScope(fn, hasThisArg ? thisArg : this, ...args);
+      };
+      Object.defineProperty(bound, "length", { value: fn.length });
+      return bound;
+    }
+    static bind(fn, type = "bound-anonymous-fn") {
+      if (typeof fn !== "function") {
+        const error = new TypeError("The \"fn\" argument must be of type function.");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const resource = new AsyncResource(type);
+      return resource.bind(fn);
     }
     emitDestroy() { return emitDestroy.call(this); }
   }
@@ -98,6 +130,7 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
   }
   const hooks = new Set();
   let nextAsyncId = 1;
+  let currentAsyncId = 1;
   const createHook = (callbacks = {}) => {
     if (callbacks === null || (typeof callbacks !== "object" && typeof callbacks !== "function")) {
       throw new TypeError("The argument must be an object");
@@ -118,8 +151,10 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
   };
   Object.defineProperty(globalThis, "\0quench:async_hooks:emit_init", {
     configurable: true,
-    value(resource, type) {
-      const asyncId = ++nextAsyncId;
+    value(resource, type, suppliedAsyncId) {
+      const asyncId = suppliedAsyncId ?? ++nextAsyncId;
+      if (asyncId > nextAsyncId) nextAsyncId = asyncId;
+      currentAsyncId = asyncId;
       for (const hook of hooks) {
         if (typeof hook.callbacks?.init === "function") {
           hook.callbacks.init(asyncId, type, 1, resource);
@@ -134,8 +169,8 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     createHook,
     enabledHooksExist: () => hooks.size !== 0,
     symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
-    executionAsyncId: () => nextAsyncId,
-    triggerAsyncId: () => 1,
+    executionAsyncId: () => currentAsyncId,
+    triggerAsyncId: () => currentAsyncId,
     executionAsyncResource: () => undefined,
   };
 })"#;
@@ -319,6 +354,7 @@ pub(crate) fn emit_init(
     context: &mut NativeContext<'_, NodeHost>,
     resource: RootId,
     resource_type: &str,
+    async_id: u64,
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let key = context.string_rooted("\0quench:async_hooks:emit_init");
@@ -327,8 +363,9 @@ pub(crate) fn emit_init(
         return Ok(());
     }
     let resource_type = context.string_rooted(resource_type);
+    let async_id = context.number(async_id as f64);
     let undefined = context.undefined();
-    let result = context.call_rooted(emitter, undefined, &[resource, resource_type])?;
+    let result = context.call_rooted(emitter, undefined, &[resource, resource_type, async_id])?;
     context.release_root(result);
     Ok(())
 }
