@@ -776,7 +776,15 @@ impl<H: Host> Vm<H> {
                 let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
                 let v = if armed {
                     match self.numeric_binary(operator, left, right) {
-                        Some(value) => value,
+                        Some(value) => {
+                            self.record_binary_value_path(
+                                operator,
+                                left,
+                                right,
+                                crate::profile::BinaryValuePath::IntegerFastPath,
+                            );
+                            value
+                        }
                         None => {
                             self.deopt_numeric_site(f, site_pc);
                             self.binary(p, operator, left, right)?
@@ -1455,7 +1463,8 @@ impl<H: Host> Vm<H> {
                 let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
-                self.profile.branch_value(value.profile_kind(), truthy);
+                self.profile
+                    .branch_value(value.profile_kind() as usize, truthy);
                 if !truthy {
                     *pc = i.jump_target() as usize;
                 }
