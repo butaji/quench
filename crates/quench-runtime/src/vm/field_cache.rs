@@ -43,7 +43,9 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            Cell::Function { .. } if self.atom_name(atom) == "caller" => return None,
+            Cell::Function { .. } if matches!(self.atom_name(atom), "caller" | "arguments") => {
+                return None;
+            }
             _ => {}
         }
         Some(object)

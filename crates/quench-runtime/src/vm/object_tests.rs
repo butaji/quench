@@ -56,7 +56,27 @@ fn field_cache_entries<H: Host>(
     }
     sites
         .into_iter()
-        .filter_map(|site| vm.field_caches.get(vm.field_cache_index(site)).copied())
+        .flat_map(|site| {
+            let index = vm.field_cache_index(site);
+            let primary = vm
+                .field_caches
+                .get(index)
+                .copied()
+                .filter(|entry| entry.receiver != NO_FIELD_RECEIVER);
+            let table = vm
+                .megamorphic_field_indices
+                .get(index)
+                .copied()
+                .filter(|index| *index != NO_MEGAMORPHIC_FIELD)
+                .and_then(|index| vm.megamorphic_fields.get(index as usize));
+            let entries = table.into_iter().flat_map(|table| {
+                table.overflow.as_ref().map_or_else(
+                    || table.entries[..usize::from(table.len)].to_vec(),
+                    |overflow| overflow.values().copied().collect(),
+                )
+            });
+            primary.into_iter().chain(entries)
+        })
         .collect()
 }
 
@@ -116,11 +136,18 @@ fn third_receiver_promotes_field_site_to_megamorphic() {
     vm.field_caches.push(EMPTY_CACHE);
     vm.megamorphic_field_indices.push(NO_MEGAMORPHIC_FIELD);
     for receiver in 1..=4 {
-        vm.record_field_cache(0, FieldCache { receiver, slot: 0 });
+        vm.record_field_cache(
+            0,
+            FieldCache {
+                receiver,
+                holder: NO_FIELD_HOLDER,
+                slot: 0,
+            },
+        );
     }
     let table = &vm.megamorphic_fields[0];
     assert_eq!(table.len(), 4);
-    assert!(table.get(1).is_some() && table.get(4).is_some());
+    assert!(table.get(1, NO_FIELD_HOLDER).is_some() && table.get(4, NO_FIELD_HOLDER).is_some());
     assert_eq!(vm.megamorphic_field_indices, [0]);
 }
 
@@ -162,7 +189,7 @@ fn cached_field_reads_follow_in_place_writes() {
             assert!(
                 field_cache_entries(&vm, &program, value)
                     .iter()
-                    .any(|entry| entry.receiver != u32::MAX),
+                    .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
                 "specialized field read should populate its cache"
             );
         }
@@ -170,7 +197,7 @@ fn cached_field_reads_follow_in_place_writes() {
 }
 
 #[test]
-fn warmed_field_cache_tracks_prototype_changes_and_rejects_cycles() {
+fn custom_prototype_fallback_tracks_changes_and_rejects_cycles() {
     let source = r#"
       var first = { value: 1 };
       var second = { value: 2 };
@@ -201,6 +228,124 @@ fn warmed_field_cache_tracks_prototype_changes_and_rejects_cycles() {
 }
 
 #[test]
+fn inherited_field_cache_reads_live_object_prototype_data() {
+    let source = r#"
+      Object.prototype.cacheValue = 1;
+      function readValue(value) { return value.cacheValue; }
+      var receiver = {};
+      print(readValue(receiver));
+      print(readValue(receiver));
+      Object.prototype.cacheValue = 2;
+      print(readValue(receiver));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "inherited-field-cache-live.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["1", "1", "2"]);
+    let value = vm.intern_atom("cacheValue");
+    assert!(
+        field_cache_entries(&vm, &program, value)
+            .iter()
+            .any(|entry| entry.holder != NO_FIELD_HOLDER),
+        "ordinary receivers should cache an immediate-prototype data property"
+    );
+    #[cfg(feature = "profile-aggregate")]
+    assert!(vm.profile.field_cache_depths[1] > 0);
+}
+
+#[test]
+fn custom_prototype_fallback_reads_live_data_and_keeps_accessor_fallback() {
+    let source = r#"
+      var getterCalls = 0;
+      var prototype = { value: 1 };
+      var receiver = Object.create(prototype);
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      prototype.value = 2;
+      print(readValue(receiver));
+      Object.defineProperty(prototype, "value", {
+        get: function() { getterCalls += 1; return this === receiver ? getterCalls + 2 : -1; },
+        configurable: true
+      });
+      print(readValue(receiver));
+      print(readValue(receiver));
+      print(getterCalls);
+      var nextPrototype = { value: 8 };
+      Object.setPrototypeOf(receiver, nextPrototype);
+      print(readValue(receiver));
+      receiver.value = 9;
+      print(readValue(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "inherited-field-cache.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "1", "2", "3", "4", "2", "8", "9"],
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn inherited_builtin_fields_cache_array_and_object_prototypes() {
+    let source = r#"
+      var array = [];
+      var object = { own: 1 };
+      function readPush(value) { return value.push; }
+      function readHasOwn(value) { return value.hasOwnProperty; }
+      var initialPush = Array.prototype.push;
+      var initialHasOwn = Object.prototype.hasOwnProperty;
+      print(readPush(array) === initialPush);
+      print(readPush(array) === initialPush);
+      print(readHasOwn(object) === initialHasOwn);
+      print(readHasOwn(object) === initialHasOwn);
+      Array.prototype.push = function(value) { this[0] = value; return 1; };
+      Object.prototype.hasOwnProperty = function(key) { return this.own === key; };
+      var replacementPush = Array.prototype.push;
+      var replacementHasOwn = Object.prototype.hasOwnProperty;
+      print(readPush(array) === replacementPush);
+      print(readHasOwn(object) === replacementHasOwn);
+      print(array.push(7));
+      print(array[0]);
+      print(object.hasOwnProperty(1));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "inherited-builtin-fields.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                "true", "true", "true", "true", "true", "true", "1", "7", "true"
+            ],
+            "{mode}"
+        );
+        if vm.specialized {
+            for atom in [vm.intern_atom("push"), vm.intern_atom("hasOwnProperty")] {
+                assert!(
+                    field_cache_entries(&vm, &program, atom)
+                        .iter()
+                        .any(|entry| entry.holder != NO_FIELD_HOLDER),
+                    "inherited builtin reads should cache their immediate prototype"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn optional_method_call_field_cache_observes_callable_replacement() {
     let source = r#"
       var receiver = { method: function() { return 1; } };
@@ -224,7 +369,7 @@ fn optional_method_call_field_cache_observes_callable_replacement() {
             assert!(
                 field_cache_entries(&vm, &program, method)
                     .iter()
-                    .any(|entry| entry.receiver != u32::MAX),
+                    .any(|entry| entry.receiver != NO_FIELD_RECEIVER),
                 "optional method lookup should populate its field cache"
             );
         }
@@ -397,7 +542,7 @@ fn field_cache_fallback_preserves_accessor_reentry() {
             assert!(
                 field_cache_entries(&vm, &program, value)
                     .iter()
-                    .all(|entry| entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
                 "accessor lookup must use the generic re-entrant path"
             );
         }
@@ -435,8 +580,45 @@ fn field_cache_fallback_preserves_proxy_get_trap_reentry() {
             assert!(
                 field_cache_entries(&vm, &program, value)
                     .iter()
-                    .all(|entry| entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
                 "Proxy reads must retain the generic trap path"
+            );
+        }
+    }
+}
+
+#[test]
+fn inherited_field_cache_preserves_proxy_prototype_traps() {
+    let source = r#"
+      var reads = 0;
+      var prototype = new Proxy({}, {
+        get: function(target, key, receiver) {
+          if (key === "value") { reads += 1; return reads; }
+          return Reflect.get(target, key, receiver);
+        }
+      });
+      var receiver = Object.create(prototype);
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      print(reads);
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "inherited-proxy-field-cache.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["1", "2", "2"], "{mode}");
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
+                "Proxy prototype reads must retain the generic trap path"
             );
         }
     }
@@ -537,7 +719,7 @@ fn optional_method_lookup_reenters_accessor_once_and_preserves_receiver() {
             assert!(
                 field_cache_entries(&vm, &program, method)
                     .iter()
-                    .all(|entry| entry.receiver == u32::MAX),
+                    .all(|entry| entry.receiver == NO_FIELD_RECEIVER),
                 "optional accessor lookup must retain the generic getter path"
             );
             assert!(
