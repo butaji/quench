@@ -106,8 +106,9 @@ impl<H: Host> Vm<H> {
                         }
                     }
                     if !writable {
-                        self.descriptors.insert(
-                            (target, PropertyKey::string(self.length_atom)),
+                        self.insert_descriptor(
+                            target,
+                            PropertyKey::string(self.length_atom),
                             PropertyAttributes {
                                 writable: false,
                                 ..ARRAY_LENGTH_ATTRIBUTES
@@ -124,8 +125,9 @@ impl<H: Host> Vm<H> {
                 }
             }
             self.heap.sparse_set_length(target, next_len);
-            self.descriptors.insert(
-                (target, PropertyKey::string(self.length_atom)),
+            self.insert_descriptor(
+                target,
+                PropertyKey::string(self.length_atom),
                 PropertyAttributes {
                     writable,
                     ..ARRAY_LENGTH_ATTRIBUTES
@@ -356,16 +358,14 @@ impl<H: Host> Vm<H> {
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Ok(false);
             }
-            self.descriptors
-                .insert((target, PropertyKey::string(atom)), attributes);
+            self.insert_descriptor(target, PropertyKey::string(atom), attributes);
             return Ok(true);
         }
         let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if !self.set_array_element(target, index, next) {
             return Ok(false);
         }
-        self.descriptors
-            .insert((target, PropertyKey::string(atom)), attributes);
+        self.insert_descriptor(target, PropertyKey::string(atom), attributes);
         if !attributes.writable {
             self.unmap_argument_index(target, index);
         }

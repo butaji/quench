@@ -268,6 +268,23 @@ impl<H: Host> Vm<H> {
             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
         })
     }
+    /// The one place descriptors are recorded. Objects remember whether any index-keyed entry
+    /// exists, so plain arrays can skip the per-index descriptor proof.
+    pub(super) fn insert_descriptor(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) {
+        if let PropertyKey::String(atom) = key
+            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            && let Some(data) = self.object_data_mut(object)
+        {
+            data.mark_indexed_descriptors();
+        }
+        self.descriptors.insert((object, key), attributes);
+    }
+
     pub(super) fn set_property_attributes(
         &mut self,
         object: Value,
@@ -291,7 +308,7 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        self.descriptors.insert((object, key), attributes);
+        self.insert_descriptor(object, key, attributes);
         self.invalidate_field_caches();
         self.invalidate_method_caches_for_key(key);
     }
