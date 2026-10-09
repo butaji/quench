@@ -1178,6 +1178,17 @@ const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, 
   }
 }"#;
 
+const READLINK_SYNC_API: &str = r#"(hostReadlinkSync) => function readlinkSync(path, options) {
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+  return hostReadlinkSync(path);
+}"#;
+
 const ASYNC_READLINK_API: &str = r#"(readlinkSync) => {
   return function readlink(path, options, callback) {
     if (typeof options === 'function') {
@@ -1189,6 +1200,13 @@ const ASYNC_READLINK_API: &str = r#"(readlinkSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (Buffer.isBuffer(path)) path = path.toString();
+    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
       try { Reflect.apply(callback, undefined, [null, readlinkSync(path)]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
@@ -1392,7 +1410,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "readdirSync", readdir_sync)?;
     let readdir = make_readdir_async(context, readdir_sync)?;
     set(context, module, "readdir", readdir)?;
-    let readlink_sync = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
+    let readlink_host = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
+    let readlink_factory =
+        context.evaluate_script_rooted(READLINK_SYNC_API, "node:fs/shared-readlink-sync.js")?;
+    let undefined = context.undefined();
+    let readlink_sync = context.call_rooted(readlink_factory, undefined, &[readlink_host])?;
     set(context, module, "readlinkSync", readlink_sync)?;
     let readlink_factory = context.evaluate_script_rooted(
         ASYNC_READLINK_API,
