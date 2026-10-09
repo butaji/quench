@@ -1125,19 +1125,10 @@ impl<H: Host> Vm<H> {
         false
     }
 
-    pub(super) fn prototype_chain_contains_typed_array_index(
-        &self,
-        object: Value,
-        atom: Atom,
-    ) -> bool {
+    pub(super) fn prototype_chain_has_typed_array(&self, object: Value) -> bool {
         let mut current = self.object_data(object).map(|data| data.proto);
         while let Some(value) = current.filter(|value| !value.is_null()) {
-            if matches!(self.heap.get(value), Some(Cell::TypedArray { .. }))
-                && !matches!(
-                    Self::typed_array_index_key(self.atom_name(atom)),
-                    super::object_descriptors::TypedArrayIndexKey::NotCanonical
-                )
-            {
+            if matches!(self.heap.get(value), Some(Cell::TypedArray { .. })) {
                 return true;
             }
             current = self.object_data(value).map(|data| data.proto);
