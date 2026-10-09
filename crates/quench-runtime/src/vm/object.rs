@@ -378,26 +378,26 @@ impl<H: Host> Vm<H> {
         first: Value,
         second: Value,
     ) -> Value {
-        if !self.specialized || !program.specialized {
-            let [first_atom, second_atom] = program.object_sites[site].atoms;
-            let one = self.transition_shape(0, first_atom);
-            let two = self.transition_shape(one, second_atom);
-            return self
-                .heap
-                .alloc_object_pair(self.object_proto, two, first, second);
-        }
-        let cache_site = self.object_cache_index(site);
-        let shape = if self.object_shapes[cache_site] != u32::MAX {
-            self.object_shapes[cache_site]
-        } else {
-            let atoms = program.object_sites[site].atoms;
-            let one = self.transition_shape(0, atoms[0]);
-            let two = self.transition_shape(one, atoms[1]);
-            self.object_shapes[cache_site] = two;
-            two
-        };
+        let shape = self.object_site_shape(program, site);
         self.heap
             .alloc_object_pair(self.object_proto, shape, first, second)
+    }
+    pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
+        let atoms = &program.object_sites[site].atoms;
+        if !self.specialized || !program.specialized {
+            return atoms
+                .iter()
+                .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        }
+        let cache_site = self.object_cache_index(site);
+        if self.object_shapes[cache_site] != u32::MAX {
+            return self.object_shapes[cache_site];
+        }
+        let shape = atoms
+            .iter()
+            .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        self.object_shapes[cache_site] = shape;
+        shape
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom
