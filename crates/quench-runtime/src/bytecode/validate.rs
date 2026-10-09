@@ -1052,6 +1052,7 @@ mod tests {
             wide: vec![],
             registers,
             dispatch: DispatchClass::General,
+            decoded: Default::default(),
             handlers: vec![],
             register_root_offset: root,
         }
