@@ -10,7 +10,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, fstatSync, fchmodSync, writeFileSync, appendFileSync, writevSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, fstatSync, fchmodSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
@@ -57,6 +57,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       }),
       writev: (buffers, position) => Promise.resolve().then(() => ({
         bytesWritten: writevSync(fd, buffers, position),
+        buffers,
+      })),
+      readv: (buffers, position) => Promise.resolve().then(() => ({
+        bytesRead: readvSync(fd, buffers, position),
         buffers,
       })),
       stat: (...statArgs) => Promise.resolve().then(() => fstatSync(fd, ...statArgs)),
@@ -344,6 +348,44 @@ const WRITEV_API: &str = quench_js_check::checked_js!(r#"(writeSync) => {
     });
   }
   return { writev, writevSync };
+}"#);
+
+const READV_API: &str = quench_js_check::checked_js!(r#"(readSync) => {
+  const validateBuffers = (buffers) => {
+    if (!Array.isArray(buffers) || buffers.some((buffer) => !Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array))) {
+      const error = new TypeError('The "buffers" argument must be an Array of Buffer or Uint8Array instances');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+  };
+  function readvSync(fd, buffers, position = null) {
+    validateBuffers(buffers);
+    let bytesRead = 0;
+    for (const buffer of buffers) {
+      const count = readSync(fd, buffer, 0, buffer.byteLength, position == null ? null : position + bytesRead);
+      bytesRead += count;
+      if (count < buffer.byteLength) break;
+    }
+    return bytesRead;
+  }
+  function readv(fd, buffers, position, callback) {
+    if (typeof position === 'function') { callback = position; position = null; }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
+      throw error;
+    }
+    validateBuffers(buffers);
+    queueMicrotask(() => {
+      try { Reflect.apply(callback, undefined, [null, readvSync(fd, buffers, position), buffers]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  }
+  readv[Symbol.for('nodejs.util.promisify.custom')] = (fd, buffers, position = null) =>
+    new Promise((resolve, reject) => readv(fd, buffers, position, (error, bytesRead, readBuffers) =>
+      error ? reject(error) : resolve({ bytesRead, buffers: readBuffers })));
+  return { readv, readvSync };
 }"#);
 
 const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
@@ -1816,6 +1858,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let writev_sync = get(context, writev_api, "writevSync")?;
     set(context, module, "writev", writev)?;
     set(context, module, "writevSync", writev_sync)?;
+    let readv_read_sync = get(context, module, "readSync")?;
+    let readv_factory = context.evaluate_script_rooted(READV_API, "node:fs/shared-readv.js")?;
+    let readv_api = context.call_rooted(readv_factory, undefined, &[readv_read_sync])?;
+    let readv = get(context, readv_api, "readv")?;
+    let readv_sync = get(context, readv_api, "readvSync")?;
+    set(context, module, "readv", readv)?;
+    set(context, module, "readvSync", readv_sync)?;
     let truncate_sync = get(context, module, "truncateSync")?;
     let truncate_factory =
         context.evaluate_script_rooted(ASYNC_TRUNCATE_API, "node:fs/shared-async-truncate.js")?;
@@ -1970,6 +2019,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         rmdir_sync,
         mkdtemp_sync,
         copy_file_sync,
+        readv_sync,
         writev_sync,
     )?;
     set(context, promises, "opendir", opendir_promise)?;
@@ -2111,6 +2161,7 @@ pub(crate) fn promises_module(
     rmdir_sync: RootId,
     mkdtemp_sync: RootId,
     copy_file_sync: RootId,
+    readv_sync: RootId,
     writev_sync: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
@@ -2138,6 +2189,7 @@ pub(crate) fn promises_module(
             fchmod_sync,
             write_file_sync,
             append_file_sync,
+            readv_sync,
             writev_sync,
         ],
     )?;
