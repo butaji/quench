@@ -90,6 +90,12 @@ pub const ABORT: &str = quench_js_check::checked_js!(
         onabort: null,
         listeners: [],
       });
+      Object.defineProperty(this, "aborted", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: false,
+      });
     }
 
     addEventListener(type, listener, options = undefined) {
@@ -186,6 +192,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       const state = signalState(signal, "abort");
       if (state.aborted) return;
       state.aborted = true;
+      signal.aborted = true;
       state.reason = reason;
       dispatchAbort(signal, state);
     }
