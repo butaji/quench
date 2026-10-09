@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, decorateBigintStats) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, decorateBigintStats) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -220,6 +220,11 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateSymlinkType(type);
       return symlinkSync(normalizePath(target), normalizePath(path), type);
     },
+    linkSync(existingPath, newPath) {
+      validatePath(existingPath, 'existingPath');
+      validatePath(newPath, 'newPath');
+      return linkSync(normalizePath(existingPath), normalizePath(newPath));
+    },
     renameSync(oldPath, newPath) {
       validateRenamePath(oldPath, 'oldPath');
       validateRenamePath(newPath, 'newPath');
@@ -366,6 +371,7 @@ pub(crate) fn install(
     let mkdtemp = context.host_function(crate::host::shared_vm::operation("fsMkdtempSync"))?;
     let copy_file = context.host_function(crate::host::shared_vm::operation("fsCopyFileSync"))?;
     let symlink = context.host_function(crate::host::shared_vm::operation("fsSymlinkSync"))?;
+    let link = context.host_function(crate::host::shared_vm::operation("fsLinkSync"))?;
     let rename = context.host_function(crate::host::shared_vm::operation("fsRenameSync"))?;
     let unlink = context.host_function(crate::host::shared_vm::operation("fsUnlinkSync"))?;
     let chown = context.host_function(crate::host::shared_vm::operation("fsChownSync"))?;
@@ -396,6 +402,7 @@ pub(crate) fn install(
             rm,
             copy_file,
             symlink,
+            link,
             rename,
             unlink,
             chown,
@@ -419,6 +426,7 @@ pub(crate) fn install(
         ("mkdtempDisposableSync", "mkdtempDisposableSync"),
         ("copyFileSync", "copyFileSync"),
         ("symlinkSync", "symlinkSync"),
+        ("linkSync", "linkSync"),
         ("renameSync", "renameSync"),
         ("unlinkSync", "unlinkSync"),
         ("chownSync", "chownSync"),
@@ -757,6 +765,26 @@ pub(crate) fn symlink_sync(
             &ops::OperationError::Io {
                 syscall: "symlink",
                 path: link_path,
+                error,
+            },
+        ),
+    }
+}
+
+pub(crate) fn link_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let existing_path = path_argument(context, args.first().copied())?;
+    let new_path = path_argument(context, args.get(1).copied())?;
+    match std::fs::hard_link(&existing_path, &new_path) {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => throw_operation_error(
+            context,
+            &ops::OperationError::Io {
+                syscall: "link",
+                path: new_path,
                 error,
             },
         ),
