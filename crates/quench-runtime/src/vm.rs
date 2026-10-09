@@ -245,10 +245,14 @@ struct GlobalLexicalState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
+    holder: u32,
     slot: u16,
 }
+const NO_FIELD_HOLDER: u32 = u32::MAX;
+const NO_FIELD_RECEIVER: u32 = u32::MAX;
 const EMPTY_CACHE: FieldCache = FieldCache {
-    receiver: u32::MAX,
+    receiver: NO_FIELD_RECEIVER,
+    holder: NO_FIELD_HOLDER,
     slot: 0,
 };
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
@@ -258,7 +262,7 @@ const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
-    overflow: Option<Box<FxHashMap<u32, FieldCache>>>,
+    overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
 struct MethodCache {

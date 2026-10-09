@@ -1,7 +1,8 @@
 use super::wtf16::JsString;
 use super::{
-    CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, TypedArrayKind,
-    Vm, activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
+    CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, NO_FIELD_HOLDER,
+    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation,
+    regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -534,7 +535,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             assert!(
                 vm.megamorphic_fields
                     .iter()
-                    .all(|cache| cache.get(shape).is_none()),
+                    .all(|cache| cache.get(shape, NO_FIELD_HOLDER).is_none()),
                 "{mode}: dictionary shape entered a megamorphic field cache for {name}"
             );
             assert!(
