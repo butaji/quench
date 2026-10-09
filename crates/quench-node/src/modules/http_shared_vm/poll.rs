@@ -13,21 +13,46 @@ pub(crate) fn poll(
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
+    let (pending_writes, pending_ends) = {
+        let host = runtime.host_mut();
+        (
+            std::mem::take(&mut host.net_pending_writes),
+            std::mem::take(&mut host.net_pending_ends),
+        )
+    };
+    if !pending_writes.is_empty() || !pending_ends.is_empty() {
+        let mut host = shared_state.borrow_mut();
+        for (socket, bytes) in pending_writes {
+            net_shared_vm::write(&mut host.tcp, socket, &bytes)?;
+        }
+        for socket in pending_ends {
+            net_shared_vm::end(&mut host.tcp, socket)?;
+        }
+    }
     let events = {
         let mut host = shared_state.borrow_mut();
         net_shared_vm::poll(&mut host.tcp)
     };
     let mut progressed = false;
     progressed |= emit_listening(runtime, program, shared_state)?;
+    progressed |= emit_net_server_events(runtime, shared_state)?;
     for event in events {
         match event {
-            net_shared_vm::TransportEvent::Accepted { listener, socket } => {
-                let server_id = shared_state
-                    .borrow()
-                    .http
-                    .servers
-                    .iter()
-                    .find_map(|(id, server)| (server.listener == Some(listener)).then_some(*id));
+            net_shared_vm::TransportEvent::Accepted {
+                listener,
+                socket,
+                remote,
+            } => {
+                let (server_id, net_server) = {
+                    let host = shared_state.borrow();
+                    (
+                        host.http
+                            .servers
+                            .iter()
+                            .find_map(|(id, server)| (server.listener == Some(listener)).then_some(*id)),
+                        host.net_servers.get(&listener).map(|server| server.root),
+                    )
+                };
                 if let Some(server_id) = server_id {
                     let mut host = shared_state.borrow_mut();
                     host.http.connections.insert(
@@ -42,20 +67,68 @@ pub(crate) fn poll(
                         server.connections.insert(socket);
                     }
                     progressed = true;
+                } else if let Some(server_root) = net_server {
+                    let constructor = shared_state
+                        .borrow()
+                        .net_socket_constructor
+                        .ok_or_else(|| "net.Socket constructor is unavailable".to_owned())?;
+                    let accepted = runtime
+                        .construct_rooted(constructor, constructor, &[])
+                        .map_err(|error| error.to_string())?;
+                    let key = runtime.string_rooted("__quenchNetSocketId");
+                    let id = runtime.root(Value::number(socket as f64));
+                    if !runtime
+                        .set_property_rooted(accepted, key, id, accepted)
+                        .map_err(|error| error.to_string())?
+                    {
+                        return Err("cannot tag accepted net socket".into());
+                    }
+                    runtime.release_root(key);
+                    runtime.release_root(id);
+                    let remote_address = runtime.string_rooted(&remote.ip().to_string());
+                    let remote_key = runtime.string_rooted("remoteAddress");
+                    runtime
+                        .set_property_rooted(accepted, remote_key, remote_address, accepted)
+                        .map_err(|error| error.to_string())?;
+                    runtime.release_root(remote_key);
+                    runtime.release_root(remote_address);
+                    {
+                        let mut host = shared_state.borrow_mut();
+                        host.net_sockets.insert(
+                            socket,
+                            crate::host::node_host::NetSocket {
+                                root: accepted,
+                                encoding: None,
+                                parent_server: Some(listener),
+                            },
+                        );
+                        if let Some(server) = host.net_servers.get_mut(&listener) {
+                            server.connections.insert(socket);
+                        }
+                    }
+                    queue_net_event(runtime, shared_state, server_root, "connection", &[accepted])?;
+                    progressed = true;
                 } else {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                 }
             }
             net_shared_vm::TransportEvent::Connected { socket } => {
-                let request = shared_state
-                    .borrow()
-                    .http
-                    .clients
-                    .get(&socket)
-                    .map(|client| client.request.clone());
+                let (request, net_root) = {
+                    let host = shared_state.borrow();
+                    (
+                        host.http
+                            .clients
+                            .get(&socket)
+                            .map(|client| client.request.clone()),
+                        host.net_sockets.get(&socket).map(|socket| socket.root),
+                    )
+                };
                 if let Some(request) = request {
                     net_shared_vm::write(&mut shared_state.borrow_mut().tcp, socket, &request)
                         .map_err(|error| format!("HTTP client write failed: {error}"))?;
+                    progressed = true;
+                } else if let Some(root) = net_root {
+                    queue_net_event(runtime, shared_state, root, "connect", &[])?;
                     progressed = true;
                 }
             }
@@ -63,20 +136,37 @@ pub(crate) fn poll(
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
+                } else if let Some(socket) = shared_state.borrow_mut().net_sockets.remove(&socket) {
+                    let error = runtime.string_rooted(&message);
+                    queue_net_event(runtime, shared_state, socket.root, "error", &[error])?;
+                    queue_net_event(runtime, shared_state, socket.root, "close", &[])?;
+                    runtime.release_root(error);
+                    runtime.release_root(socket.root);
                 }
                 progressed = true;
             }
             net_shared_vm::TransportEvent::Data { socket, bytes } => {
+                let net_socket = shared_state.borrow().net_sockets.get(&socket).map(|socket| {
+                    (socket.root, socket.encoding.clone().unwrap_or_default())
+                });
+                if let Some((root, _encoding)) = net_socket {
+                    let text = String::from_utf8_lossy(&bytes);
+                    let chunk = runtime.string_rooted(&text);
+                    queue_net_event(runtime, shared_state, root, "data", &[chunk])?;
+                    runtime.release_root(chunk);
+                    progressed = true;
+                    continue;
+                }
                 if shared_state.borrow().http.connections.contains_key(&socket) {
                     let dispatch = {
                         let mut host = shared_state.borrow_mut();
                         let Some(connection) = host.http.connections.get_mut(&socket) else {
                             continue;
                         };
+                        connection.received.extend_from_slice(&bytes);
                         if connection.request_dispatched {
                             None
                         } else {
-                            connection.received.extend_from_slice(&bytes);
                             let head_end = super::protocol::head_size(&connection.received);
                             if head_end.is_none() && connection.received.len() > REQUEST_HEAD_LIMIT
                                 || head_end.is_some_and(|end| end > REQUEST_HEAD_LIMIT)
@@ -109,6 +199,10 @@ pub(crate) fn poll(
                             let incoming_factory = host.http.incoming_factory.ok_or_else(|| {
                                 "HTTP incoming-message factory is unavailable".to_owned()
                             })?;
+                            let close_after_response = message.headers.iter().any(|(name, value)| {
+                                name.eq_ignore_ascii_case("connection")
+                                    && value.eq_ignore_ascii_case("close")
+                            });
                             host.http
                                 .connections
                                 .get_mut(&socket)
@@ -119,7 +213,11 @@ pub(crate) fn poll(
                                 Response {
                                     socket,
                                     async_id: request_async_id,
-                                    headers: Vec::new(),
+                                    headers: if close_after_response {
+                                        vec![("Connection".to_owned(), "close".to_owned())]
+                                    } else {
+                                        Vec::new()
+                                    },
                                     body: Default::default(),
                                     send_date: true,
                                     lifecycle: super::state::ResponseLifecycle::Open,
@@ -328,6 +426,19 @@ pub(crate) fn poll(
                 }
             }
             net_shared_vm::TransportEvent::End { socket } => {
+                let net_root = {
+                    shared_state
+                        .borrow()
+                        .net_sockets
+                        .get(&socket)
+                        .map(|socket| socket.root)
+                };
+                if let Some(root) = net_root {
+                    queue_net_event(runtime, shared_state, root, "end", &[])?;
+                    runtime.host_mut().net_pending_ends.push(socket);
+                    progressed = true;
+                    continue;
+                }
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(mut client) = client {
                     match client.response_parser.finish() {
@@ -369,6 +480,7 @@ pub(crate) fn poll(
                             fail_client_exchange(runtime, program, client, "socket hang up")?;
                         }
                     }
+                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                     progressed = true;
                 }
                 let (server_id, contexts) = {
@@ -404,10 +516,52 @@ pub(crate) fn poll(
                     );
                 }
                 if server_id.is_some() {
+                    net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                    progressed = true;
+                }
+            }
+            net_shared_vm::TransportEvent::Closed { socket } => {
+                let (net_socket, closed_server) = {
+                    let mut host = shared_state.borrow_mut();
+                    let net_socket = host.net_sockets.remove(&socket);
+                    let closed_server = net_socket
+                        .as_ref()
+                        .and_then(|net_socket| net_socket.parent_server)
+                        .and_then(|server_id| {
+                            let should_close = host.net_servers.get_mut(&server_id).is_some_and(
+                                |server| {
+                                    server.connections.remove(&socket);
+                                    server.closing && server.connections.is_empty()
+                                },
+                            );
+                            should_close
+                                .then(|| host.net_servers.remove(&server_id).map(|server| server.root))
+                                .flatten()
+                        });
+                    (net_socket, closed_server)
+                };
+                if let Some(net_socket) = net_socket {
+                    queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
+                    runtime.release_root(net_socket.root);
+                    progressed = true;
+                }
+                if let Some(server_root) = closed_server {
+                    queue_net_event(runtime, shared_state, server_root, "close", &[])?;
+                    runtime.release_root(server_root);
                     progressed = true;
                 }
             }
             net_shared_vm::TransportEvent::Error { socket, message } => {
+                let net_socket = shared_state.borrow_mut().net_sockets.remove(&socket);
+                if let Some(net_socket) = net_socket {
+                    let error = runtime.string_rooted(&message);
+                    queue_net_event(runtime, shared_state, net_socket.root, "error", &[error])?;
+                    queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
+                    runtime.release_root(error);
+                    runtime.release_root(net_socket.root);
+                    progressed = true;
+                    continue;
+                }
                 let (client, server_id, contexts) = {
                     let mut host = shared_state.borrow_mut();
                     let server_id = host
@@ -788,6 +942,47 @@ fn emit_listening(
     Ok(!pending.is_empty())
 }
 
+fn emit_net_server_events(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+) -> Result<bool, String> {
+    let (listening, closed) = {
+        let mut host = shared_state.borrow_mut();
+        let listening = host
+            .net_servers
+            .iter_mut()
+            .filter_map(|(id, server)| {
+                if server.listening_pending {
+                    server.listening_pending = false;
+                    Some((*id, server.root))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let ids = host
+            .net_servers
+            .iter()
+            .filter_map(|(id, server)| {
+                (server.closing && server.connections.is_empty()).then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        let closed = ids
+            .into_iter()
+            .filter_map(|id| host.net_servers.remove(&id).map(|server| server.root))
+            .collect::<Vec<_>>();
+        (listening, closed)
+    };
+    for (_, root) in &listening {
+        queue_net_event(runtime, shared_state, *root, "listening", &[])?;
+    }
+    for root in &closed {
+        queue_net_event(runtime, shared_state, *root, "close", &[])?;
+        runtime.release_root(*root);
+    }
+    Ok(!listening.is_empty() || !closed.is_empty())
+}
+
 fn finish_closed_servers(
     runtime: &mut Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
@@ -831,6 +1026,48 @@ fn emit_event(
     let result = emit(runtime, program, receiver, event, args);
     runtime.release_root(event);
     result
+}
+
+fn queue_net_event(
+    runtime: &mut Runtime<NodeHost>,
+    shared_state: &Rc<RefCell<SharedNodeState>>,
+    receiver: RootId,
+    name: &str,
+    args: &[RootId],
+) -> Result<(), String> {
+    let key = runtime.string_rooted("emit");
+    let callback = runtime
+        .get_property_rooted(receiver, key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(key);
+    let callback = runtime.root(
+        runtime
+            .rooted_value(callback)
+            .ok_or("net socket emit is unavailable")?,
+    );
+    let receiver = runtime.root(
+        runtime
+            .rooted_value(receiver)
+            .ok_or("net socket is unavailable")?,
+    );
+    let event = runtime.string_rooted(name);
+    let mut retained_args = vec![event];
+    for arg in args {
+        retained_args.push(runtime.root(
+            runtime
+                .rooted_value(*arg)
+                .ok_or("net event argument is unavailable")?,
+        ));
+    }
+    shared_state
+        .borrow_mut()
+        .scheduler
+        .queue_shared_next_tick(crate::modules::shared_event_loop::SharedCallback {
+            callback,
+            receiver,
+            args: retained_args,
+        });
+    Ok(())
 }
 
 fn emit(
