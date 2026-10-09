@@ -199,6 +199,11 @@ impl Heap {
     }
 
     #[cfg(test)]
+    pub(crate) fn occupied_cell_count_for_test(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.cell.is_some()).count()
+    }
+
+    #[cfg(test)]
     pub(crate) fn root_count_for_test(&self) -> usize {
         self.roots.values().count()
     }

@@ -71,6 +71,10 @@ impl<H: Host> Vm<H> {
                     })?;
                 self.write(f, i.result_register(), value);
             }
+            Op::CreateRegExpLiteral => {
+                let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
+                self.write(f, i.result_register(), value);
+            }
             Op::LoadLocalPlain => {
                 // SAFETY: validated bytecode bounds the slot by Function.locals,
                 // and frame setup sizes locals to that count.

@@ -7,6 +7,7 @@ struct ProgramEntry {
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
@@ -75,11 +76,13 @@ impl ProgramStore {
 
     pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
+        let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         self.programs.push(ProgramEntry {
             residual: program,
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
+            regexp_literals,
             module_environment: None,
             import_meta: None,
             module_imports: Vec::new(),
@@ -328,6 +331,48 @@ impl ProgramStore {
             *cached = Some(Rc::new(entry.constants.get(start..end)?.to_vec()));
         }
         cached.clone()
+    }
+
+    pub(crate) fn regexp_literal_matcher(
+        &self,
+        id: ProgramId,
+        site: usize,
+    ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
+        self.programs
+            .get(id.index())?
+            .regexp_literals
+            .get(site)?
+            .as_ref()
+            .cloned()
+    }
+
+    pub(crate) fn cache_regexp_literal_matcher(
+        &mut self,
+        id: ProgramId,
+        site: usize,
+        matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
+    ) -> bool {
+        let Some(entry) = self.programs.get_mut(id.index()) else {
+            return false;
+        };
+        let Some(cached) = entry.regexp_literals.get_mut(site) else {
+            return false;
+        };
+        if cached.is_none() {
+            *cached = Some(matcher);
+        }
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compiled_regexp_literal_count(&self, id: ProgramId) -> usize {
+        self.programs.get(id.index()).map_or(0, |entry| {
+            entry
+                .regexp_literals
+                .iter()
+                .filter(|site| site.is_some())
+                .count()
+        })
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
