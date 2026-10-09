@@ -42,6 +42,18 @@ fs.promises.open(__filename).then(async (handle) => {
   await handle.close();
 });
 
+fs.promises.open(`${__dirname}/.fs-filehandle-write-${process.pid}`, 'w+').then(async (handle) => {
+  const first = Buffer.from('file handle ');
+  const writeResult = await handle.write(first);
+  assert.strictEqual(writeResult.bytesWritten, first.length);
+  assert.strictEqual(writeResult.buffer, first);
+  await handle.writeFile('methods');
+  await handle.close();
+  const written = fs.readFileSync(`${__dirname}/.fs-filehandle-write-${process.pid}`, 'utf8');
+  assert.strictEqual(written, 'file handle methods');
+  fs.unlinkSync(`${__dirname}/.fs-filehandle-write-${process.pid}`);
+});
+
 fs.open(__filename, 'r', (error, readFd) => {
   assert.ifError(error);
   const output = Buffer.alloc(5);

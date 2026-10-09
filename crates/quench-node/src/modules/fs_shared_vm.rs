@@ -10,7 +10,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, fstatSync, fchmodSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
@@ -55,6 +55,71 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         const bytesRead = readSync(fd, buffer, offset, length, position);
         return { bytesRead, buffer };
       }),
+      write: (...writeArgs) => Promise.resolve().then(() => {
+        let [data, offset = 0, length, position = null] = writeArgs;
+        let buffer = data;
+        if (typeof data === 'string') {
+          position = offset ?? null;
+          buffer = Buffer.from(data, typeof length === 'string' ? length : 'utf8');
+          offset = 0;
+          length = buffer.length;
+        } else if (offset && typeof offset === 'object') {
+          const options = offset;
+          offset = options.offset ?? 0;
+          length = options.length;
+          position = options.position ?? null;
+        }
+        if (!ArrayBuffer.isView(buffer)) {
+          const error = new TypeError('The "buffer" argument must be an instance of Buffer, TypedArray, or DataView.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        length ??= buffer.byteLength - offset;
+        const bytesWritten = writeSync(fd, buffer, offset, length, position);
+        return { bytesWritten, buffer: data };
+      }),
+      writeFile: async (data, options) => {
+        const settings = typeof options === 'string' ? { encoding: options } : (options || {});
+        const encoding = settings.encoding || 'utf8';
+        const signal = settings.signal;
+        const checkAbort = () => {
+          if (!signal?.aborted) return;
+          const error = new Error('The operation was aborted');
+          error.name = 'AbortError';
+          error.code = 'ABORT_ERR';
+          throw error;
+        };
+        const chunks = [];
+        if (typeof data === 'string' || ArrayBuffer.isView(data)) {
+          chunks.push(data);
+        } else if (data && (typeof data[Symbol.asyncIterator] === 'function' || typeof data[Symbol.iterator] === 'function')) {
+          for await (const chunk of data) chunks.push(chunk);
+        } else {
+          const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, DataView, or Iterable.');
+          error.code = 'ERR_INVALID_ARG_TYPE';
+          throw error;
+        }
+        await Promise.resolve();
+        checkAbort();
+        for (const chunk of chunks) {
+          checkAbort();
+          if (typeof chunk !== 'string' && !ArrayBuffer.isView(chunk)) {
+            const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView.');
+            error.code = 'ERR_INVALID_ARG_TYPE';
+            throw error;
+          }
+          const buffer = typeof chunk === 'string'
+            ? Buffer.from(chunk, encoding)
+            : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+          let offset = 0;
+          while (offset < buffer.length) {
+            checkAbort();
+            const written = writeSync(fd, buffer, offset, buffer.length - offset, null);
+            if (written === 0) break;
+            offset += written;
+          }
+        }
+      },
       writev: (buffers, position) => Promise.resolve().then(() => ({
         bytesWritten: writevSync(fd, buffers, position),
         buffers,
@@ -2011,6 +2076,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         open_sync,
         close_sync,
         read_sync,
+        write_sync,
         fstat_sync,
         fchmod_sync,
         write_file_sync,
@@ -2153,6 +2219,7 @@ pub(crate) fn promises_module(
     open_sync: RootId,
     close_sync: RootId,
     read_sync: RootId,
+    write_sync: RootId,
     fstat_sync: RootId,
     fchmod_sync: RootId,
     write_file_sync: RootId,
@@ -2185,6 +2252,7 @@ pub(crate) fn promises_module(
             open_sync,
             close_sync,
             read_sync,
+            write_sync,
             fstat_sync,
             fchmod_sync,
             write_file_sync,
