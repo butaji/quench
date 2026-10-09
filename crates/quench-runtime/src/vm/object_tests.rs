@@ -170,6 +170,49 @@ fn cached_field_reads_follow_in_place_writes() {
 }
 
 #[test]
+fn cached_field_read_rechecks_after_delete_and_descriptor_transition() {
+    let source = r#"
+      var receiver = { value: 1 };
+      function readValue(value) { return value.value; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      delete receiver.value;
+      print(readValue(receiver));
+      receiver.value = 2;
+      print(readValue(receiver));
+      Object.defineProperty(receiver, "value", {
+        configurable: true,
+        get: function() { return 3; }
+      });
+      print(readValue(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "field-cache-delete-reconfigure.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(
+            output.borrow().as_slice(),
+            ["1", "1", "undefined", "2", "3"],
+            "{mode}"
+        );
+
+        if vm.specialized {
+            let value = vm.intern_atom("value");
+            assert!(
+                field_cache_entries(&vm, &program, value)
+                    .iter()
+                    .any(|entry| entry.receiver != u32::MAX),
+                "specialized field read should populate its cache before deletion"
+            );
+        }
+    }
+}
+
+#[test]
 fn warmed_field_cache_tracks_prototype_changes_and_rejects_cycles() {
     let source = r#"
       var first = { value: 1 };
