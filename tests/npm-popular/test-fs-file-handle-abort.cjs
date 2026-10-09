@@ -23,4 +23,18 @@ const path = require('node:path');
     await handle.close();
     fs.rmSync(file, { force: true });
   }
+  const reader = await fs.promises.open(__filename, 'r');
+  try {
+    const direct = await reader.readFile('utf8');
+    assert.ok(direct.includes('readFile'));
+  } finally {
+    await reader.close();
+  }
+  const promiseReader = await fs.promises.open(__filename, 'r');
+  try {
+    const viaPromises = await fs.promises.readFile(promiseReader, 'utf8');
+    assert.ok(viaPromises.includes('readFile'));
+  } finally {
+    await promiseReader.close();
+  }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
