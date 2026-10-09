@@ -36,23 +36,26 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       super({
         ...options, autoDestroy: true, allowHalfOpen: true,
         read() {},
-        write(chunk, encoding, callback) { try { writeOperation(this, chunk); this.bytesWritten += chunk.length || 0; callback(); } catch (error) { callback(error); } },
+        write(chunk, encoding, callback) { try { writeOperation(this, chunk); callback(); } catch (error) { callback(error); } },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error); callback(error); } catch (failure) { callback(failure); } },
       });
       this.allowHalfOpen = false;
       this._encoding = null;
+      this._handle = options.handle || null;
       this.connecting = false;
       this.pending = true;
       this.bytesRead = 0;
       this.bytesWritten = 0;
       this._quenchPreconnectWrites = [];
       this._quenchPreconnectEnd = null;
+      this._quenchTimeout = 0;
+      this._quenchTimeoutTimer = null;
     }
     emit(event, ...args) {
-      if (event === 'connect') { this.connecting = false; this.pending = false; }
-      if (event === 'close') this.pending = true;
-      if (event === 'data' && args[0]) this.bytesRead += args[0].length || 0;
+      if (event === 'connect') { this.connecting = false; this.pending = false; this._quenchResetTimeout(); }
+      if (event === 'close') { this.pending = true; if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer); this._quenchTimeoutTimer = null; }
+      if (event === 'data' && args[0]) { this.bytesRead += args[0].length || 0; this._quenchResetTimeout(); }
       if (event === 'end' && !this.allowHalfOpen) {
         const result = super.emit(event, ...args);
         this.end();
@@ -61,8 +64,40 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return super.emit(event, ...args);
     }
     setEncoding(encoding) { this._encoding = String(encoding); encodingOperation(this, this._encoding); super.setEncoding(encoding); return this; }
+    get readyState() {
+      if (this.connecting) return 'opening';
+      if (this.destroyed || this.closed) return 'closed';
+      if (this.readable && this.writable) return 'open';
+      if (this.readable) return 'readOnly';
+      if (this.writable) return 'writeOnly';
+      return 'closed';
+    }
+    setNoDelay(noDelay = true) {
+      if (noDelay && this._handle && typeof this._handle.setNoDelay === 'function') this._handle.setNoDelay(true);
+      return this;
+    }
+    setKeepAlive(enable = false, initialDelay = 0) {
+      if (this._handle && typeof this._handle.setKeepAlive === 'function') this._handle.setKeepAlive(!!enable, initialDelay);
+      return this;
+    }
+    setTimeout(timeout, callback) {
+      if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) throw new TypeError('The "msecs" argument must be a non-negative number');
+      if (typeof callback === 'function') this.once('timeout', callback);
+      this._quenchTimeout = timeout;
+      this._quenchResetTimeout();
+      return this;
+    }
+    _quenchResetTimeout() {
+      if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer);
+      this._quenchTimeoutTimer = null;
+      if (this._quenchTimeout > 0 && !this.destroyed && !this.connecting) {
+        this._quenchTimeoutTimer = setTimeout(() => this.emit('timeout'), this._quenchTimeout);
+      }
+    }
     write(chunk, encoding, callback) {
       if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+      this._quenchResetTimeout();
+      this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk && chunk.length || 0);
       if (!this.__quenchNetSocketId && !this.connecting) {
         this._quenchPreconnectWrites.push([chunk, encoding, callback]);
         return this.writableHighWaterMark !== 0;
@@ -72,6 +107,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     end(chunk, encoding, callback) {
       if (typeof chunk === 'function') { callback = chunk; chunk = undefined; encoding = undefined; }
       else if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+      if (chunk !== undefined && chunk !== null) this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk.length || 0);
       if (!this.__quenchNetSocketId && !this.connecting) {
         this._quenchPreconnectEnd = [chunk, encoding, callback];
         return this;
