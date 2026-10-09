@@ -1,5 +1,20 @@
 // Node compat: url module.
 const url = require('node:url');
+if (typeof url.URLSearchParams !== 'function' || url.URLSearchParams !== URLSearchParams) {
+  throw new Error('URLSearchParams export/global identity');
+}
+const params = new url.URLSearchParams('a=one+two&a=three&b=%21');
+if (params.get('a') !== 'one two' || params.getAll('a').join('|') !== 'one two|three' ||
+  params.get('missing') !== null || params.size !== 3 || params.toString() !== 'a=one+two&a=three&b=%21') {
+  throw new Error('URLSearchParams query parsing');
+}
+params.set('a', 'new value');
+params.append('x y', '!~');
+if (params.toString() !== 'a=new+value&b=%21&x+y=%21%7E' || !params.has('a', 'new value')) {
+  throw new Error('URLSearchParams mutation and encoding');
+}
+params.sort();
+if ([...params.keys()].join(',') !== 'a,b,x y') throw new Error('URLSearchParams sort/iterator');
 if (url.parse.name !== 'urlParse' || url.parse.length !== 3 ||
   url.format.name !== 'urlFormat' || url.format.length !== 2) {
   throw new Error('URL function shape');
