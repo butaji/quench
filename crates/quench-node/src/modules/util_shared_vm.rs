@@ -294,10 +294,28 @@ const UTIL: &str = quench_js_check::checked_js!(
   const types = {
     isDate: (value) => value instanceof Date,
   };
+  const systemErrorNames = new Map([
+    [-9, "EBADF"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
+    [-99, "EADDRNOTAVAIL"], [-111, "ECONNREFUSED"], [-113, "EHOSTUNREACH"],
+    [-101, "ENETUNREACH"], [-110, "ETIMEDOUT"], [-32, "EPIPE"], [-4094, "UNKNOWN"],
+  ]);
+  function getSystemErrorName(errno) {
+    if (typeof errno !== "number") {
+      throw Object.assign(new TypeError('The "err" argument must be of type number'), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    }
+    const name = systemErrorNames.get(errno);
+    if (name) return name;
+    throw Object.assign(new RangeError(`Unknown system error ${errno}`), {
+      code: "ERR_UNKNOWN_SYSTEM_ERROR",
+    });
+  }
   return {
     format,
     inspect,
     getCallSites,
+    getSystemErrorName,
     inherits,
     debuglog,
     deprecate,
