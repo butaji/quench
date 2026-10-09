@@ -23,7 +23,6 @@ pub(crate) const OPTIONAL_REGISTER_BIAS: Register = 1;
 pub(crate) const SINGLE_ARGUMENT_CALL_ARGUMENT_COUNT: u16 = 1;
 pub(crate) const NUMERIC_LOCAL_DECREMENT_FLAG: Register = RETURN_REGISTER;
 pub(crate) const NUMERIC_LOCAL_INC_STORE: u16 = 1;
-pub(crate) const NUMERIC_LOCAL_INC_STORE_AFTER_TO_NUMERIC: u16 = 2;
 pub(crate) const NO_NUMERIC_LOCAL_STORE_MARKER: u16 = 0;
 pub(crate) const NUMERIC_LOCAL_TARGET: u16 = SET_THIS_REGISTER;
 pub(crate) const FUNCTION_NAME_PREFIX_NONE: u32 = 0;
@@ -257,7 +256,6 @@ pub(crate) enum FieldLookup {
 pub(crate) struct NumericLocalStoreTarget {
     pub(crate) register: Register,
     pub(crate) decrement: bool,
-    pub(crate) through_to_numeric: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1279,7 +1277,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 79;
+    pub const FORMAT_VERSION: u8 = 78;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

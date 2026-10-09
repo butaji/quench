@@ -110,18 +110,6 @@ impl<H: Host> Vm<H> {
                     Op::LoadLocalPlain => {
                         let value = self.frames[frame].locals[ins.local_slot()];
                         self.write(frame, ins.result_register(), value);
-                        if let Some(target) = ins.numeric_local_store_target()
-                            && let Some(integer) = value.as_int()
-                        {
-                            self.numeric_local_inc_store(
-                                frame,
-                                code,
-                                &mut pc,
-                                integer,
-                                target,
-                                ins.local_slot() as u32,
-                            );
-                        }
                     }
                     Op::LoadLocal => {
                         let local = ins.local_slot();
@@ -132,7 +120,6 @@ impl<H: Host> Vm<H> {
                         {
                             self.numeric_local_inc_store(
                                 frame,
-                                code,
                                 &mut pc,
                                 integer,
                                 target,
@@ -345,7 +332,6 @@ impl<H: Host> Vm<H> {
     fn numeric_local_inc_store(
         &mut self,
         frame: usize,
-        code: &[Instr],
         pc: &mut usize,
         integer: i32,
         target: crate::bytecode::NumericLocalStoreTarget,
@@ -359,15 +345,9 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| Value::number(f64::from(integer) + f64::from(delta)));
         self.write(frame, target.register, next);
         self.frames[frame].locals[local as usize] = next;
-        let store_pc = *pc + usize::from(target.through_to_numeric) + 1;
-        if target.through_to_numeric {
-            self.profile_numeric_fusion(frame, function as u32, *pc, Op::ToNumeric);
-            self.profile_numeric_fusion(frame, function as u32, *pc + 1, Op::IncDec);
-        } else {
-            self.profile_numeric_fusion(frame, function as u32, *pc, Op::IncDec);
-        }
-        self.profile_numeric_fusion(frame, function as u32, store_pc, code[store_pc].op());
-        *pc = store_pc + 1;
+        self.profile_numeric_fusion(frame, function as u32, *pc, Op::IncDec);
+        self.profile_numeric_fusion(frame, function as u32, *pc + 1, Op::StoreLocal);
+        *pc += 2;
     }
 
     #[inline(always)]
