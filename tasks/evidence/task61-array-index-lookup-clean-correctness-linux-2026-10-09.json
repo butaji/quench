@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "task": "61",
+  "kind": "committed array-index lookup correctness evidence",
+  "recorded_at": "2026-10-09",
+  "source_revision": "142c3ac05046ea1cbe8bf7f0e645d6ba9f52db4b",
+  "production_binary_sha256": "63985cb7a9cee8ff73466728dd1b3443aee43297aba824a37308c884fb942e57",
+  "tracked_source_clean": true,
+  "test262_stage31": {
+    "baseline_report": {
+      "path": "target/iteration/task61-array-index-lookup-baseline-stage31.json",
+      "sha256": "5d92a350efb448762f325722456c2f1756de24c467cb99b48f176c2aa4553ef6",
+      "stages": {
+        "31": {
+          "failed": 0,
+          "passed": 3081,
+          "total": 3081
+        }
+      },
+      "total": 3081,
+      "passed": 3081,
+      "failed": 0
+    },
+    "clean_candidate_report": {
+      "path": "target/iteration/task61-array-index-lookup-clean-candidate-stage31.json",
+      "sha256": "3023dc6ea08a64000b3ab3ca474afaf61e12c2293bd83dc81f330b605006cd3d",
+      "stages": {
+        "31": {
+          "failed": 0,
+          "passed": 3081,
+          "total": 3081
+        }
+      },
+      "total": 3081,
+      "passed": 3081,
+      "failed": 0,
+      "source_revision": "142c3ac05046ea1cbe8bf7f0e645d6ba9f52db4b"
+    },
+    "compare_runs_regressions": 0,
+    "compare_runs_command": "TEST262_TEST_TIMEOUT_MS=30000 cargo run --profile iteration -p quench-test262 --bin compare-runs -- --reports target/iteration/task61-array-index-lookup-baseline-stage31.json target/iteration/task61-array-index-lookup-clean-candidate-stage31.json"
+  },
+  "node_framework_core": {
+    "command": "cargo run --profile iteration -p quench-node-test --bin run-parallel -- --profile framework-core --timeout-secs 60",
+    "passed": 43,
+    "failed": 0,
+    "skip": 0,
+    "timeout": 0,
+    "crash": 0
+  },
+  "node_oracle_record": "tasks/evidence/task61-array-index-lookup-clean-oracle-linux-2026-10-09.json",
+  "runtime_unit_suite_snapshot": "tasks/evidence/task61-array-index-lookup-correctness-linux-2026-10-09.json"
+}

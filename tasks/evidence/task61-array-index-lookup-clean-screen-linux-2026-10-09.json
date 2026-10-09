@@ -1,0 +1,117 @@
+{
+  "schema": 1,
+  "fixture": "navier-stokes",
+  "source_revision": "142c3ac05046ea1cbe8bf7f0e645d6ba9f52db4b",
+  "source_dirty": false,
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "host": {
+    "platform": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": "17179869184"
+  },
+  "bootstrap": {
+    "method": "paired percentile bootstrap of median differences",
+    "replicates": 100000
+  },
+  "fixture_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+  "baseline_binary_sha256": "9d6f2a425a741230a6e12d9e05dc9cb5ee93bc56b638533c95f797650bac9948",
+  "candidate_binary_sha256": "63985cb7a9cee8ff73466728dd1b3443aee43297aba824a37308c884fb942e57",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "status": 0,
+        "elapsed_ns": 69108335254,
+        "score": 71.6,
+        "max_rss_bytes": 25300992,
+        "stdout_sha256": "c692d8ddef30f773d584f2f3bf0ed83e8679a2ae84eb19e6a0bea983eee247cd",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "candidate": {
+        "status": 0,
+        "elapsed_ns": 54849641246,
+        "score": 89.8,
+        "max_rss_bytes": 23064576,
+        "stdout_sha256": "ee45733fc621ed382aa7d4483c47ab62c7705ba69b4266b07eba64a3358cf783",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "candidate": {
+        "status": 0,
+        "elapsed_ns": 53689244304,
+        "score": 91.6,
+        "max_rss_bytes": 23162880,
+        "stdout_sha256": "c002235e95bfd23ba7787deb36cec20b3ce77f6a286544bf5da7601247b46392",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "baseline": {
+        "status": 0,
+        "elapsed_ns": 68721187447,
+        "score": 71.7,
+        "max_rss_bytes": 25178112,
+        "stdout_sha256": "83613d0526c5ec048610ef50a9b68178a5f3a368a0a4bb6ab381703d24dff974",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline": {
+        "status": 0,
+        "elapsed_ns": 67807820196,
+        "score": 72.8,
+        "max_rss_bytes": 25288704,
+        "stdout_sha256": "3543fa37c6d2d9f6a4725d2d36383922384e9207812bfaa647948d2affe04c4b",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "candidate": {
+        "status": 0,
+        "elapsed_ns": 54649053298,
+        "score": 89.9,
+        "max_rss_bytes": 22986752,
+        "stdout_sha256": "ad1e2d2f595cc48d85e8a13287db94dda30acc0acf04577079df1a5953e0c36a",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "summary": {
+    "baseline_score_median": 71.7,
+    "candidate_score_median": 89.9,
+    "score_delta": {
+      "median": 18.200000000000003,
+      "95_ci": [
+        17.10000000000001,
+        19.89999999999999
+      ]
+    },
+    "baseline_rss_median_bytes": 25288704,
+    "candidate_rss_median_bytes": 23064576,
+    "rss_delta_bytes": {
+      "median": -2236416,
+      "95_ci": [
+        -2301952,
+        -2015232
+      ]
+    },
+    "all_outputs_equal": true
+  }
+}
