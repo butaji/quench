@@ -1,0 +1,60 @@
+{
+  "schema": "quench.task61.symbolized-profile-summary.v1",
+  "task": 61,
+  "experiment": "EarleyBoyer symbolized sample after function-source cache",
+  "diagnostic_only": true,
+  "source_revision": "a4d239fe2f1412fc12ff9b820aea0789e1f9111d",
+  "source_worktree_clean_at_build": true,
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported"
+  },
+  "binary": {
+    "path": "target/iteration/task61-function-source-cache-profile-20261009/production/quench-node",
+    "sha256": "2c94684f4b61c622c45ea77aed7c68f629640be66a15f74572c6c5c87227362c"
+  },
+  "input": {
+    "path": "target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js",
+    "sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b"
+  },
+  "profile": {
+    "method": "sample for 5 seconds at 1 ms after 1.5 seconds of warmup",
+    "sample_path": "target/iteration/task61-function-source-cache-profile-20261009/earley-current-sample.txt",
+    "sample_sha256": "43a536b96913c3a5c7571abcc4adc4e8d44a512f3813f35cf3a5e6c33c6e458f",
+    "sample_count": 3333,
+    "assembly_path": "target/iteration/task61-function-source-cache-profile-20261009/run_frame_general_until.asm",
+    "assembly_sha256": "ebda04b79afb5ad809de746a03a0410db7f9d19ed1397081cbb161b23ccb795f",
+    "top_self_samples": {
+      "run_frame_general_until": 686,
+      "collect_slow": 106,
+      "atom_units_equal_str": 99,
+      "_xzm_free": 99,
+      "call_user_frame_mode": 87,
+      "Cell::object": 84,
+      "get_property_with_receiver": 83,
+      "_platform_memset_pattern16": 65,
+      "quicksort": 60,
+      "intern_atom": 56,
+      "symbol_property": 55,
+      "active_shape_attributes": 54,
+      "CallArguments::from_values": 49,
+      "outer_environment_binding": 45,
+      "load_environment_binding": 44,
+      "get_field_cached": 43,
+      "object_property_slot": 40,
+      "binary_slow": 40,
+      "prune_weak_entries": 39,
+      "capture": 36,
+      "own_property": 36,
+      "root_local_var_binding": 34,
+      "binary": 34,
+      "_tlv_get_addr": 33,
+      "StackGuard::enter": 32,
+      "shape_property_lookup_cell": 31
+    },
+    "attribution": "run_frame_general_until was 20.6% of top-of-stack samples. set_function_source was absent from the top self symbols after the cache; closure-path JsString::from_str had one self sample. This supports leaving source-span materialization for later and ranking the dispatch loop ahead of further source-string work."
+  }
+}
