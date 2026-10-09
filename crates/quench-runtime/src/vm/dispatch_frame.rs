@@ -450,6 +450,39 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         expose_callee: bool,
     ) -> Result<(), JsError> {
+        let template_key = (self.realm.globals, expose_callee);
+        if let Some(template) = self
+            .realm
+            .intrinsics
+            .arguments_objects
+            .get(&template_key)
+            .copied()
+        {
+            let anchor = self
+                .object_data(template.anchor)
+                .expect("arguments template anchor is an object");
+            let shape = anchor.shape();
+            let iterator = self
+                .heap
+                .property_get(anchor, template.iterator_slot)
+                .expect("arguments template has an iterator method");
+            let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
+            properties[template.length_slot] = Value::number(args.len() as f64);
+            properties[template.callee_slot] = if expose_callee {
+                callable.ok_or_else(|| {
+                    JsError::validation("arguments object requires callable identity".into())
+                })?
+            } else {
+                Value::UNDEFINED
+            };
+            properties[template.iterator_slot] = iterator;
+            self.object_data_mut(arguments)
+                .expect("arguments object is an array")
+                .set_arguments_object();
+            self.heap
+                .initialize_object_properties(arguments, shape, &properties);
+            return Ok(());
+        }
         if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
@@ -505,7 +538,8 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
-            self.set_symbol_property(arguments, iterator, self.native_value(Native::ArrayValues))?;
+            let iterator_method = self.native_value(Native::ArrayValues);
+            self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(
                 arguments,
                 property_key::PropertyKey::symbol(iterator),
@@ -518,8 +552,58 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+            self.cache_arguments_object_template(arguments, template_key, length, callee, iterator);
         }
         Ok(())
+    }
+
+    fn cache_arguments_object_template(
+        &mut self,
+        arguments: Value,
+        key: (Value, bool),
+        length: Atom,
+        callee: Atom,
+        iterator: Value,
+    ) {
+        let Some((shape, length_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::string(length))
+        else {
+            return;
+        };
+        let Some((_, callee_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::string(callee))
+        else {
+            return;
+        };
+        let Some((_, iterator_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::symbol(iterator))
+        else {
+            return;
+        };
+        if self.shapes[shape as usize].storage_len != ARGUMENTS_OBJECT_PROPERTY_COUNT {
+            return;
+        }
+        let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
+        let Some(object) = self.object_data(arguments) else {
+            return;
+        };
+        let proto = object.proto;
+        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
+            return;
+        };
+        properties[iterator_slot] = iterator_method;
+        let anchor = self
+            .heap
+            .alloc_object_with_properties(proto, shape, &properties);
+        self.realm.intrinsics.arguments_objects.insert(
+            key,
+            ArgumentsObjectTemplate {
+                anchor,
+                length_slot,
+                callee_slot,
+                iterator_slot,
+            },
+        );
     }
 
     pub(super) fn promote_frame_environment(&mut self, frame: usize) -> Value {

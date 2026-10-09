@@ -250,6 +250,30 @@ impl ValueArena {
         vector
     }
 
+    pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
+        let expected = self.shape_lengths[shape as usize] as usize;
+        assert_eq!(values.len(), expected, "property values must match shape");
+        let mut vector = ValueVec {
+            start: EMPTY_START,
+            auxiliary: shape,
+        };
+        if values.is_empty() {
+            return vector;
+        }
+        let capacity = values
+            .len()
+            .max(MIN_CAPACITY)
+            .checked_next_power_of_two()
+            .expect("property vector capacity overflow");
+        if let Some(start) = self.allocate(capacity, MAX_ARENA_START) {
+            vector.start = start as u32;
+            self.values[start..start + values.len()].copy_from_slice(values);
+        } else {
+            vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
+        }
+        vector
+    }
+
     pub(crate) fn append_live_values(&self, vector: ValueVec, output: &mut Vec<Value>) {
         let len = self.len(vector);
         if vector.is_dictionary() {
@@ -468,6 +492,24 @@ mod tests {
         }
         assert_eq!(arena.get(values, 8).unwrap().as_number(), Some(8.0));
         assert_eq!(arena.vector_stats(values), (9, 16));
+    }
+
+    #[test]
+    fn initialized_vector_uses_the_shape_length_and_preserves_values() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 3);
+        let expected = [Value::heap(11), Value::heap(12), Value::heap(13)];
+
+        let vector = arena.with_values(1, &expected);
+
+        assert_eq!(arena.len(vector), expected.len());
+        assert_eq!(
+            (0..expected.len())
+                .map(|slot| arena.get(vector, slot).unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(vector.auxiliary(), 1);
     }
 
     #[test]
