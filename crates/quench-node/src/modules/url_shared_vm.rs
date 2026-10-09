@@ -195,6 +195,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         legacy_constructor,
     )?;
     set(context, module, "parse", parse)?;
+    let resolve = context.host_function(crate::host::shared_vm::operation("urlResolve"))?;
+    set(context, module, "resolve", resolve)?;
+    let resolve_object = context.host_function_with_data(
+        crate::host::shared_vm::operation("urlResolveObject"),
+        legacy_constructor,
+    )?;
+    set(context, module, "resolveObject", resolve_object)?;
     set(context, module, "URL", constructor)?;
     set(context, module, "URLSearchParams", search_params)?;
     set(context, module, "Url", legacy_constructor)?;
@@ -217,6 +224,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("fileURLToPath"),
     )?;
     set(context, module, "fileURLToPath", file_url_to_path)?;
+    let file_url_to_path_buffer = context.host_function(
+        crate::host::shared_vm::operation("fileURLToPathBuffer"),
+    )?;
+    set(context, module, "fileURLToPathBuffer", file_url_to_path_buffer)?;
     Ok(module)
 }
 
@@ -432,6 +443,99 @@ pub(crate) fn file_url_to_path(
         })?
     };
     Ok(context.string_rooted(&path))
+}
+
+pub(crate) fn file_url_to_path_buffer(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(input) = args.first().copied() else {
+        return Err(invalid_url_argument(context));
+    };
+    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_url_argument(context))?;
+    let windows = windows_option(context, args)?;
+    let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
+    if parsed.scheme() != "file" {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_URL_SCHEME",
+            "The URL must be of scheme file",
+        ));
+    }
+    if !windows
+        && parsed
+            .host_str()
+            .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+    {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_FILE_URL_HOST",
+            "File URL host must be \"localhost\" or empty on this platform",
+        ));
+    }
+    if parsed.path().to_ascii_lowercase().contains("%2f")
+        || (windows && parsed.path().to_ascii_lowercase().contains("%5c"))
+    {
+        return Err(coded_url_type_error(
+            context,
+            "ERR_INVALID_FILE_URL_PATH",
+            "File URL path must not include encoded / characters",
+        ));
+    }
+    let bytes = if windows {
+        let path = if cfg!(windows) {
+            parsed
+                .to_file_path()
+                .map_err(|_| invalid_url(context, &input))?
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            windows_file_url_path(&parsed).ok_or_else(|| {
+                coded_url_type_error(
+                    context,
+                    "ERR_INVALID_FILE_URL_PATH",
+                    "File URL path must be an absolute Windows path",
+                )
+            })?
+        };
+        path.into_bytes()
+    } else {
+        decode_percent_bytes(parsed.path()).ok_or_else(|| {
+            coded_url_type_error(
+                context,
+                "ERR_INVALID_FILE_URL_PATH",
+                "File URL path contains invalid percent encoding",
+            )
+        })?
+    };
+    let values = bytes
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let values = context.array_rooted(&values)?;
+    let global = context.global_root()?;
+    let buffer = get(context, global, "Buffer")?;
+    let from = get(context, buffer, "from")?;
+    context.call_rooted(from, buffer, &[values])
+}
+
+fn decode_percent_bytes(input: &str) -> Option<Vec<u8>> {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = hex_value(*bytes.get(index + 1)?)?;
+            let low = hex_value(*bytes.get(index + 2)?)?;
+            output.push((high << 4) | low);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    Some(output)
 }
 
 fn windows_option(
@@ -733,6 +837,82 @@ pub(crate) fn parse(
         set(context, instance, name, value)?;
     }
     Ok(instance)
+}
+
+pub(crate) fn resolve(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let base = args.first().copied().map(|root| context.to_string(root)).transpose()?.unwrap_or_default();
+    let target = args.get(1).copied().map(|root| context.to_string(root)).transpose()?.unwrap_or_default();
+    let resolved = resolve_legacy_url(&base, &target);
+    Ok(context.string_rooted(&resolved))
+}
+
+pub(crate) fn resolve_object(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let resolved = resolve(context, receiver, args)?;
+    parse(context, receiver, &[resolved])
+}
+
+fn resolve_legacy_url(base: &str, target: &str) -> String {
+    if base.is_empty() {
+        return target.to_owned();
+    }
+    if target.is_empty() {
+        return base.to_owned();
+    }
+    if url::Url::parse(target).is_ok() {
+        return target.to_owned();
+    }
+    if let Ok(base_url) = url::Url::parse(base) {
+        if target.starts_with("//") {
+            return format!("{}:{}", base_url.scheme(), target);
+        }
+        return base_url
+            .join(target)
+            .map(|url| url.to_string())
+            .unwrap_or_else(|_| target.to_owned());
+    }
+    if target.starts_with('/') {
+        if let Some((scheme, rest)) = base.split_once("://") {
+            if let Some((authority, _)) = rest.split_once('/') {
+                return format!("{scheme}://{authority}{target}");
+            }
+        }
+        return target.to_owned();
+    }
+    let prefix = base.rsplit_once('/').map_or("", |(prefix, _)| prefix);
+    let combined = if prefix.is_empty() {
+        target.to_owned()
+    } else {
+        format!("{prefix}/{target}")
+    };
+    normalize_relative_url_path(&combined)
+}
+
+fn normalize_relative_url_path(value: &str) -> String {
+    let (path, suffix) = value
+        .find(['?', '#'])
+        .map_or((value, ""), |index| (&value[..index], &value[index..]));
+    let rooted = path.starts_with('/');
+    let mut segments = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => { segments.pop(); }
+            segment => segments.push(segment),
+        }
+    }
+    let mut normalized = segments.join("/");
+    if rooted { normalized.insert(0, '/'); }
+    if path.ends_with('/') && !normalized.ends_with('/') { normalized.push('/'); }
+    normalized.push_str(suffix);
+    normalized
 }
 
 pub(crate) fn format(
