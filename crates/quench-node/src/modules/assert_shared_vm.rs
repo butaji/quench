@@ -440,7 +440,24 @@ pub(crate) fn throws(
     };
     if context.is_callable_rooted(expected)? {
         let prototype = get(context, expected, "prototype")?;
-        let matched = if context.is_object_rooted(prototype)? {
+        let is_error_constructor = if context.is_object_rooted(prototype)? {
+            let global = context.global_root()?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            let error_constructor = get(context, global, "Error")?;
+            let error_prototype = get(context, error_constructor, "prototype")?;
+            if context.same_value_rooted(prototype, error_prototype)? {
+                true
+            } else {
+                let inherits_error =
+                    context.call_rooted(is_prototype_of, error_prototype, &[prototype])?;
+                context.truthy_rooted(inherits_error)?
+            }
+        } else {
+            false
+        };
+        let matched = if is_error_constructor {
             let global = context.global_root()?;
             let object = get(context, global, "Object")?;
             let object_prototype = get(context, object, "prototype")?;
