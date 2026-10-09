@@ -48,6 +48,15 @@ const path = require('node:path');
   } finally {
     await defaultReader.close();
   }
+  const appendPath = path.join(process.cwd(), `quench-filehandle-append-${process.pid}`);
+  const appendHandle = await fs.promises.open(appendPath, 'a');
+  try {
+    await appendHandle.appendFile('append works');
+    assert.equal(fs.readFileSync(appendPath, 'utf8'), 'append works');
+  } finally {
+    await appendHandle.close();
+    fs.rmSync(appendPath, { force: true });
+  }
   const streamReader = await fs.promises.open(__filename, 'r');
   try {
     const chunks = [];
