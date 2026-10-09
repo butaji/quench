@@ -910,7 +910,7 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
   };
 }"#;
 
-const CP_API: &str = r#"(existsSync, statSync, readdirSync, mkdirSync, copyFileSync) => {
+const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync) => {
   const exists = (path) => {
     try { statSync(path); return true; } catch { return false; }
   };
@@ -949,6 +949,9 @@ const CP_API: &str = r#"(existsSync, statSync, readdirSync, mkdirSync, copyFileS
       return undefined;
     }
     let dest = destination;
+    if (exists(destination) && lstatSync(destination).isSymbolicLink() && options.dereference !== true) {
+      unlinkSync(destination);
+    }
     if (exists(destination) && statSync(destination).isDirectory()) {
       const sourceParts = String(source).split(/[\\/]/);
       dest = `${destination.replace(/[\\/]$/, '')}/${sourceParts[sourceParts.length - 1]}`;
@@ -1655,10 +1658,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let copy_file = context.call_rooted(copy_file_factory, undefined, &[copy_file_sync])?;
     set(context, module, "copyFile", copy_file)?;
     let cp_factory = context.evaluate_script_rooted(CP_API, "node:fs/shared-cp.js")?;
+    let lstat_sync = get(context, module, "lstatSync")?;
+    let unlink_sync = get(context, module, "unlinkSync")?;
     let cp_api = context.call_rooted(
         cp_factory,
         undefined,
-        &[exists_sync, stat_sync, readdir_sync, mkdir_sync, copy_file_sync],
+        &[
+            exists_sync,
+            stat_sync,
+            lstat_sync,
+            readdir_sync,
+            mkdir_sync,
+            unlink_sync,
+            copy_file_sync,
+        ],
     )?;
     let cp_sync = get(context, cp_api, "cpSync")?;
     let cp = get(context, cp_api, "cp")?;
