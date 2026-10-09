@@ -21,6 +21,7 @@ const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as
 #[derive(Default)]
 pub(crate) struct Profile {
     pub opcodes: Vec<u64>,
+    pub dispatched_opcodes: Vec<u64>,
     pub pairs: Vec<u64>,
     pub pair_sites: rustc_hash::FxHashMap<(u32, u32), u64>,
     pub last_locations: Vec<Option<(u32, usize, usize)>>,
@@ -87,6 +88,10 @@ impl Profile {
     #[inline(always)]
     pub fn opcode(&mut self, opcode: usize, frame: usize, function: u32, pc: usize) {
         self.site(function, pc);
+        if self.dispatched_opcodes.len() <= opcode {
+            self.dispatched_opcodes.resize(opcode + 1, 0);
+        }
+        self.dispatched_opcodes[opcode] = self.dispatched_opcodes[opcode].saturating_add(1);
         if self.opcodes.len() <= opcode {
             self.opcodes.resize(opcode + 1, 0);
         }
@@ -113,6 +118,31 @@ impl Profile {
         if self.trace.len() < 4_000_000 {
             self.trace.extend_from_slice(&(opcode as u32).to_le_bytes());
         }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub fn report_dispatch_census_if_enabled(&self) -> bool {
+        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
+            return false;
+        }
+        let total = self.dispatched_opcodes.iter().sum::<u64>();
+        let site_total = self.site_counts.iter().flatten().sum::<u64>();
+        assert_eq!(total, site_total, "dispatch opcode/site counters diverged");
+        eprint!(
+            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"counts\":{{"
+        );
+        for opcode in 0..crate::bytecode::Op::COUNT {
+            if opcode != 0 {
+                eprint!(",");
+            }
+            eprint!(
+                "\"{}\":{}",
+                crate::bytecode::Op::NAMES[opcode],
+                self.dispatched_opcodes.get(opcode).copied().unwrap_or(0)
+            );
+        }
+        eprintln!("}}}}");
+        true
     }
 
     #[cfg(not(feature = "profile-aggregate"))]
@@ -508,4 +538,21 @@ impl Profile {
 
     #[cfg(not(feature = "profile-aggregate"))]
     pub fn report(&mut self, _: &crate::heap::Heap, _: &crate::bytecode::ResidualProgram) {}
+}
+
+#[cfg(all(test, feature = "profile-aggregate"))]
+mod tests {
+    use super::Profile;
+    use crate::bytecode::Op;
+
+    #[test]
+    fn physical_dispatch_counts_exclude_virtual_fusion_steps() {
+        let mut profile = Profile::default();
+        profile.opcode(Op::NumericAdd as usize, 0, 0, 0);
+        profile.virtual_opcode(Op::Binary as usize);
+
+        assert_eq!(profile.dispatched_opcodes[Op::NumericAdd as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[Op::Binary as usize], 0);
+        assert_eq!(profile.opcodes[Op::Binary as usize], 1);
+    }
 }
