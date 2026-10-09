@@ -95,6 +95,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsMkdtempSync" (1) => crate::modules::fs_shared_vm::sync::mkdtemp_sync,
         method "fsCopyFileSync" (3) => crate::modules::fs_shared_vm::sync::copy_file_sync,
         method "fsSymlinkSync" (3) => crate::modules::fs_shared_vm::sync::symlink_sync,
+        method "fsLinkSync" (2) => crate::modules::fs_shared_vm::sync::link_sync,
         method "fsRenameSync" (2) => crate::modules::fs_shared_vm::sync::rename_sync,
         method "fsUnlinkSync" (1) => crate::modules::fs_shared_vm::sync::unlink_sync,
         method "fsChownSync" (3) => crate::modules::fs_shared_vm::stat::chown_sync,
