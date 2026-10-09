@@ -304,6 +304,31 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   configurable: true,
 });
 
+Object.defineProperty(globalThis, "MessageEvent", {
+  value: (() => {
+    const brand = new WeakSet();
+    const assertBrand = (value) => { if (!brand.has(value)) throw new TypeError("Illegal invocation"); };
+    return class MessageEvent extends Event {
+      constructor(type, init = {}) {
+        super(type, init);
+        brand.add(this);
+        this._data = init.data;
+        this._origin = init.origin === undefined ? "" : String(init.origin);
+        this._lastEventId = init.lastEventId === undefined ? "" : String(init.lastEventId);
+        this._source = init.source ?? null;
+        this._ports = init.ports === undefined ? [] : [...init.ports];
+      }
+      get data() { assertBrand(this); return this._data; }
+      get origin() { assertBrand(this); return this._origin; }
+      get lastEventId() { assertBrand(this); return this._lastEventId; }
+      get source() { assertBrand(this); return this._source; }
+      get ports() { assertBrand(this); return this._ports; }
+    };
+  })(),
+  writable: true,
+  configurable: true,
+});
+
 if (globalThis.MessagePort === undefined) Object.defineProperty(globalThis, "MessagePort", {
   value: class MessagePort extends EventTarget {
     constructor() {
@@ -367,7 +392,7 @@ if (globalThis.MessagePort === undefined) Object.defineProperty(globalThis, "Mes
       const peer = this._peer;
       queueMicrotask(() => {
         if (peer._closed) return;
-        const event = Object.assign(new Event("message"), { data, ports: [] });
+        const event = new MessageEvent("message", { data, ports: [] });
         peer.dispatchEvent(event);
         for (const listener of peer._nodeListeners.get("message") || []) listener(data);
         if (typeof peer.onmessage === "function") peer.onmessage.call(peer, event);
