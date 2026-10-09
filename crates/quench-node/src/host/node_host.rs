@@ -36,6 +36,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) assert_module: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
+    pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -71,6 +72,7 @@ impl SharedNodeState {
             assert_module: None,
             path_module: None,
             url_constructor: None,
+            url_search_params_constructor: None,
             timer_handle_api: None,
             exec_argv: Vec::new(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
