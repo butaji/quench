@@ -8,6 +8,16 @@ if (params.get('a') !== 'one two' || params.getAll('a').join('|') !== 'one two|t
   params.get('missing') !== null || params.size !== 3 || params.toString() !== 'a=one+two&a=three&b=%21') {
   throw new Error('URLSearchParams query parsing');
 }
+const liveUrl = new URL('https://example.test/path?old=1#frag');
+const liveParams = liveUrl.searchParams;
+liveParams.append('new value', '!');
+if (liveUrl.href !== 'https://example.test/path?old=1&new+value=%21#frag' ||
+  liveUrl.searchParams !== liveParams) throw new Error('URL.searchParams mutation and identity');
+liveUrl.search = '?replacement=2';
+if (liveUrl.searchParams !== liveParams || liveParams.get('replacement') !== '2' ||
+  liveUrl.href !== 'https://example.test/path?replacement=2#frag') {
+  throw new Error('URL.search setter updates live searchParams');
+}
 params.set('a', 'new value');
 params.append('x y', '!~');
 if (params.toString() !== 'a=new+value&b=%21&x+y=%21%7E' || !params.has('a', 'new value')) {
