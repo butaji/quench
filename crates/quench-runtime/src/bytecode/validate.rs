@@ -51,6 +51,34 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
     (atom as usize) < atoms
 }
 
+fn eval_binding_is_valid(
+    binding: &super::EvalBinding,
+    function: &super::Function,
+    functions: &[super::Function],
+    atoms: usize,
+) -> bool {
+    let target = match binding.location {
+        super::EvalBindingLocation::Local(_) => Some(function),
+        super::EvalBindingLocation::Capture { depth, .. } => {
+            let mut parent = function.parent;
+            for _ in 0..depth {
+                parent = parent
+                    .and_then(|id| functions.get(id as usize))
+                    .and_then(|function| function.parent);
+            }
+            parent.and_then(|id| functions.get(id as usize))
+        }
+    };
+    let slot = match binding.location {
+        super::EvalBindingLocation::Local(slot)
+        | super::EvalBindingLocation::Capture { slot, .. } => slot,
+    };
+    atom_in_bounds(binding.atom, atoms)
+        && target.is_some_and(|target| {
+            slot < target.locals && usize::from(binding.with_depth) <= function.code.len()
+        })
+}
+
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
@@ -73,6 +101,7 @@ struct ValidationBounds {
     cache_sites: u16,
     method_sites: usize,
     object_sites: usize,
+    regexp_literal_sites: usize,
     superinstructions: usize,
     code_len: u32,
 }
@@ -251,6 +280,9 @@ fn immediate_domains_in_bounds(
         }
         super::ImmediateRole::ObjectSiteIndex => {
             (instruction.object_site_index() as usize) < bounds.object_sites
+        }
+        super::ImmediateRole::RegExpLiteralSiteIndex => {
+            instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
         }
         super::ImmediateRole::SuperinstructionIndex => {
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
@@ -440,49 +472,8 @@ impl ResidualProgram {
                     "function {index} has duplicate or unsorted name bindings"
                 ));
             }
-            if function
-                .binding_sites
-                .windows(2)
-                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
-                || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0
-                        || site.resume_pc as usize > function.code.len()
-                        || site
-                            .bindings
-                            .windows(2)
-                            .any(|pair| pair[0].atom >= pair[1].atom)
-                })
-            {
-                return Err(format!("function {index} has invalid binding sites"));
-            }
-            for binding in function.name_bindings.iter().chain(
-                function
-                    .binding_sites
-                    .iter()
-                    .flat_map(|site| site.bindings.iter()),
-            ) {
-                let target = match binding.location {
-                    super::EvalBindingLocation::Local(_) => Some(function),
-                    super::EvalBindingLocation::Capture { depth, .. } => {
-                        let mut parent = function.parent;
-                        for _ in 0..depth {
-                            parent = parent
-                                .and_then(|id| self.functions.get(id as usize))
-                                .and_then(|function| function.parent);
-                        }
-                        parent.and_then(|id| self.functions.get(id as usize))
-                    }
-                };
-                let slot = match binding.location {
-                    super::EvalBindingLocation::Local(slot)
-                    | super::EvalBindingLocation::Capture { slot, .. } => slot,
-                };
-                if !atom_in_bounds(binding.atom, self.atoms.len())
-                    || target.is_none_or(|function| {
-                        slot >= function.locals
-                            || usize::from(binding.with_depth) > function.code.len()
-                    })
-                {
+            for binding in &function.name_bindings {
+                if !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len()) {
                     return Err(format!("function {index} has an invalid name binding"));
                 }
             }
@@ -497,13 +488,19 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has invalid source positions"));
             }
-            if function.binding_sites.windows(2).any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+            if function
+                .binding_sites
+                .windows(2)
+                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
                 || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0 || site.resume_pc > code_len
-                        || site.bindings.windows(2).any(|pair| pair[0].atom >= pair[1].atom)
+                    site.resume_pc == 0
+                        || site.resume_pc > code_len
+                        || site
+                            .bindings
+                            .windows(2)
+                            .any(|pair| pair[0].atom >= pair[1].atom)
                         || site.bindings.iter().any(|binding| {
-                            !atom_in_bounds(binding.atom, self.atoms.len())
-                                || matches!(binding.location, super::EvalBindingLocation::Local(slot) if slot >= function.locals)
+                            !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len())
                         })
                 })
             {
@@ -529,6 +526,7 @@ impl ResidualProgram {
                 cache_sites: self.cache_sites,
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
+                regexp_literal_sites: self.regexp_literal_sites.len(),
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
@@ -737,6 +735,17 @@ impl ResidualProgram {
                 .any(|atom| !atom_in_bounds(*atom, self.atoms.len()))
             {
                 return Err("invalid object site".into());
+            }
+        }
+        for site in &self.regexp_literal_sites {
+            if !matches!(
+                self.constants.get(site.pattern_constant as usize),
+                Some(super::Constant::String(_))
+            ) || !matches!(
+                self.constants.get(site.flags_constant as usize),
+                Some(super::Constant::String(_))
+            ) {
+                return Err("invalid RegExp literal site".into());
             }
         }
         if self
@@ -1051,6 +1060,7 @@ mod tests {
             method_arguments: vec![],
             field_sites: vec![],
             object_sites: vec![],
+            regexp_literal_sites: vec![],
             superinstructions: vec![],
             register_roots: roots,
         }

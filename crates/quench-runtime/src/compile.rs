@@ -1614,6 +1614,7 @@ struct Compiler<'a> {
     method_sites: Vec<MethodSiteSpec>,
     field_sites: Vec<FieldSite>,
     object_sites: Vec<ObjectSite>,
+    regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
     superinstructions: Vec<Superinstruction>,
 }
 
@@ -1828,6 +1829,7 @@ impl<'a> Compiler<'a> {
             method_sites: vec![],
             field_sites: vec![],
             object_sites: vec![],
+            regexp_literal_sites: vec![],
             superinstructions: vec![],
         }
     }
@@ -2216,6 +2218,7 @@ impl<'a> Compiler<'a> {
             method_arguments,
             field_sites: self.field_sites,
             object_sites: self.object_sites,
+            regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
             register_roots,
         };
@@ -2314,6 +2317,16 @@ impl<'a> Compiler<'a> {
         let index = self.constants.len() as u32;
         self.constants.push(value);
         self.constant_index.insert(key, index);
+        index
+    }
+
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+        let index = self.regexp_literal_sites.len() as u32;
+        self.regexp_literal_sites
+            .push(crate::bytecode::RegExpLiteralSite {
+                pattern_constant,
+                flags_constant,
+            });
         index
     }
 
