@@ -1,0 +1,183 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "direct Number binary dispatch with inline(always) shared helper",
+  "decision": "reject as a general change: NavierStokes has a joint win, but RayTrace RSS regresses and Splay Score falls; pursue a smaller out-of-line helper separately.",
+  "source_revision": "d4a0c3c74fc5d8b5875f634c76e0badb3f8cbbaf",
+  "candidate_patch_sha256": "737dc55037b6a1a6cbf048917f6971a07cc84b17cf8a82d760f6655d7b290d6d",
+  "candidate_binary_sha256": "5d85f488d0a5cee264d8b1f93fdab705a1ec2e61011ec21143f6405319cba552",
+  "baseline_binary_sha256": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158",
+  "node_oracle": {
+    "version": "v24.19.0",
+    "script_sha256": "1ef8e190acf21a2b0294cb220ace206d9afe07ec7dd74cafeb23eb34e8410081",
+    "baseline_matches": true,
+    "candidate_matches": true,
+    "scope": "20 binary operators across 14 numeric edge values, including NaN, signed zero, infinities, integer boundaries and fractional/large bitwise inputs."
+  },
+  "host": {
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "cpu": "AMD EPYC 9V74",
+    "quota": "400000 100000",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "rss_backend": "Linux wait4 rusage"
+  },
+  "method": {
+    "screen": "one alternating sample on all eight V8-v7 fixtures",
+    "paired_followup": "11 alternating Quench production pairs on Crypto, DeltaBlue, NavierStokes, RayTrace and Splay",
+    "bootstrap": "100000 paired percentile replicates for median deltas",
+    "output": "benchmark output matched in every sample"
+  },
+  "all8_screen": {
+    "crypto": {
+      "baseline_score": 152.0,
+      "candidate_score": 157.0,
+      "baseline_maximum_rss_bytes": 22601728,
+      "candidate_maximum_rss_bytes": 22245376,
+      "output_equal": true
+    },
+    "deltablue": {
+      "baseline_score": 91.1,
+      "candidate_score": 97.4,
+      "baseline_maximum_rss_bytes": 20787200,
+      "candidate_maximum_rss_bytes": 20467712,
+      "output_equal": true
+    },
+    "earley-boyer": {
+      "baseline_score": 205.0,
+      "candidate_score": 209.0,
+      "baseline_maximum_rss_bytes": 51392512,
+      "candidate_maximum_rss_bytes": 50548736,
+      "output_equal": true
+    },
+    "navier-stokes": {
+      "baseline_score": 222.0,
+      "candidate_score": 236.0,
+      "baseline_maximum_rss_bytes": 20541440,
+      "candidate_maximum_rss_bytes": 19816448,
+      "output_equal": true
+    },
+    "raytrace": {
+      "baseline_score": 151.0,
+      "candidate_score": 146.0,
+      "baseline_maximum_rss_bytes": 20594688,
+      "candidate_maximum_rss_bytes": 19861504,
+      "output_equal": true
+    },
+    "regexp": {
+      "baseline_score": 55.1,
+      "candidate_score": 55.3,
+      "baseline_maximum_rss_bytes": 31866880,
+      "candidate_maximum_rss_bytes": 31154176,
+      "output_equal": true
+    },
+    "richards": {
+      "baseline_score": 150.0,
+      "candidate_score": 150.0,
+      "baseline_maximum_rss_bytes": 18874368,
+      "candidate_maximum_rss_bytes": 18157568,
+      "output_equal": true
+    },
+    "splay": {
+      "baseline_score": 879.0,
+      "candidate_score": 863.0,
+      "baseline_maximum_rss_bytes": 200491008,
+      "candidate_maximum_rss_bytes": 200261632,
+      "output_equal": true
+    }
+  },
+  "paired_fixtures": {
+    "crypto.js": {
+      "baseline_score_median": 153.0,
+      "candidate_score_median": 154.0,
+      "score_delta_median": 2.0,
+      "score_delta_95_ci": [
+        -4.0,
+        6.0
+      ],
+      "baseline_maximum_rss_median_bytes": 22581248,
+      "candidate_maximum_rss_median_bytes": 21979136,
+      "maximum_rss_delta_median_bytes": -421888,
+      "maximum_rss_delta_95_ci_bytes": [
+        -860160,
+        -204800
+      ],
+      "candidate_score_worse_pairs": 4,
+      "candidate_rss_lower_pairs": 11
+    },
+    "deltablue.js": {
+      "baseline_score_median": 93.3,
+      "candidate_score_median": 94.4,
+      "score_delta_median": 1.2999999999999972,
+      "score_delta_95_ci": [
+        -0.29999999999999716,
+        3.799999999999997
+      ],
+      "baseline_maximum_rss_median_bytes": 20697088,
+      "candidate_maximum_rss_median_bytes": 20467712,
+      "maximum_rss_delta_median_bytes": -237568,
+      "maximum_rss_delta_95_ci_bytes": [
+        -364544,
+        -135168
+      ],
+      "candidate_score_worse_pairs": 3,
+      "candidate_rss_lower_pairs": 10
+    },
+    "navier-stokes.js": {
+      "baseline_score_median": 219.0,
+      "candidate_score_median": 236.0,
+      "score_delta_median": 19.0,
+      "score_delta_95_ci": [
+        16.0,
+        22.0
+      ],
+      "baseline_maximum_rss_median_bytes": 20422656,
+      "candidate_maximum_rss_median_bytes": 19636224,
+      "maximum_rss_delta_median_bytes": -770048,
+      "maximum_rss_delta_95_ci_bytes": [
+        -880640,
+        -585728
+      ],
+      "candidate_score_worse_pairs": 0,
+      "candidate_rss_lower_pairs": 11
+    },
+    "raytrace.js": {
+      "baseline_score_median": 154.0,
+      "candidate_score_median": 155.0,
+      "score_delta_median": 1.0,
+      "score_delta_95_ci": [
+        -3.0,
+        3.0
+      ],
+      "baseline_maximum_rss_median_bytes": 20471808,
+      "candidate_maximum_rss_median_bytes": 21041152,
+      "maximum_rss_delta_median_bytes": 585728,
+      "maximum_rss_delta_95_ci_bytes": [
+        319488,
+        843776
+      ],
+      "candidate_score_worse_pairs": 3,
+      "candidate_rss_lower_pairs": 2
+    },
+    "splay.js": {
+      "baseline_score_median": 1072.0,
+      "candidate_score_median": 862.0,
+      "score_delta_median": -67.0,
+      "score_delta_95_ci": [
+        -219.0,
+        4.0
+      ],
+      "baseline_maximum_rss_median_bytes": 200790016,
+      "candidate_maximum_rss_median_bytes": 200327168,
+      "maximum_rss_delta_median_bytes": -471040,
+      "maximum_rss_delta_95_ci_bytes": [
+        -602112,
+        -425984
+      ],
+      "candidate_score_worse_pairs": 8,
+      "candidate_rss_lower_pairs": 11
+    }
+  },
+  "qualification_ready": false,
+  "raw_artifacts": "target/iteration/task61-direct-number-dispatch-inline-linux-2026-10-09/"
+}
