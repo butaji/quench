@@ -857,9 +857,7 @@ impl<H: Host> Vm<H> {
         }
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
-            self.report_memory("initialized");
-        }
+        self.report_memory_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -884,8 +882,12 @@ impl<H: Host> Vm<H> {
     fn report_execution(&mut self, program: &ResidualProgram) {
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_memory_if_enabled(&self, phase: &str) {
         if std::env::var_os("QUENCH_MEMORY").is_some() {
-            self.report_memory("complete");
+            self.report_memory(phase);
         }
     }
     #[cfg(feature = "profile-memory")]
@@ -1022,9 +1024,18 @@ impl<H: Host> Vm<H> {
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("program_constants");
         self.install_builtins(program)?;
-        self.initialize_host(program)
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_builtins");
+        self.initialize_host(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("host_bootstrap");
+        Ok(())
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {

@@ -599,10 +599,14 @@ const NATIVES: &[Native] = &[
 impl<H: Host> Vm<H> {
     pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         self.install_prototypes();
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_prototypes");
         for native in NATIVES {
             let value = self.native(*native);
             self.natives.push((*native, value));
         }
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_native_function_table");
         // Error intrinsics must exist before any guarded initialization step.
         self.install_error_intrinsics(program)?;
         self.install_throw_type_error_for_realm(self.realm.globals)?;
@@ -819,7 +823,11 @@ impl<H: Host> Vm<H> {
             self.set_builtin_named(program, self.realm.globals, name, native)?;
         }
         self.install_number(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_core_builtins");
         self.install_intl_for_realm(program, self.realm.globals, self.object_proto)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_intl");
         for (name, native) in [
             ("encodeURI", Native::EncodeUri),
             ("encodeURIComponent", Native::EncodeUriComponent),
@@ -838,7 +846,12 @@ impl<H: Host> Vm<H> {
         self.install_reflect(program)?;
         self.install_math(program)?;
         self.install_promise(program)?;
-        self.install_temporal(program)
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_builtins_before_temporal");
+        self.install_temporal(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_temporal");
+        Ok(())
     }
     fn install_prototypes(&mut self) {
         self.object_proto = self
