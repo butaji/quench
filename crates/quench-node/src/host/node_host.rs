@@ -11,6 +11,8 @@ pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 pub struct NodeHost {
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
+    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
+    pub(crate) net_pending_ends: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -44,6 +46,23 @@ pub(crate) struct SharedNodeState {
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
+    pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
+    pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
+    pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
+}
+
+pub(crate) struct NetSocket {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) encoding: Option<String>,
+    pub(crate) parent_server: Option<u64>,
+}
+
+pub(crate) struct NetServer {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) listener: u64,
+    pub(crate) connections: std::collections::HashSet<u64>,
+    pub(crate) closing: bool,
+    pub(crate) listening_pending: bool,
 }
 
 impl SharedNodeState {
@@ -80,6 +99,9 @@ impl SharedNodeState {
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
             tcp: crate::modules::net_shared_vm::Transport::new(),
+            net_sockets: std::collections::HashMap::new(),
+            net_servers: std::collections::HashMap::new(),
+            net_socket_constructor: None,
         }
     }
 }
@@ -108,6 +130,8 @@ impl NodeHost {
                 async_identity,
             ))),
             commonjs_entry: None,
+            net_pending_writes: Vec::new(),
+            net_pending_ends: Vec::new(),
         }
     }
 

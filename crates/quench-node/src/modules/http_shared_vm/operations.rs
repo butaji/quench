@@ -535,11 +535,28 @@ pub(crate) fn server_close(
     let host = context.host_mut().shared_state();
     {
         let mut guard = host.borrow_mut();
-        if let Some(server) = guard.http.servers.get_mut(&id) {
+        let mut idle_sockets = Vec::new();
+        let listener = guard.http.servers.get_mut(&id).and_then(|server| {
             server.closing = true;
-            if let Some(listener) = server.listener.take() {
-                net_shared_vm::close_listener(&mut guard.tcp, listener);
-            }
+            idle_sockets.extend(server.connections.iter().copied());
+            server.listener.take()
+        });
+        if let Some(listener) = listener {
+            net_shared_vm::close_listener(&mut guard.tcp, listener);
+        }
+        idle_sockets.retain(|socket| {
+            guard
+                .http
+                .responses
+                .values()
+                .filter(|response| response.socket == *socket)
+                .all(|response| response.lifecycle.is_terminal())
+        });
+        for socket in idle_sockets {
+            // A response can be terminal while its bytes are still queued in
+            // the shared transport. Half-close after the queued writes drain
+            // so server.close() cannot discard a just-finished response.
+            net_shared_vm::end(&mut guard.tcp, socket).map_err(RootedError::host)?;
         }
     }
     let listening = context.boolean(false);
@@ -984,6 +1001,9 @@ pub(crate) fn response_finish(
     else {
         return Ok(context.undefined());
     };
+    let close_after_response = headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("connection") && value == "close");
     let bytes = if headers_sent {
         if chunked {
             let mut framed = crate::modules::http_protocol::chunk_frame(&body);
@@ -1018,6 +1038,23 @@ pub(crate) fn response_finish(
         &bytes,
     )
     .map_err(RootedError::host)?;
+    if close_after_response {
+        net_shared_vm::end(
+            &mut context.host_mut().shared_state().borrow_mut().tcp,
+            socket,
+        )
+        .map_err(RootedError::host)?;
+    } else if let Some(connection) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .http
+        .connections
+        .get_mut(&socket)
+    {
+        connection.received.clear();
+        connection.request_dispatched = false;
+    }
     if let (Some(request), Some(response), Some(server), Some(socket)) = (
         args.get(3).copied(),
         args.get(4).copied(),
