@@ -6,6 +6,14 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) => {
   function WriteStream(path, options) {
     if (!(this instanceof WriteStream)) return new WriteStream(path, options);
+    if (options !== undefined && options !== null && typeof options !== "string" && typeof options !== "object") {
+      const received = typeof options === "number" || typeof options === "boolean"
+        ? `type ${typeof options} (${String(options)})`
+        : `type ${typeof options}`;
+      const error = new TypeError(`The "options" argument must be of type object. Received ${received}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
 
     const settings = typeof options === "string" ? { encoding: options } : (options || {});
     const flags = settings.flags || "w";
