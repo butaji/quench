@@ -59,14 +59,13 @@ const UTIL: &str = quench_js_check::checked_js!(
         if (typeof current.stack === "string") return current.stack;
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
-      if (depth > maxDepth) return Array.isArray(current) ? "[Array]" : "[Object]";
-
       const customInspect = current[inspect.custom];
       if (settings.customInspect !== false && typeof customInspect === "function") {
-        const custom = Reflect.apply(customInspect, current, [depth, settings, inspect]);
+        const custom = Reflect.apply(customInspect, current, [maxDepth - depth, settings, inspect]);
         if (typeof custom === "string") return custom;
         if (custom !== current) return render(custom, depth + 1);
       }
+      if (depth > maxDepth) return Array.isArray(current) ? "[Array]" : "[Object]";
       if (seen.has(current)) return "[Circular]";
       seen.add(current);
       let result;
