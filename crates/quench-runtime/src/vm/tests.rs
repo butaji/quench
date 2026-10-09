@@ -7561,6 +7561,55 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
 }
 
 #[test]
+fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
+    let program = Engine::specialize(
+        r#"
+        function make() { return /a/g; }
+        var first = make();
+        var second = make();
+        if (first === second) throw new Error('literal object was cached');
+        if (!first.exec('a') || first.lastIndex !== 1 || second.lastIndex !== 0)
+            throw new Error('lastIndex was shared');
+        first.compile('b', 'g');
+        if (!first.test('b') || !second.test('a'))
+            throw new Error('compile changed a shared matcher');
+        var callbackMatcher = make();
+        var nested = false;
+        var replaced = 'a'.replace(callbackMatcher, function () {
+            callbackMatcher.lastIndex = 0;
+            nested = !!callbackMatcher.exec('a');
+            return 'x';
+        });
+        if (!nested || replaced !== 'x') throw new Error('reentrant exec failed');
+
+        function makeCaptured() { return /(a)(b)/g; }
+        var captureFirst = makeCaptured();
+        var captureSecond = makeCaptured();
+        var nestedCaptures = false;
+        var replacedCaptured = 'ab'.replace(captureFirst, function (whole, first, second) {
+            var nestedMatch = captureSecond.exec('ab');
+            nestedCaptures = !!nestedMatch
+                && nestedMatch[0] === 'ab'
+                && nestedMatch[1] === 'a'
+                && nestedMatch[2] === 'b';
+            return 'x';
+        });
+        if (!nestedCaptures || replacedCaptured !== 'x' || captureSecond.lastIndex !== 2)
+            throw new Error('shared capture workspace was not reentrant');
+        "#,
+        "regexp-literal-site.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        vm.programs
+            .compiled_regexp_literal_count(super::program_store::ProgramId::MAIN),
+        2
+    );
+}
+
+#[test]
 fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,

@@ -1723,6 +1723,10 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), value);
             }
+            Op::CreateRegExpLiteral => {
+                let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
+                self.write(f, i.result_register(), value);
+            }
             Op::Construct => {
                 self.profile.call_source(4);
                 let args = match i.construct_arguments() {

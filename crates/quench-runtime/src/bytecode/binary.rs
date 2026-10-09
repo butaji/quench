@@ -3,7 +3,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
     MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
     ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    SourcePosition, Superinstruction, WideInstruction,
+    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 8] = &[
@@ -306,6 +306,11 @@ pub(super) fn write_program(
     for site in &program.object_sites {
         out.u32(site.atoms[0]);
         out.u32(site.atoms[1]);
+    }
+    out.u32(program.regexp_literal_sites.len() as u32);
+    for site in &program.regexp_literal_sites {
+        out.u32(site.pattern_constant);
+        out.u32(site.flags_constant);
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
@@ -652,6 +657,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             atoms: [input.u32()?, input.u32()?],
         })
     })?;
+    let regexp_literal_sites = input.list(|input| {
+        Ok(RegExpLiteralSite {
+            pattern_constant: input.u32()?,
+            flags_constant: input.u32()?,
+        })
+    })?;
     let superinstructions = input.list(|input| {
         let mut code = [Instr::new(Op::Nop, 0, 0, 0, 0); 4];
         for instruction in &mut code {
@@ -691,6 +702,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         method_arguments,
         field_sites,
         object_sites,
+        regexp_literal_sites,
         superinstructions,
         register_roots,
     };
