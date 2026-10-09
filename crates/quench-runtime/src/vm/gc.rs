@@ -514,10 +514,14 @@ impl<H: Host> Vm<H> {
                     ))
             }));
         let shapes = &self.shapes;
+        // A shape's symbol and accessor roots are fixed, so each shape contributes them once.
+        let mut shape_rooted = vec![false; shapes.len()];
         let finalization_jobs =
             self.heap
                 .collect_with_object_roots(roots, |owner, shape, roots| {
-                    append_shape_roots(shapes, shape, roots);
+                    if !std::mem::replace(&mut shape_rooted[shape as usize], true) {
+                        append_shape_roots(shapes, shape, roots);
+                    }
                     if let Some(edges) = owned_roots.get(&owner) {
                         roots.extend(edges.iter().copied());
                     }

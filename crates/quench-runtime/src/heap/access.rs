@@ -42,13 +42,6 @@ impl Heap {
         }
     }
 
-    pub(crate) fn environment_contains(&self, environment: Value, value: Value) -> bool {
-        let Some(Cell::Environment { slots, .. }) = self.get(environment) else {
-            return false;
-        };
-        (0..slots.len()).any(|slot| self.environment_slot(environment, slot) == Some(value))
-    }
-
     pub(crate) fn environment_slot_owner(&self, environment: Value, slot: usize) -> Option<Value> {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
