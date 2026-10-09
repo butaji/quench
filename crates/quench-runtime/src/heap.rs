@@ -225,9 +225,6 @@ impl Heap {
                 self.retired_slots += 1;
                 continue;
             };
-            if let Some(arrays) = &mut self.sparse_arrays {
-                arrays.remove(&index);
-            }
             self.generations[index as usize] = generation;
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
             #[cfg(feature = "profile-memory")]
@@ -446,6 +443,7 @@ impl Heap {
                 if let Some(arrays) = &mut self.sparse_arrays {
                     arrays.remove(&(index as u32));
                 }
+                // Reused slots enter `free` only after their side-table entries are gone.
                 self.free.push(index as u32);
                 #[cfg(feature = "profile-aggregate")]
                 {
