@@ -517,6 +517,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:module", BuiltinModule::Module),
     ("async_hooks", BuiltinModule::AsyncHooks),
     ("node:async_hooks", BuiltinModule::AsyncHooks),
+    ("internal/async_hooks", BuiltinModule::AsyncHooks),
     ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
     (
         "node:diagnostics_channel",
