@@ -179,6 +179,65 @@ pub(crate) fn statfs_sync(
     }
 }
 
+pub(crate) fn truncate_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let length = truncate_length(context, args.get(1).copied());
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_len(length));
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "open")?),
+    }
+}
+
+pub(crate) fn ftruncate_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let length = truncate_length(context, args.get(1).copied());
+    let result = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let result = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|descriptor| descriptor.file.set_len(length));
+        result
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "ftruncate")?),
+    }
+}
+
+fn truncate_length(
+    context: &NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> u64 {
+    value
+        .and_then(|value| context.rooted_value(value))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= u64::MAX as f64)
+        .map(|value| value as u64)
+        .unwrap_or(0)
+}
+
 pub(crate) fn access_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,

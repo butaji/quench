@@ -109,6 +109,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsStatMetadata" (1) => crate::modules::fs_shared_vm::stat::metadata,
         method "fsStatSync" (1) => crate::modules::fs_shared_vm::stat::stat_sync,
         method "fsStatfsSync" (1) => crate::modules::fs_shared_vm::stat::statfs_sync,
+        method "fsTruncateSync" (2) => crate::modules::fs_shared_vm::stat::truncate_sync,
+        method "fsFtruncateSync" (2) => crate::modules::fs_shared_vm::stat::ftruncate_sync,
         method "fsAccessSync" (2) => crate::modules::fs_shared_vm::stat::access_sync,
         method "fsChmodSync" (2) => crate::modules::fs_shared_vm::stat::chmod_sync,
         method "fsFchmodSync" (2) => crate::modules::fs_shared_vm::stat::fchmod_sync,

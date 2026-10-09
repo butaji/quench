@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -54,6 +54,23 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       error.code = 'ERR_OUT_OF_RANGE';
       throw error;
     }
+  };
+  const validateLength = (length) => {
+    if (length === undefined) return 0;
+    if (typeof length !== 'number') {
+      const received = length === null ? ' Received null' : typeof length === 'object'
+        ? ` Received an instance of ${Array.isArray(length) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof length} (${typeof length === 'string' ? `'${length}'` : String(length)})`;
+      const error = new TypeError(`The "len" argument must be of type number.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isSafeInteger(length)) {
+      const error = new RangeError(`The value of "len" is out of range. It must be an integer. Received ${String(length)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    return Math.max(0, length);
   };
   const writeBytes = (data, options) => {
     const encoding = typeof options === 'string' ? options : options?.encoding;
@@ -215,6 +232,14 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateOwner('gid', gid);
       return fchownSync(fd, uid, gid);
     },
+    truncateSync(path, length) {
+      validatePath(path, 'path');
+      return truncateSync(normalizePath(path), validateLength(length));
+    },
+    ftruncateSync(fd, length) {
+      validateFd(fd);
+      return ftruncateSync(fd, validateLength(length));
+    },
     writeFileSync(path, data, options) {
       const fd = descriptorArgument(path);
       if (fd !== null) {
@@ -332,6 +357,8 @@ pub(crate) fn install(
     let chown = context.host_function(crate::host::shared_vm::operation("fsChownSync"))?;
     let lchown = context.host_function(crate::host::shared_vm::operation("fsLchownSync"))?;
     let fchown = context.host_function(crate::host::shared_vm::operation("fsFchownSync"))?;
+    let truncate = context.host_function(crate::host::shared_vm::operation("fsTruncateSync"))?;
+    let ftruncate = context.host_function(crate::host::shared_vm::operation("fsFtruncateSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -356,6 +383,8 @@ pub(crate) fn install(
             chown,
             lchown,
             fchown,
+            truncate,
+            ftruncate,
             write,
             open,
             close,
@@ -375,6 +404,8 @@ pub(crate) fn install(
         ("chownSync", "chownSync"),
         ("lchownSync", "lchownSync"),
         ("fchownSync", "fchownSync"),
+        ("truncateSync", "truncateSync"),
+        ("ftruncateSync", "ftruncateSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),
