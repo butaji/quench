@@ -2,10 +2,10 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.queueMicrotask ||= (callback) => Promise.resolve().then(callback);
 globalThis.setImmediate ||= (callback, ...args) => Promise.resolve().then(() => callback(...args));
-var __quenchDgramStateSymbol = globalThis.__quenchDgramStateSymbol;
-var __quenchDgramBoundPorts = globalThis.__quenchDgramBoundPorts || new Set();
-var __quenchDgramClosedPorts = globalThis.__quenchDgramClosedPorts || new Set();
-var __quenchDgramSockets = globalThis.__quenchDgramSockets || new Set();
+var __quenchDgramStateSymbol = __quenchDgramSharedState.stateSymbol;
+var __quenchDgramBoundPorts = __quenchDgramSharedState.boundPorts;
+var __quenchDgramClosedPorts = __quenchDgramSharedState.closedPorts;
+var __quenchDgramSockets = __quenchDgramSharedState.sockets;
 const __quenchDgramOnce = (socket, listeners, event, callback) => {
   const wrapper = (...args) => {
     listeners[event] = (listeners[event] || []).filter(

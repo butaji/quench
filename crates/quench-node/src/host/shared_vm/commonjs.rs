@@ -149,6 +149,18 @@ pub(super) fn require(
                 )),
             };
         }
+        Some(BuiltinModule::InternalDgram) => {
+            let global = context.global_root()?;
+            let require = get(context, global, "require")?;
+            let specifier = context.string_rooted("internal/dgram");
+            let undefined = context.undefined();
+            let result = context.call_rooted(require, undefined, &[specifier]);
+            context.release_root(require);
+            context.release_root(undefined);
+            context.release_root(global);
+            context.release_root(specifier);
+            return result;
+        }
         Some(BuiltinModule::Assert) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
             return crate::modules::assert_shared_vm::module(context, util);
@@ -307,6 +319,7 @@ enum BuiltinModule {
     DiagnosticsChannel,
     Dns,
     Dgram,
+    InternalDgram,
     Https,
     Http2,
     Vm,
@@ -376,6 +389,7 @@ impl BuiltinModule {
             | Self::Path
             | Self::PathPosix
             | Self::PathWin32 => None,
+            Self::InternalDgram => None,
         }
     }
 }
@@ -457,6 +471,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:dns", BuiltinModule::Dns),
     ("dgram", BuiltinModule::Dgram),
     ("node:dgram", BuiltinModule::Dgram),
+    ("internal/dgram", BuiltinModule::InternalDgram),
     ("https", BuiltinModule::Https),
     ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
@@ -555,7 +570,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 .next()
                 .unwrap_or(crate::polyfills::bootstrap::dgram_tail::JS);
             let source = format!(
-                "{}\n{}\n{}\n{}",
+                "(() => {{\n{}\n{}\n{}\n{}\n}})();",
                 crate::polyfills::bootstrap::dgram_head::JS,
                 crate::polyfills::bootstrap::dgram::JS,
                 crate::polyfills::bootstrap::membership::JS,
@@ -602,7 +617,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::AssertStrict
         | BuiltinModule::Path
         | BuiltinModule::PathPosix
-        | BuiltinModule::PathWin32 => Err(RootedError::host(
+        | BuiltinModule::PathWin32
+        | BuiltinModule::InternalDgram => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
