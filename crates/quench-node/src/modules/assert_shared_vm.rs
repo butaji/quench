@@ -59,10 +59,12 @@ AssertionError"#
         ),
         "node:assert/AssertionError.js",
     )?;
-    let rejects = context.evaluate_script_rooted(
+    let rejects_factory = context.evaluate_script_rooted(
         crate::modules::assert_rejects_source::ASSERT_REJECTS,
         "node:assert/rejects.js",
     )?;
+    let undefined = context.undefined();
+    let rejects = context.call_rooted(rejects_factory, undefined, &[assertion_error])?;
 
     set(context, assert, "ok", ok)?;
     set(context, assert, "strictEqual", strict_equal)?;
