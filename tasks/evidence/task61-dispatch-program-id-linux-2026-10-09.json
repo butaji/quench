@@ -1,0 +1,2062 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Hoist active ProgramId out of the per-opcode dispatch loop, updating it only after a tail call changes programs",
+  "decision": "reject for the current Linux V8-v7 source: the 11-pair Splay Score interval is entirely negative and RSS includes a tie, despite earlier M4 instruction-count gains on microloops",
+  "source": {
+    "base_revision": "93ce4f5a35662bcfeb5fbbe533b2ddaa39875c8b",
+    "candidate_source_dirty_during_build": true,
+    "source_diff_sha256": "45d403b8a01ad409221fe92d829b34e3923eda12bd04d96741b952e69d1b307b",
+    "owner_file": "crates/quench-runtime/src/vm/dispatch_frame.rs",
+    "baseline_file_sha256": "c83e7cb3873daa85c87ee8e9b7839943b958ac3cbfec9ccdf73602f6bd139682",
+    "candidate_file_sha256": "05fd91829838d793bae97550440150a71d5dbcce150843a8d9afa381e00d721a",
+    "candidate_binary_sha256": "10c75b561c986feeaf7e5e9d8dab85a586e35ef6be4988c419ccbcaad1e4ac62",
+    "baseline_binary_sha256": "9d6f2a425a741230a6e12d9e05dc9cb5ee93bc56b638533c95f797650bac9948",
+    "profile": "production",
+    "build_command": "cargo build --profile production -p quench-node --bin quench-node",
+    "toolchain": {
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+      "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)"
+    },
+    "delta": "Capture the executing frame ProgramId once before the dispatch loop; refresh it after StepResult::TailCall, eliminating the per-op frame program read while retaining cross-program tail-call lookup."
+  },
+  "v2_m4_reference": {
+    "commit": "4165fc19ef98738e99d3fcf352f8ce70f7e02dec",
+    "source_revision": "b4b861d5fcb87d06ff7568b0c67552fab853774f",
+    "candidate_binary_sha256": "6e5807544369d9dab11e4ae9a9979ede734f1b03e06e6ea0da3f219e44877187",
+    "host": "Apple M4 / macOS",
+    "finding": "11 alternating pairs reduced retired instructions by 2.00% on a CJS local-store loop and 1.40% on a CJS call loop; RSS median fell 180,224 bytes on both. These microloops did not establish V8-v7 Score effects."
+  },
+  "node_oracle": {
+    "engine": "Node.js v24.19.0",
+    "binary_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+    "supported_control": "tasks/evidence/task61-dispatch-tailcall-node-oracle-2026-10-09.cjs",
+    "control_sha256": "d8ece97ae3cd4497ce6e59f24727cebe1612f33325dd2d253b16264147450cd2",
+    "node_stdout_sha256": "d4c2cddc7184684e99bafa82952ec2758ac132079022d0872dbb8c0182a89e19",
+    "baseline_stdout_sha256": "d4c2cddc7184684e99bafa82952ec2758ac132079022d0872dbb8c0182a89e19",
+    "candidate_stdout_sha256": "d4c2cddc7184684e99bafa82952ec2758ac132079022d0872dbb8c0182a89e19",
+    "matches_node": true,
+    "50k_control": "Baseline and candidate Quench both produced identical output for 50,000 strict tail calls. Node v24.19.0 overflowed its ordinary call stack at that depth, so it was not used as an oracle for this control.",
+    "50k_control_fixture": {
+      "path": "tasks/evidence/task61-dispatch-tailcall-control-2026-10-09.cjs",
+      "sha256": "4372b9358ce6273205c28cc81b0fa5eef65c9a139dcf8b47728567f6f567fba6",
+      "baseline_candidate_stdout_sha256": "f6ab214914b1ab800ff07deebae7cdd4756b9098295d9117d16c5c5edad4ea1d"
+    }
+  },
+  "correctness": {
+    "runtime_tests": [
+      {
+        "command": "cargo test -p quench-runtime --lib regression_captured_values_and_calls_preserve_runtime_binding_state",
+        "result": "passed (1 test)"
+      },
+      {
+        "command": "cargo test -p quench-runtime --lib regression_stack_errors_preserve_realm_intrinsics_through_collection",
+        "result": "passed (1 test)"
+      }
+    ],
+    "wasm": {
+      "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report <report> crates/quench-wasm-test/testsuite/return_call.wast crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+      "total": 130,
+      "passed": 130,
+      "failed": 0,
+      "report_sha256": "fc2c011554618a50f74710c791ac4b7e7c22119a3d0e6eb6c140ccc561188207",
+      "report_path": "work/task61-dispatch-wasm-return-call.json"
+    },
+    "full_test262_stage_campaign": "not run because the candidate was rejected by its paired V8-v7 Score result"
+  },
+  "measurement": {
+    "kind": "diagnostic Quench-only production-binary paired Score/RSS",
+    "fixture": "Splay",
+    "fixture_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "pairs": 11,
+    "order": "alternating baseline/candidate and candidate/baseline",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median deltas",
+      "replicates": 100000,
+      "quantiles": [
+        0.025,
+        0.975
+      ]
+    },
+    "host": {
+      "platform": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+      "cpu_quota": "400000 100000",
+      "memory_limit_bytes": "17179869184"
+    },
+    "runner_script": "tasks/evidence/task61-dispatch-program-id-linux-2026-10-09.py",
+    "runner_script_sha256": "991cd24074256f036439fa7611d2ccc708656e4077c5c1016afc0f45b0ad4bbd",
+    "runner_source_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+    "raw_pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2780713450,
+          "score": 870.0,
+          "max_rss_bytes": 202317824,
+          "stdout_sha256": "86d637eb7473163c7b934a25a3d7f78d59153799597682c58d8f2d1fa0498ac7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2818254460,
+          "score": 818.0,
+          "max_rss_bytes": 202321920,
+          "stdout_sha256": "401aa77d01764286310a161f627de34041e1309aef4d3e7b08aa9ad4411b95b6",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2850551471,
+          "score": 829.0,
+          "max_rss_bytes": 202321920,
+          "stdout_sha256": "657270dc8e3dc6fbea8536fbf4dc58b1583c7695931c829e05c2d01e2435f30a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2991213439,
+          "score": 1129.0,
+          "max_rss_bytes": 202485760,
+          "stdout_sha256": "1fc75dea378fbd371085877605466a8479c616b0696442230580a6ac449f43d3",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2951020636,
+          "score": 1146.0,
+          "max_rss_bytes": 202493952,
+          "stdout_sha256": "60fcf1ec0feb011ec089a1d5df1d59c379dce60fcc1057623d1c2aa50632f1c1",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2796489876,
+          "score": 894.0,
+          "max_rss_bytes": 202719232,
+          "stdout_sha256": "e7814217c3d141ce17334392c4a98b16be40d5da6ff1a3a3bd764687ea680ebf",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 4,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2899648762,
+          "score": 810.0,
+          "max_rss_bytes": 202436608,
+          "stdout_sha256": "be42fbcce107d39c55ebdbfc05cfe43ff48098d3924213cbbfc9c75943051fdf",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2911354879,
+          "score": 1159.0,
+          "max_rss_bytes": 202715136,
+          "stdout_sha256": "493d6c5907c3fe6e8b447d43e07e8cdb38975b0bd4055d8200c24c97f2114822",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 5,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2784921942,
+          "score": 900.0,
+          "max_rss_bytes": 202481664,
+          "stdout_sha256": "ddc354e2041453618a51e96dee4e3a6dc90748b999fab6074fceaa243a7e45ee",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2808213476,
+          "score": 844.0,
+          "max_rss_bytes": 202649600,
+          "stdout_sha256": "3f4914978f27f82eb3f4b9aeae9f1df63456dc68880fbc7094af093b7c52d195",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 6,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2921659215,
+          "score": 824.0,
+          "max_rss_bytes": 202584064,
+          "stdout_sha256": "cc7eaafce73f35413c8e91b4457d1bf00b4c7fe07c07726982b742e3c17a4907",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2824963923,
+          "score": 860.0,
+          "max_rss_bytes": 202608640,
+          "stdout_sha256": "39e2fb63dde804ff9a045fb5562c568c98fca802dcd96f3434c2f9f7161fc9de",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 7,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2873300620,
+          "score": 790.0,
+          "max_rss_bytes": 202616832,
+          "stdout_sha256": "2e8d24cdece2927816434bb28706e7cbf082f3067d592f6bca4ee4004298dbe7",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2802399713,
+          "score": 911.0,
+          "max_rss_bytes": 202530816,
+          "stdout_sha256": "aaf5c46b7ad0623376edd604a6805cde5ebe353be0d7449e92d50d92395b91ff",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 8,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2930415893,
+          "score": 1114.0,
+          "max_rss_bytes": 202588160,
+          "stdout_sha256": "24a4e26e013b197bae658312a924eb73e1e1c3e53868514f6536c49aea119105",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2833252620,
+          "score": 1216.0,
+          "max_rss_bytes": 202711040,
+          "stdout_sha256": "b252e32197c5eebe79a1fa1ee5200f3a5f68917752912b5b44b4c03cafcf8b01",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 9,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2961060897,
+          "score": 1089.0,
+          "max_rss_bytes": 202391552,
+          "stdout_sha256": "e97ba887d812e6a84dd6e5655e203bc2837d18407c76d075b2b3c956af7193b2",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2807754325,
+          "score": 867.0,
+          "max_rss_bytes": 202641408,
+          "stdout_sha256": "d92d51f6a891813f666f00df01d56a2e442dc849f1900223a012ad09e77db91a",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 10,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2833394313,
+          "score": 800.0,
+          "max_rss_bytes": 202485760,
+          "stdout_sha256": "e0a42d856855cff224c35666f886726a89ef3c91c944d7feb9f63c8505f36095",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2793743560,
+          "score": 911.0,
+          "max_rss_bytes": 202256384,
+          "stdout_sha256": "aaf5c46b7ad0623376edd604a6805cde5ebe353be0d7449e92d50d92395b91ff",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      },
+      {
+        "pair": 11,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "status": 0,
+          "elapsed_ns": 2827581311,
+          "score": 941.0,
+          "max_rss_bytes": 202457088,
+          "stdout_sha256": "b3aa2bd62428519108b42e05a9db9433f949d55ca194216afc6d399d68ecc316",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "candidate": {
+          "status": 0,
+          "elapsed_ns": 2910286536,
+          "score": 1149.0,
+          "max_rss_bytes": 202420224,
+          "stdout_sha256": "2a7574de344c2110a02688648cf1ae4f186d0f049cc83aa5d7252ff0c6cb5147",
+          "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "semantic_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    ],
+    "summary": {
+      "baseline_score_median": 941.0,
+      "candidate_score_median": 844.0,
+      "score_delta": {
+        "median": -102.0,
+        "95_ci": [
+          -252.0,
+          -36.0
+        ]
+      },
+      "baseline_rss_median_bytes": 202485760,
+      "candidate_rss_median_bytes": 202530816,
+      "rss_delta_bytes": {
+        "median": -24576,
+        "95_ci": [
+          -122880,
+          225280
+        ]
+      },
+      "all_outputs_equal": true
+    },
+    "all_outputs_equal": true
+  },
+  "wasm_report": {
+    "engine": "quench",
+    "failed": 0,
+    "file_errors": [],
+    "file_timeout_ms": 60000,
+    "inputs": [
+      {
+        "execution": {
+          "status": 0,
+          "status_text": "exit status: 0",
+          "stderr": "",
+          "stdout": "print_i32_f32(5, 91)\n",
+          "timed_out": false
+        },
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "sha256": "21949b27168593550e309437c03509b2dec7e1084d55d6bf096527457dc3d879"
+      },
+      {
+        "execution": {
+          "status": 0,
+          "status_text": "exit status: 0",
+          "stderr": "",
+          "stdout": "print_i32_f32(5, 91)\n",
+          "timed_out": false
+        },
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "sha256": "278328bf745789b7d02c6d4558443a4376ab9851e2991f225d12b5b6965c1b3d"
+      }
+    ],
+    "inventory_complete": true,
+    "outcomes": [
+      {
+        "directive_index": 0,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 3,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=0",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 1,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 101,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=1",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 2,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 102,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=2",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 3,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 103,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=3",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 4,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 104,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=4",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 5,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 106,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=5",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 6,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 107,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=6",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 7,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 108,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=7",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 8,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 109,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=8",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 9,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 111,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=9",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 10,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 112,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=10",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 11,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 113,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=11",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 12,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 114,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=12",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 13,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 116,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=13",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 14,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 117,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=14",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 15,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 118,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=15",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 16,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 119,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=16",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 17,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 124,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=17",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 18,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 125,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=18",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 19,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 126,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=19",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 20,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 128,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=20",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 21,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 129,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=21",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 22,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 130,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=22",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 23,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 131,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=23",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 24,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 132,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=24",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 25,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 133,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=25",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 26,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 134,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=26",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 27,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 135,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=27",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 28,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 136,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=28",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 29,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 137,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=29",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 30,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 138,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=30",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 31,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 139,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=31",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 32,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 140,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=32",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 33,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 141,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=33",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 34,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 142,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=34",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 35,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: current function requires result type [i32] but callee returns [] (at offset 0x1c)",
+        "kind": "assert_invalid",
+        "line": 146,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=35",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 36,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: current function requires result type [i32] but callee returns [i64] (at offset 0x1d)",
+        "kind": "assert_invalid",
+        "line": 153,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=36",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 37,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: current function requires result type [(ref null (id 0))] but callee returns [funcref] (at offset 0x21)",
+        "kind": "assert_invalid",
+        "line": 160,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=37",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 38,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x1c)",
+        "kind": "assert_invalid",
+        "line": 169,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=38",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 39,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x1d)",
+        "kind": "assert_invalid",
+        "line": 176,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=39",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 40,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 184,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=40",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 41,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 189,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=41",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 42,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x20)",
+        "kind": "assert_invalid",
+        "line": 194,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=42",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 43,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x20)",
+        "kind": "assert_invalid",
+        "line": 201,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=43",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 44,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected f64, found i32 (at offset 0x28)",
+        "kind": "assert_invalid",
+        "line": 208,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=44",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 45,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: expected i32, found f64 (at offset 0x28)",
+        "kind": "assert_invalid",
+        "line": 215,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=45",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 46,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "type mismatch: current function requires result type [i32] but callee returns [i32 i32] (at offset 0x22)",
+        "kind": "assert_invalid",
+        "line": 222,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=46",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 47,
+        "expected": "invalid (unknown function)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "unknown function 1: function index out of bounds (at offset 0x17)",
+        "kind": "assert_invalid",
+        "line": 234,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=47",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 48,
+        "expected": "invalid (unknown function)",
+        "file": "crates/quench-wasm-test/testsuite/return_call.wast",
+        "got": "unknown function 1012321300: function index out of bounds (at offset 0x17)",
+        "kind": "assert_invalid",
+        "line": 238,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call.wast#directive=48",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 0,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 3,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=0",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 1,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 247,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=1",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 2,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 248,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=2",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 3,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 249,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=3",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 4,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 250,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=4",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 5,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 252,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=5",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 6,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 254,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=6",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 7,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 255,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=7",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 8,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 256,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=8",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 9,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 257,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=9",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 10,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 259,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=10",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 11,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 260,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=11",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 12,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 261,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=12",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 13,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 262,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=13",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 14,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 264,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=14",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 15,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 265,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=15",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 16,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 266,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=16",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 17,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 267,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=17",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 18,
+        "expected": "trap (indirect call type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "indirect call type mismatch",
+        "kind": "assert_trap",
+        "line": 268,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=18",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 19,
+        "expected": "trap (indirect call type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "indirect call type mismatch",
+        "kind": "assert_trap",
+        "line": 269,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=19",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 20,
+        "expected": "trap (undefined element)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "undefined element",
+        "kind": "assert_trap",
+        "line": 270,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=20",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 21,
+        "expected": "trap (undefined element)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "undefined element",
+        "kind": "assert_trap",
+        "line": 271,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=21",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 22,
+        "expected": "trap (undefined element)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "undefined element",
+        "kind": "assert_trap",
+        "line": 272,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=22",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 23,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 274,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=23",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 24,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 275,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=24",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 25,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 276,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=25",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 26,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 277,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=26",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 27,
+        "expected": "trap (indirect call type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "indirect call type mismatch",
+        "kind": "assert_trap",
+        "line": 278,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=27",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 28,
+        "expected": "trap (indirect call type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "indirect call type mismatch",
+        "kind": "assert_trap",
+        "line": 279,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=28",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 29,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 281,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=29",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 30,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 282,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=30",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 31,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 283,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=31",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 32,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 285,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=32",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 33,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 286,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=33",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 34,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 287,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=34",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 35,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 288,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=35",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 36,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 290,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=36",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 37,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 291,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=37",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 38,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 292,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=38",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 39,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 293,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=39",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 40,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 294,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=40",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 41,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 295,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=41",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 42,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 296,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=42",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 43,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 297,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=43",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 44,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 298,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=44",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 45,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 299,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=45",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 46,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 300,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=46",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 47,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 301,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=47",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 48,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 303,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=48",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 49,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 304,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=49",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 50,
+        "expected": "match",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "match",
+        "kind": "assert_return",
+        "line": 305,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=50",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 51,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "result before parameter (or unexpected token): cannot list params after results\n     --> <anon>:1:132\n      |\n    1 | (type $sig (func (param i32) (result i32))) (table 0 funcref) (func (result i32)   (return_call_indirect (type $sig) (result i32) (param i32)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                                                                                    ^",
+        "kind": "assert_malformed",
+        "line": 309,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=51",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 52,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown operator or unexpected token\n     --> <anon>:1:119\n      |\n    1 | (type $sig (func (param i32) (result i32))) (table 0 funcref) (func (result i32)   (return_call_indirect (param i32) (type $sig) (result i32)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                                                                       ^",
+        "kind": "assert_malformed",
+        "line": 321,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=52",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 53,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown operator or unexpected token\n     --> <anon>:1:132\n      |\n    1 | (type $sig (func (param i32) (result i32))) (table 0 funcref) (func (result i32)   (return_call_indirect (param i32) (result i32) (type $sig)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                                                                                    ^",
+        "kind": "assert_malformed",
+        "line": 333,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=53",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 54,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown operator or unexpected token\n     --> <anon>:1:120\n      |\n    1 | (type $sig (func (param i32) (result i32))) (table 0 funcref) (func (result i32)   (return_call_indirect (result i32) (type $sig) (param i32)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                                                                        ^",
+        "kind": "assert_malformed",
+        "line": 345,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=54",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 55,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "result before parameter (or unexpected token): cannot list params after results\n     --> <anon>:1:120\n      |\n    1 | (type $sig (func (param i32) (result i32))) (table 0 funcref) (func (result i32)   (return_call_indirect (result i32) (param i32) (type $sig)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                                                                        ^",
+        "kind": "assert_malformed",
+        "line": 357,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=55",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 56,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "result before parameter (or unexpected token): cannot list params after results\n     --> <anon>:1:76\n      |\n    1 | (table 0 funcref) (func (result i32)   (return_call_indirect (result i32) (param i32)     (i32.const 0) (i32.const 0)   ) ) \n      |                                                                            ^",
+        "kind": "assert_malformed",
+        "line": 369,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=56",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 57,
+        "expected": "malformed (unexpected token)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unexpected token, expected one of: `i32`, `i64`, `f32`, `f64`, `v128`, `funcref`, `externref`, `exnref`, `contref`, `anyref`, `eqref`, `structref`, `arrayref`, `i31ref`, `nullfuncref`, `nullexternref`, `nullexnref`, `nullcontref`, `nullref`, lparen\n     --> <anon>:1:54\n      |\n    1 | (table 0 funcref) (func (return_call_indirect (param $x i32) (i32.const 0) (i32.const 0))) \n      |                                                      ^",
+        "kind": "assert_malformed",
+        "line": 381,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=57",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 58,
+        "expected": "malformed (inline function type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "inline function type doesn't match type reference at byte offset 86",
+        "kind": "assert_malformed",
+        "line": 388,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=58",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 59,
+        "expected": "malformed (inline function type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "inline function type doesn't match type reference at byte offset 111",
+        "kind": "assert_malformed",
+        "line": 398,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=59",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 60,
+        "expected": "malformed (inline function type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "inline function type doesn't match type reference at byte offset 98",
+        "kind": "assert_malformed",
+        "line": 408,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=60",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 61,
+        "expected": "malformed (inline function type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "inline function type doesn't match type reference at byte offset 115",
+        "kind": "assert_malformed",
+        "line": 420,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=61",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 62,
+        "expected": "invalid (unknown table)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown table 0: table index out of bounds (at offset 0x19)",
+        "kind": "assert_invalid",
+        "line": 435,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=62",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 63,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: values remaining on stack at end of block (at offset 0x23)",
+        "kind": "assert_invalid",
+        "line": 443,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=63",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 64,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: current function requires result type [] but callee returns [i64] (at offset 0x23)",
+        "kind": "assert_invalid",
+        "line": 451,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=64",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 65,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: current function requires result type [(ref null (id 0))] but callee returns [funcref] (at offset 0x28)",
+        "kind": "assert_invalid",
+        "line": 459,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=65",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 66,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x23)",
+        "kind": "assert_invalid",
+        "line": 470,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=66",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 67,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x24)",
+        "kind": "assert_invalid",
+        "line": 478,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=67",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 68,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 487,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=68",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 69,
+        "expected": "valid",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "valid",
+        "kind": "module",
+        "line": 493,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=69",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 70,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x24)",
+        "kind": "assert_invalid",
+        "line": 501,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=70",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 71,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32, found i64 (at offset 0x25)",
+        "kind": "assert_invalid",
+        "line": 509,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=71",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 72,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x27)",
+        "kind": "assert_invalid",
+        "line": 518,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=72",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 73,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32 but nothing on stack (at offset 0x27)",
+        "kind": "assert_invalid",
+        "line": 528,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=73",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 74,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected f64, found i32 (at offset 0x2f)",
+        "kind": "assert_invalid",
+        "line": 538,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=74",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 75,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: expected i32, found f64 (at offset 0x2f)",
+        "kind": "assert_invalid",
+        "line": 548,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=75",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 76,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: current function requires result type [i32] but callee returns [i32 i32] (at offset 0x31)",
+        "kind": "assert_invalid",
+        "line": 558,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=76",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 77,
+        "expected": "invalid (type mismatch)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "type mismatch: indirect calls must go through a table with type <= funcref (at offset 0x1f)",
+        "kind": "assert_invalid",
+        "line": 571,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=77",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 78,
+        "expected": "invalid (unknown type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown type: type index out of bounds (at offset 0x1f)",
+        "kind": "assert_invalid",
+        "line": 582,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=78",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 79,
+        "expected": "invalid (unknown type)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown type: type index out of bounds (at offset 0x1f)",
+        "kind": "assert_invalid",
+        "line": 589,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=79",
+        "stage": "wasm"
+      },
+      {
+        "directive_index": 80,
+        "expected": "invalid (unknown function 0)",
+        "file": "crates/quench-wasm-test/testsuite/return_call_indirect.wast",
+        "got": "unknown function 0: func index out of bounds (at offset 0x19)",
+        "kind": "assert_invalid",
+        "line": 600,
+        "outcome": "pass",
+        "path": "crates/quench-wasm-test/testsuite/return_call_indirect.wast#directive=80",
+        "stage": "wasm"
+      }
+    ],
+    "passed": 130,
+    "provenance": {
+      "binary": "/workspace/quench/target/iteration/run",
+      "binary_sha256": "a9b9f94a8d67ec444ac800817f768bf147d41badd67297f2f342d0efe2e99089",
+      "command": [
+        {
+          "Unix": [
+            116,
+            97,
+            114,
+            103,
+            101,
+            116,
+            47,
+            105,
+            116,
+            101,
+            114,
+            97,
+            116,
+            105,
+            111,
+            110,
+            47,
+            114,
+            117,
+            110
+          ]
+        },
+        {
+          "Unix": [
+            45,
+            45,
+            114,
+            101,
+            112,
+            111,
+            114,
+            116
+          ]
+        },
+        {
+          "Unix": [
+            119,
+            111,
+            114,
+            107,
+            47,
+            116,
+            97,
+            115,
+            107,
+            54,
+            49,
+            45,
+            100,
+            105,
+            115,
+            112,
+            97,
+            116,
+            99,
+            104,
+            45,
+            119,
+            97,
+            115,
+            109,
+            45,
+            114,
+            101,
+            116,
+            117,
+            114,
+            110,
+            45,
+            99,
+            97,
+            108,
+            108,
+            46,
+            106,
+            115,
+            111,
+            110
+          ]
+        },
+        {
+          "Unix": [
+            99,
+            114,
+            97,
+            116,
+            101,
+            115,
+            47,
+            113,
+            117,
+            101,
+            110,
+            99,
+            104,
+            45,
+            119,
+            97,
+            115,
+            109,
+            45,
+            116,
+            101,
+            115,
+            116,
+            47,
+            116,
+            101,
+            115,
+            116,
+            115,
+            117,
+            105,
+            116,
+            101,
+            47,
+            114,
+            101,
+            116,
+            117,
+            114,
+            110,
+            95,
+            99,
+            97,
+            108,
+            108,
+            46,
+            119,
+            97,
+            115,
+            116
+          ]
+        },
+        {
+          "Unix": [
+            99,
+            114,
+            97,
+            116,
+            101,
+            115,
+            47,
+            113,
+            117,
+            101,
+            110,
+            99,
+            104,
+            45,
+            119,
+            97,
+            115,
+            109,
+            45,
+            116,
+            101,
+            115,
+            116,
+            47,
+            116,
+            101,
+            115,
+            116,
+            115,
+            117,
+            105,
+            116,
+            101,
+            47,
+            114,
+            101,
+            116,
+            117,
+            114,
+            110,
+            95,
+            99,
+            97,
+            108,
+            108,
+            95,
+            105,
+            110,
+            100,
+            105,
+            114,
+            101,
+            99,
+            116,
+            46,
+            119,
+            97,
+            115,
+            116
+          ]
+        }
+      ]
+    },
+    "schema": 1,
+    "suite": "wasm",
+    "total": 130
+  }
+}
