@@ -1,0 +1,571 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "single-numeric-argument String.fromCharCode fast path",
+  "fixture": "crypto.js",
+  "source_revision": "9e063ccecbd5884852bbbc3073c8d25af7d59f9a",
+  "candidate_dirty": true,
+  "candidate_diff_sha256": "be78d639e02684b3cc787109ce53d0e15f426d529faf874464cd7d432056ddd5",
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "source_fixture_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+  "materialized_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+  "materialized_path": "work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js",
+  "rounds_per_fixture": 11,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158",
+    "candidate": "55ee5f553ade29e7a7e71335023a80a52546948f70c5d78fb76603078b252cff"
+  },
+  "valid": true,
+  "outputs_equal": true,
+  "rounds": [
+    {
+      "pair": 1,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 151.0,
+          "maximum_rss_bytes": 22069248,
+          "wall_ns": 28010150641,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 151"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 151\n----\nScore: 151\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 155.0,
+          "maximum_rss_bytes": 22900736,
+          "wall_ns": 27126845720,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 155"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 155\n----\nScore: 155\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 2,
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 143.0,
+          "maximum_rss_bytes": 22736896,
+          "wall_ns": 28761708903,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 143"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 143\n----\nScore: 143\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 156.0,
+          "maximum_rss_bytes": 21831680,
+          "wall_ns": 27448031259,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 156"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 156\n----\nScore: 156\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 3,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 153.0,
+          "maximum_rss_bytes": 22499328,
+          "wall_ns": 27771793616,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 153"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 153\n----\nScore: 153\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 155.0,
+          "maximum_rss_bytes": 22216704,
+          "wall_ns": 26865762327,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 155"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 155\n----\nScore: 155\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 4,
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 156.0,
+          "maximum_rss_bytes": 22441984,
+          "wall_ns": 27682238191,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 156"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 156\n----\nScore: 156\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 154.0,
+          "maximum_rss_bytes": 22110208,
+          "wall_ns": 27773378121,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 154"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 5,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 153.0,
+          "maximum_rss_bytes": 22618112,
+          "wall_ns": 27490627341,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 153"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 153\n----\nScore: 153\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 149.0,
+          "maximum_rss_bytes": 22110208,
+          "wall_ns": 28190535797,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 149"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 149\n----\nScore: 149\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 6,
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 154.0,
+          "maximum_rss_bytes": 22568960,
+          "wall_ns": 27472169181,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 154"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 155.0,
+          "maximum_rss_bytes": 22056960,
+          "wall_ns": 27430699930,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 155"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 155\n----\nScore: 155\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 7,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 146.0,
+          "maximum_rss_bytes": 22671360,
+          "wall_ns": 27860598742,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 146"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 146\n----\nScore: 146\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 154.0,
+          "maximum_rss_bytes": 22585344,
+          "wall_ns": 27385397365,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 154"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 8,
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 149.0,
+          "maximum_rss_bytes": 22589440,
+          "wall_ns": 27846354902,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 149"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 149\n----\nScore: 149\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 155.0,
+          "maximum_rss_bytes": 22274048,
+          "wall_ns": 27185049321,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 155"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 155\n----\nScore: 155\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 9,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 151.0,
+          "maximum_rss_bytes": 22806528,
+          "wall_ns": 27525740366,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 151"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 151\n----\nScore: 151\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 147.0,
+          "maximum_rss_bytes": 22728704,
+          "wall_ns": 27528135830,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 147"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 147\n----\nScore: 147\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 10,
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 154.0,
+          "maximum_rss_bytes": 22425600,
+          "wall_ns": 27173221396,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 154"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 155.0,
+          "maximum_rss_bytes": 22167552,
+          "wall_ns": 27523339157,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 155"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 155\n----\nScore: 155\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "pair": 11,
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "results": {
+        "baseline": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-baseline",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 147.0,
+          "maximum_rss_bytes": 22958080,
+          "wall_ns": 27336292885,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 147"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 147\n----\nScore: 147\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "command": [
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/quench-candidate",
+            "/workspace/quench/work/task61-from-char-code-linux-2026-10-09/materialized-crypto.js"
+          ],
+          "exit_code": 0,
+          "timed_out": false,
+          "score": 154.0,
+          "maximum_rss_bytes": 22159360,
+          "wall_ns": 27553211551,
+          "result_lines": [
+            "__quenchBenchResult: Crypto: 154"
+          ],
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        }
+      }
+    }
+  ],
+  "summary": {
+    "baseline_median_score": 153.0,
+    "candidate_median_score": 154.0,
+    "score_delta": 1.0,
+    "score_delta_percent": 0.6535947712418277,
+    "score_delta_95_percentile_interval": {
+      "lower_95": -6.0,
+      "upper_95": 3.0,
+      "resamples": 100000,
+      "method": "paired percentile bootstrap of difference in medians",
+      "seed": 20261009
+    },
+    "baseline_median_maximum_rss_bytes": 22274048,
+    "candidate_median_maximum_rss_bytes": 22568960,
+    "maximum_rss_delta_bytes": 294912,
+    "maximum_rss_delta_95_percentile_interval": {
+      "lower_95": -380928.0,
+      "upper_95": 561152.0,
+      "resamples": 100000,
+      "method": "paired percentile bootstrap of difference in medians",
+      "seed": 20261009
+    },
+    "candidate_lower_score_pairs": 6,
+    "candidate_lower_rss_pairs": 5
+  },
+  "decision": "reject",
+  "change_summary": "When String.fromCharCode receives exactly one numeric argument, convert it with the existing ToUint16 helper and allocate the one-unit string directly; preserve the generic path for all other cases.",
+  "oracle": {
+    "runtime": "Node v24.19.0",
+    "probe_script": "tasks/evidence/task61-from-char-code-node-oracle-linux-2026-10-09.cjs",
+    "probe_output_sha256": "1524bee881be28f5132bd2c956fa5f390413f47813cebc51d15ef8ff014f50c0",
+    "baseline_candidate_output_equal": true
+  },
+  "evidence_paths": {
+    "paired_jsonl": "tasks/evidence/task61-from-char-code-crypto-linux-2026-10-09.jsonl",
+    "runner": "tasks/evidence/task61-from-char-code-crypto-linux-2026-10-09.py",
+    "candidate_patch": "tasks/evidence/task61-from-char-code-crypto-linux-2026-10-09.patch",
+    "node_probe": "tasks/evidence/task61-from-char-code-node-oracle-linux-2026-10-09.cjs"
+  }
+}
