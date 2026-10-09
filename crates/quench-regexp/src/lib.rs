@@ -542,9 +542,16 @@ fn normalize_control_letter_escapes(source: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(normalized)
 }
 
-fn normalize_new_unicode_scripts(pattern: &str) -> String {
-    let mut normalized = pattern.to_owned();
+fn normalize_new_unicode_scripts(pattern: &str) -> std::borrow::Cow<'_, str> {
+    if !pattern.contains("\\p{") && !pattern.contains("\\P{") {
+        return std::borrow::Cow::Borrowed(pattern);
+    }
+
+    let mut normalized = None;
     for script in NEW_UNICODE_SCRIPTS {
+        if !script.aliases.iter().any(|alias| pattern.contains(alias)) {
+            continue;
+        }
         let ranges = script
             .ranges
             .iter()
@@ -556,17 +563,25 @@ fn normalize_new_unicode_scripts(pattern: &str) -> String {
                 }
             })
             .collect::<String>();
+        let positive_class = format!("[{ranges}]");
+        let negative_class = format!("[^{ranges}]");
         for value in script.aliases {
             for property in ["Script", "sc", "Script_Extensions", "scx"] {
-                for (escape, class) in [("p", format!("[{ranges}]")), ("P", format!("[^{ranges}]"))]
-                {
-                    normalized =
-                        normalized.replace(&format!(r"\{escape}{{{property}={value}}}"), &class);
+                for (escape, class) in [("p", &positive_class), ("P", &negative_class)] {
+                    let needle = format!(r"\{escape}{{{property}={value}}}");
+                    let current = normalized.as_deref().unwrap_or(pattern);
+                    if current.contains(&needle) {
+                        let current = normalized.get_or_insert_with(|| pattern.to_owned());
+                        *current = current.replace(&needle, class);
+                    }
                 }
             }
         }
     }
-    normalized
+    normalized.map_or_else(
+        || std::borrow::Cow::Borrowed(pattern),
+        std::borrow::Cow::Owned,
+    )
 }
 
 fn contains_invalid_string_property(disjunction: &ast::Disjunction<'_>, flags: Flags) -> bool {
@@ -2308,7 +2323,39 @@ fn is_line_terminator(value: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Flags, Regex};
+    use super::{normalize_new_unicode_scripts, Flags, Regex, NEW_UNICODE_SCRIPTS};
+
+    #[test]
+    fn new_unicode_script_normalization_borrows_unrelated_patterns() {
+        for pattern in [r"\s+", r"\p{Letter}", r"\p{Script=Latin}"] {
+            assert!(matches!(
+                normalize_new_unicode_scripts(pattern),
+                std::borrow::Cow::Borrowed(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn new_unicode_script_aliases_keep_their_ranges() {
+        for script in NEW_UNICODE_SCRIPTS {
+            let character = char::from_u32(script.ranges[0].0).unwrap().to_string();
+            for alias in script.aliases {
+                let positive =
+                    Regex::with_flags(&format!(r"\p{{Script={alias}}}"), Flags::from("u")).unwrap();
+                assert!(
+                    positive.find_from(&character, 0).next().is_some(),
+                    "positive property did not match {alias}"
+                );
+
+                let negative =
+                    Regex::with_flags(&format!(r"\P{{Script={alias}}}"), Flags::from("u")).unwrap();
+                assert!(
+                    negative.find_from(&character, 0).next().is_none(),
+                    "negative property matched {alias}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn captures_partition_a_greedy_run() {
