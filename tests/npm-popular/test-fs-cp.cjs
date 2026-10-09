@@ -13,6 +13,14 @@ const syncTarget = path.join(root, 'sync');
 fs.cpSync(source, syncTarget, { recursive: true });
 assert.equal(fs.readFileSync(path.join(syncTarget, 'nested', 'child.txt'), 'utf8'), 'child');
 
+const linkTarget = path.join(root, 'linked-directory');
+const destinationDirectory = path.join(root, 'destination-directory');
+fs.mkdirSync(destinationDirectory);
+fs.symlinkSync(destinationDirectory, linkTarget, 'dir');
+fs.cpSync(path.join(source, 'root.txt'), linkTarget, { dereference: false });
+assert.equal(fs.readFileSync(linkTarget, 'utf8'), 'root');
+assert.equal(fs.existsSync(path.join(destinationDirectory, 'root.txt')), false);
+
 const callbackTarget = path.join(root, 'callback');
 const callbackResult = new Promise((resolve, reject) => {
   fs.cp(source, callbackTarget, { recursive: true }, (error) => error ? reject(error) : resolve());
