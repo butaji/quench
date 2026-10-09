@@ -438,6 +438,9 @@ fn listen_host(context: &mut Context<'_>, value: Option<RootId>) -> Result<Strin
     let Some(value) = value else {
         return Ok(DEFAULT_LISTEN_HOST.to_owned());
     };
+    if context.is_callable_rooted(value)? {
+        return Ok(DEFAULT_LISTEN_HOST.to_owned());
+    }
     match context.rooted_value(value) {
         Some(value) if value.is_undefined() || value.is_null() => {
             Ok(DEFAULT_LISTEN_HOST.to_owned())
