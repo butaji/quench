@@ -11,6 +11,13 @@ const path = require('node:path');
     await assert.rejects(handle.writeFile(Buffer.alloc(6 * 1024 * 1024), { signal: controller.signal }), { name: 'AbortError' });
   } finally {
     await handle.close();
+    assert.equal(handle.fd, -1);
+    const otherHandle = await fs.promises.open(__filename, 'r');
+    try {
+      await assert.rejects(handle.stat(), { code: 'EBADF', syscall: 'fstat' });
+    } finally {
+      await otherHandle.close();
+    }
     await handle.close();
     fs.rmSync(file, { force: true });
   }
