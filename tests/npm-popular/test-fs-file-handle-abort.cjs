@@ -37,4 +37,12 @@ const path = require('node:path');
   } finally {
     await promiseReader.close();
   }
+  const defaultReader = await fs.promises.open(__filename, 'r');
+  try {
+    const result = await defaultReader.read();
+    assert.ok(Buffer.isBuffer(result.buffer));
+    assert.ok(result.bytesRead > 0);
+  } finally {
+    await defaultReader.close();
+  }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
