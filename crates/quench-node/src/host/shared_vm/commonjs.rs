@@ -200,10 +200,15 @@ pub(super) fn require(
             );
         }
         Some(BuiltinModule::InternalSocketAddress) => {
-            return context.evaluate_script_rooted(
+            let module = context.evaluate_script_rooted(
                 "({ kHandle: Symbol.for('quench.internal.socketaddress.handle') })",
                 "internal/socketaddress.js",
-            );
+            )?;
+            let net = cached_builtin(context, BuiltinModule::Net)?;
+            let constructor = get(context, net, "SocketAddress")?;
+            context.release_root(net);
+            set(context, module, "SocketAddress", constructor)?;
+            return Ok(module);
         }
         Some(BuiltinModule::Assert) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
