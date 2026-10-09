@@ -268,6 +268,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   const addressValue = (value, family) => parseAddress(value, family);
   const ipv4Mapped = (parsed) => parsed.family === 'ipv6' && (parsed.value >> 32n) === 65535n
     ? { family: 'ipv4', value: parsed.value & 0xffffffffn, bits: 32, text: '' } : null;
+  const blockListHandleKey = Symbol.for('quench.internal.blocklist.handle');
+  const socketAddressHandleKey = Symbol.for('quench.internal.socketaddress.handle');
   class SocketAddress {
     constructor(options = {}) {
       if (!options || typeof options !== 'object') throw blockError('ERR_INVALID_ARG_TYPE', 'The "options" argument must be an object');
@@ -278,12 +280,16 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.family = parsed.family === 'ipv4' ? 'IPv4' : 'IPv6';
       this.port = options.port === undefined ? 0 : options.port;
       this.flowlabel = options.flowlabel === undefined ? 0 : options.flowlabel;
+      this[socketAddressHandleKey] = { address: this.address, family: this.family };
     }
     toJSON() { return { address: this.address, family: this.family, port: this.port, flowlabel: this.flowlabel }; }
     static isSocketAddress(value) { return value instanceof SocketAddress; }
   }
   class BlockList {
-    constructor() { this._rules = []; }
+    constructor() {
+      this._rules = [];
+      this[blockListHandleKey] = { check: (address) => this.check(address?.address, address?.family) };
+    }
     _insert(kind, first, last = first, prefix) {
       if (this._rules.some((rule) => rule.kind === kind && rule.family === first.family && rule.start === first.value && rule.end === last.value)) return;
       this._rules.push({ kind, family: first.family, start: first.value, end: last.value, address: first.text, endAddress: last.text, bits: first.bits, prefix });

@@ -193,6 +193,18 @@ pub(super) fn require(
                 "internal/test/binding.js",
             );
         }
+        Some(BuiltinModule::InternalBlockList) => {
+            return context.evaluate_script_rooted(
+                "({ kHandle: Symbol.for('quench.internal.blocklist.handle') })",
+                "internal/blocklist.js",
+            );
+        }
+        Some(BuiltinModule::InternalSocketAddress) => {
+            return context.evaluate_script_rooted(
+                "({ kHandle: Symbol.for('quench.internal.socketaddress.handle') })",
+                "internal/socketaddress.js",
+            );
+        }
         Some(BuiltinModule::Assert) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
             return crate::modules::assert_shared_vm::module(context, util);
@@ -353,6 +365,8 @@ enum BuiltinModule {
     Dgram,
     InternalDgram,
     InternalTestBinding,
+    InternalBlockList,
+    InternalSocketAddress,
     Https,
     Http2,
     Vm,
@@ -422,7 +436,10 @@ impl BuiltinModule {
             | Self::Path
             | Self::PathPosix
             | Self::PathWin32 => None,
-            Self::InternalDgram | Self::InternalTestBinding => None,
+            Self::InternalDgram
+            | Self::InternalTestBinding
+            | Self::InternalBlockList
+            | Self::InternalSocketAddress => None,
         }
     }
 }
@@ -506,6 +523,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
+    ("internal/blocklist", BuiltinModule::InternalBlockList),
+    ("internal/socketaddress", BuiltinModule::InternalSocketAddress),
     ("https", BuiltinModule::Https),
     ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
@@ -653,7 +672,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::PathPosix
         | BuiltinModule::PathWin32
         | BuiltinModule::InternalDgram
-        | BuiltinModule::InternalTestBinding => Err(RootedError::host(
+        | BuiltinModule::InternalTestBinding
+        | BuiltinModule::InternalBlockList
+        | BuiltinModule::InternalSocketAddress => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
