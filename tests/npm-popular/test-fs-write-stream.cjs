@@ -8,7 +8,7 @@ async function main() {
   const root = path.join(process.cwd(), `quench-write-stream-${process.pid}`);
   fs.mkdirSync(root);
   const file = path.join(root, 'output.txt');
-  const stream = fs.createWriteStream(file, { encoding: 'utf8' });
+  const stream = fs.createWriteStream(file, { encoding: 'utf8', flush: true });
   stream.end('popular packages use file streams');
   await once(stream, 'close');
   assert.equal(fs.readFileSync(file, 'utf8'), 'popular packages use file streams');
@@ -32,6 +32,10 @@ async function main() {
       name: 'TypeError',
     });
   }
+  assert.throws(() => fs.createWriteStream(file, { flush: 'true' }), {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+  });
   fs.rmSync(root, { recursive: true });
 }
 

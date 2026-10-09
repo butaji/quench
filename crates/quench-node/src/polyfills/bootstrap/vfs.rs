@@ -1338,6 +1338,11 @@ class __QuenchVirtualFileSystem {
     return stream;
   }
   createWriteStream(path, options = {}) {
+    if (options.flush !== undefined && options.flush !== null && typeof options.flush !== "boolean") {
+      throw Object.assign(new TypeError('The "flush" option must be of type boolean'), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    }
     const flags = options.flags || "w";
     const suppliedFd = typeof options.fd === "number";
     const autoClose = options.autoClose !== false;
@@ -1345,7 +1350,10 @@ class __QuenchVirtualFileSystem {
     const closeDescriptor = () => {
       if (closed || stream.fd === null) return;
       const fd = stream.fd;
-      if (autoClose || explicitClose) this.closeSync(fd);
+      if (autoClose || explicitClose) {
+        if (options.flush === true) this.fsyncSync(fd);
+        this.closeSync(fd);
+      }
       if (autoClose || explicitClose) {
         stream.fd = null;
         closed = true;
