@@ -13,11 +13,12 @@ pub(crate) fn poll(
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<SharedNodeState>>,
 ) -> Result<bool, String> {
-    let (pending_writes, pending_ends) = {
+    let (pending_writes, pending_ends, pending_destroys) = {
         let host = runtime.host_mut();
         (
             std::mem::take(&mut host.net_pending_writes),
             std::mem::take(&mut host.net_pending_ends),
+            std::mem::take(&mut host.net_pending_destroys),
         )
     };
     if !pending_writes.is_empty() || !pending_ends.is_empty() {
@@ -27,6 +28,33 @@ pub(crate) fn poll(
         }
         for socket in pending_ends {
             net_shared_vm::end(&mut host.tcp, socket)?;
+        }
+    }
+    let destroyed = {
+        let mut host = shared_state.borrow_mut();
+        pending_destroys
+            .into_iter()
+            .filter_map(|socket_id| {
+                let socket = host.net_sockets.remove(&socket_id)?;
+                let closed_server = socket.parent_server.and_then(|server_id| {
+                    let closed = host.net_servers.get_mut(&server_id).is_some_and(|server| {
+                        server.connections.remove(&socket_id);
+                        server.closing && server.connections.is_empty()
+                    });
+                    closed
+                        .then(|| host.net_servers.remove(&server_id).map(|server| server.root))
+                        .flatten()
+                });
+                Some((socket.root, closed_server))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (socket, server) in destroyed {
+        queue_net_event(runtime, shared_state, socket, "close", &[])?;
+        runtime.release_root(socket);
+        if let Some(server) = server {
+            queue_net_event(runtime, shared_state, server, "close", &[])?;
+            runtime.release_root(server);
         }
     }
     let events = {
@@ -136,12 +164,15 @@ pub(crate) fn poll(
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
-                } else if let Some(socket) = shared_state.borrow_mut().net_sockets.remove(&socket) {
-                    let error = runtime.string_rooted(&message);
-                    queue_net_event(runtime, shared_state, socket.root, "error", &[error])?;
-                    queue_net_event(runtime, shared_state, socket.root, "close", &[])?;
-                    runtime.release_root(error);
-                    runtime.release_root(socket.root);
+                } else {
+                    let net_socket = shared_state.borrow_mut().net_sockets.remove(&socket);
+                    if let Some(net_socket) = net_socket {
+                        let error = net_socket_error(runtime, &message)?;
+                        queue_net_event(runtime, shared_state, net_socket.root, "error", &[error])?;
+                        queue_net_event(runtime, shared_state, net_socket.root, "close", &[])?;
+                        runtime.release_root(error);
+                        runtime.release_root(net_socket.root);
+                    }
                 }
                 progressed = true;
             }
@@ -907,6 +938,25 @@ pub(crate) fn cleanup(
     for async_id in async_ids {
         crate::modules::async_hooks_shared_vm::clear_context(runtime, shared_state, async_id);
     }
+}
+
+fn net_socket_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<RootId, String> {
+    let global = runtime.global_root().map_err(|error| error.to_string())?;
+    let key = runtime.string_rooted("Error");
+    let constructor = runtime
+        .get_property_rooted(global, key)
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(key);
+    runtime.release_root(global);
+    let message_root = runtime.string_rooted(message);
+    let error = runtime
+        .construct_rooted(constructor, constructor, &[message_root])
+        .map_err(|error| error.to_string())?;
+    runtime.release_root(constructor);
+    runtime.release_root(message_root);
+    let code = message.split_whitespace().nth(1).unwrap_or("ECONNRESET");
+    set_text(runtime, error, "code", code)?;
+    Ok(error)
 }
 
 fn emit_listening(
