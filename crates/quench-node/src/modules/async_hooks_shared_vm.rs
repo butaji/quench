@@ -37,11 +37,48 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     emitDestroy() { return emitDestroy.call(this); }
   }
   class AsyncLocalStorage {
+    static bind(fn) {
+      if (typeof fn !== "function") {
+        const error = new TypeError("The \"fn\" argument must be of type function.");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const resource = new AsyncResource("AsyncLocalStorage.bind");
+      return function(...args) {
+        return resource.runInAsyncScope(fn, this, ...args);
+      };
+    }
+    static snapshot() {
+      const resource = new AsyncResource("AsyncLocalStorage.snapshot");
+      return function(fn, ...args) {
+        return resource.runInAsyncScope(fn, this, ...args);
+      };
+    }
     constructor(options = {}) {
       initializeStorage.call(this, options);
       this.defaultValue = options?.defaultValue;
     }
     enterWith(store) { return enterWith.call(this, store); }
+    run(store, callback, ...args) {
+      if (typeof callback !== "function") {
+        const error = new TypeError("The \"callback\" argument must be of type function.");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const scope = this.withScope(store);
+      try { return Reflect.apply(callback, undefined, args); }
+      finally { scope.dispose(); }
+    }
+    exit(callback, ...args) {
+      if (typeof callback !== "function") {
+        const error = new TypeError("The \"callback\" argument must be of type function.");
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const scope = this.withScope(this.defaultValue);
+      try { return Reflect.apply(callback, undefined, args); }
+      finally { scope.dispose(); }
+    }
     getStore() {
       const store = getStore.call(this);
       return store === undefined ? this.defaultValue : store;
