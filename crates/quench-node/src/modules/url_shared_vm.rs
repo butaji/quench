@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(parse) => {
+    r#"(parse, URLSearchParams) => {
   const state = new WeakMap();
   const fields = [
     "href", "origin", "protocol", "username", "password", "host",
@@ -53,11 +53,8 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
     get searchParams() {
       const value = data(this);
       if (!value._searchParams) {
-        const params = new globalThis.URLSearchParams(value.search);
-        Object.defineProperty(params, "_onchange", {
-          configurable: true,
-          value: () => syncSearchParams(this, params.toString() ? `?${params.toString()}` : ""),
-        });
+        const params = new URLSearchParams(value.search,
+          () => syncSearchParams(this, params.toString() ? `?${params.toString()}` : ""));
         value._searchParams = params;
       }
       return value._searchParams;
@@ -74,7 +71,7 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
           const updated = parse(String(value), undefined);
           if (!updated) throw new TypeError("Invalid URL");
           if (current._searchParams) {
-            const params = new globalThis.URLSearchParams(updated.search);
+            const params = new URLSearchParams(updated.search);
             current._searchParams._pairs = params._pairs;
           }
           Object.assign(current, updated);
@@ -84,7 +81,7 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
         if (field === "search") {
           current.search = current.search && current.search !== "?" ? current.search : "";
           if (current._searchParams) {
-            current._searchParams._pairs = new globalThis.URLSearchParams(current.search)._pairs;
+            current._searchParams._pairs = new URLSearchParams(current.search)._pairs;
           }
         }
         if (field === "pathname" && current.pathname === "") current.pathname = "/";
@@ -100,7 +97,6 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
 
 const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
     r#"() => {
-  const state = new WeakMap();
   const decode = (value) => {
     try { return decodeURIComponent(value.replace(/\+/g, " ")); }
     catch { return value.replace(/\+/g, " "); }
@@ -136,14 +132,17 @@ const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
     }
     throw new TypeError("Failed to construct 'URLSearchParams': parameter 1 is not of type 'object'.");
   };
-  const pairs = (receiver) => {
-    const value = state.get(receiver);
+  const paramsState = new WeakMap();
+  const state = (receiver) => {
+    const value = paramsState.get(receiver);
     if (value === undefined) throw new TypeError("Illegal invocation");
     return value;
   };
+  const pairs = (receiver) => state(receiver).pairs;
+  const update = (receiver) => { const callback = state(receiver).onchange; if (callback) callback(); };
   class URLSearchParams {
-    constructor(init) { state.set(this, entriesFrom(init)); }
-    append(name, value) { pairs(this).push([String(name), String(value)]); }
+    constructor(init) { paramsState.set(this, { pairs: entriesFrom(init), onchange: arguments[1] }); }
+    append(name, value) { pairs(this).push([String(name), String(value)]); update(this); }
     delete(name, value) {
       name = String(name);
       const list = pairs(this);
@@ -152,6 +151,7 @@ const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
       for (let index = list.length - 1; index >= 0; index--) {
         if (list[index][0] === name && (!matchValue || list[index][1] === expected)) list.splice(index, 1);
       }
+      update(this);
     }
     get(name) { name = String(name); const pair = pairs(this).find((entry) => entry[0] === name); return pair ? pair[1] : null; }
     getAll(name) { name = String(name); return pairs(this).filter((entry) => entry[0] === name).map((entry) => entry[1]); }
@@ -164,11 +164,13 @@ const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
       const list = pairs(this); const index = list.findIndex((entry) => entry[0] === name);
       if (index < 0) list.push([name, value]);
       else { list[index][1] = value; for (let i = list.length - 1; i > index; i--) if (list[i][0] === name) list.splice(i, 1); }
+      update(this);
     }
-    sort() { pairs(this).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); }
+    sort() { pairs(this).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); update(this); }
     forEach(callback, thisArg) {
       if (typeof callback !== "function") throw new TypeError("callback must be a function");
-      for (const [name, value] of pairs(this).slice()) callback.call(thisArg, value, name, this);
+      const list = pairs(this);
+      for (let index = 0; index < list.length; index++) callback.call(thisArg, list[index][1], list[index][0], this);
     }
     *entries() { for (const pair of pairs(this)) yield pair.slice(); }
     *keys() { for (const pair of pairs(this)) yield pair[0]; }
@@ -177,6 +179,11 @@ const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
     toString() { return pairs(this).map(([name, value]) => `${encode(name)}=${encode(value)}`).join("&"); }
     get size() { return pairs(this).length; }
   }
+  Object.defineProperty(URLSearchParams.prototype, "_pairs", {
+    configurable: true,
+    get() { return pairs(this); },
+    set(value) { state(this).pairs = value; },
+  });
   Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag, { value: "URLSearchParams", configurable: true });
   return URLSearchParams;
 }"#
@@ -778,9 +785,10 @@ fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, 
     let parser_data = context.string_rooted(WHATWG_PARSE_MARKER);
     let parser = context
         .host_function_with_data(crate::host::shared_vm::operation("urlParse"), parser_data)?;
+    let search_params = url_search_params_constructor(context)?;
     let factory = context.evaluate_script_rooted(WHATWG_URL_FACTORY, "node:url/whatwg.js")?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[parser])?;
+    let constructor = context.call_rooted(factory, undefined, &[parser, search_params])?;
     let retained = context.retain(constructor)?;
     roots.borrow_mut().url_constructor = Some(retained);
     Ok(constructor)
