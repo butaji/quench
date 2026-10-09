@@ -221,6 +221,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           }
         }
       },
+      appendFile: (...args) => handle.writeFile(...args),
       writev: (buffers, position) => Promise.resolve().then(() => ({
         bytesWritten: (ensureOpen("writev"), writevSync(fd, buffers, position)),
         buffers,
@@ -231,8 +232,6 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       })),
       stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fstatSync(fd, ...statArgs))),
       chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fchmodSync(fd, ...chmodArgs))),
-      sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fsyncSync(fd))),
-      datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fdatasyncSync(fd))),
       sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fsyncSync(fd))),
       datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fdatasyncSync(fd))),
     };
