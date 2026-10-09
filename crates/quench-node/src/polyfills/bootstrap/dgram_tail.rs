@@ -142,7 +142,8 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
           },
         );
       }
-      if (address === "localhost") {
+      const resolvedAddress = type === "udp6" ? address.split("%")[0] : address;
+      if (resolvedAddress === "localhost") {
         throw Object.assign(new TypeError("Invalid IP address"), {
           code: "ERR_INVALID_ARG_VALUE",
         });
@@ -168,7 +169,7 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
       __quenchDgramBoundPorts.add(resolvedPort);
       __quenchDgramClosedPorts.delete(resolvedPort);
       socket._address = {
-        address,
+        address: resolvedAddress,
         family: type === "udp6" ? "IPv6" : "IPv4",
         port: resolvedPort,
       };
