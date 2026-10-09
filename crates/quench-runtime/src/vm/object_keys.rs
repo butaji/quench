@@ -9,7 +9,10 @@ pub(super) enum EnumerableOwnPropertyKind {
 impl<H: Host> Vm<H> {
     pub(super) fn indexed_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
         let (indices, array_length) = match self.heap.get(object) {
-            Some(Cell::Array { .. }) => (self.array_present_indices(object), true),
+            Some(Cell::Array { .. }) => (
+                self.array_present_indices(object),
+                self.own_array_length(object).is_some(),
+            ),
             Some(Cell::TypedArray { .. }) => {
                 ((0..self.typed_array_length(object)?).collect(), false)
             }

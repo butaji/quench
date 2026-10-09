@@ -464,6 +464,13 @@ impl<H: Host> Vm<H> {
                     .chain(job.args.iter().copied())
             }))
             .chain(self.realm.template_objects.values().copied())
+            .chain(
+                self.realm
+                    .intrinsics
+                    .arguments_objects
+                    .iter()
+                    .flat_map(|((global, _), template)| [*global, template.anchor]),
+            )
             .chain(self.with_stack.iter().copied())
             .chain(self.active_call_roots.iter().copied())
             .chain(

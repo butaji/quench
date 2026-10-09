@@ -264,6 +264,31 @@ impl Heap {
         let properties = self.properties.pair(shape, first, second);
         self.alloc(Cell::Object(Object::new(proto, properties)))
     }
+    pub(crate) fn alloc_object_with_properties(
+        &mut self,
+        proto: Value,
+        shape: u32,
+        values: &[Value],
+    ) -> Value {
+        let properties = self.properties.with_values(shape, values);
+        self.alloc(Cell::Object(Object::new(proto, properties)))
+    }
+    pub(crate) fn initialize_object_properties(
+        &mut self,
+        owner: Value,
+        shape: u32,
+        values: &[Value],
+    ) {
+        let properties = self.properties.with_values(shape, values);
+        let previous = {
+            let object = self
+                .get_mut(owner)
+                .and_then(Cell::object_mut)
+                .expect("property owner is an object");
+            std::mem::replace(&mut object.properties, properties)
+        };
+        self.properties.release(previous);
+    }
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
     }
