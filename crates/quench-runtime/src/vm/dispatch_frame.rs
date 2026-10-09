@@ -649,21 +649,19 @@ impl<H: Host> Vm<H> {
         }
         let parent = self.frames[frame].env;
         let function = self.frames[frame].function as usize;
-        let selective_capture_slots = self
-            .programs
-            .get(self.frames[frame].program)
-            .and_then(|program| {
-                program
-                    .functions
-                    .get(function)
-                    .and_then(|function| function.selective_capture_slots.clone())
-            });
+        let selective_capture_slots =
+            self.programs
+                .get(self.frames[frame].program)
+                .and_then(|program| {
+                    program
+                        .functions
+                        .get(function)
+                        .and_then(|function| function.selective_capture_slots.clone())
+                });
         let slots = if let Some(captured) = selective_capture_slots {
             let mut slots = self.frames[frame].locals.clone();
             for slot in 0..slots.len() {
-                if u16::try_from(slot)
-                    .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-                {
+                if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
                     self.frames[frame].locals[slot] = Value::DELETED;
                 } else {
                     slots[slot] = Value::DELETED;
@@ -840,6 +838,12 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(cursor.program, self.frames[frame].program);
                 debug_assert_eq!(cursor.function, self.frames[frame].function);
                 let instruction_pc = pc;
+                #[cfg(feature = "profile-memory")]
+                self.heap.set_memory_allocation_site(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
                 // GC inside a getter or native operation needs this instruction's root map.
                 self.frames[frame].pc = instruction_pc;
                 let ins = cursor.instruction(pc);

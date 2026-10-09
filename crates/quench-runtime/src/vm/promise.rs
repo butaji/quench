@@ -2401,7 +2401,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(target) = self.object_data_mut(target) {
             target.proto = source.proto;
-            target.properties = source.properties;
+            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }

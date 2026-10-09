@@ -1,0 +1,331 @@
+{
+  "schema": 1,
+  "purpose": "Measure Rust Cell variant layouts and correlate them with exact fixed-work live and allocation counts before choosing a boxed representation.",
+  "source": {
+    "head_commit": "73ac314628e76e2633d53fb71e0c77eb46d13424",
+    "working_tree_dirty": true,
+    "layout_build": "iteration library build with RUSTC_BOOTSTRAP=1 and -Zprint-type-sizes=yes; feature set otherwise unchanged",
+    "profile_binary_sha256": "c376197ec89e5e7948e513c08022ae13d2e871b0fdfbdfd29e9c73bbbefb7e01"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "platform": "macOS-26.5-arm64-arm-64bit"
+  },
+  "cell_layout": {
+    "type": "heap::cell::Cell",
+    "size_bytes": 112,
+    "alignment_bytes": 16,
+    "slot_size_bytes": 112,
+    "largest_variants_payload_bytes": {
+      "WeakMap": 103,
+      "Iterator": 95,
+      "RegExp": 95,
+      "TemporalDuration": 95,
+      "Environment": 87,
+      "TemporalZonedDateTime": 79,
+      "DataView": 71,
+      "Map": 71,
+      "Set": 71,
+      "TemporalPlainDateTime": 71,
+      "TypedArray": 71,
+      "WeakSet": 71,
+      "ArrayBuffer": 63,
+      "FinalizationRegistry": 63,
+      "Proxy": 63,
+      "ShadowRealm": 63,
+      "WasmGc": 63,
+      "WasmTable": 63,
+      "Array": 55,
+      "WasmMemory": 55,
+      "WeakRef": 55,
+      "Object": 47,
+      "TemporalPlainDate": 47,
+      "TemporalPlainMonthDay": 47,
+      "TemporalPlainYearMonth": 47,
+      "Function": 39,
+      "String": 39,
+      "WasmException": 39,
+      "WasmGlobal": 39,
+      "BigInt": 31,
+      "Error": 31,
+      "Symbol": 31,
+      "TemporalInstant": 31,
+      "WasmElements": 31,
+      "Date": 23,
+      "WasmTag": 23,
+      "WasmV128": 16,
+      "ArrayFromAsyncState": 15,
+      "BindingReference": 15,
+      "PromiseResolvingState": 15,
+      "WasmBits64": 15,
+      "WasmExtern": 15,
+      "WasmHostFunction": 15
+    },
+    "object_header_size_bytes": 40,
+    "object_header_alignment_bytes": 8
+  },
+  "projection_model": {
+    "formula": "ceil((largest unboxed variant payload + 1-byte enum tag) / resulting Cell alignment) * resulting Cell alignment; validate only by building the representation and querying rustc again.",
+    "current_size_bytes": 112,
+    "scenario_96": {
+      "size_bytes_projected": 96,
+      "assumptions": [
+        "Box WeakMap, Iterator and TemporalDuration payloads.",
+        "Store RegExp source/flags/matcher in shared immutable literal data instead of boxing a per-evaluation payload.",
+        "Environment payload remains 87 B; TemporalZonedDateTime keeps 16-byte alignment."
+      ],
+      "dominant_remaining_payload": "Environment: 87 B; enum align 16 B."
+    },
+    "scenario_80": {
+      "size_bytes_projected": 80,
+      "assumptions": [
+        "Scenario 96.",
+        "Compact Environment program and binding_site_pc Option<u32> to named u32 sentinel fields, reducing the 87 B payload to 79 B.",
+        "TemporalZonedDateTime remains 79 B and keeps 16-byte alignment."
+      ],
+      "dominant_remaining_payload": "Environment and TemporalZonedDateTime: 79 B; enum align 16 B."
+    },
+    "scenario_56": {
+      "size_bytes_projected": 56,
+      "assumptions": [
+        "Move every variant payload larger than Array (55 B) behind a shared or boxed payload.",
+        "Move the i128-aligned Temporal variants out of the enum.",
+        "Cell alignment then falls to 8 B; Array payload 55 B plus enum tag rounds to 56 B."
+      ],
+      "risk": "Broad representation changes; allocation and hot-access costs must be measured rather than inferred from the slot saving."
+    }
+  },
+  "fixtures": {
+    "crypto": {
+      "reserved_slots_at_peak_snapshot": 8192,
+      "reserved_slot_bytes_current": 917504,
+      "save_112_to_96_bytes": 131072,
+      "save_112_to_80_bytes": 262144,
+      "save_112_to_56_bytes": 458752,
+      "live_variant_counts": {
+        "array": 244,
+        "environment": 191,
+        "function": 1639,
+        "iterator": 16,
+        "object": 552,
+        "string": 3907,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 8,
+      "allocated_variant_counts": {
+        "array": 431,
+        "environment": 213,
+        "function": 1655,
+        "iterator": 38,
+        "object": 1262,
+        "string": 8909,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "deltablue": {
+      "reserved_slots_at_peak_snapshot": 10240,
+      "reserved_slot_bytes_current": 1146880,
+      "save_112_to_96_bytes": 163840,
+      "save_112_to_80_bytes": 327680,
+      "save_112_to_56_bytes": 573440,
+      "live_variant_counts": {
+        "array": 235,
+        "environment": 190,
+        "function": 1578,
+        "iterator": 16,
+        "object": 899,
+        "string": 4397,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 40,
+      "allocated_variant_counts": {
+        "array": 33446,
+        "environment": 218,
+        "function": 1600,
+        "iterator": 38,
+        "object": 58869,
+        "string": 159362,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "earley-boyer": {
+      "reserved_slots_at_peak_snapshot": 135168,
+      "reserved_slot_bytes_current": 15138816,
+      "save_112_to_96_bytes": 2162688,
+      "save_112_to_80_bytes": 4325376,
+      "save_112_to_56_bytes": 7569408,
+      "live_variant_counts": {
+        "array": 110,
+        "environment": 193,
+        "function": 1864,
+        "iterator": 16,
+        "object": 96433,
+        "string": 8887,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 6,
+      "allocated_variant_counts": {
+        "array": 42612,
+        "environment": 12244,
+        "function": 14118,
+        "iterator": 38,
+        "object": 811261,
+        "string": 141293,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "navier-stokes": {
+      "reserved_slots_at_peak_snapshot": 8192,
+      "reserved_slot_bytes_current": 917504,
+      "save_112_to_96_bytes": 131072,
+      "save_112_to_80_bytes": 262144,
+      "save_112_to_56_bytes": 458752,
+      "live_variant_counts": {
+        "array": 44,
+        "environment": 201,
+        "function": 1600,
+        "iterator": 16,
+        "object": 303,
+        "string": 3057,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 5,
+      "allocated_variant_counts": {
+        "array": 110,
+        "environment": 223,
+        "function": 1616,
+        "iterator": 38,
+        "object": 882,
+        "string": 5659,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "raytrace": {
+      "reserved_slots_at_peak_snapshot": 8192,
+      "reserved_slot_bytes_current": 917504,
+      "save_112_to_96_bytes": 131072,
+      "save_112_to_80_bytes": 262144,
+      "save_112_to_56_bytes": 458752,
+      "live_variant_counts": {
+        "array": 279,
+        "environment": 204,
+        "function": 1579,
+        "iterator": 16,
+        "object": 576,
+        "string": 3083,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 10,
+      "allocated_variant_counts": {
+        "array": 666104,
+        "environment": 226,
+        "function": 1595,
+        "iterator": 50,
+        "object": 667282,
+        "string": 6509,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "regexp": {
+      "reserved_slots_at_peak_snapshot": 24576,
+      "reserved_slot_bytes_current": 2752512,
+      "save_112_to_96_bytes": 393216,
+      "save_112_to_80_bytes": 786432,
+      "save_112_to_56_bytes": 1376256,
+      "live_variant_counts": {
+        "array": 254,
+        "environment": 190,
+        "function": 1521,
+        "iterator": 16,
+        "object": 214,
+        "regexp": 131,
+        "string": 14563,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 1,
+      "allocated_variant_counts": {
+        "array": 93015,
+        "environment": 212,
+        "function": 1537,
+        "iterator": 38,
+        "object": 793,
+        "regexp": 29885,
+        "string": 624112,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "richards": {
+      "reserved_slots_at_peak_snapshot": 8192,
+      "reserved_slot_bytes_current": 917504,
+      "save_112_to_96_bytes": 131072,
+      "save_112_to_80_bytes": 262144,
+      "save_112_to_56_bytes": 458752,
+      "live_variant_counts": {
+        "array": 237,
+        "environment": 190,
+        "function": 1543,
+        "iterator": 16,
+        "object": 739,
+        "string": 3082,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 100,
+      "allocated_variant_counts": {
+        "array": 980,
+        "environment": 212,
+        "function": 1559,
+        "iterator": 38,
+        "object": 2914,
+        "string": 5900,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    },
+    "splay": {
+      "reserved_slots_at_peak_snapshot": 1562624,
+      "reserved_slot_bytes_current": 175013888,
+      "save_112_to_96_bytes": 25001984,
+      "save_112_to_80_bytes": 50003968,
+      "save_112_to_56_bytes": 87506944,
+      "live_variant_counts": {
+        "array": 496435,
+        "environment": 187,
+        "function": 1518,
+        "iterator": 16,
+        "object": 1030592,
+        "string": 33474,
+        "symbol": 38,
+        "weak_map": 4
+      },
+      "fixed_work_calls": 300,
+      "allocated_variant_counts": {
+        "array": 1024082,
+        "environment": 212,
+        "function": 1537,
+        "iterator": 38,
+        "object": 2184763,
+        "string": 101554,
+        "symbol": 38,
+        "weak_map": 4
+      }
+    }
+  },
+  "limits": [
+    "Variant layout sizes are compiler-reported for this Rust target; projected sizes are not built results.",
+    "Fixed-work allocation totals are raw counts for each fixture-specific run count, not normalized across unlike workloads.",
+    "RSS projections multiply slot savings by the measured reserved-slot count; they do not predict allocator RSS release or extra boxed-allocation overhead."
+  ]
+}

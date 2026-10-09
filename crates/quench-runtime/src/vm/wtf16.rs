@@ -146,6 +146,23 @@ impl JsString {
         self.units.len() * std::mem::size_of::<u16>() + self.host.get().map_or(0, |host| host.len())
     }
 
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
+        const RC_HEADER_WORDS: usize = 2;
+        let rc_header_bytes = RC_HEADER_WORDS * std::mem::size_of::<usize>();
+        let units = (
+            Rc::as_ptr(&self.units) as *const u16 as usize,
+            rc_header_bytes + self.units.len() * std::mem::size_of::<u16>(),
+        );
+        let host = self.host.get().map(|host| {
+            (
+                Rc::as_ptr(host) as *const u8 as usize,
+                rc_header_bytes + host.len(),
+            )
+        });
+        (units, host)
+    }
+
     pub(crate) fn push_js_string(&mut self, text: &Self) {
         let mut units = self.units.to_vec();
         units.extend(text.units.iter().copied());
