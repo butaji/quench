@@ -30,7 +30,7 @@
     "runner_sha256": "c66de51db82ca46ca3762275ad3885c6d7176e7dc4722b90f64b22fb51a03a01",
     "command": "python3.14 tasks/evidence/task61-dispatch-executing-program-pairs.py --baseline target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node --candidate target/pinned/39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7/quench-node --output tasks/evidence/task61-dispatch-active-program-cursor-pairs-2026-10-09.csv",
     "raw_pairs": "tasks/evidence/task61-dispatch-active-program-cursor-pairs-2026-10-09.csv",
-    "raw_pairs_sha256": "0f9a3f2b261915444d68812acd4d04a9a8933c4d7e02dc45d65ecbf61a7feebd",
+    "raw_pairs_sha256": "1ac43c2769de0d5e69f1e1cadcaaf99e9cded4d73f1745a12e1e17436125d94f",
     "results": {
       "cjs_call": {
         "instructions": {
@@ -92,18 +92,66 @@
           "max_paired_delta_percent": 1.098901098901095
         }
       }
-    }
+    },
+    "original_runner_output_path": "target/pinned/0f9a3f2b261915444d68812acd4d04a9a8933c4d7e02dc45d65ecbf61a7feebd/task61-dispatch-active-program-cursor-pairs-2026-10-09.csv",
+    "original_runner_output_sha256": "0f9a3f2b261915444d68812acd4d04a9a8933c4d7e02dc45d65ecbf61a7feebd",
+    "repository_copy_line_endings": "CRLF normalized to LF; metric rows unchanged"
   },
   "extended_local_store_screen": {
     "pairs": 11,
     "order": "alternating; candidate first on odd pairs",
     "runner": "tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.py",
-    "runner_sha256": "17a9cb1a2c1bcb6311ebdefabc15774e52907a84d5efb9adc9ba122c0f6e2e51",
+    "runner_sha256": "e445a1fb65f7d2443dc9490c5d55e9ff747d03c5fa5a8661dd7abb201f1f556e",
     "command": "python3.14 tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.py --baseline target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node --candidate target/pinned/39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7/quench-node --fixture tasks/evidence/task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs --output tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
     "input": "tasks/evidence/task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs",
     "input_sha256": "43f00d72c3bd12b5ad05ea2ebe4be1d311b86214d1dff7aa9fc2c55746eae682",
     "raw_pairs": "tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
-    "raw_pairs_sha256": "9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055",
+    "raw_pairs_sha256": "062ea471a4b63eabf1e861a57ca61dc2651b233eef8edb8590aee09bd8d11d9b",
+    "results": {
+      "instructions": {
+        "paired_median_delta_percent": -4.498046688845358,
+        "candidate_better_pairs": 11,
+        "candidate_worse_pairs": 0,
+        "min_paired_delta_percent": -4.5123263842376975,
+        "max_paired_delta_percent": -4.490557375693093
+      },
+      "elapsed_seconds": {
+        "paired_median_delta_percent": 8.713692946058082,
+        "candidate_better_pairs": 0,
+        "candidate_worse_pairs": 11,
+        "min_paired_delta_percent": 5.737704918032782,
+        "max_paired_delta_percent": 13.636363636363647
+      },
+      "user_seconds": {
+        "paired_median_delta_percent": 8.571428571428562,
+        "candidate_better_pairs": 0,
+        "candidate_worse_pairs": 11,
+        "min_paired_delta_percent": 5.349794238683114,
+        "max_paired_delta_percent": 13.692946058091282
+      },
+      "max_rss_bytes": {
+        "paired_median_delta_percent": 0.5504587155963359,
+        "candidate_better_pairs": 1,
+        "candidate_worse_pairs": 10,
+        "min_paired_delta_percent": -0.2744739249771255,
+        "max_paired_delta_percent": 1.5582034830430747
+      }
+    },
+    "original_inline_runner_output_path": "target/pinned/9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
+    "original_inline_runner_output_sha256": "9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055",
+    "repository_copy_line_endings": "LF from the checked-in reproducibility runner"
+  },
+  "correctness": {
+    "production_build": "passed",
+    "stdout_and_exit_status": "baseline and candidate matched for both short fixtures",
+    "conformance_tests": "not run; candidate rejected on elapsed time before qualification"
+  },
+  "rationale": "Two independent 100M local-store screens both retire about 4.5% fewer instructions but take about 8% longer in all 11 pairs. The short CJS-call loop retires 2.79% fewer instructions while elapsed time is flat. Since fixture Score depends on elapsed execution time, the instruction reduction does not justify retaining this raw-pointer cursor.",
+  "initial_100m_confirmation": {
+    "pairs": 11,
+    "provenance": "initial inline Python runner; byte-exact raw output preserved",
+    "raw_output": "target/pinned/9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
+    "raw_output_sha256": "9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055",
     "results": {
       "instructions": {
         "paired_median_delta_percent": -4.503340538689504,
@@ -134,11 +182,5 @@
         "max_paired_delta_percent": 1.2832263978001857
       }
     }
-  },
-  "correctness": {
-    "production_build": "passed",
-    "stdout_and_exit_status": "baseline and candidate matched for both short fixtures",
-    "conformance_tests": "not run; candidate rejected on elapsed time before qualification"
-  },
-  "rationale": "The longer 100M local-store loop retires 4.50% fewer instructions in all 11 pairs but takes 7.92% longer in all 11. The short CJS-call loop retires 2.79% fewer instructions, while elapsed time is flat. Since fixture Score depends on elapsed execution time, the instruction reduction does not justify retaining this raw-pointer cursor."
+  }
 }
