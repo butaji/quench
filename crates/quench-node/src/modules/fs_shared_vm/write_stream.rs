@@ -18,6 +18,7 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     const settings = typeof options === "string" ? { encoding: options } : (options || {});
     const flags = settings.flags || "w";
     const autoClose = settings.autoClose !== false;
+    const suppliedFd = settings.fd !== undefined && settings.fd !== null;
     let phase = "opening";
     let fd = null;
     let pendingWrite = null;
@@ -30,7 +31,8 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     const writePending = (pending) => {
       if (!pending) return;
       try {
-        stream.bytesWritten += writeFile(fd, pending.chunk);
+        const position = settings.start === undefined ? null : settings.start + stream.bytesWritten;
+        stream.bytesWritten += writeFile(fd, pending.chunk, position);
         pending.callback();
       } catch (error) {
         pending.callback(error);
@@ -94,6 +96,7 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     stream.path = path;
     stream.flags = flags;
     stream.mode = settings.mode;
+    stream._autoClose = autoClose;
     stream.fd = null;
     stream.bytesWritten = 0;
     stream.closed = false;
@@ -111,11 +114,11 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
 
     setImmediate(() => {
       try {
-        fd = openFile(path, flags);
+        fd = suppliedFd ? settings.fd : openFile(path, flags);
         stream.fd = fd;
         stream.pending = false;
         phase = "open";
-        stream.emit("open", fd);
+        if (!suppliedFd) stream.emit("open", fd);
         stream.emit("ready");
 
         if (pendingDestroy) {
@@ -181,6 +184,17 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
   Object.setPrototypeOf(WriteStream, Writable);
   Object.setPrototypeOf(WriteStream.prototype, Writable.prototype);
   WriteStream.prototype.constructor = WriteStream;
+  Object.defineProperty(WriteStream.prototype, "autoClose", {
+    configurable: true,
+    get() {
+      if (this === WriteStream.prototype || !(this instanceof WriteStream)) {
+        const error = new TypeError('Cannot read properties of undefined (reading \'autoClose\')');
+        error.code = "ERR_INVALID_THIS";
+        throw error;
+      }
+      return this._autoClose;
+    },
+  });
   return WriteStream;
 }"#;
 
@@ -243,6 +257,13 @@ pub(crate) fn write(
 ) -> Result<RootId, RootedError> {
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
     let bytes = super::sync::byte_view(context, args.get(1).copied())?;
+    let position = args
+        .get(2)
+        .copied()
+        .and_then(|value| context.rooted_value(value))
+        .and_then(quench_runtime::Value::as_number)
+        .filter(|value| value.is_finite() && *value >= 0.0 && value.fract() == 0.0)
+        .map(|value| value as u64);
     let (result, path) = {
         let shared_state = context.host_mut().shared_state();
         let state = shared_state.borrow();
@@ -252,7 +273,7 @@ pub(crate) fn write(
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
-        let result = state.fs.write_stream_chunk(fd, &bytes);
+        let result = state.fs.write_descriptor(fd, &bytes, position);
         (result, path)
     };
     match result {
