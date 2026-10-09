@@ -154,6 +154,16 @@ impl<H: Host> Vm<H> {
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
+            // Descriptors, accessors and frozen state are the only things that make replacing a
+            // present dense element differ from a plain store, and a plain array has none.
+            if let Some(Cell::Array { object: data, elements }) = self.heap.get(object)
+                && !data.has_indexed_descriptors()
+                && !data.is_frozen()
+                && elements.get(index).is_some_and(|value| !value.is_deleted())
+            {
+                self.replace_dense_element(object, index, value);
+                return Ok(());
+            }
             if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
                 && attributes.accessor
             {
@@ -212,20 +222,26 @@ impl<H: Host> Vm<H> {
                     if elements.get(index).is_some_and(|value| !value.is_deleted())
             );
             if replaces {
-                let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
-                    unreachable!()
-                };
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .array_write_ownership(Rc::strong_count(elements) != 1);
-                mutable_array_elements(elements)[index] = value;
-                self.sync_mapped_argument(object, index, value);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.index_set(0);
+                self.replace_dense_element(object, index, value);
                 return Ok(());
             }
         }
         self.set_index_slow(p, object, key, value, strict)
+    }
+
+    /// Overwrites a present dense array element after every guard has passed.
+    #[inline(always)]
+    fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
+        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
+            unreachable!("dense element replacement requires an array")
+        };
+        #[cfg(feature = "profile-aggregate")]
+        self.profile
+            .array_write_ownership(Rc::strong_count(elements) != 1);
+        mutable_array_elements(elements)[index] = value;
+        self.sync_mapped_argument(object, index, value);
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_set(0);
     }
 
     #[inline(never)]
