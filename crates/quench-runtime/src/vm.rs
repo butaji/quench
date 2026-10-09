@@ -880,6 +880,12 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-aggregate")]
+        if self.profile.report_dispatch_census_if_enabled() {
+            #[cfg(feature = "profile-memory")]
+            self.report_memory_if_enabled("complete");
+            return;
+        }
         self.profile.report(&self.heap, program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
