@@ -1434,6 +1434,78 @@ impl<H: Host> Vm<H> {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
+        self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
+    }
+
+    pub(super) fn regexp_literal(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        site_index: usize,
+    ) -> Result<Value, JsError> {
+        let program = self.frames[frame].program;
+        let site = p
+            .regexp_literal_sites
+            .get(site_index)
+            .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
+        let source = self
+            .programs
+            .constant(program, site.pattern_constant as usize)
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(source)) => Some(source.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
+        let flags = self
+            .programs
+            .constant(program, site.flags_constant as usize)
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(flags)) => Some(flags.host_string().to_owned()),
+                _ => None,
+            })
+            .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
+        let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
+            Some(matcher) => matcher,
+            None => {
+                let matcher = Self::compile_regexp(&source, &flags)
+                    .map(Rc::new)
+                    .map_err(|error| Rc::<str>::from(error.to_string()));
+                if !self
+                    .programs
+                    .cache_regexp_literal_matcher(program, site_index, matcher.clone())
+                {
+                    return Err(JsError::validation(
+                        "RegExp literal cache site is invalid".into(),
+                    ));
+                }
+                matcher
+            }
+        }
+        .map_err(|message| JsError(message.to_string().into()))?;
+        let (prototype, constructor) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
+            .expect("RegExp intrinsics are installed for the active realm");
+        self.regexp_from_matcher(
+            prototype,
+            source,
+            flags,
+            matcher,
+            crate::heap::RegExpLegacyOwner::Enabled(constructor),
+        )
+    }
+
+    fn regexp_from_matcher(
+        &mut self,
+        prototype: Value,
+        source: JsString,
+        flags: String,
+        matcher: Rc<quench_regexp::Regex>,
+        legacy_constructor: crate::heap::RegExpLegacyOwner,
+    ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
             object: Box::new(Self::empty_object(prototype)),
             source,

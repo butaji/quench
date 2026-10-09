@@ -809,6 +809,7 @@ impl Engine {
             method_arguments: vec![],
             field_sites: vec![],
             object_sites: vec![],
+            regexp_literal_sites: vec![],
             superinstructions: vec![],
             register_roots,
         };

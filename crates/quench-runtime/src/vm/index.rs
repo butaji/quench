@@ -520,7 +520,7 @@ mod tests {
         });
         let atom_count = vm.dynamic_atoms.len();
         vm.heap.retain_allocations_for_test();
-        let cell_count = vm.heap.cell_counts().iter().sum::<usize>();
+        let cell_count = vm.heap.occupied_cell_count_for_test();
 
         for index in 0..1024 {
             vm.set_index(
@@ -534,7 +534,7 @@ mod tests {
 
         assert_eq!(vm.dynamic_atoms.len(), atom_count);
         assert!(vm.lookup_array_index_atom(1023).is_none());
-        assert_eq!(vm.heap.cell_counts().iter().sum::<usize>(), cell_count);
+        assert_eq!(vm.heap.occupied_cell_count_for_test(), cell_count);
     }
 
     #[test]

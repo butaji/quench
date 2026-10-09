@@ -589,6 +589,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn regexp_literal_site_index(self) -> usize {
+                debug_assert_eq!(
+                    self.op().immediate_role(),
+                    ImmediateRole::RegExpLiteralSiteIndex
+                );
+                self.imm() as usize
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn superinstruction_index(self) -> usize {
                 debug_assert_eq!(
                     self.op().immediate_role(),
