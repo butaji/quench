@@ -150,16 +150,48 @@ pub(super) fn require(
             };
         }
         Some(BuiltinModule::InternalDgram) => {
-            let global = context.global_root()?;
-            let require = get(context, global, "require")?;
-            let specifier = context.string_rooted("internal/dgram");
-            let undefined = context.undefined();
-            let result = context.call_rooted(require, undefined, &[specifier]);
-            context.release_root(require);
-            context.release_root(undefined);
-            context.release_root(global);
-            context.release_root(specifier);
-            return result;
+            let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
+            context.release_root(dgram);
+            return context.evaluate_script_rooted(
+                r#"(() => {
+  const dgram = globalThis["\0quench:dgram_module"];
+  const stateSymbol = Object.getOwnPropertySymbols(dgram.createSocket("udp4"))
+    .find((symbol) => symbol.description === "quench.dgram.state");
+  const internals = globalThis[Symbol.for("quench.dgram.internals")];
+  return {
+    kStateSymbol: stateSymbol,
+    _createSocketHandle(address, port, type, flags, fd) {
+      if (fd !== undefined) {
+        if (!globalThis.__quenchDgramUdpFds.has(fd)) return -9;
+        const adopted = new internals.UDP(); adopted.fd = fd; return adopted;
+      }
+      const handle = new internals.UDP();
+      if (address === null) return handle;
+      return handle.bind(address, port, flags) < 0 ? -1 : handle;
+    },
+  };
+})()"#,
+                "internal/dgram.js",
+            );
+        }
+        Some(BuiltinModule::InternalTestBinding) => {
+            let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
+            context.release_root(dgram);
+            return context.evaluate_script_rooted(
+                r#"(() => {
+  const internals = globalThis[Symbol.for("quench.dgram.internals")];
+  return { internalBinding(name) {
+    if (name === "udp_wrap") return { UDP: internals.UDP };
+    if (name === "tcp_wrap") return { TCP: internals.TCP, constants: { SOCKET: 0 } };
+    if (name === "uv") return {
+      UV_UDP_REUSEADDR: 4, UV_UNKNOWN: -4094, UV_EBADF: -9,
+      UV_EINVAL: -22, UV_ENOTSOCK: -88,
+    };
+    return {};
+  } };
+})()"#,
+                "internal/test/binding.js",
+            );
         }
         Some(BuiltinModule::Assert) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
@@ -320,6 +352,7 @@ enum BuiltinModule {
     Dns,
     Dgram,
     InternalDgram,
+    InternalTestBinding,
     Https,
     Http2,
     Vm,
@@ -389,7 +422,7 @@ impl BuiltinModule {
             | Self::Path
             | Self::PathPosix
             | Self::PathWin32 => None,
-            Self::InternalDgram => None,
+            Self::InternalDgram | Self::InternalTestBinding => None,
         }
     }
 }
@@ -472,6 +505,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("dgram", BuiltinModule::Dgram),
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
+    ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("https", BuiltinModule::Https),
     ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
@@ -618,7 +652,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::Path
         | BuiltinModule::PathPosix
         | BuiltinModule::PathWin32
-        | BuiltinModule::InternalDgram => Err(RootedError::host(
+        | BuiltinModule::InternalDgram
+        | BuiltinModule::InternalTestBinding => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
