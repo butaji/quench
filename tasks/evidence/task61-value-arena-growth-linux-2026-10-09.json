@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-09",
+  "status": "no measurable benefit; candidate not retained; Stage B remains open",
+  "experiment": "Reduce post-65K ValueArena reserve growth from capacity + capacity/3 to capacity + capacity/4.",
+  "source_revision": "2ebe153e7",
+  "candidate_source_patch_sha256": "6a5825b4259dae71b774829c9b7b0b1bc61909d6434e488fab04949222791d76",
+  "source_tree": "detached worktree based on the source revision; only DENSE_ARENA_GROWTH_DIVISOR and its explanatory comment changed",
+  "build": {
+    "profile": "production",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "baseline_binary_sha256": "5e28dca54c3596935dbe9c411c898a53bb8257e99236dee9525e7ec91adfeed0",
+    "candidate_binary_sha256": "24b933bf1b81089fddea97e8cc2b9902040ec2e3ffff705b5b372bcad09e8554"
+  },
+  "measurement": {
+    "kind": "Quench-only alternating paired diagnostic on V8-v7 Splay materialized input",
+    "rounds": 3,
+    "fixture_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+    "runner_source_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+    "host": {
+      "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+      "cpu_quota": "400000 100000",
+      "memory_limit_bytes": "17179869184",
+      "process_metrics_backend": "Linux wait4 rusage"
+    },
+    "rss_backend": "Linux wait4 rusage",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median differences",
+      "replicates": 100000
+    },
+    "summary": {
+      "baseline_score_median": 871.0,
+      "candidate_score_median": 836.0,
+      "score_delta": {
+        "median": -41.0,
+        "95_ci": [
+          -245.0,
+          24.0
+        ]
+      },
+      "baseline_rss_median_bytes": 202436608,
+      "candidate_rss_median_bytes": 202412032,
+      "rss_delta_bytes": {
+        "median": -86016,
+        "95_ci": [
+          -94208,
+          49152
+        ]
+      },
+      "all_outputs_equal": true
+    },
+    "outputs_equal": true,
+    "raw_report": "target/stageb-candidates/arena-growth/three-pair-screen.json",
+    "raw_report_sha256": "5b3ec0be70a1f0510dc32b51260667cbc861163bf007ef1029bee216d0aff2f7"
+  },
+  "interpretation": "Median paired Score delta was -41 (95% interval -245 to +24), and maximum RSS delta was -86,016 bytes (95% interval -94,208 to +49,152). Neither interval establishes a benefit. The screen is small, but its direction does not justify expanding to eleven pairs; the growth-policy change was discarded.",
+  "research_basis": "Rust std::Vec::reserve_exact contract and allocator behavior were already documented in task 61 research; this trial measures Quench rather than transferring allocator behavior from another runtime.",
+  "qualification_ready": false
+}
