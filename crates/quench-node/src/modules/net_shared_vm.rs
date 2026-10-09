@@ -218,7 +218,22 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
   Object.setPrototypeOf(Stream, Socket);
-  return { Socket, Stream, Server, connect, createConnection: connect, createServer };
+  class BlockList {
+    constructor() { this._addresses = []; }
+    addAddress(address, type) {
+      if (typeof address !== 'string') throw invalidArgValue(address);
+      const family = type === undefined ? (address.includes(':') ? 'ipv6' : 'ipv4') : String(type).toLowerCase();
+      if (family !== 'ipv4' && family !== 'ipv6') throw invalidArgValue(type);
+      this._addresses.push({ address, family });
+    }
+    check(address, type) {
+      if (address && typeof address === 'object') { type = address.family === 'IPv6' ? 'ipv6' : 'ipv4'; address = address.address; }
+      const family = String(type || (String(address).includes(':') ? 'ipv6' : 'ipv4')).toLowerCase();
+      return this._addresses.some((entry) => entry.address === address && entry.family === family);
+    }
+    get rules() { return this._addresses.map(({ address, family }) => `Address: ${family === 'ipv4' ? 'IPv4' : 'IPv6'} ${address}`); }
+  }
+  return { Socket, Stream, Server, BlockList, connect, createConnection: connect, createServer };
 })"#;
 
 /// TCP resources for the shared-VM projection. Protocol modules keep only
@@ -608,7 +623,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         undefined,
         &[duplex, connect, write, end, destroy, encoding, listen, close, address],
     )?;
-    for name in ["Socket", "Stream", "Server", "connect", "createConnection", "createServer"] {
+    for name in ["Socket", "Stream", "Server", "BlockList", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(surface, key)?;
         if !context.set_property_rooted(module, key, value, module)? {
