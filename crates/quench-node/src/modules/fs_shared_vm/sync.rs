@@ -596,6 +596,26 @@ pub(crate) fn mkdir_sync(
 ) -> Result<RootId, RootedError> {
     let path = path_argument(context, args.first().copied())?;
     let options = mkdir_options(context, args.get(1).copied())?;
+    let requested_path = args
+        .first()
+        .copied()
+        .map(|path| context.string_text(path))
+        .transpose()?
+        .flatten();
+    let relative_path = requested_path
+        .as_deref()
+        .is_some_and(|path| !std::path::Path::new(path).is_absolute());
+    let cwd = context.host_mut().shared_state().borrow().cwd.path();
+    if relative_path && !cwd.is_dir() {
+        return throw_operation_error(
+            context,
+            &ops::OperationError::Io {
+                syscall: "mkdir",
+                path,
+                error: std::io::Error::from_raw_os_error(libc::ENOENT),
+            },
+        );
+    }
     let first_created = match ops::mkdir(&path, options) {
         Ok(path) => path,
         Err(error) => return throw_operation_error(context, &error),
@@ -1067,10 +1087,35 @@ fn received_type(
         return Ok(format!("type number ({number})"));
     }
     if let Some(string) = context.string_text(value)? {
-        return Ok(format!("type string ({string:?})"));
+        let inspected = string.replace('\\', "\\\\").replace('\'', "\\'");
+        return Ok(format!("type string ('{inspected}')"));
+    }
+    if context.is_symbol_rooted(value)? {
+        let global = context.global_root()?;
+        let string_key = context.string_rooted("String");
+        let string_constructor = context.get_property_rooted(global, string_key)?;
+        let description = context.call_rooted(string_constructor, global, &[value])?;
+        let description = context.string_text(description)?.unwrap_or_default();
+        return Ok(format!("type symbol ({description})"));
+    }
+    let global = context.global_root()?;
+    let array_key = context.string_rooted("Array");
+    let array_constructor = context.get_property_rooted(global, array_key)?;
+    let is_array_key = context.string_rooted("isArray");
+    let is_array = context.get_property_rooted(array_constructor, is_array_key)?;
+    let is_array = context.call_rooted(is_array, array_constructor, &[value])?;
+    if context
+        .rooted_value(is_array)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok("an instance of Array".to_owned());
     }
     if context.is_callable_rooted(value)? {
-        return Ok("type function".to_owned());
+        let name_key = context.string_rooted("name");
+        let name = context.get_property_rooted(value, name_key)?;
+        let name = context.string_text(name)?.unwrap_or_default();
+        return Ok(format!("function {name}"));
     }
     Ok("an instance of Object".to_owned())
 }

@@ -25,6 +25,24 @@ const callbackResult = new Promise((resolve, reject) => {
     }
   });
 });
+const previousCwd = process.cwd();
+const deletedCwd = path.join(root, 'deleted-cwd');
+fs.mkdirSync(deletedCwd);
+process.chdir(deletedCwd);
+fs.rmdirSync(deletedCwd);
+assert.throws(() => fs.mkdirSync('X', { recursive: true }), { code: 'ENOENT' });
+const deletedCwdCallbackResult = new Promise((resolve, reject) => {
+  fs.mkdir('X', { recursive: true }, (error) => {
+    try {
+      assert.equal(error.code, 'ENOENT');
+      resolve();
+    } catch (failure) {
+      reject(failure);
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+});
 const callbackRmdirResult = new Promise((resolve, reject) => {
   fs.mkdirSync(callbackRmdirTarget);
   fs.rmdir(callbackRmdirTarget, (error) => error ? reject(error) : resolve());
@@ -32,6 +50,7 @@ const callbackRmdirResult = new Promise((resolve, reject) => {
 
 Promise.all([
   callbackResult,
+  deletedCwdCallbackResult,
   callbackRmdirResult,
   fs.promises.mkdir(promiseTarget, { recursive: true }).then((createdPath) => {
     assert.equal(fs.statSync(promiseTarget).isDirectory(), true);
