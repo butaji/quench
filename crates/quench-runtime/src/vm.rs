@@ -211,6 +211,7 @@ struct Realm {
 }
 #[derive(Default)]
 struct RealmIntrinsics {
+    arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
@@ -236,6 +237,14 @@ struct RealmIntrinsics {
     intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
 }
+#[derive(Clone, Copy)]
+struct ArgumentsObjectTemplate {
+    anchor: Value,
+    length_slot: usize,
+    callee_slot: usize,
+    iterator_slot: usize,
+}
+const ARGUMENTS_OBJECT_PROPERTY_COUNT: usize = 3;
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: FxHashSet<Atom>,
@@ -987,6 +996,7 @@ impl<H: Host> Vm<H> {
     }
     fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
         self.specialized = program.specialized;
+        self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
         self.natives.clear();
         self.frames.clear();
