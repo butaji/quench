@@ -2,7 +2,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 const FIRST_TRANSPORT_ID: u64 = 1;
@@ -305,6 +305,17 @@ fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, String> {
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
     for (name, operation) in [
+        ("isIP", "netIsIP"),
+        ("isIPv4", "netIsIPv4"),
+        ("isIPv6", "netIsIPv6"),
+    ] {
+        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let key = context.string_rooted(name);
+        if !context.set_property_rooted(module, key, function, module)? {
+            return Err(RootedError::host(format!("cannot install net.{name}")));
+        }
+    }
+    for (name, operation) in [
         (
             "getDefaultAutoSelectFamilyAttemptTimeout",
             "netGetAutoSelectFamilyAttemptTimeout",
@@ -321,6 +332,40 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         }
     }
     Ok(module)
+}
+
+pub(crate) fn is_ip(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
+    let family = input.as_deref().and_then(|input| input.parse::<IpAddr>().ok());
+    Ok(context.number(match family {
+        Some(IpAddr::V4(_)) => 4.0,
+        Some(IpAddr::V6(_)) => 6.0,
+        None => 0.0,
+    }))
+}
+
+pub(crate) fn is_ipv4(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
+    let is_ipv4 = input.is_some_and(|input| input.parse::<Ipv4Addr>().is_ok());
+    Ok(context.boolean(is_ipv4))
+}
+
+pub(crate) fn is_ipv6(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
+    let is_ipv6 = input.is_some_and(|input| input.parse::<Ipv6Addr>().is_ok());
+    Ok(context.boolean(is_ipv6))
 }
 
 pub(crate) fn get_timeout(
