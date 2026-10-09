@@ -727,12 +727,39 @@ fn expected_matches_object(
     expected: RootId,
     keys: &[RootId],
 ) -> Result<bool, RootedError> {
+    expected_matches_object_depth(context, actual, expected, keys, 0)
+}
+
+fn expected_matches_object_depth(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    keys: &[RootId],
+    depth: usize,
+) -> Result<bool, RootedError> {
+    if depth > 32 {
+        return Ok(false);
+    }
     for key in keys {
         let expected_value = context.get_property_rooted(expected, *key)?;
         let actual_value = context.get_property_rooted(actual, *key)?;
         let matches = match regexp_match(context, expected_value, actual_value)? {
             Some(matches) => matches,
-            None => context.same_value_rooted(expected_value, actual_value)?,
+            None if context.same_value_rooted(expected_value, actual_value)? => true,
+            None => {
+                let expected_keys = object_keys(context, expected_value)?;
+                if expected_keys.is_empty() {
+                    false
+                } else {
+                    expected_matches_object_depth(
+                        context,
+                        actual_value,
+                        expected_value,
+                        &expected_keys,
+                        depth + 1,
+                    )?
+                }
+            }
         };
         if !matches {
             return Ok(false);
