@@ -1,0 +1,381 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Use validator-proven unchecked access for plain-local slots",
+  "decision": "Retain as a measured Stage B candidate. On 11 alternating M4 instruction pairs the local assignment loop fell 3.04% and the local-callee loop fell 1.27%; every pair improved. The candidate arm removes the local and frame bounds branches visible in the previous checked access. This focused instruction result is not a V8-v7 fixture qualification.",
+  "source": {
+    "base_revision": "fabbe67693775f6f1e4cf8e26d1a531be55e5221",
+    "candidate_source_dirty_during_measurement": true,
+    "candidate_diff_sha256": "e5b22b0344bf2a2c3437eb5ab9b5a512e9b21e770e1ddaa2b385798ed22d8c15",
+    "files": {
+      "crates/quench-runtime/src/vm/dispatch.rs": "52d3daac394a1ea7b83319b5254a21d9a81cc390fa5b9ddc314f3786a0fada7e",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs": "624f36f979946c32e130da997f0c938128e0f22b63d01aa323613c74c7d7fa16",
+      "crates/quench-runtime/src/vm/dispatch_numeric.rs": "43a82f452b8632ee3cce05f6091dfbb6ba0a7f7a1f60d59bb1bfbd3b71aa7559"
+    },
+    "baseline_binary_sha256": "5894efb8ecdc943eb999996b5840d305fdb6762e36c9854c9101ba5b53b0d39e",
+    "candidate_binary_sha256": "790acdad8d00bdf4fc6f1db03450914dead2a43119eba3ac99e9ba246c517a4a",
+    "symbolized_candidate_binary_sha256": "4dfce6f601c757c67b8c5fe5cf90dea0591f5c5f4b6d50bcfcd3e29c242fc4d8",
+    "baseline_binary_source": "The hash-pinned clean production executable recorded as the candidate in task61-shape-compaction-2026-10-09.json; its source is the committed base revision above.",
+    "build_commands": {
+      "candidate_production": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-local-bounds-prod cargo build --profile production -p quench-node --bin quench-node",
+      "symbolized_candidate": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-dispatch-asm-20261009 CARGO_PROFILE_PRODUCTION_DEBUG=line-tables-only CARGO_PROFILE_PRODUCTION_STRIP=none cargo build --profile production -p quench-node --bin quench-node"
+    },
+    "implementation": "LoadLocalPlain and StoreLocalPlain now use two #[inline(always)] unsafe helpers for direct Vec access, in both general and numeric dispatch. The validator checks each plain local slot against Function.locals and independently rejects plain-local opcodes unless scope/TDZ analysis marks the slot plain. Invocation setup sizes frame.locals to Function.locals. No eligibility rules or bytecode format changed.",
+    "invariant_sources": [
+      "crates/quench-runtime/src/bytecode/validate.rs: ImmediateRole::LocalSlot bounds check and plain_local_slots eligibility validation",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs: invocation setup resizes frame.locals to function.locals",
+      "crates/quench-runtime/src/vm/dispatch_frame.rs: dispatch loop validates active frame before executing an instruction"
+    ]
+  },
+  "host": {
+    "platform": "macOS 26.5 (25F71)",
+    "kernel": "Darwin 25.5.0, arm64",
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "physical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew), LLVM 23.1.2",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27) (Homebrew)",
+    "limits": "ulimit: CPU/file size/data/address/locked memory unlimited; stack 8192 KiB; 2666 processes; 8192 file descriptors."
+  },
+  "correctness": {
+    "production_build": "passed",
+    "focused_runtime_tests": "regression_captured_values_and_calls_preserve_runtime_binding_state: 1/1; regression_captured_parameter_stores_preserve_argument_mapping: 1/1 (profile-memory feature)",
+    "test262": "Stages 3 block-scope, 8 eval-code, 11 function-code passed 709/709 in an isolated iteration target.",
+    "node_oracle": "The hash-pinned production candidate and local Node 26.10.0 exited 0 with byte-identical stdout/stderr on local assignment, parameter mutation/arguments aliasing, closure capture, direct eval, TDZ and sloppy mapped-arguments probes. tools/diff.mjs extra debug-quench entries aborted on a ClosureFunctionIndex != LocalSlot validation issue; the candidate-vs-Node comparison was true and independently confirmed with direct stdout/stderr cmp.",
+    "profile_memory_runtime_suite": "471 passed, 55 failed. Failures span API, GC, Proxy, RegExp, source-position and Wasm tests; the exact set was not rerun against baseline, so no claim is made that these are unrelated or caused by this patch.",
+    "rustfmt": "The touched dispatch files passed formatting except dispatch_frame.rs, which reports two pre-existing formatting differences near selective-capture code (lines 528 and 543); the added helper formatting is clean.",
+    "git_diff_check": "passed"
+  },
+  "measurement": {
+    "kind": "11 alternating, control-corrected production instruction-retirement pairs per loop; baseline/candidate order alternated each pair",
+    "backend": "/usr/bin/time -l; 4000 x 2500 = 10 million loop iterations; compare work script minus zero-outer-iteration control for the same binary",
+    "baseline_binary_sha256": "5894efb8ecdc943eb999996b5840d305fdb6762e36c9854c9101ba5b53b0d39e",
+    "candidate_binary_sha256": "790acdad8d00bdf4fc6f1db03450914dead2a43119eba3ac99e9ba246c517a4a",
+    "scripts": {
+      "local_control": "(function(){function f(outerLimit){var r=0;for(var outer=0;outer<outerLimit;outer++){for(var i=0;i<2500;i++){r=i;}}return r;}f(0);})();",
+      "local_work": "(function(){function f(outerLimit){var r=0;for(var outer=0;outer<outerLimit;outer++){for(var i=0;i<2500;i++){r=i;}}return r;}f(4000);})();",
+      "call_control": "(function(){function g(x){return x+1;}function f(outerLimit){var r=0;for(var outer=0;outer<outerLimit;outer++){for(var i=0;i<2500;i++){r=g(i);}}return r;}f(0);})();",
+      "call_work": "(function(){function g(x){return x+1;}function f(outerLimit){var r=0;for(var outer=0;outer<outerLimit;outer++){for(var i=0;i<2500;i++){r=g(i);}}return r;}f(4000);})();"
+    },
+    "loop_workload": "Each work script executes 10,000,000 innermost iterations; control executes zero innermost iterations but follows the same parse/startup path.",
+    "results": {
+      "plain_local_assignment_loop": {
+        "mean_paired_change_percent": -3.0421956801028385,
+        "median_paired_change_percent": -3.0414191794928613,
+        "bootstrap_median_95_percent_interval": [
+          -3.0490744299440613,
+          -3.0362594185236187
+        ],
+        "candidate_lower_instruction_pairs": 11,
+        "baseline_mean_control_corrected_instructions_per_iteration": 954.4742956545454,
+        "candidate_mean_control_corrected_instructions_per_iteration": 925.437318309091,
+        "mean_control_corrected_instructions_saved_per_iteration": 29.036977345454407,
+        "raw_pairs": [
+          {
+            "baseline": {
+              "control": 239848962,
+              "work": 9772141944,
+              "delta": 9532292982
+            },
+            "candidate": {
+              "control": 239665932,
+              "work": 9482041927,
+              "delta": 9242375995
+            },
+            "candidate_change_percent": -3.0414191794928613
+          },
+          {
+            "candidate": {
+              "control": 226119121,
+              "work": 9482197860,
+              "delta": 9256078739
+            },
+            "baseline": {
+              "control": 225842841,
+              "work": 9771760401,
+              "delta": 9545917560
+            },
+            "candidate_change_percent": -3.0362594185236187
+          },
+          {
+            "baseline": {
+              "control": 225570482,
+              "work": 9771776837,
+              "delta": 9546206355
+            },
+            "candidate": {
+              "control": 226150135,
+              "work": 9481285553,
+              "delta": 9255135418
+            },
+            "candidate_change_percent": -3.0490744299440613
+          },
+          {
+            "candidate": {
+              "control": 226081318,
+              "work": 9481970666,
+              "delta": 9255889348
+            },
+            "baseline": {
+              "control": 225816081,
+              "work": 9771750199,
+              "delta": 9545934118
+            },
+            "candidate_change_percent": -3.0384116045079956
+          },
+          {
+            "baseline": {
+              "control": 225787686,
+              "work": 9771852713,
+              "delta": 9546065027
+            },
+            "candidate": {
+              "control": 226556395,
+              "work": 9482062597,
+              "delta": 9255506202
+            },
+            "candidate_change_percent": -3.0437549312537278
+          },
+          {
+            "candidate": {
+              "control": 226581549,
+              "work": 9481988880,
+              "delta": 9255407331
+            },
+            "baseline": {
+              "control": 225877639,
+              "work": 9771714300,
+              "delta": 9545836661
+            },
+            "candidate_change_percent": -3.0424711873246664
+          },
+          {
+            "baseline": {
+              "control": 226271562,
+              "work": 9772179817,
+              "delta": 9545908255
+            },
+            "candidate": {
+              "control": 226505347,
+              "work": 9480889381,
+              "delta": 9254384034
+            },
+            "candidate_change_percent": -3.0539181103830964
+          },
+          {
+            "candidate": {
+              "control": 225996074,
+              "work": 9481793638,
+              "delta": 9255797564
+            },
+            "baseline": {
+              "control": 225984415,
+              "work": 9771936127,
+              "delta": 9545951712
+            },
+            "candidate_change_percent": -3.0395518095409364
+          },
+          {
+            "baseline": {
+              "control": 226203036,
+              "work": 9772491677,
+              "delta": 9546288641
+            },
+            "candidate": {
+              "control": 226580573,
+              "work": 9481363014,
+              "delta": 9254782441
+            },
+            "candidate_change_percent": -3.0536076475628535
+          },
+          {
+            "candidate": {
+              "control": 226218198,
+              "work": 9482321866,
+              "delta": 9256103668
+            },
+            "baseline": {
+              "control": 225847306,
+              "work": 9771682116,
+              "delta": 9545834810
+            },
+            "candidate_change_percent": -3.035157718175515
+          },
+          {
+            "baseline": {
+              "control": 226222849,
+              "work": 9772159250,
+              "delta": 9545936401
+            },
+            "candidate": {
+              "control": 225589028,
+              "work": 9482233302,
+              "delta": 9256644274
+            },
+            "candidate_change_percent": -3.030526444421888
+          }
+        ]
+      },
+      "local_callee_loop": {
+        "mean_paired_change_percent": -1.2714560072725287,
+        "median_paired_change_percent": -1.2714600667000882,
+        "bootstrap_median_95_percent_interval": [
+          -1.2734759826461808,
+          -1.268835038012916
+        ],
+        "candidate_lower_instruction_pairs": 11,
+        "baseline_mean_control_corrected_instructions_per_iteration": 3147.8163764272726,
+        "candidate_mean_control_corrected_instructions_per_iteration": 3107.7932761272727,
+        "mean_control_corrected_instructions_saved_per_iteration": 40.0231003,
+        "raw_pairs": [
+          {
+            "baseline": {
+              "control": 226634828,
+              "work": 31704374164,
+              "delta": 31477739336
+            },
+            "candidate": {
+              "control": 226790225,
+              "work": 31304653200,
+              "delta": 31077862975
+            },
+            "candidate_change_percent": -1.2703465033865227
+          },
+          {
+            "candidate": {
+              "control": 225734162,
+              "work": 31303505764,
+              "delta": 31077771602
+            },
+            "baseline": {
+              "control": 226335933,
+              "work": 31704337758,
+              "delta": 31478001825
+            },
+            "candidate_change_percent": -1.2714600667000882
+          },
+          {
+            "baseline": {
+              "control": 226051910,
+              "work": 31704351534,
+              "delta": 31478299624
+            },
+            "candidate": {
+              "control": 225677276,
+              "work": 31304569205,
+              "delta": 31078891929
+            },
+            "candidate_change_percent": -1.268835038012916
+          },
+          {
+            "candidate": {
+              "control": 226670785,
+              "work": 31303315319,
+              "delta": 31076644534
+            },
+            "baseline": {
+              "control": 226301731,
+              "work": 31704605435,
+              "delta": 31478303704
+            },
+            "candidate_change_percent": -1.2759873396512167
+          },
+          {
+            "baseline": {
+              "control": 227695754,
+              "work": 31705556229,
+              "delta": 31477860475
+            },
+            "candidate": {
+              "control": 226321217,
+              "work": 31303318699,
+              "delta": 31076997482
+            },
+            "candidate_change_percent": -1.2734759826461808
+          },
+          {
+            "candidate": {
+              "control": 225843975,
+              "work": 31303753067,
+              "delta": 31077909092
+            },
+            "baseline": {
+              "control": 226380787,
+              "work": 31704613200,
+              "delta": 31478232413
+            },
+            "candidate_change_percent": -1.2717465064355804
+          },
+          {
+            "baseline": {
+              "control": 226327603,
+              "work": 31704520889,
+              "delta": 31478193286
+            },
+            "candidate": {
+              "control": 226699082,
+              "work": 31303342631,
+              "delta": 31076643549
+            },
+            "candidate_change_percent": -1.2756441684935906
+          },
+          {
+            "candidate": {
+              "control": 226577621,
+              "work": 31304198867,
+              "delta": 31077621246
+            },
+            "baseline": {
+              "control": 226326863,
+              "work": 31704605012,
+              "delta": 31478278149
+            },
+            "candidate_change_percent": -1.2728043799076985
+          },
+          {
+            "baseline": {
+              "control": 226174862,
+              "work": 31704382232,
+              "delta": 31478207370
+            },
+            "candidate": {
+              "control": 226711637,
+              "work": 31304727754,
+              "delta": 31078016117
+            },
+            "candidate_change_percent": -1.2713279644424682
+          },
+          {
+            "candidate": {
+              "control": 225689974,
+              "work": 31304715634,
+              "delta": 31079025660
+            },
+            "baseline": {
+              "control": 226397068,
+              "work": 31704657719,
+              "delta": 31478260651
+            },
+            "candidate_change_percent": -1.268287963640447
+          },
+          {
+            "baseline": {
+              "control": 226281915,
+              "work": 31704706489,
+              "delta": 31478424574
+            },
+            "candidate": {
+              "control": 226617787,
+              "work": 31306493975,
+              "delta": 31079876188
+            },
+            "candidate_change_percent": -1.2661001666811054
+          }
+        ]
+      }
+    },
+    "machine_code": "The symbolized candidate disassembly shows LoadLocalPlain at 0x1001e0adc as frame-base load, frame-stride address calculation, local pointer/indexed load, register-file store and loop status/branch; no frame/local bounds compare/branch remains on this arm. Earlier checked assembly had both frame-vector and locals-vector bounds checks. The candidate binary is 11,988,704 bytes, equal in total file size to the baseline; no separate __TEXT claim is made.",
+    "raw_artifacts": "Full raw pair rows are embedded above. Temporary scripts and tool outputs are under target/iteration/plain-local-validation-20261009/ and /tmp/quench-dispatch-asm-20261009/ during this session."
+  }
+}

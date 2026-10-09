@@ -81,7 +81,9 @@ impl<H: Host> Vm<H> {
                 match ins.op() {
                     Op::LoadLocalPlain => {
                         let local = ins.local_slot();
-                        let value = self.frames[frame].locals[local];
+                        // SAFETY: validated bytecode bounds the slot by Function.locals,
+                        // and frame setup sizes locals to that count.
+                        let value = unsafe { self.read_validated_local(frame, local) };
                         self.write(frame, ins.result_register(), value);
                         if let Some(target) = ins.numeric_local_store_target()
                             && let Some(integer) = value.as_int()
@@ -129,7 +131,9 @@ impl<H: Host> Vm<H> {
                     }
                     Op::StoreLocalPlain => {
                         let value = self.read(frame, ins.register_a());
-                        self.frames[frame].locals[ins.local_slot()] = value;
+                        // SAFETY: validated bytecode bounds the slot by Function.locals,
+                        // and frame setup sizes locals to that count.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
                         if let Some(register) = ins.optional_register_b() {
                             self.write(frame, register, value);
                         }
