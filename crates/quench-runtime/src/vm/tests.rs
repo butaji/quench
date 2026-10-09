@@ -5480,6 +5480,37 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
 }
 
 #[test]
+fn numeric_binary_fast_paths_preserve_number_edges_and_generic_coercion() {
+    let source = r#"
+        function assert(condition) {
+            if (!condition) throw new Error('numeric fast-path mismatch');
+        }
+        assert(Object.is(0 * -1, -0));
+        assert(Object.is(-2 % 2, -0));
+        assert(Object.is(0 / -1, -0));
+        assert(Object.is((-2147483648) % -1, -0));
+        assert(6 / 3 === 2);
+        assert(1 / 2 === 0.5);
+        assert((2147483647 + 1) === 2147483648);
+        assert((1 << 31) === -2147483648);
+        assert((1 << 33) === 2);
+        assert((-1 >>> 0) === 4294967295);
+        assert(!((0 / 0) < 1));
+
+        let order = '';
+        const left = { valueOf() { order += 'l'; return 9; } };
+        const right = { valueOf() { order += 'r'; return 4; } };
+        assert(left - right === 5 && order === 'lr');
+
+        let mixedBigIntThrows = false;
+        try { 1n - 1; } catch (error) { mixedBigIntThrows = true; }
+        assert(mixedBigIntThrows);
+    "#;
+    let program = Engine::specialize(source, "numeric-binary-fast-paths.js").unwrap();
+    Vm::new(SilentHost).execute(&program).unwrap();
+}
+
+#[test]
 fn equality_roots_the_opposite_primitive_during_object_coercion() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
