@@ -266,7 +266,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       };
       const first = index(start, 0);
       const last = Math.max(first, index(end, 0));
-      return decode(Array.from(this.subarray(first, last)), normalized);
+      return decode(this.subarray(first, last), normalized);
     }
 
     write(value, offset, length, encoding) {
@@ -747,6 +747,10 @@ pub(crate) fn decode(
             "ERR_UNKNOWN_ENCODING",
         )?);
     };
+    if let Some(bytes) = context.view_bytes_rooted(values) {
+        let units = crate::modules::buffer_codec::decode_units(&bytes, canonical);
+        return Ok(context.string_units_rooted(&units));
+    }
     let length = get(context, values, "length")?;
     let length = context
         .rooted_value(length)
