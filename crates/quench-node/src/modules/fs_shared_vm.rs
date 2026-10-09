@@ -1178,6 +1178,46 @@ const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, 
   }
 }"#;
 
+const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, options) {
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+  const stats = hostStatfsSync(path);
+  if (options?.bigint === true) {
+    for (const name of ['type', 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree']) {
+      stats[name] = BigInt(stats[name]);
+    }
+  }
+  return stats;
+}"#;
+
+const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options, callback) {
+  if (typeof options === 'function') {
+    callback = options;
+    options = undefined;
+  }
+  if (typeof callback !== 'function') {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+  queueMicrotask(() => {
+    try { Reflect.apply(callback, undefined, [null, statfsSync(path, options)]); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#;
+
 const READLINK_SYNC_API: &str = r#"(hostReadlinkSync) => function readlinkSync(path, options) {
   if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
@@ -1369,6 +1409,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let undefined = context.undefined();
     let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
     set(context, module, "statSync", stat_sync)?;
+    let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
+    let statfs_factory =
+        context.evaluate_script_rooted(STATFS_SYNC_API, "node:fs/shared-statfs-sync.js")?;
+    let statfs_sync = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
+    set(context, module, "statfsSync", statfs_sync)?;
+    let statfs_factory =
+        context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
+    let statfs = context.call_rooted(statfs_factory, undefined, &[statfs_sync])?;
+    set(context, module, "statfs", statfs)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
     let access_host = context.host_function(crate::host::shared_vm::operation("fsAccessSync"))?;
@@ -1567,6 +1616,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         mkdtemp_sync,
         copy_file_sync,
     )?;
+    let statfs_sync = get(context, module, "statfsSync")?;
+    let statfs_promise_factory = context.evaluate_script_rooted(
+        "(statfsSync) => (...args) => Promise.resolve().then(() => statfsSync(...args))",
+        "node:fs/promises/shared-statfs.js",
+    )?;
+    let statfs_promise =
+        context.call_rooted(statfs_promise_factory, undefined, &[statfs_sync])?;
+    set(context, promises, "statfs", statfs_promise)?;
     set(context, promises, "cp", cp_promise)?;
     let symlink_promise_factory = context.evaluate_script_rooted(
         "(symlinkSync) => (...args) => Promise.resolve().then(() => symlinkSync(...args))",
