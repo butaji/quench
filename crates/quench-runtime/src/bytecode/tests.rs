@@ -149,6 +149,7 @@ fn decoder_rejects_out_of_range_local_load() {
         method_arguments: vec![],
         field_sites: vec![],
         object_sites: vec![],
+        regexp_literal_sites: vec![],
         superinstructions: vec![],
         register_roots: vec![],
     };
@@ -220,6 +221,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         method_arguments: vec![],
         field_sites: vec![],
         object_sites: vec![],
+        regexp_literal_sites: vec![],
         superinstructions: vec![],
         register_roots: vec![],
     };
@@ -394,10 +396,10 @@ fn decoder_rejects_invalid_binding_site_metadata() {
             _ => unreachable!(),
         }
         invalid.write_binary(&path).unwrap();
+        let error = ResidualProgram::read_binary(&path).unwrap_err();
         assert!(
-            ResidualProgram::read_binary(&path)
-                .unwrap_err()
-                .contains("invalid binding-site metadata")
+            error.contains("invalid binding-site metadata"),
+            "unexpected decoder error: {error}"
         );
     }
     std::fs::remove_file(path).unwrap();

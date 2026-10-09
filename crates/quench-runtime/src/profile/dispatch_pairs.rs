@@ -171,6 +171,7 @@ mod tests {
             method_arguments: Vec::new(),
             field_sites: Vec::new(),
             object_sites: Vec::new(),
+            regexp_literal_sites: Vec::new(),
             superinstructions: Vec::new(),
             register_roots: Vec::new(),
         };
