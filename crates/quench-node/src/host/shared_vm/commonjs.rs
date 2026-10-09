@@ -223,6 +223,7 @@ pub(super) fn require(
             | BuiltinModule::FsPromises
             | BuiltinModule::Net
             | BuiltinModule::Http
+            | BuiltinModule::Dgram
             | BuiltinModule::Os
             | BuiltinModule::Buffer
             | BuiltinModule::Stream
@@ -235,7 +236,14 @@ pub(super) fn require(
             | BuiltinModule::Util
             | BuiltinModule::ChildProcess
             | BuiltinModule::Https
-            | BuiltinModule::Http2),
+            | BuiltinModule::Http2
+            | BuiltinModule::Vm
+            | BuiltinModule::Inspector
+            | BuiltinModule::Repl
+            | BuiltinModule::Sea
+            | BuiltinModule::Cluster
+            | BuiltinModule::Wasi
+            | BuiltinModule::TraceEvents),
         ) => {
             return cached_builtin(context, module);
         }
@@ -298,8 +306,16 @@ enum BuiltinModule {
     AsyncHooks,
     DiagnosticsChannel,
     Dns,
+    Dgram,
     Https,
     Http2,
+    Vm,
+    Inspector,
+    Repl,
+    Sea,
+    Cluster,
+    Wasi,
+    TraceEvents,
     PerfHooks,
     Zlib,
 }
@@ -341,8 +357,16 @@ impl BuiltinModule {
             Self::V8 => Some("v8"),
             Self::Module => Some("module"),
             Self::Dns => Some("dns"),
+            Self::Dgram => Some("dgram"),
             Self::Https => Some("https"),
             Self::Http2 => Some("http2"),
+            Self::Vm => Some("vm"),
+            Self::Inspector => Some("inspector"),
+            Self::Repl => Some("repl"),
+            Self::Sea => Some("sea"),
+            Self::Cluster => Some("cluster"),
+            Self::Wasi => Some("wasi"),
+            Self::TraceEvents => Some("trace_events"),
             Self::PerfHooks => Some("perf_hooks"),
             Self::Zlib => Some("zlib"),
             Self::AsyncHooks | Self::DiagnosticsChannel => None,
@@ -431,10 +455,25 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ),
     ("dns", BuiltinModule::Dns),
     ("node:dns", BuiltinModule::Dns),
+    ("dgram", BuiltinModule::Dgram),
+    ("node:dgram", BuiltinModule::Dgram),
     ("https", BuiltinModule::Https),
     ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
     ("node:http2", BuiltinModule::Http2),
+    ("vm", BuiltinModule::Vm),
+    ("node:vm", BuiltinModule::Vm),
+    ("inspector", BuiltinModule::Inspector),
+    ("node:inspector", BuiltinModule::Inspector),
+    ("repl", BuiltinModule::Repl),
+    ("node:repl", BuiltinModule::Repl),
+    ("node:sea", BuiltinModule::Sea),
+    ("cluster", BuiltinModule::Cluster),
+    ("node:cluster", BuiltinModule::Cluster),
+    ("wasi", BuiltinModule::Wasi),
+    ("node:wasi", BuiltinModule::Wasi),
+    ("trace_events", BuiltinModule::TraceEvents),
+    ("node:trace_events", BuiltinModule::TraceEvents),
     ("perf_hooks", BuiltinModule::PerfHooks),
     ("node:perf_hooks", BuiltinModule::PerfHooks),
     ("zlib", BuiltinModule::Zlib),
@@ -495,10 +534,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
-            let module = context.object_rooted()?;
-            let is_main = context.boolean(true);
-            set(context, module, "isMainThread", is_main)?;
-            Ok(module)
+            context.evaluate_script_rooted(
+                "({ isMainThread: true, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
+                "node:worker_threads.js",
+            )
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
@@ -510,6 +549,19 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
         BuiltinModule::Dns => crate::modules::dns_shared_vm::module(context),
+        BuiltinModule::Dgram => {
+            let source = format!(
+                "{}\n{}\n{}\n{}",
+                crate::polyfills::bootstrap::dgram_head::JS,
+                crate::polyfills::bootstrap::dgram::JS,
+                crate::polyfills::bootstrap::membership::JS,
+                crate::polyfills::bootstrap::dgram_tail::JS,
+            );
+            let root = context.evaluate_script_rooted(&source, "node:dgram/bootstrap.js")?;
+            context.release_root(root);
+            let global = context.global_root()?;
+            get(context, global, "\0quench:dgram_module")
+        }
         BuiltinModule::PerfHooks => crate::modules::perf_hooks::module(context),
         BuiltinModule::Zlib => {
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
@@ -525,8 +577,22 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         // Fastify imports both alternatives at module initialization. Its
-        // selected HTTP/1 path does not access these TLS-only exports.
-        BuiltinModule::Https | BuiltinModule::Http2 => context.object_rooted(),
+        // selected HTTP/1 path does not access the HTTPS transport.
+        BuiltinModule::Https => context.evaluate_script_rooted(
+            "({ request: function request() { throw new Error('HTTPS transport is unavailable'); }, get: function get() { throw new Error('HTTPS transport is unavailable'); } })",
+            "node:https.js",
+        ),
+        BuiltinModule::Http2
+        | BuiltinModule::Vm
+        | BuiltinModule::Inspector
+        | BuiltinModule::Repl
+        | BuiltinModule::Cluster
+        | BuiltinModule::Wasi
+        | BuiltinModule::TraceEvents => context.object_rooted(),
+        BuiltinModule::Sea => context.evaluate_script_rooted(
+            "({ isSea: function isSea() { return false; } })",
+            "node:sea.js",
+        ),
         BuiltinModule::Process
         | BuiltinModule::Assert
         | BuiltinModule::AssertStrict
