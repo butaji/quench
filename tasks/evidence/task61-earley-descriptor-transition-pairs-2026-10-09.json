@@ -1,0 +1,99 @@
+{
+  "title": "Task 61 descriptor-transition cache EarleyBoyer paired screen",
+  "date_local": "2026-10-09",
+  "fixture": "target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "baseline_binary": "target/iteration/task61-code-cursor-candidate-20261009/production/quench-node",
+  "baseline_binary_sha256": "9175e3ac9ef03874f5a9d046963645ced1f427a0c8bd21de6b10632090e54783",
+  "candidate_binary": "target/iteration/task61-descriptor-transition-20261009/production/quench-node",
+  "candidate_binary_sha256": "eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28",
+  "host": {
+    "system": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64"
+  },
+  "method": {
+    "pairs": 11,
+    "order": "candidate first on odd pairs, baseline first on even pairs",
+    "command": "/usr/bin/time -l <pinned-quench-node> <materialized-earley-boyer.js>",
+    "metrics": [
+      "Score from stdout",
+      "instructions retired",
+      "elapsed real seconds",
+      "maximum resident set size"
+    ],
+    "output_check": "All exit codes are zero. Each run emitted the EarleyBoyer result marker and Score line. After removing __quenchBenchResult:, ----, and Score: lines, both stdout streams are empty and hashes match for all pairs; no other guest stdout was emitted.",
+    "campaign_wall_seconds": 325.611
+  },
+  "results": {
+    "all_exits_zero": true,
+    "normalized_output_matches_all_pairs": true,
+    "score": {
+      "baseline_median": 623.0,
+      "candidate_median": 629.0,
+      "median_paired_candidate_delta_percent": 1.610305958132045,
+      "candidate_better_pairs": 9,
+      "candidate_equal_pairs": 0,
+      "baseline_range": [
+        542.0,
+        628.0
+      ],
+      "candidate_range": [
+        563.0,
+        636.0
+      ]
+    },
+    "instructions_retired": {
+      "baseline_median": 353589197283.0,
+      "candidate_median": 352920833933.0,
+      "median_paired_candidate_delta_percent": 0.13227548047349116,
+      "candidate_better_pairs": 5,
+      "candidate_equal_pairs": 0,
+      "baseline_range": [
+        352130978621.0,
+        363899626053.0
+      ],
+      "candidate_range": [
+        350069093494.0,
+        361895190309.0
+      ]
+    },
+    "elapsed_seconds": {
+      "baseline_median": 14.31,
+      "candidate_median": 14.31,
+      "median_paired_candidate_delta_percent": -0.3508771929824611,
+      "candidate_better_pairs": 9,
+      "candidate_equal_pairs": 0,
+      "baseline_range": [
+        14.18,
+        17.3
+      ],
+      "candidate_range": [
+        14.2,
+        16.62
+      ]
+    },
+    "maximum_resident_set_size_bytes": {
+      "baseline_median": 62996480.0,
+      "candidate_median": 56393728.0,
+      "median_paired_candidate_delta_percent": -10.530421216848673,
+      "candidate_better_pairs": 11,
+      "candidate_equal_pairs": 0,
+      "baseline_range": [
+        62095360.0,
+        64094208.0
+      ],
+      "candidate_range": [
+        56098816.0,
+        59670528.0
+      ]
+    }
+  },
+  "artifacts": {
+    "raw_csv": "tasks/evidence/task61-earley-descriptor-transition-pairs-2026-10-09.csv",
+    "raw_csv_sha256": "0502e245a4676793235ee67c17fe73363d681e7c80940722bdb4b7d561993a89",
+    "runner": "tasks/evidence/task61-earley-descriptor-transition-pairs-2026-10-09.py",
+    "runner_sha256": "966322f8e393b804ce03ebed4b57edb2a943c929d587772a8731421a935a2043"
+  },
+  "interpretation": "EarleyBoyer instructions show no clear speed win (median paired instructions +0.13%; candidate lower in 5/11). Elapsed-time median is 14.31 s for both binaries; candidate elapsed is lower in 9/11 but the median paired change is only \u22120.35%, with noisy outliers, so this is not a convincing speed qualification. RSS is consistently lower: candidate wins 11/11, median paired reduction 10.53% (median maximum RSS 62,996,480 to 56,393,728 bytes). Score medians are 623 to 629 (+0.96%), but score is noisy and not a speed qualification."
+}
