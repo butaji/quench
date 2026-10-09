@@ -550,12 +550,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
         BuiltinModule::Dns => crate::modules::dns_shared_vm::module(context),
         BuiltinModule::Dgram => {
+            let dgram_tail = crate::polyfills::bootstrap::dgram_tail::JS
+                .split("globalThis.require = (specifier) =>")
+                .next()
+                .unwrap_or(crate::polyfills::bootstrap::dgram_tail::JS);
             let source = format!(
                 "{}\n{}\n{}\n{}",
                 crate::polyfills::bootstrap::dgram_head::JS,
                 crate::polyfills::bootstrap::dgram::JS,
                 crate::polyfills::bootstrap::membership::JS,
-                crate::polyfills::bootstrap::dgram_tail::JS,
+                dgram_tail,
             );
             let root = context.evaluate_script_rooted(&source, "node:dgram/bootstrap.js")?;
             context.release_root(root);
