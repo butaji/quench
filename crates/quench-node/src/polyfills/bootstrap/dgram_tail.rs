@@ -400,6 +400,31 @@ const __quenchDgramSocket = (type = "udp4", options = {}) => {
   }
   return socket;
 };
+class __QuenchUDPHandle {
+  constructor() { this.fd = -1; this._address = null; }
+  bind(address, port = 0) { return this._bind(address, port, "IPv4"); }
+  bind6(address, port = 0) { return this._bind(address, port, "IPv6"); }
+  _bind(address, port, family) {
+    const resolvedPort = port || __quenchDgramNextPort++;
+    this.fd = resolvedPort;
+    this._address = { address, family, port: resolvedPort };
+    globalThis.__quenchDgramUdpFds.add(this.fd);
+    globalThis.__quenchDgramActiveFds.add(this.fd);
+    return 0;
+  }
+  getsockname(result) {
+    if (!this._address) return -9;
+    Object.assign(result, this._address);
+    return 0;
+  }
+}
+__quenchDgramInternals.UDP = __QuenchUDPHandle;
+class __QuenchTCPHandle {
+  constructor() { this.fd = 60000 + __quenchDgramNextPort++; }
+  listen() { return 0; }
+  close() { globalThis.__quenchDgramActiveFds.delete(this.fd); }
+}
+__quenchDgramInternals.TCP = __QuenchTCPHandle;
 const __quenchDgramValidateType = (type) => {
   if (type === "udp4" || type === "udp6") return type;
   throw Object.assign(
@@ -461,14 +486,32 @@ globalThis.require = (specifier) =>
         const fd = arguments[3];
         if (fd !== undefined) {
           if (!globalThis.__quenchDgramUdpFds.has(fd)) return -9;
-          const adopted = new globalThis.__quenchDgramUDPClass();
+          const adopted = new __QuenchUDPHandle();
           adopted.fd = fd;
           return adopted;
         }
-        const handle = new globalThis.__quenchDgramUDPClass();
+        const handle = new __QuenchUDPHandle();
         if (address === null) return handle;
         const result = handle.bind(address, port, 0);
         return result < 0 ? result : handle;
+      },
+    }
+    : specifier === "internal/test/binding"
+    ? {
+      internalBinding(name) {
+        if (name === "udp_wrap") return { UDP: __QuenchUDPHandle };
+        if (name === "tcp_wrap") return {
+          TCP: __QuenchTCPHandle,
+          constants: { SOCKET: 0 },
+        };
+        if (name === "uv") return {
+          UV_UDP_REUSEADDR: 4,
+          UV_UNKNOWN: -4094,
+          UV_EBADF: -9,
+          UV_EINVAL: -22,
+          UV_ENOTSOCK: -88,
+        };
+        return {};
       },
     }
     : __quenchOriginalRequireWithDgram(specifier);
