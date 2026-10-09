@@ -232,7 +232,7 @@ impl<H: Host> Vm<H> {
                 binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
+                dynamic_bindings: Box::new(Vec::new().into()),
                 with_objects: with_objects.into_boxed_slice(),
             });
         }
@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
                 binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
+                dynamic_bindings: Box::new(Vec::new().into()),
                 with_objects: Box::default(),
             });
         }

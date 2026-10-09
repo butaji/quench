@@ -473,7 +473,7 @@ impl<H: Host> Vm<H> {
                     binding_site_pc: None,
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    dynamic_bindings: dynamic_bindings.into(),
+                    dynamic_bindings: Box::new(dynamic_bindings.into()),
                     with_objects: Box::default(),
                 })
             } else {
@@ -543,7 +543,7 @@ impl<H: Host> Vm<H> {
             binding_site_pc: Some(binding_site_pc),
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+            dynamic_bindings: Box::new(crate::heap::EnvironmentBindings::Shared(owner)),
             with_objects: with_objects.clone(),
         };
         Ok(self.heap.alloc(scope))
@@ -940,7 +940,7 @@ impl<H: Host> Vm<H> {
                     binding_site_pc: None,
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    dynamic_bindings: Vec::new().into(),
+                    dynamic_bindings: Box::new(Vec::new().into()),
                     with_objects: Box::default(),
                 })
             } else {
@@ -965,7 +965,7 @@ impl<H: Host> Vm<H> {
                 binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: bindings.into(),
+                dynamic_bindings: Box::new(bindings.into()),
                 with_objects: Box::default(),
             });
         }

@@ -364,7 +364,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
             epoch_nanoseconds: epoch,
-            time_zone: timezone,
+            time_zone: Box::new(timezone),
             calendar,
         }))
     }
@@ -375,7 +375,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<String, JsError> {
         if let Some(Cell::TemporalZonedDateTime { time_zone, .. }) = self.heap.get(value) {
-            return Ok(time_zone.clone());
+            return Ok(time_zone.as_ref().clone());
         }
         let Some(Cell::String(_)) = self.heap.get(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
@@ -483,7 +483,7 @@ impl<H: Host> Vm<H> {
             };
             let receiver = ZonedDateTimeRecord {
                 epoch_nanoseconds: *epoch_nanoseconds,
-                time_zone: time_zone.clone(),
+                time_zone: time_zone.as_ref().clone(),
                 calendar: calendar.clone(),
             };
             let other = self.temporal_zoned_date_time_record(
@@ -579,7 +579,7 @@ impl<H: Host> Vm<H> {
                 ));
             };
             let epoch_nanoseconds = *epoch_nanoseconds;
-            let time_zone = time_zone.clone();
+            let time_zone = time_zone.as_ref().clone();
             let calendar = calendar.clone();
             if native == Native::TemporalZonedDateTimeValueOf {
                 return Err(self.type_error(p, "Cannot convert ZonedDateTime to a number".into()));
@@ -629,7 +629,11 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch, zone, calendar) = (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+        let (epoch, zone, calendar) = (
+            *epoch_nanoseconds,
+            time_zone.as_ref().clone(),
+            calendar.clone(),
+        );
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
                 Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
@@ -824,7 +828,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
+        let time_zone = time_zone.as_ref().clone();
         let calendar = calendar.clone();
         let mut duration =
             self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -917,7 +921,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
+        let time_zone = time_zone.as_ref().clone();
         let calendar = calendar.clone();
         let options = args
             .first()
@@ -979,7 +983,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
+        let time_zone = time_zone.as_ref().clone();
         let calendar = calendar.clone();
         let at_epoch_limit = epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128;
         if at_epoch_limit && !ZERO_OFFSET_TIME_ZONES.contains(&time_zone.as_str()) {
@@ -1024,7 +1028,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
+        let time_zone = time_zone.as_ref().clone();
         let calendar = calendar.clone();
         let options = args
             .first()
@@ -1129,7 +1133,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let record_epoch = *epoch_nanoseconds;
-        let record_time_zone = time_zone.clone();
+        let record_time_zone = time_zone.as_ref().clone();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
             Some(Cell::String(_)) => {
@@ -1177,8 +1181,11 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch_nanoseconds, time_zone, calendar) =
-            (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+        let (epoch_nanoseconds, time_zone, calendar) = (
+            *epoch_nanoseconds,
+            time_zone.as_ref().clone(),
+            calendar.clone(),
+        );
         let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = if argument.is_undefined() {
             round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
@@ -1260,8 +1267,11 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch_nanoseconds, time_zone, calendar) =
-            (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+        let (epoch_nanoseconds, time_zone, calendar) = (
+            *epoch_nanoseconds,
+            time_zone.as_ref().clone(),
+            calendar.clone(),
+        );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
         let is_plain_time = matches!(
             self.heap.get(partial),
@@ -1518,7 +1528,7 @@ impl<H: Host> Vm<H> {
         };
         let left = ZonedDateTimeRecord {
             epoch_nanoseconds: *left_epoch,
-            time_zone: left_time_zone.clone(),
+            time_zone: left_time_zone.as_ref().clone(),
             calendar: left_calendar.clone(),
         };
         let other = self.temporal_zoned_date_time_compare_record(
@@ -1972,7 +1982,7 @@ impl<H: Host> Vm<H> {
                 self.temporal_zoned_date_time_options(p, options)?;
                 Ok(ZonedDateTimeRecord {
                     epoch_nanoseconds,
-                    time_zone,
+                    time_zone: *time_zone,
                     calendar,
                 })
             }
@@ -2067,7 +2077,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let epoch = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
+        let time_zone = time_zone.as_ref().clone();
         let calendar = calendar.clone();
         let epoch = round_zoned_date_time_epoch(epoch, &time_zone, &options)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
@@ -2375,7 +2385,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
             epoch_nanoseconds: record.epoch_nanoseconds,
-            time_zone: record.time_zone,
+            time_zone: Box::new(record.time_zone),
             calendar: record.calendar,
         }))
     }

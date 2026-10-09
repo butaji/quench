@@ -30,7 +30,7 @@ impl Host for RecordingHost {
 #[test]
 fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
-    use crate::heap::{Cell, WeakMapEntries};
+    use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(SilentHost);
     let owner = vm.heap.alloc(Cell::Array {
@@ -57,7 +57,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     assert!(vm.heap.release_root(root));
     let map = vm.heap.alloc(Cell::WeakMap {
         object: Vm::<SilentHost>::empty_object(Value::NULL),
-        entries: WeakMapEntries::default(),
+        entries: Box::default(),
     });
     let map_key = vm.object();
     if let Some(Cell::WeakMap { entries, .. }) = vm.heap.get_mut(map) {
@@ -747,7 +747,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
+        dynamic_bindings: Box::new(vec![].into()),
         with_objects: Box::default(),
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
@@ -757,7 +757,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
+        dynamic_bindings: Box::new(vec![].into()),
         with_objects: Box::default(),
     });
     vm.method_caches.push([
@@ -801,7 +801,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
+        dynamic_bindings: Box::new(vec![].into()),
         with_objects: Box::default(),
     });
     assert_eq!(reused, dead);
@@ -1990,7 +1990,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                dynamic_bindings: vec![].into(),
+                dynamic_bindings: Box::new(vec![].into()),
                 with_objects: Box::default(),
             });
             vm.programs
@@ -3561,7 +3561,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
+        dynamic_bindings: Box::new(vec![].into()),
         with_objects: Box::default(),
     });
     let held = vm
@@ -5864,7 +5864,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 let value = vm.heap.alloc(super::Cell::Iterator {
                     object: Vm::<SilentHost>::empty_object(Value::NULL),
                     source: Value::NULL,
-                    next_method: None,
+                    next_method: Value::DELETED,
                     helper: None,
                     helper_running: false,
                     helper_started: false,
@@ -6203,7 +6203,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     _ => vm.heap.alloc(super::Cell::Iterator {
                         object: Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto),
                         source,
-                        next_method: None,
+                        next_method: Value::DELETED,
                         helper: None,
                         helper_running: false,
                         helper_started: false,
@@ -6406,7 +6406,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
                     object: Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto),
                     source: matcher,
-                    next_method: None,
+                    next_method: Value::DELETED,
                     helper: Some(Box::new(
                         crate::heap::IteratorHelper::RegExpStringMatchAll {
                             input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),

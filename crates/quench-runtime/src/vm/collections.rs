@@ -1,6 +1,4 @@
 use super::*;
-use crate::heap::WeakMapEntries;
-
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
 #[derive(Clone, Copy)]
@@ -129,7 +127,7 @@ impl<H: Host> Vm<H> {
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
                 object: Self::empty_object(prototype),
-                entries: WeakMapEntries::default(),
+                entries: Box::default(),
             },
             Native::WeakSet => Cell::WeakSet {
                 object: Self::empty_object(prototype),

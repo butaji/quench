@@ -1285,7 +1285,7 @@ pub(crate) enum Cell {
     },
     WeakMap {
         object: Object,
-        entries: WeakMapEntries,
+        entries: Box<WeakMapEntries>,
     },
     WeakSet {
         object: Object,
@@ -1303,7 +1303,7 @@ pub(crate) enum Cell {
     Iterator {
         object: Object,
         source: Value,
-        next_method: Option<Value>,
+        next_method: Value,
         helper: Option<Box<IteratorHelper>>,
         helper_running: bool,
         helper_started: bool,
@@ -1339,7 +1339,7 @@ pub(crate) enum Cell {
         binding_site_pc: Option<u32>,
         function: u32,
         slots: EnvironmentSlots,
-        dynamic_bindings: EnvironmentBindings,
+        dynamic_bindings: Box<EnvironmentBindings>,
         with_objects: Box<[Value]>,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
@@ -1376,7 +1376,7 @@ pub(crate) enum Cell {
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
         object: Box<Object>,
-        source: JsString,
+        source: Box<JsString>,
         flags: String,
         matcher: Rc<quench_regexp::Regex>,
         // One constructor identity owns creation realm and legacy eligibility.
@@ -1389,7 +1389,7 @@ pub(crate) enum Cell {
     },
     TemporalDuration {
         object: Box<Object>,
-        fields: [f64; 10],
+        fields: Box<[f64; 10]>,
     },
     TemporalPlainDate {
         object: Box<Object>,
@@ -1421,7 +1421,7 @@ pub(crate) enum Cell {
     TemporalZonedDateTime {
         object: Box<Object>,
         epoch_nanoseconds: i128,
-        time_zone: String,
+        time_zone: Box<String>,
         calendar: String,
     },
     TemporalInstant {
