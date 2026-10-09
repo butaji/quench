@@ -269,6 +269,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
+        self.field_add_caches.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
     }
@@ -1117,9 +1118,17 @@ impl<H: Host> Vm<H> {
             && !data.is_arguments_object()
         {
             let site = self.field_cache_index(site);
-            if self.try_cached_field_store(object, atom, data.shape(), value, site) {
+            let shape = data.shape();
+            if self.try_cached_field_store(object, atom, shape, value, site)
+                || (self.field_cache_atom_eligible(atom)
+                    && self.try_cached_field_add(object, atom, shape, value, site))
+            {
                 return Ok(());
             }
+        }
+        let own = self.own_property(object, atom).is_some();
+        if !own && self.prototype_chain_contains_proxy(object) {
+            return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
@@ -1129,7 +1138,6 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        let own = self.own_property(object, atom).is_some();
         if own
             && self
                 .property_attributes(object, PropertyKey::string(atom))
@@ -1188,6 +1196,12 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .map(Object::shape)
             .unwrap_or(u32::MAX);
+        let add_prototype_shapes =
+            if existing.is_none() && shape != u32::MAX && self.field_cache_atom_eligible(atom) {
+                self.field_add_prototype_shapes(object, atom)
+            } else {
+                None
+            };
         if shape != u32::MAX && self.try_cached_field_store(object, atom, shape, value, site) {
             return Ok(());
         }
@@ -1199,6 +1213,23 @@ impl<H: Host> Vm<H> {
             .expect("property transition records the new shape slot");
         let data_shape = data.shape();
         if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
+            if existing.is_none()
+                && data_shape != shape
+                && slot == self.shapes[shape as usize].storage_len
+                && !self.shape_is_dictionary(shape)
+                && let Some(prototype_shapes) = add_prototype_shapes
+            {
+                self.field_add_caches.insert(
+                    site,
+                    FieldAddCache {
+                        atom,
+                        source_shape: shape,
+                        target_shape: data_shape,
+                        slot: slot as u16,
+                        prototype_shapes,
+                    },
+                );
+            }
             self.record_field_cache(
                 site,
                 FieldCache {
@@ -1209,6 +1240,85 @@ impl<H: Host> Vm<H> {
             );
         }
         Ok(())
+    }
+
+    fn try_cached_field_add(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        shape: u32,
+        value: Value,
+        site: usize,
+    ) -> bool {
+        let Some(cache) = self.field_add_caches.get(&site) else {
+            return false;
+        };
+        if cache.atom != atom
+            || cache.source_shape != shape
+            || self.shape_is_dictionary(shape)
+            || !self.object_data(object).is_some_and(Object::is_extensible)
+            || !self.field_add_prototype_chain_matches(object, &cache.prototype_shapes)
+        {
+            return false;
+        }
+        let target_shape = cache.target_shape;
+        let slot = cache.slot;
+        self.heap.property_push(object, value);
+        self.object_data_mut(object)
+            .expect("field-add cache requires an ordinary object")
+            .set_shape(target_shape);
+        self.invalidate_method_caches_for_prototype_add(object, atom);
+        self.profile.field_cache_hit(0, 0);
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len);
+        true
+    }
+
+    fn field_add_prototype_shapes(&self, object: Value, atom: Atom) -> Option<Vec<u32>> {
+        let mut prototype = self.object_data(object)?.proto;
+        let key = PropertyKey::string(atom);
+        let mut shapes = Vec::new();
+        while !prototype.is_null() {
+            if shapes.len() == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
+                return None;
+            }
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return None;
+            };
+            let shape = data.shape();
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || self.shape_is_dictionary(shape)
+                || self
+                    .property_attributes(prototype, key)
+                    .is_some_and(|attributes| attributes.accessor || !attributes.writable)
+            {
+                return None;
+            }
+            shapes.push(shape);
+            prototype = data.proto;
+        }
+        Some(shapes)
+    }
+
+    fn field_add_prototype_chain_matches(&self, object: Value, expected: &[u32]) -> bool {
+        let Some(mut prototype) = self.object_data(object).map(|data| data.proto) else {
+            return false;
+        };
+        for expected_shape in expected {
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return false;
+            };
+            let shape = data.shape();
+            if shape != *expected_shape
+                || data.is_module_namespace()
+                || data.is_arguments_object()
+                || self.shape_is_dictionary(shape)
+            {
+                return false;
+            }
+            prototype = data.proto;
+        }
+        prototype.is_null()
     }
 
     #[inline(always)]
