@@ -176,6 +176,9 @@ fn byte_array(
     let Some(root) = root else {
         return Ok(Vec::new());
     };
+    if let Some(bytes) = context.view_bytes_rooted(root) {
+        return Ok(bytes);
+    }
     let length_key = context.string_rooted("length");
     let length = context.get_property_rooted(root, length_key)?;
     let length = context
