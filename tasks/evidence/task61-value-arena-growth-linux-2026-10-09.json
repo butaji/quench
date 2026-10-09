@@ -53,6 +53,13 @@
     "raw_report_sha256": "5b3ec0be70a1f0510dc32b51260667cbc861163bf007ef1029bee216d0aff2f7"
   },
   "interpretation": "Median paired Score delta was -41 (95% interval -245 to +24), and maximum RSS delta was -86,016 bytes (95% interval -94,208 to +49,152). Neither interval establishes a benefit. The screen is small, but its direction does not justify expanding to eleven pairs; the growth-policy change was discarded.",
-  "research_basis": "Rust std::Vec::reserve_exact contract and allocator behavior were already documented in task 61 research; this trial measures Quench rather than transferring allocator behavior from another runtime.",
-  "qualification_ready": false
+  "qualification_ready": false,
+  "online_research": [
+    {
+      "source": "Rust 1.99 std::Vec::reserve_exact documentation",
+      "url": "https://doc.rust-lang.org/1.99.0/std/vec/struct.Vec.html#method.reserve_exact",
+      "accessed": "2026-10-09",
+      "finding": "reserve_exact guarantees capacity of at least len + additional, but the allocator may give the collection more space than requested; requested reserve growth cannot be treated as realized capacity or RSS."
+    }
+  ]
 }
