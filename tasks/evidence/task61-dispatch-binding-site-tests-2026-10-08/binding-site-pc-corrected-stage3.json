@@ -1,0 +1,750 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "provenance": {
+    "source_revision": "fe7ef311f69f64c0b03de4e11461fbe4a24ce410",
+    "source_dirty": true,
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/run-stages",
+    "host": "macos-aarch64",
+    "timeout_ms": 30000,
+    "jobs": 8
+  },
+  "total": 145,
+  "passed": 145,
+  "failed": 0,
+  "stages": {
+    "3": {
+      "passed": 145,
+      "total": 145,
+      "failed": 0
+    }
+  },
+  "families": {},
+  "outcomes": [
+    {
+      "path": "language/block-scope/leave/finally-block-let-declaration-only-shadows-outer-parameter-value-1.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/finally-block-let-declaration-only-shadows-outer-parameter-value-2.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/for-loop-block-let-declaration-only-shadows-outer-parameter-value-1.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/for-loop-block-let-declaration-only-shadows-outer-parameter-value-2.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/nested-block-let-declaration-only-shadows-outer-parameter-value-1.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/nested-block-let-declaration-only-shadows-outer-parameter-value-2.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/outermost-binding-updated-in-catch-block-nested-block-let-declaration-unseen-outside-of-block.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/try-block-let-declaration-only-shadows-outer-parameter-value-1.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/try-block-let-declaration-only-shadows-outer-parameter-value-2.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/verify-context-in-finally-block.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/verify-context-in-for-loop-block.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/verify-context-in-labelled-block.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/verify-context-in-try-block.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/x-after-break-to-label.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/leave/x-before-continue.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/return-from/block-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/return-from/block-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/catch-parameter-shadowing-catch-parameter.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/catch-parameter-shadowing-function-parameter-name.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/catch-parameter-shadowing-let-declaration.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/catch-parameter-shadowing-var-variable.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/const-declaration-shadowing-catch-parameter.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/const-declarations-shadowing-parameter-name-let-const-and-var-variables.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/dynamic-lookup-from-closure.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/dynamic-lookup-in-and-through-block-contexts.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/hoisting-var-declarations-out-of-blocks.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/let-declaration-shadowing-catch-parameter.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/let-declarations-shadowing-parameter-name-let-const-and-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/lookup-from-closure.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/lookup-in-and-through-block-contexts.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/parameter-name-shadowing-catch-parameter.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/shadowing/parameter-name-shadowing-parameter-name-let-const-and-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/acquire-properties-from-array.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/acquire-properties-from-object.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/disallow-initialization-assignment.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/disallow-multiple-lexical-bindings-with-and-without-initializer.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/disallow-multiple-lexical-bindings-with-initializer.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/disallow-multiple-lexical-bindings-without-and-with-initializer.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/disallow-multiple-lexical-bindings.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/for-in/mixed-values-in-iteration.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-case-expression-statement-list.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-default-statement-list.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-do-statement-while-expression.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-for-statement.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-if-expression-statement-else-statement.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-if-expression-statement.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/function-declarations/in-statement-position-while-expression-statement.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-function-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/async-generator-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/class-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/const-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/fn-scope-var-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-declaration-attempt-to-redeclare-with-var-declaration-nested-in-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/function-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/generator-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/inner-block-var-redeclaration-attempt-after-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/let-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-name-redeclaration-attempt-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-async-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-async-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-class.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-const.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-function.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-generator.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration/var-redeclaration-attempt-after-let.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration-global/allowed-to-declare-function-with-function-declaration.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration-global/allowed-to-redeclare-function-declaration-with-var.js",
+      "stage": "3",
+      "outcome": "pass"
+    },
+    {
+      "path": "language/block-scope/syntax/redeclaration-global/allowed-to-redeclare-var-with-function-declaration.js",
+      "stage": "3",
+      "outcome": "pass"
+    }
+  ]
+}
