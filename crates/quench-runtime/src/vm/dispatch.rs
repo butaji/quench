@@ -498,7 +498,8 @@ impl<H: Host> Vm<H> {
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorClose => {
-                self.iterator_close(p, self.read(f, i.register_b()))?;
+                let result = self.iterator_close(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), result);
             }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
