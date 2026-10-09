@@ -87,7 +87,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsReadStreamRead" (2) => crate::modules::fs_shared_vm::read_stream_read,
         method "fsReadStreamClose" (1) => crate::modules::fs_shared_vm::read_stream_close,
         method "fsWriteStreamOpen" (2) => crate::modules::fs_shared_vm::write_stream::open,
-        method "fsWriteStreamWrite" (2) => crate::modules::fs_shared_vm::write_stream::write,
+        method "fsWriteStreamWrite" (3) => crate::modules::fs_shared_vm::write_stream::write,
         method "fsWriteStreamClose" (1) => crate::modules::fs_shared_vm::write_stream::close,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
         method "fsMkdirSync" (2) => crate::modules::fs_shared_vm::sync::mkdir_sync,

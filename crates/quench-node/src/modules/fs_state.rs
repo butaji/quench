@@ -58,16 +58,6 @@ impl FsState {
         Ok(fd)
     }
 
-    pub(crate) fn write_stream_chunk(&self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
-        let mut state = self.0.borrow_mut();
-        let descriptor = state
-            .descriptors
-            .get_mut(&fd)
-            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-        descriptor.file.write_all(bytes)?;
-        Ok(bytes.len())
-    }
-
     pub(crate) fn write_descriptor(
         &self,
         fd: i32,
