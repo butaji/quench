@@ -829,6 +829,13 @@ fn assertion_message(
     match context.string_text(message)? {
         Some(message) => Ok((message, false)),
         None => {
+            if error_instance(context, message)? {
+                let key = context.string_rooted("message");
+                let text = context.get_property_rooted(message, key)?;
+                if let Some(text) = context.string_text(text)? {
+                    return Ok((text, false));
+                }
+            }
             let received = if let Some(number) = value.as_number() {
                 format!("type number ({number})")
             } else if let Some(boolean) = value.as_bool() {
