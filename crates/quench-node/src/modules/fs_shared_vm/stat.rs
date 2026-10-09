@@ -209,6 +209,102 @@ pub(crate) fn fchmod_sync(
     }
 }
 
+pub(crate) fn chown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    change_owner(context, args, false)
+}
+
+pub(crate) fn lchown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    change_owner(context, args, true)
+}
+
+fn change_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    no_follow: bool,
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let uid = owner_id(context, args.get(1).copied());
+    let gid = owner_id(context, args.get(2).copied());
+    #[cfg(unix)]
+    let result = match CString::new(std::path::Path::new(&path).as_os_str().as_bytes()) {
+        Ok(path_string) => {
+            let status = unsafe {
+                if no_follow {
+                    libc::lchown(path_string.as_ptr(), uid, gid)
+                } else {
+                    libc::chown(path_string.as_ptr(), uid, gid)
+                }
+            };
+            if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        }
+        Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(
+            context,
+            error,
+            &path,
+            if no_follow { "lchown" } else { "chown" },
+        )?),
+    }
+}
+
+pub(crate) fn fchown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let uid = owner_id(context, args.get(1).copied());
+    let gid = owner_id(context, args.get(2).copied());
+    #[cfg(unix)]
+    let result = {
+        use std::os::fd::AsRawFd;
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let descriptor = state.fs.descriptors();
+        match descriptor.get(&fd) {
+            Some(descriptor) => {
+                let status = unsafe { libc::fchown(descriptor.file.as_raw_fd(), uid, gid) };
+                if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+            }
+            None => Err(io::Error::from_raw_os_error(libc::EBADF)),
+        }
+    };
+    #[cfg(not(unix))]
+    let result = Err(io::Error::from_raw_os_error(libc::EBADF));
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "fchown")?),
+    }
+}
+
+fn owner_id(context: &NativeContext<'_, NodeHost>, value: Option<RootId>) -> libc::uid_t {
+    value
+        .and_then(|value| context.rooted_value(value))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= -1.0 && *value <= u32::MAX as f64)
+        .map(|value| if value == -1.0 { u32::MAX } else { value as u32 })
+        .unwrap_or(u32::MAX)
+}
+
 pub(crate) fn lstat_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
