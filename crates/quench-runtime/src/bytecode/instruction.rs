@@ -247,12 +247,16 @@ macro_rules! layout_accessors {
                     self.op().field_layout(InstructionField::C),
                     FieldLayout::NumericLocalStoreMarker
                 );
-                (self.c() == super::NUMERIC_LOCAL_INC_STORE).then_some(
-                    super::NumericLocalStoreTarget {
-                        register: self.b() & REGISTER_MASK,
-                        decrement: self.b() & super::NUMERIC_LOCAL_DECREMENT_FLAG != 0,
-                    },
+                matches!(
+                    self.c(),
+                    super::NUMERIC_LOCAL_INC_STORE
+                        | super::NUMERIC_LOCAL_INC_STORE_AFTER_TO_NUMERIC
                 )
+                .then_some(super::NumericLocalStoreTarget {
+                    register: self.b() & REGISTER_MASK,
+                    decrement: self.b() & super::NUMERIC_LOCAL_DECREMENT_FLAG != 0,
+                    through_to_numeric: self.c() == super::NUMERIC_LOCAL_INC_STORE_AFTER_TO_NUMERIC,
+                })
             }
 
             #[allow(dead_code)]
@@ -268,6 +272,9 @@ macro_rules! layout_accessors {
                 match self.c() {
                     super::NO_NUMERIC_LOCAL_STORE_MARKER => self.b() == super::NO_OPTIONAL_REGISTER,
                     super::NUMERIC_LOCAL_INC_STORE => {
+                        self.b() & !(REGISTER_MASK | super::NUMERIC_LOCAL_DECREMENT_FLAG) == 0
+                    }
+                    super::NUMERIC_LOCAL_INC_STORE_AFTER_TO_NUMERIC => {
                         self.b() & !(REGISTER_MASK | super::NUMERIC_LOCAL_DECREMENT_FLAG) == 0
                     }
                     _ => false,
@@ -295,7 +302,11 @@ macro_rules! layout_accessors {
                             } else {
                                 super::NO_OPTIONAL_REGISTER
                             },
-                        super::NUMERIC_LOCAL_INC_STORE,
+                        if target.through_to_numeric {
+                            super::NUMERIC_LOCAL_INC_STORE_AFTER_TO_NUMERIC
+                        } else {
+                            super::NUMERIC_LOCAL_INC_STORE
+                        },
                     ),
                     None => (
                         super::NO_OPTIONAL_REGISTER,
