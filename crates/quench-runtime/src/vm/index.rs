@@ -66,14 +66,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
-            if let Some(value) = self.typed_array_get(object, index) {
-                return Ok(value);
-            }
-            if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
-                && attributes.accessor
-            {
-                return self.get_property(p, object, atom);
-            }
+            // Accessor indices are stored as holes, so a present dense element is a data property.
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
                 && let Some(value) = elements
                     .get(index)
@@ -83,6 +76,14 @@ impl<H: Host> Vm<H> {
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.index_get(ARRAY_INDEX_GET_DENSE);
                 return Ok(value);
+            }
+            if let Some(value) = self.typed_array_get(object, index) {
+                return Ok(value);
+            }
+            if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
+                && attributes.accessor
+            {
+                return self.get_property(p, object, atom);
             }
             if matches!(self.heap.get(object), Some(Cell::Array { .. }))
                 && let Some(value) = self

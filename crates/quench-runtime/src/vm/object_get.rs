@@ -334,7 +334,9 @@ impl<H: Host> Vm<H> {
             ));
         }
         if !private_name
-            && matches!(self.atom_name(atom), "caller" | "arguments")
+            && self
+                .atom_class(atom)
+                .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
             && matches!(self.heap.get(object), Some(Cell::Function { .. }))
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
@@ -438,7 +440,8 @@ impl<H: Host> Vm<H> {
                     .module_namespace_value(p, object, atom)?
                     .unwrap_or(Value::UNDEFINED));
             }
-            if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+                && let Some(index) = super::object_static::array_index(self.atom_name(atom))
                 && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
             {
                 let value = elements
