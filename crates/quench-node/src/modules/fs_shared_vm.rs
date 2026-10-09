@@ -434,6 +434,20 @@ const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(appendF
   });
 }"#);
 
+const REALPATH_SYNC_API: &str = r#"(hostRealpathSync) => function realpathSync(path, options) {
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${typeof path === 'string' ? `'${path}'` : String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+  const resolved = hostRealpathSync(path);
+  const encoding = typeof options === 'string' ? options : options?.encoding;
+  if (encoding === 'buffer') return Buffer.from(resolved);
+  return encoding === undefined ? resolved : Buffer.from(resolved).toString(encoding);
+}"#;
+
 const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) => {
   function realpath(path, options, callback) {
     if (typeof options === "function") callback = options;
@@ -443,7 +457,7 @@ const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) =>
       throw error;
     }
     queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, realpathSync(path)]); }
+      try { Reflect.apply(callback, undefined, [null, realpathSync(path, options)]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
   }
@@ -1575,7 +1589,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let readlink = context.call_rooted(readlink_factory, undefined, &[readlink_sync])?;
     set(context, module, "readlink", readlink)?;
-    let realpath_sync = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    let realpath_host = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    let realpath_sync_factory =
+        context.evaluate_script_rooted(REALPATH_SYNC_API, "node:fs/shared-realpath-sync.js")?;
+    let undefined = context.undefined();
+    let realpath_sync =
+        context.call_rooted(realpath_sync_factory, undefined, &[realpath_host])?;
     set(context, module, "realpathSync", realpath_sync)?;
     let native = context.string_rooted("native");
     if !context.set_property_rooted(realpath_sync, native, realpath_sync, realpath_sync)? {
@@ -1739,6 +1758,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let promise = context.call_rooted(promise_factory, undefined, &[sync])?;
         set(context, promises, name, promise)?;
     }
+    let realpath_sync = get(context, module, "realpathSync")?;
+    let realpath_promise_factory = context.evaluate_script_rooted(
+        "(realpathSync) => (...args) => Promise.resolve().then(() => realpathSync(...args))",
+        "node:fs/promises/shared-realpath.js",
+    )?;
+    let realpath_promise =
+        context.call_rooted(realpath_promise_factory, undefined, &[realpath_sync])?;
+    set(context, promises, "realpath", realpath_promise)?;
     let statfs_sync = get(context, module, "statfsSync")?;
     let statfs_promise_factory = context.evaluate_script_rooted(
         "(statfsSync) => (...args) => Promise.resolve().then(() => statfsSync(...args))",

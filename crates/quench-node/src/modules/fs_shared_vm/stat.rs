@@ -1,6 +1,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::collections::VecDeque;
 use std::io;
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::{
@@ -485,8 +487,68 @@ pub(crate) fn realpath_sync(
     let path = super::resolve_shared_path(context, path);
     match std::fs::canonicalize(&path) {
         Ok(canonical) => Ok(context.string_rooted(&canonical.to_string_lossy())),
-        Err(error) => Err(stat_error(context, error, &path)?),
+        Err(error) => {
+            // Some platforms report EIO for a symlink cycle where Node reports
+            // ELOOP. Detect the cycle before translating the host error.
+            let error = if symlink_loop(Path::new(&path)) {
+                io::Error::from_raw_os_error(libc::ELOOP)
+            } else {
+                error
+            };
+            Err(stat_error(context, error, &path)?)
+        }
     }
+}
+
+fn symlink_loop(path: &Path) -> bool {
+    let mut pending = path
+        .components()
+        .map(|part| PathBuf::from(part.as_os_str()))
+        .collect::<VecDeque<_>>();
+    let mut current = PathBuf::new();
+    let mut followed = 0;
+
+    while let Some(component) = pending.pop_front() {
+        match component.components().next() {
+            Some(Component::Prefix(prefix)) => current.push(prefix.as_os_str()),
+            Some(Component::RootDir) => current.push(component.as_os_str()),
+            Some(Component::CurDir) | None => {}
+            Some(Component::ParentDir) => {
+                current.pop();
+            }
+            Some(Component::Normal(name)) => {
+                current.push(name);
+                let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+                    return false;
+                };
+                if !metadata.file_type().is_symlink() {
+                    continue;
+                }
+                followed += 1;
+                if followed > 40 {
+                    return true;
+                }
+                let Ok(target) = std::fs::read_link(&current) else {
+                    return false;
+                };
+                let mut replacement = if target.is_absolute() {
+                    target
+                } else {
+                    current
+                        .parent()
+                        .unwrap_or_else(|| Path::new("/"))
+                        .join(target)
+                };
+                replacement.extend(pending.into_iter());
+                pending = replacement
+                    .components()
+                    .map(|part| PathBuf::from(part.as_os_str()))
+                    .collect();
+                current = PathBuf::new();
+            }
+        }
+    }
+    false
 }
 
 pub(crate) fn read_dir_sync(
@@ -720,6 +782,7 @@ fn stat_error(
         io::ErrorKind::PermissionDenied => "permission denied",
         io::ErrorKind::NotADirectory => "not a directory",
         io::ErrorKind::IsADirectory => "illegal operation on a directory",
+        _ if error.raw_os_error() == Some(libc::ELOOP) => "too many symbolic links encountered",
         _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
         _ => "input/output error",
     };
@@ -765,6 +828,7 @@ fn error_code(error: &io::Error) -> &'static str {
         Some(libc::EINVAL) => "EINVAL",
         Some(libc::ENOTDIR) => "ENOTDIR",
         Some(libc::ENOENT) => "ENOENT",
+        Some(libc::ELOOP) => "ELOOP",
         _ => match error.kind() {
             io::ErrorKind::NotFound => "ENOENT",
             io::ErrorKind::PermissionDenied => "EACCES",
