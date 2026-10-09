@@ -58,11 +58,27 @@ const STAT_API: &str = r#"(readMetadata) => {
 }"#;
 
 const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
+  for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
+    stats[name] = new Date(stats[`${name}Ms`]);
+  }
   for (const name of ["isDirectory", "isFile", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
     const result = stats[name];
     Object.defineProperty(stats, name, { value: () => result, configurable: true });
   }
   return stats;
+}"#);
+
+const STATS_CONSTRUCTOR: &str = quench_js_check::checked_js!(r#"(emitWarning) => {
+  function Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atime, mtime, ctime, birthtime) {
+    emitWarning('fs.Stats constructor is deprecated.', { type: 'DeprecationWarning', code: 'DEP0180' });
+    for (const [name, value] of Object.entries({ dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks })) this[name] = value;
+    for (const [name, value] of Object.entries({ atime, mtime, ctime, birthtime })) {
+      this[`${name}Ms`] = value;
+      this[name] = new Date(value);
+    }
+    for (const name of ['isDirectory', 'isFile', 'isSymbolicLink', 'isBlockDevice', 'isCharacterDevice', 'isFIFO', 'isSocket']) this[name] = () => false;
+  }
+  return Stats;
 }"#);
 
 pub(crate) fn install(
@@ -74,7 +90,14 @@ pub(crate) fn install(
     let factory = context.evaluate_script_rooted(STAT_API, "node:fs/shared-stat.js")?;
     let undefined = context.undefined();
     let stat = context.call_rooted(factory, undefined, &[host_operation])?;
-    set(context, module, "stat", stat)
+    set(context, module, "stat", stat)?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let emit_warning = get(context, process, "emitWarning")?;
+    let constructor_factory =
+        context.evaluate_script_rooted(STATS_CONSTRUCTOR, "node:fs/shared-stats-constructor.js")?;
+    let stats = context.call_rooted(constructor_factory, undefined, &[emit_warning])?;
+    set(context, module, "Stats", stats)
 }
 
 pub(crate) fn metadata(
@@ -399,20 +422,32 @@ pub(crate) fn fstat_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
-    let descriptor = {
+    let descriptor_metadata = {
         let shared = context.host_mut().shared_state();
         let state = shared.borrow();
-        let descriptor = state.fs.descriptors().get(&fd).map(|descriptor| {
-            (
-                descriptor.file.metadata(),
-                descriptor.path.clone(),
-            )
-        });
+        let descriptor = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .map(|descriptor| (descriptor.file.metadata(), descriptor.path.clone()));
         descriptor
     };
-    let Some((metadata, path)) = descriptor else {
-        let error = io::Error::from_raw_os_error(libc::EBADF);
-        return Err(super::stream_io_error(context, error, "fstat", "")?);
+    let (metadata, path) = match descriptor_metadata {
+        Some((metadata, path)) => (metadata, path),
+        None => {
+            #[cfg(unix)]
+            let metadata = {
+                use std::os::fd::BorrowedFd;
+                let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+                borrowed
+                    .try_clone_to_owned()
+                    .map(std::fs::File::from)
+                    .and_then(|file| file.metadata())
+            };
+            #[cfg(not(unix))]
+            let metadata = Err(io::Error::from_raw_os_error(libc::EBADF));
+            (metadata, String::new())
+        }
     };
     match metadata {
         Ok(metadata) => stats(context, &metadata),
@@ -638,6 +673,15 @@ fn set(
         return Err(RootedError::host("cannot set shared fs stat property"));
     }
     Ok(())
+}
+
+fn get(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    context.get_property_rooted(object, key)
 }
 
 fn set_number(
