@@ -5,9 +5,8 @@ use std::{
     hash::{Hash, Hasher},
     path::Path,
     process::{Command, ExitCode, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
-use wait_timeout::ChildExt;
 
 use crate::NodeOutcome;
 
@@ -212,7 +211,17 @@ fn observe_process_in(
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn observed process: {error}"))?;
-    let waited = child.wait_timeout(timeout);
+    let deadline = Instant::now() + timeout;
+    let waited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(Some(status)),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break Ok(None),
+            Err(error) => break Err(error),
+        }
+    };
     let timed_out = matches!(waited, Ok(None));
     let status = match waited {
         Ok(Some(status)) => status,
