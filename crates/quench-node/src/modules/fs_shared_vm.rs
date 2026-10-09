@@ -128,15 +128,23 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           error.code = 'ERR_FS_FILE_TOO_LARGE';
           throw error;
         }
-        const buffer = Buffer.alloc(size);
-        let offset = 0;
-        while (offset < size) {
+        const chunks = [];
+        let total = 0;
+        while (true) {
           checkAbort();
-          const bytesRead = readSync(fd, buffer, offset, size - offset, null);
+          const remaining = 0x7FFFFFFF - total;
+          const buffer = Buffer.alloc(Math.min(64 * 1024, remaining || 1));
+          const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
           if (bytesRead === 0) break;
-          offset += bytesRead;
+          if (bytesRead > remaining) {
+            const error = new RangeError('File size is greater than 2 GiB');
+            error.code = 'ERR_FS_FILE_TOO_LARGE';
+            throw error;
+          }
+          chunks.push(buffer.subarray(0, bytesRead));
+          total += bytesRead;
         }
-        const result = buffer.subarray(0, offset);
+        const result = Buffer.concat(chunks, total);
         return settings.encoding ? result.toString(settings.encoding) : result;
       },
       createReadStream: (options) => {
