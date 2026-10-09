@@ -162,6 +162,38 @@ pub(super) fn require(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
+    if specifier == "internal/bootstrap/realm" {
+        let builtin_ids = BUILTIN_SPECIFIERS
+            .iter()
+            .filter_map(|(name, _)| {
+                (!name.starts_with("node:") && !name.starts_with("internal/"))
+                    .then_some(*name)
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let builtin_ids = serde_json::to_string(&builtin_ids)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let source = format!(
+            r#"(() => {{
+  const ids = new Set({builtin_ids});
+  class BuiltinModule {{
+    static map = new Map(Array.from(ids, (id) => [id, new BuiltinModule(id)]));
+    constructor(id) {{ this.id = id; this.filename = `${{id}}.js`; this.exports = {{}}; this.loaded = false; this.loading = false; }}
+    static exists(id) {{ return this.map.has(id); }}
+    static canBeRequiredByUsers(id) {{ return ids.has(id); }}
+    static canBeRequiredWithoutScheme(id) {{ return ids.has(id); }}
+    static normalizeRequirableId(id) {{ const name = String(id).replace(/^node:/, ""); return ids.has(name) ? name : undefined; }}
+    static isBuiltin(id) {{ return this.normalizeRequirableId(id) !== undefined; }}
+    static getAllBuiltinModuleIds() {{ return Array.from(ids); }}
+    static allowRequireByUsers(id) {{ ids.add(id); this.map.set(id, new BuiltinModule(id)); }}
+    static exposeInternals() {{}}
+    compileForInternalLoader() {{ return this.exports; }}
+    compileForPublicLoader() {{ return this.exports; }}
+  }}
+  return {{ BuiltinModule, internalBinding: () => ({{}}), require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
+}})()"#
+        );
+        return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
+    }
     match BuiltinModule::from_specifier(&specifier) {
         Some(BuiltinModule::Process) => {
             return match context.host_mut().shared_state().borrow().process_module {
@@ -992,10 +1024,37 @@ fn load(
                         .unwrap_or_else(|| context.undefined()),
                     None => context.undefined(),
                 };
-                let internal_binding = if in_node_internal {
+                let is_realm_bootstrap = filename
+                    .to_string_lossy()
+                    .ends_with("/internal/bootstrap/realm.js");
+                let internal_binding = if is_realm_bootstrap {
+                    r#"const getInternalBinding = (name) => {
+  if (name === "builtins") return { builtinIds: [], compileFunction() {}, setInternalLoaders() {} };
+  if (name === "module_wrap") return { ModuleWrap: class ModuleWrap {} };
+  return {};
+};
+const getLinkedBinding = () => ({});
+"#
+                } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
-    case "util": return Object.assign({}, require("util"), { privateSymbols: { arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom") } });
+    case "util": return Object.assign({}, require("util"), {
+      privateSymbols: {
+        arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
+        decorated_private_symbol: Symbol.for("nodejs.util.inspect.decorated"),
+      },
+      constants: { ALL_PROPERTIES: 0, ONLY_ENUMERABLE: 1, kPending: 0, kRejected: 1 },
+      getOwnNonIndexProperties: (value) => Object.getOwnPropertyNames(value),
+      getPromiseDetails: () => [0, undefined],
+      getProxyDetails: () => undefined,
+      previewEntries: () => undefined,
+      getConstructorName: (value) => value?.constructor?.name,
+      getExternalValue: () => undefined,
+      constructSharedArrayBuffer: (length) => new SharedArrayBuffer(length),
+      guessHandleType: () => "UNKNOWN",
+      defineLazyProperties: () => undefined,
+      sleep: () => undefined,
+    });
     case "types": return require("util").types || {
       isNativeError: (value) => value instanceof Error,
       isPromise: (value) => value instanceof Promise,
