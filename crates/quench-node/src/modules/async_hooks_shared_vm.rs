@@ -36,9 +36,14 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     }
     runInAsyncScope(fn, thisArg, ...args) {
       const previous = currentAsyncId;
+      const previousTrigger = currentTriggerAsyncId;
       currentAsyncId = this["\0quench:async_hooks:id"];
+      currentTriggerAsyncId = this["\0quench:async_hooks:trigger"];
       try { return runInAsyncScope.call(this, fn, thisArg, ...args); }
-      finally { currentAsyncId = previous; }
+      finally {
+        currentAsyncId = previous;
+        currentTriggerAsyncId = previousTrigger;
+      }
     }
     asyncId() { return this["\0quench:async_hooks:id"]; }
     triggerAsyncId() { return this["\0quench:async_hooks:trigger"]; }
@@ -131,6 +136,7 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
   const hooks = new Set();
   let nextAsyncId = 1;
   let currentAsyncId = 1;
+  let currentTriggerAsyncId = 1;
   const createHook = (callbacks = {}) => {
     if (callbacks === null || (typeof callbacks !== "object" && typeof callbacks !== "function")) {
       throw new TypeError("The argument must be an object");
@@ -152,12 +158,14 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
   Object.defineProperty(globalThis, "\0quench:async_hooks:emit_init", {
     configurable: true,
     value(resource, type, suppliedAsyncId) {
+      const triggerAsyncId = currentAsyncId;
       const asyncId = suppliedAsyncId ?? ++nextAsyncId;
       if (asyncId > nextAsyncId) nextAsyncId = asyncId;
       currentAsyncId = asyncId;
+      currentTriggerAsyncId = triggerAsyncId;
       for (const hook of hooks) {
         if (typeof hook.callbacks?.init === "function") {
-          hook.callbacks.init(asyncId, type, 1, resource);
+          hook.callbacks.init(asyncId, type, triggerAsyncId, resource);
         }
       }
       return asyncId;
@@ -170,7 +178,7 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     enabledHooksExist: () => hooks.size !== 0,
     symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
     executionAsyncId: () => currentAsyncId,
-    triggerAsyncId: () => currentAsyncId,
+    triggerAsyncId: () => currentTriggerAsyncId,
     executionAsyncResource: () => undefined,
   };
 })"#;
