@@ -7,6 +7,7 @@ struct ProgramEntry {
     wasm_signatures: Option<Rc<crate::wasm::WasmSignatures>>,
     constants: Vec<Value>,
     const_arrays: Vec<Option<Rc<Vec<Value>>>>,
+    function_sources: Vec<Option<Value>>,
     regexp_literals: Vec<Option<Result<Rc<quench_regexp::Regex>, Rc<str>>>>,
     module_environment: Option<Value>,
     import_meta: Option<Value>,
@@ -76,12 +77,14 @@ impl ProgramStore {
 
     pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
+        let function_sources = vec![None; program.functions.len()];
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         self.programs.push(ProgramEntry {
             residual: program,
             wasm_signatures: None,
             constants: Vec::new(),
             const_arrays: Vec::new(),
+            function_sources,
             regexp_literals,
             module_environment: None,
             import_meta: None,
@@ -333,6 +336,29 @@ impl ProgramStore {
         cached.clone()
     }
 
+    pub(crate) fn function_source(&self, id: ProgramId, function: u32) -> Option<Value> {
+        self.programs
+            .get(id.index())?
+            .function_sources
+            .get(function as usize)
+            .copied()
+            .flatten()
+    }
+
+    pub(crate) fn cache_function_source(
+        &mut self,
+        id: ProgramId,
+        function: u32,
+        source: Value,
+    ) -> Option<Value> {
+        let cached = self
+            .programs
+            .get_mut(id.index())?
+            .function_sources
+            .get_mut(function as usize)?;
+        Some(*cached.get_or_insert(source))
+    }
+
     pub(crate) fn regexp_literal_matcher(
         &self,
         id: ProgramId,
@@ -381,6 +407,7 @@ impl ProgramStore {
                 .constants
                 .iter()
                 .copied()
+                .chain(entry.function_sources.iter().flatten().copied())
                 .chain(entry.module_environment)
                 .chain(entry.import_meta)
                 .chain(
