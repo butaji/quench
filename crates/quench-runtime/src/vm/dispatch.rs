@@ -72,7 +72,9 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::LoadLocalPlain => {
-                let value = self.frames[f].locals[i.local_slot()];
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
             Op::LoadLocal | Op::LoadEnvLocal => {
@@ -130,7 +132,9 @@ impl<H: Host> Vm<H> {
             }
             Op::StoreLocalPlain => {
                 let value = self.read(f, i.register_a());
-                self.frames[f].locals[i.local_slot()] = value;
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                unsafe { self.write_validated_local(f, i.local_slot(), value) };
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
