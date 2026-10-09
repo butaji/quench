@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Keep bounded holey arrays in dense storage",
+  "decision": "retain as a Stage B candidate pending fixture-level confirmation",
+  "source": {
+    "base_revision": "fa14f749a304f350c445471dff272ce4123afc48",
+    "measured_source_diff_sha256": "cea93e97bd3c00910d2615e4f02432eea53e526d5b8ee95c67ec3dd5b9b1d7ec",
+    "files": [
+      "crates/quench-runtime/src/heap.rs",
+      "crates/quench-runtime/src/vm/index.rs"
+    ],
+    "candidate_binary_sha256": "6a6176e2f6240571d78e2c4a61ec2a183faf88c03bc216ce097d7e0273b6d3aa",
+    "baseline_binary_sha256": "d57de12813b4e251b1c4c1f3167bcf1eaa86e67ef0f525e6b518d488cb0a0b41",
+    "quickjs_binary_sha256": "4b0d0da1beae0a88d0724c7a0869797dee7a24c5bc1e74cfb5d2f69d17811c2b",
+    "candidate_build_command": "CARGO_INCREMENTAL=0 cargo build -p quench-node --profile production"
+  },
+  "host": {
+    "platform": "macOS 26.5; Apple M4 (Mac16,10), arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "measurement": {
+    "kind": "CJS-shaped production instruction-retirement microbenchmark",
+    "script": "(function(){var n=16900;var a=new Array(n);for(var k=0;k<n;k++)a[k]=0;function f(x){for(var t=0;t<100;t++)for(var i=0;i<n;i++)x[i]=i}f(a)})()",
+    "matched_control": "(function(){var n=16900;var a=new Array(n);for(var k=0;k<n;k++)a[k]=0;function f(x){for(var t=0;t<100;t++)for(var i=0;i<n;i++){}}f(a)})()",
+    "array_length": 16900,
+    "measured_store_iterations": 1690000,
+    "normalization": "Subtract each binary's matched empty-loop instruction count, then divide by 1,690,000 indexed stores.",
+    "instructions": {
+      "baseline_total": 21786772068,
+      "baseline_control": 2147901187,
+      "candidate_total": 5408443530,
+      "candidate_control": 2141658972,
+      "quickjs_total": 300652629,
+      "quickjs_control": 174368702,
+      "baseline_per_store": 11620.63,
+      "candidate_per_store": 1933.01,
+      "quickjs_per_store": 74.72,
+      "candidate_change_percent": -83.37,
+      "baseline_to_quickjs_ratio": 155.51,
+      "candidate_to_quickjs_ratio": 25.87
+    },
+    "raw_wall_time_seconds_one_run": {
+      "baseline": 1.19,
+      "candidate": 0.50,
+      "quickjs": 0.02
+    },
+    "scope_limit": "Per-store kernel only; not a V8-v7 fixture Score claim. A 3-round NavierStokes fixture diagnostic is running separately."
+  },
+  "implementation": "Heap owns one per-array dense-hole budget of 256 KiB, with the slot limit derived from size_of::<Value>(). Array creation and length changes materialize bounded holes as Value::DELETED; writes into a moderate sparse sidecar promote it once into dense storage. Larger lengths remain in the sparse sidecar. The same heap transition handles construction, Array(length), length writes, and sparse promotion.",
+  "verification": {
+    "runtime_unit_tests": {
+      "command": "cargo test -p quench-runtime --features profile-memory --lib vm::index::tests",
+      "passed": 11,
+      "failed": 0
+    },
+    "test262_before_final_noop_change": [
+      {"filter": "Array stage 31", "passed": 3081, "failed": 0},
+      {"filter": "Object.defineProperty stage 60", "passed": 1133, "failed": 0},
+      {"filter": "Arguments stage 1", "passed": 263, "failed": 0}
+    ],
+    "test262_final_source_slices": [
+      {"filter": "Array holes stage 31", "passed": 8, "failed": 0},
+      {"filter": "Array length stage 31", "passed": 183, "failed": 0},
+      {"filter": "Array push stage 31", "passed": 24, "failed": 0},
+      {"filter": "Array constructors stage 31", "passed": 55, "failed": 0},
+      {"filter": "Array define-own-prop-length stage 31", "passed": 6, "failed": 0}
+    ],
+    "node_oracle": {
+      "matched": true,
+      "final_source_cases": [
+        "sparse shrink and regrow",
+        "same-length assignment",
+        "new Array(1e9)",
+        "Array.prototype indexed getter and setter"
+      ],
+      "earlier_candidate_cases": [
+        "holes and own keys",
+        "forEach and iteration",
+        "length grow and shrink",
+        "own indexed accessor",
+        "blocked shrink at a non-configurable index"
+      ]
+    },
+    "reports": [
+      "target/iteration/task34-dense-hole-array-stage31-20261009.json",
+      "target/iteration/task34-followup-array-hole-20261009.json",
+      "target/iteration/task34-followup-array-length-20261009.json",
+      "target/iteration/task34-followup-array-push-20261009.json",
+      "target/iteration/task34-followup-array-constructor-20261009.json",
+      "target/iteration/task34-followup-array-define-own-length-20261009.json"
+    ]
+  }
+}

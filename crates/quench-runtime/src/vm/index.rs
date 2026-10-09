@@ -448,6 +448,69 @@ mod tests {
     }
 
     #[test]
+    fn bounded_holey_array_length_uses_dense_storage() {
+        let program = crate::Engine::specialize("", "dense-array-holes.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        let array = vm.array_create(&program, 16_900).unwrap();
+
+        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+            panic!("array cell")
+        };
+        assert_eq!(elements.len(), 16_900);
+        assert!(elements.iter().all(|value| value.is_deleted()));
+        assert_eq!(vm.heap.sparse_length(array), None);
+
+        assert!(vm.set_array_element(array, 16_899, Value::TRUE));
+        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+            panic!("array cell")
+        };
+        assert_eq!(elements[16_899], Value::TRUE);
+        assert!(elements[16_898].is_deleted());
+        assert_eq!(vm.heap.sparse_length(array), None);
+    }
+
+    #[test]
+    fn bounded_sparse_write_promotes_to_dense_storage() {
+        let mut vm = Vm::new(SilentHost);
+        let array = vm.heap.alloc(Cell::Array {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            elements: Rc::new(Vec::new()),
+        });
+
+        assert!(vm.set_array_element(array, 2_048, Value::TRUE));
+
+        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+            panic!("array cell")
+        };
+        assert_eq!(elements.len(), 2_049);
+        assert!(elements[..2_048].iter().all(|value| value.is_deleted()));
+        assert_eq!(elements[2_048], Value::TRUE);
+        assert_eq!(vm.heap.sparse_length(array), None);
+    }
+
+    #[test]
+    fn shrinking_large_sparse_array_promotes_and_preserves_values() {
+        let mut vm = Vm::new(SilentHost);
+        let array = vm.heap.alloc(Cell::Array {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            elements: Rc::new(Vec::new()),
+        });
+        vm.heap.sparse_set_length(array, 1_000_000);
+        vm.heap.sparse_set(array, 3, Value::TRUE);
+        vm.heap.sparse_set(array, 999_999, Value::FALSE);
+
+        vm.heap.sparse_set_length(array, 16_900);
+
+        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+            panic!("array cell")
+        };
+        assert_eq!(elements.len(), 16_900);
+        assert_eq!(elements[3], Value::TRUE);
+        assert!(elements[4].is_deleted());
+        assert_eq!(vm.heap.sparse_length(array), None);
+    }
+
+    #[test]
     fn ordinary_indexed_writes_do_not_intern_property_names() {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(SilentHost);
