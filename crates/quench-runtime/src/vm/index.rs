@@ -65,11 +65,9 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.typed_array_get(object, index) {
                 return Ok(value);
             }
-            if self
-                .array_descriptor(object, index)
-                .is_some_and(|attributes| attributes.accessor)
+            if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
+                && attributes.accessor
             {
-                let atom = self.intern_atom(&index.to_string());
                 return self.get_property(p, object, atom);
             }
             if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
@@ -151,13 +149,12 @@ impl<H: Host> Vm<H> {
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
-            if let Some(attributes) = self.array_descriptor(object, index)
+            if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
                 && attributes.accessor
             {
                 if strict && attributes.setter.is_none() {
                     return Err(self.type_error(p, "array index has no setter".into()));
                 }
-                let atom = self.intern_atom(&index.to_string());
                 return self.set_property_with_program(p, object, atom, value);
             }
             if matches!(self.heap.get(object), Some(Cell::Array { .. }))
@@ -187,7 +184,9 @@ impl<H: Host> Vm<H> {
                 if integrity.is_some_and(Object::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
-                    let atom = self.intern_atom(&index.to_string());
+                    let atom = self
+                        .lookup_array_index_atom(index)
+                        .unwrap_or_else(|| self.intern_atom(&index.to_string()));
                     return self.set_property_with_program_mode(p, object, atom, value, strict);
                 }
             }
@@ -250,11 +249,10 @@ impl<H: Host> Vm<H> {
         if let Some(index) = super::object_static::array_index(key.host_string())
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
             && !self.has_own_array_index(object, index as usize)
+            && self.prototype_chain_has_typed_array(object)
         {
             let atom = self.intern_js_atom(&key);
-            if self.prototype_chain_contains_typed_array_index(object, atom) {
-                return self.set_property_with_program_mode(p, object, atom, value, strict);
-            }
+            return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(index) = super::object_static::array_index(key.host_string())
             && matches!(self.heap.get(object), Some(Cell::Array { .. }))
@@ -304,7 +302,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         strict: bool,
     ) -> Result<bool, JsError> {
-        let atom = self.intern_atom(&index.to_string());
+        let Some(atom) = self.lookup_array_index_atom(index) else {
+            return Ok(false);
+        };
         let Some(attributes) = self.property_accessor(object, atom) else {
             return Ok(false);
         };
@@ -433,6 +433,34 @@ mod tests {
         };
         assert!(elements.is_empty());
         assert_eq!(vm.heap.sparse_length(array), Some(1_000_001));
+    }
+
+    #[test]
+    fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
+        let mut vm = Vm::new(SilentHost);
+        let array = vm.heap.alloc(Cell::Array {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            elements: Rc::new(vec![Value::FALSE; 1024]),
+        });
+        let atom_count = vm.dynamic_atoms.len();
+
+        assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
+
+        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+            panic!("array cell")
+        };
+        assert!(elements[1023].is_deleted());
+        assert_eq!(vm.dynamic_atoms.len(), atom_count);
+        assert!(vm.lookup_array_index_atom(1023).is_none());
+    }
+
+    #[test]
+    fn array_index_atom_lookup_uses_canonical_decimal_text() {
+        let mut vm = Vm::new(SilentHost);
+        for index in [0, 9, 10, 99, 100, 1023, u32::MAX as usize, usize::MAX] {
+            let expected = vm.intern_atom(&index.to_string());
+            assert_eq!(vm.lookup_array_index_atom(index), Some(expected));
+        }
     }
 
     #[test]
