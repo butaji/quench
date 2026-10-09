@@ -108,6 +108,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsFstatSync" (1) => crate::modules::fs_shared_vm::stat::fstat_sync,
         method "fsReadDescriptor" (3) => crate::modules::fs_shared_vm::sync::read_descriptor,
         method "fsWriteDescriptor" (3) => crate::modules::fs_shared_vm::sync::write_descriptor,
+        method "fsSyncDescriptor" (2) => crate::modules::fs_shared_vm::sync::sync_descriptor,
         method "fsStatMetadata" (1) => crate::modules::fs_shared_vm::stat::metadata,
         method "fsStatSync" (1) => crate::modules::fs_shared_vm::stat::stat_sync,
         method "fsStatfsSync" (1) => crate::modules::fs_shared_vm::stat::statfs_sync,

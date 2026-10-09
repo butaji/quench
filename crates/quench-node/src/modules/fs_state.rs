@@ -90,6 +90,19 @@ impl FsState {
         result
     }
 
+    pub(crate) fn sync_descriptor(&self, fd: i32, data_only: bool) -> std::io::Result<()> {
+        let mut state = self.0.borrow_mut();
+        let descriptor = state
+            .descriptors
+            .get_mut(&fd)
+            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
+        if data_only {
+            descriptor.file.sync_data()
+        } else {
+            descriptor.file.sync_all()
+        }
+    }
+
     pub(crate) fn read_descriptor(
         &self,
         fd: i32,

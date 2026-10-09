@@ -10,7 +10,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
   readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
@@ -150,12 +150,42 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       })),
       stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fstatSync(fd, ...statArgs))),
       chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fchmodSync(fd, ...chmodArgs))),
+      sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fsyncSync(fd))),
+      datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fdatasyncSync(fd))),
+      sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fsyncSync(fd))),
+      datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fdatasyncSync(fd))),
     };
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
     return handle;
   }),
 })"#);
+
+const ASYNC_SYNC_API: &str = r#"(fsyncSync, fdatasyncSync) => {
+  const create = (sync, syscall) => function(fd, callback) {
+    if (typeof fd !== 'number') {
+      const received = fd === null || fd === undefined ? ` Received ${fd}` : ` Received type ${typeof fd} (${String(fd)})`;
+      const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(fd) || fd < 0 || fd > 0x7FFFFFFF) {
+      const error = new RangeError(`The value of "fd" is out of range. Received ${String(fd)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "callback" argument must be of type function.');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    queueMicrotask(() => {
+      try { sync(fd); callback(null); }
+      catch (error) { callback(error); }
+    });
+  };
+  return { fsync: create(fsyncSync, 'fsync'), fdatasync: create(fdatasyncSync, 'fdatasync') };
+}"#;
 
 const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync, fstatSync) => {
   const assertBuffer = (buffer) => {
@@ -1936,6 +1966,21 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
+    let fsync_sync = get(context, module, "fsyncSync")?;
+    let fdatasync_sync = get(context, module, "fdatasyncSync")?;
+    let async_sync_factory = context.evaluate_script_rooted(
+        ASYNC_SYNC_API,
+        "node:fs/shared-async-sync.js",
+    )?;
+    let async_sync = context.call_rooted(
+        async_sync_factory,
+        undefined,
+        &[fsync_sync, fdatasync_sync],
+    )?;
+    let fsync_async = get(context, async_sync, "fsync")?;
+    let fdatasync_async = get(context, async_sync, "fdatasync")?;
+    set(context, module, "fsync", fsync_async)?;
+    set(context, module, "fdatasync", fdatasync_async)?;
     let write_sync = get(context, module, "writeSync")?;
     let writev_factory = context.evaluate_script_rooted(WRITEV_API, "node:fs/shared-writev.js")?;
     let writev_api = context.call_rooted(writev_factory, undefined, &[write_sync])?;
@@ -2099,6 +2144,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         write_sync,
         fstat_sync,
         fchmod_sync,
+        fsync_sync,
+        fdatasync_sync,
         write_file_sync,
         append_file_sync,
         mkdir_sync,
@@ -2242,6 +2289,8 @@ pub(crate) fn promises_module(
     write_sync: RootId,
     fstat_sync: RootId,
     fchmod_sync: RootId,
+    fsync_sync: RootId,
+    fdatasync_sync: RootId,
     write_file_sync: RootId,
     append_file_sync: RootId,
     mkdir_sync: RootId,
@@ -2275,6 +2324,8 @@ pub(crate) fn promises_module(
             write_sync,
             fstat_sync,
             fchmod_sync,
+            fsync_sync,
+            fdatasync_sync,
             write_file_sync,
             append_file_sync,
             readv_sync,
