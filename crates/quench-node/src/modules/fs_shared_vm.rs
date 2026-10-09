@@ -779,7 +779,9 @@ const ASYNC_MKDIR_API: &str = r#"(mkdirSync) => {
       const value = options.recursive;
       const received = value === null ? ' Received null' : typeof value === 'object'
         ? ` Received an instance of ${Array.isArray(value) ? 'Array' : 'Object'}`
-        : ` Received type ${typeof value} (${String(value)})`;
+        : typeof value === 'function'
+          ? ` Received function ${value.name}`
+        : ` Received type ${typeof value} (${typeof value === 'string' ? `'${value}'` : String(value)})`;
       const error = new TypeError(`The "options.recursive" property must be of type boolean.${received}`);
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
