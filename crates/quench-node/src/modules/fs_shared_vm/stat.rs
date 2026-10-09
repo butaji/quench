@@ -126,6 +126,59 @@ pub(crate) fn stat_sync(
     sync_metadata(context, args, false)
 }
 
+pub(crate) fn statfs_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    #[cfg(target_os = "linux")]
+    let result = {
+        let c_path = CString::new(std::path::Path::new(&path).as_os_str().as_bytes());
+        match c_path {
+            Ok(c_path) => {
+                let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+                let status = unsafe { libc::statfs(c_path.as_ptr(), stats.as_mut_ptr()) };
+                if status == 0 {
+                    let stats = unsafe { stats.assume_init() };
+                    Ok([
+                        ("type", stats.f_type as f64),
+                        ("bsize", stats.f_bsize as f64),
+                        ("frsize", stats.f_frsize as f64),
+                        ("blocks", stats.f_blocks as f64),
+                        ("bfree", stats.f_bfree as f64),
+                        ("bavail", stats.f_bavail as f64),
+                        ("files", stats.f_files as f64),
+                        ("ffree", stats.f_ffree as f64),
+                    ])
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let result: Result<[(&str, f64); 8], io::Error> =
+        Err(io::Error::from_raw_os_error(libc::ENOSYS));
+    match result {
+        Ok(values) => {
+            let object = context.object_rooted()?;
+            for (name, value) in values {
+                set_number(context, object, name, value)?;
+            }
+            Ok(object)
+        }
+        Err(error) => Err(path_error(context, error, &path, "statfs")?),
+    }
+}
+
 pub(crate) fn access_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
