@@ -791,6 +791,30 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainLocalContextIneligibility {
+    RootFunction,
+    AsyncFunction,
+    GeneratorFunction,
+    ClassConstructor,
+    ClassFieldInitializer,
+    NonSimpleParameters,
+    LegacyCaptureLayout,
+    DynamicNameResolution,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainLocalSlotIneligibility {
+    MissingAtom,
+    MappedArgument,
+    Tdz,
+    SelfBinding,
+    Captured,
+    NotEnvironmentVisible,
+    Lexical,
+    HiddenName,
+}
+
 impl Function {
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
@@ -801,30 +825,49 @@ impl Function {
     }
 
     pub(crate) fn plain_local_context_is_safe(&self) -> bool {
-        self.parent.is_some()
-            && !self.is_async
-            && !self.is_generator
-            && !self.is_class_constructor
-            && !self.class_field_initializer
-            && self.simple_parameters
-            && (self.arguments_slot.is_none() || self.selective_capture_slots.is_some())
-            && self.code.iter().all(|instruction| {
-                let selective = self.selective_capture_slots.is_some();
-                !(instruction.op() == Op::MakeClosure && !selective)
-                    && !(matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal)
-                        && !selective)
-                    && !matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
-                    && !(instruction.op() == Op::Call && instruction.direct_eval())
-            })
-            && self.wide.iter().all(|instruction| {
-                let selective = self.selective_capture_slots.is_some();
-                !(instruction.op() == Op::MakeClosure && !selective)
-                    && !(matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal)
-                        && !selective)
-                    && !matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
-                    && !(instruction.op() == Op::Call
-                        && ImmediateLayout::direct_eval(instruction.imm()))
-            })
+        self.plain_local_context_ineligibility().is_none()
+    }
+
+    pub(crate) fn plain_local_context_ineligibility(
+        &self,
+    ) -> Option<PlainLocalContextIneligibility> {
+        if self.parent.is_none() {
+            return Some(PlainLocalContextIneligibility::RootFunction);
+        }
+        if self.is_async {
+            return Some(PlainLocalContextIneligibility::AsyncFunction);
+        }
+        if self.is_generator {
+            return Some(PlainLocalContextIneligibility::GeneratorFunction);
+        }
+        if self.is_class_constructor {
+            return Some(PlainLocalContextIneligibility::ClassConstructor);
+        }
+        if self.class_field_initializer {
+            return Some(PlainLocalContextIneligibility::ClassFieldInitializer);
+        }
+        if !self.simple_parameters {
+            return Some(PlainLocalContextIneligibility::NonSimpleParameters);
+        }
+        let selective = self.selective_capture_slots.is_some();
+        let has_legacy_environment_access = self.code.iter().any(|instruction| {
+            instruction.op() == Op::MakeClosure && !selective
+                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+        }) || self.wide.iter().any(|instruction| {
+            instruction.op() == Op::MakeClosure && !selective
+                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+        });
+        if has_legacy_environment_access {
+            return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
+        }
+        let has_dynamic_name_resolution = self.code.iter().any(|instruction| {
+            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
+                || instruction.op() == Op::Call && instruction.direct_eval()
+        }) || self.wide.iter().any(|instruction| {
+            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
+                || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
+        });
+        has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
     }
 
     pub(crate) fn plain_local_slot_is_safe(
@@ -833,18 +876,50 @@ impl Function {
         atom_name: &str,
         has_tdz: bool,
     ) -> bool {
+        self.plain_local_slot_ineligibility(slot, atom_name, has_tdz)
+            .is_none()
+    }
+
+    pub(crate) fn plain_local_slot_ineligibility(
+        &self,
+        slot: usize,
+        atom_name: &str,
+        has_tdz: bool,
+    ) -> Option<PlainLocalSlotIneligibility> {
         let Some(&atom) = self.local_atoms.get(slot) else {
-            return false;
+            return Some(PlainLocalSlotIneligibility::MissingAtom);
         };
-        slot >= usize::from(self.params)
-            && !has_tdz
-            && !self.is_self_binding_slot(slot)
-            && !self.selective_capture_slots.as_ref().is_some_and(|captured| {
+        if has_tdz {
+            return Some(PlainLocalSlotIneligibility::Tdz);
+        }
+        if self.is_self_binding_slot(slot) {
+            return Some(PlainLocalSlotIneligibility::SelfBinding);
+        }
+        if self
+            .selective_capture_slots
+            .as_ref()
+            .is_some_and(|captured| {
                 u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
             })
-            && self.environment_atoms.contains(&atom)
-            && !self.lexical_atoms.contains(&atom)
-            && !atom_name.starts_with('\0')
+        {
+            return Some(PlainLocalSlotIneligibility::Captured);
+        }
+        if slot < usize::from(self.params)
+            && self.arguments_slot.is_some()
+            && self.arguments_are_mapped()
+        {
+            return Some(PlainLocalSlotIneligibility::MappedArgument);
+        }
+        if !self.environment_atoms.contains(&atom) {
+            return Some(PlainLocalSlotIneligibility::NotEnvironmentVisible);
+        }
+        if self.lexical_atoms.contains(&atom) {
+            return Some(PlainLocalSlotIneligibility::Lexical);
+        }
+        if atom_name.starts_with('\0') {
+            return Some(PlainLocalSlotIneligibility::HiddenName);
+        }
+        None
     }
 
     pub(crate) fn is_self_binding_slot(&self, slot: usize) -> bool {
