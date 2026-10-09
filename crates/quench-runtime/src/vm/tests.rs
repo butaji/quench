@@ -148,6 +148,37 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
 }
 
 #[test]
+fn closures_share_cached_function_source_and_program_roots_it() {
+    let program = Engine::specialize(
+        "function outer() { return function inner() { return 1; }; }",
+        "closure-source-cache.js",
+    )
+    .unwrap();
+    let inner = program
+        .functions
+        .iter()
+        .position(|function| {
+            function.parent.is_some()
+                && function
+                    .name
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "inner")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+
+    let first = vm.closure(&program, inner, Value::NULL).unwrap();
+    let source_atom = vm.intern_atom("\0quench:function-source");
+    let source = vm.own_property(first, source_atom).unwrap();
+    let source_weak = vm.heap.weak_handle(source).unwrap();
+    let second = vm.closure(&program, inner, Value::NULL).unwrap();
+
+    assert_eq!(vm.own_property(second, source_atom), Some(source));
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(source_weak), Some(source));
+}
+
+#[test]
 fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
     use super::property_key::PropertyKey;
 
