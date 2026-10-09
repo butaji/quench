@@ -147,6 +147,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "asyncLocalStorageInit" (1) => crate::modules::async_hooks_shared_vm::initialize_storage,
         method "asyncLocalStorageEnterWith" (1) => crate::modules::async_hooks_shared_vm::enter_with,
         method "asyncLocalStorageGetStore" (0) => crate::modules::async_hooks_shared_vm::get_store,
+        method "asyncLocalStorageDisable" (0) => crate::modules::async_hooks_shared_vm::disable_storage,
         method "diagnosticsSubscribe" (2) => crate::modules::diagnostics_channel_shared_vm::subscribe,
         method "diagnosticsUnsubscribe" (2) => crate::modules::diagnostics_channel_shared_vm::unsubscribe,
         method "diagnosticsHasSubscribers" (1) => crate::modules::diagnostics_channel_shared_vm::has_subscribers,

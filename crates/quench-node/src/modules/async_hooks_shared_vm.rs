@@ -10,7 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
-    initializeStorage, enterWith, getStore) {
+    initializeStorage, enterWith, getStore, disableStorage) {
   class AsyncResource {
     constructor(type, options) {
       if (typeof type !== "string") {
@@ -83,6 +83,7 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
       const store = getStore.call(this);
       return store === undefined ? this.defaultValue : store;
     }
+    disable() { return disableStorage.call(this); }
     withScope(store) {
       const previous = this.getStore();
       this.enterWith(store);
@@ -294,6 +295,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "asyncLocalStorageInit",
         "asyncLocalStorageEnterWith",
         "asyncLocalStorageGetStore",
+        "asyncLocalStorageDisable",
     ]
     .map(|name| context.host_function(crate::host::shared_vm::operation(name)))
     .into_iter()
@@ -467,6 +469,37 @@ pub(crate) fn get_store(
             .copied()
     };
     Ok(store.unwrap_or_else(|| context.undefined()))
+}
+
+pub(crate) fn disable_storage(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let local_id = number_property(context, receiver, LOCAL_ID)?
+        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
+    let released = {
+        let shared_state = context.host_mut().shared_state();
+        let mut shared = shared_state.borrow_mut();
+        let keys = shared
+            .async_hooks
+            .local_stores
+            .keys()
+            .filter_map(|(resource_id, candidate)| {
+                (*candidate == local_id).then_some((*resource_id, *candidate))
+            })
+            .collect::<Vec<_>>();
+        keys.into_iter()
+            .filter_map(|key| {
+                let store = shared.async_hooks.local_stores.remove(&key)?;
+                shared.async_hooks.release_store(store).then_some(store)
+            })
+            .collect::<Vec<_>>()
+    };
+    for store in released {
+        context.release_root(store);
+    }
+    Ok(receiver)
 }
 
 fn number_property(
