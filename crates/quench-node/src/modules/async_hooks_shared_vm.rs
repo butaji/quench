@@ -37,9 +37,26 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     emitDestroy() { return emitDestroy.call(this); }
   }
   class AsyncLocalStorage {
-    constructor(options) { initializeStorage.call(this, options); }
+    constructor(options = {}) {
+      initializeStorage.call(this, options);
+      this.defaultValue = options?.defaultValue;
+    }
     enterWith(store) { return enterWith.call(this, store); }
-    getStore() { return getStore.call(this); }
+    getStore() {
+      const store = getStore.call(this);
+      return store === undefined ? this.defaultValue : store;
+    }
+    withScope(store) {
+      const previous = this.getStore();
+      this.enterWith(store);
+      let active = true;
+      const dispose = () => {
+        if (!active) return;
+        active = false;
+        this.enterWith(previous);
+      };
+      return { dispose, [Symbol.dispose]: dispose };
+    }
   }
   const hooks = new Set();
   let nextAsyncId = 1;
