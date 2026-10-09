@@ -513,6 +513,11 @@ impl<H: Host> Vm<H> {
                         },
                     ))
             }));
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+            let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
+            self.report_memory_snapshot(&phase);
+        }
         let shapes = &self.shapes;
         let finalization_jobs =
             self.heap
@@ -618,6 +623,11 @@ impl<H: Host> Vm<H> {
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
+        }
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+            let phase = format!("gc_{}_after", self.heap.collection_count());
+            self.report_memory_snapshot(&phase);
         }
     }
 
