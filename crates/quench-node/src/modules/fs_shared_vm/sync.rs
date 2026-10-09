@@ -72,6 +72,14 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     }
     return Math.max(0, length);
   };
+  const makeMkdtemp = (prefix) => {
+    const normalized = normalizePath(prefix);
+    if (!warnedMkdtempX && typeof normalized === 'string' && normalized.endsWith('X')) {
+      warnedMkdtempX = true;
+      process.emitWarning('mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html');
+    }
+    return mkdtempSync(normalized);
+  };
   const writeBytes = (data, options) => {
     const encoding = typeof options === 'string' ? options : options?.encoding;
     if (typeof data === 'string') return Buffer.from(data, encoding);
@@ -176,12 +184,18 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       return rmdirSync(normalizePath(path));
     },
     mkdtempSync(prefix) {
-      const normalized = normalizePath(prefix);
-      if (!warnedMkdtempX && typeof normalized === 'string' && normalized.endsWith('X')) {
-        warnedMkdtempX = true;
-        process.emitWarning('mkdtemp() templates ending with X are not portable. For details see: https://nodejs.org/api/fs.html');
-      }
-      return mkdtempSync(normalized);
+      return makeMkdtemp(prefix);
+    },
+    mkdtempDisposableSync(prefix) {
+      const absolutePath = makeMkdtemp(prefix);
+      const normalizedPrefix = normalizePath(prefix);
+      const path = normalizedPrefix.startsWith('/')
+        ? absolutePath
+        : `${normalizedPrefix}${absolutePath.slice(-6)}`;
+      const remove = () => rmSync(absolutePath, { recursive: true, force: true });
+      const disposable = { path, remove };
+      disposable[Symbol.dispose] = remove;
+      return disposable;
     },
     rmSync(path, options) {
       return rmSync(normalizePath(path), options);
@@ -402,6 +416,7 @@ pub(crate) fn install(
         ("mkdirSync", "mkdirSync"),
         ("rmdirSync", "rmdirSync"),
         ("mkdtempSync", "mkdtempSync"),
+        ("mkdtempDisposableSync", "mkdtempDisposableSync"),
         ("copyFileSync", "copyFileSync"),
         ("symlinkSync", "symlinkSync"),
         ("renameSync", "renameSync"),
