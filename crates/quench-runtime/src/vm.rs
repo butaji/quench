@@ -882,7 +882,13 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
-        self.profile.report(&self.heap, program);
+        #[cfg(feature = "profile-aggregate")]
+        let census_reported = self.profile.report_dispatch_census_if_enabled();
+        #[cfg(not(feature = "profile-aggregate"))]
+        let census_reported = false;
+        if !census_reported {
+            self.profile.report(&self.heap, program);
+        }
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             self.report_memory("complete");

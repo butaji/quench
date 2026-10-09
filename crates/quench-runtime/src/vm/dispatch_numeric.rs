@@ -364,8 +364,9 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn profile_numeric_fusion(&mut self, _frame: usize, _function: u32, _pc: usize, op: Op) {
         #[cfg(feature = "profile-aggregate")]
-        self.profile.opcode(op as usize, _frame, _function, _pc);
+        self.profile
+            .fused_opcode(op as usize, _frame, _function, _pc);
         #[cfg(not(feature = "profile-aggregate"))]
-        self.profile.opcode(op as usize);
+        self.profile.fused_opcode(op as usize);
     }
 }

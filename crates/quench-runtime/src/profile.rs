@@ -21,6 +21,8 @@ const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as
 #[derive(Default)]
 pub(crate) struct Profile {
     pub opcodes: Vec<u64>,
+    pub dispatched_opcodes: Vec<u64>,
+    pub dispatched_sites: u64,
     pub pairs: Vec<u64>,
     pub pair_sites: rustc_hash::FxHashMap<(u32, u32), u64>,
     pub last_locations: Vec<Option<(u32, usize, usize)>>,
@@ -86,7 +88,33 @@ impl Profile {
     #[cfg(feature = "profile-aggregate")]
     #[inline(always)]
     pub fn opcode(&mut self, opcode: usize, frame: usize, function: u32, pc: usize) {
+        self.record_opcode(opcode, frame, function, pc, true);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
+    pub fn fused_opcode(&mut self, opcode: usize, frame: usize, function: u32, pc: usize) {
+        self.record_opcode(opcode, frame, function, pc, false);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
+    fn record_opcode(
+        &mut self,
+        opcode: usize,
+        frame: usize,
+        function: u32,
+        pc: usize,
+        dispatched: bool,
+    ) {
         self.site(function, pc);
+        if dispatched {
+            if self.dispatched_opcodes.len() <= opcode {
+                self.dispatched_opcodes.resize(opcode + 1, 0);
+            }
+            self.dispatched_opcodes[opcode] = self.dispatched_opcodes[opcode].saturating_add(1);
+            self.dispatched_sites = self.dispatched_sites.saturating_add(1);
+        }
         if self.opcodes.len() <= opcode {
             self.opcodes.resize(opcode + 1, 0);
         }
@@ -118,6 +146,55 @@ impl Profile {
     #[cfg(not(feature = "profile-aggregate"))]
     #[inline(always)]
     pub fn opcode(&mut self, _opcode: usize) {}
+
+    #[cfg(not(feature = "profile-aggregate"))]
+    #[inline(always)]
+    pub fn fused_opcode(&mut self, _opcode: usize) {}
+
+    #[cfg(feature = "profile-aggregate")]
+    pub fn report_dispatch_census_if_enabled(&self) -> bool {
+        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
+            return false;
+        }
+        let total = self.dispatched_opcodes.iter().sum::<u64>();
+        assert_eq!(total, self.dispatched_sites, "dispatch counters diverged");
+        eprint!(
+            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"dispatch_sites\":{},\"counts\":{{",
+            self.dispatched_sites
+        );
+        for opcode in 0..crate::bytecode::Op::COUNT {
+            if opcode != 0 {
+                eprint!(",");
+            }
+            eprint!(
+                "\"{}\":{}",
+                crate::bytecode::Op::NAMES[opcode],
+                self.dispatched_opcodes.get(opcode).copied().unwrap_or(0)
+            );
+        }
+        let mut pairs: Vec<_> = self
+            .pairs
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        pairs.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
+        eprint!("}},\"top_profile_pairs\":[");
+        for (position, (id, count)) in pairs.iter().take(32).enumerate() {
+            if position != 0 {
+                eprint!(",");
+            }
+            eprint!(
+                "[\"{}\",\"{}\",{}]",
+                crate::bytecode::Op::NAMES[id / crate::bytecode::Op::COUNT],
+                crate::bytecode::Op::NAMES[id % crate::bytecode::Op::COUNT],
+                count
+            );
+        }
+        eprintln!("]}}");
+        true
+    }
 
     #[inline(always)]
     pub fn shape_transition(&mut self, hit: bool) {
