@@ -28,13 +28,17 @@ fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
 impl<H: Host> Vm<H> {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
         let name = match self.heap.get(value) {
-            Some(Cell::String(_)) => "String",
+            Some(Cell::String(_)) => return Some(self.string_proto),
             Some(Cell::Symbol(_)) => "Symbol",
             Some(Cell::BigInt(_)) => "BigInt",
             _ if value.as_bool().is_some() => "Boolean",
             _ if value.as_number().is_some() => "Number",
             _ => return None,
         };
+        self.primitive_prototype_named(name)
+    }
+
+    pub(super) fn primitive_prototype_named(&self, name: &str) -> Option<Value> {
         let constructor = self
             .lookup_atom(name)
             .and_then(|atom| self.own_property(self.realm.globals, atom))?;

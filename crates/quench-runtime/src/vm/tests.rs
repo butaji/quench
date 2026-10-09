@@ -380,6 +380,24 @@ fn dynamic_primitive_strings_are_canonicalized() {
 }
 
 #[test]
+fn primitive_strings_keep_the_intrinsic_prototype_after_global_reassignment() {
+    let program = Engine::specialize(
+        r#"
+            function readCode() { return "a".charCodeAt(0); }
+            if (readCode() !== 97) throw new Error("initial String prototype");
+            String.prototype.charCodeAt = function() { return 99; };
+            if (readCode() !== 99) throw new Error("live prototype value");
+            String = function ReplacedString() {};
+            if (readCode() !== 99) throw new Error("intrinsic String prototype");
+        "#,
+        "primitive-string-intrinsic-prototype.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+}
+
+#[test]
 fn repeated_string_concatenations_use_the_bounded_cache() {
     let mut vm = Vm::new(SilentHost);
     let left = vm.intern_dynamic_value("left".into());

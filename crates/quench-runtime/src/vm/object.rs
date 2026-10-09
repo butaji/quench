@@ -7,7 +7,9 @@ pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 enum FieldCacheRead {
     Proxy,
     Generic,
+    StringGeneric,
     Miss(usize),
+    StringMiss { prototype: Value, site: usize },
     Hit { value: Value, kind: u8 },
 }
 
@@ -439,42 +441,31 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         let lookup = match self.heap.get(object) {
+            Some(Cell::String(_)) if self.specialized && p.specialized => {
+                if !self.field_cache_atom_eligible(atom) {
+                    FieldCacheRead::StringGeneric
+                } else {
+                    let prototype = self.string_proto;
+                    if let Some(receiver) = self.shape_property_lookup(prototype, atom) {
+                        let site = self.field_cache_index(site);
+                        match self.cached_field_value(site, receiver) {
+                            Some((value, kind)) => FieldCacheRead::Hit { value, kind },
+                            None => FieldCacheRead::StringMiss { prototype, site },
+                        }
+                    } else {
+                        FieldCacheRead::StringGeneric
+                    }
+                }
+            }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
                 let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
                     return self.get_property(p, object, atom);
                 };
                 let site = self.field_cache_index(site);
-                let receiver_shape = receiver.shape();
-                // SAFETY: the active program's layout reserves every compiler-emitted site.
-                let cache = unsafe { *self.field_caches.get_unchecked(site) };
-                if cache.receiver == receiver_shape
-                    && self
-                        .heap
-                        .property_get(receiver, cache.slot as usize)
-                        .is_some()
-                {
-                    // SAFETY: receiver shape and slot were recorded together for an
-                    // own data property on the cache miss path.
-                    let value = unsafe {
-                        self.heap
-                            .property_get_unchecked(receiver, cache.slot as usize)
-                    };
-                    FieldCacheRead::Hit { value, kind: 0 }
-                } else if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
-                    && self
-                        .heap
-                        .property_get(receiver, cache.slot as usize)
-                        .is_some()
-                {
-                    // SAFETY: the table is keyed by the immutable receiver shape.
-                    let value = unsafe {
-                        self.heap
-                            .property_get_unchecked(receiver, cache.slot as usize)
-                    };
-                    FieldCacheRead::Hit { value, kind: 2 }
-                } else {
-                    FieldCacheRead::Miss(site)
+                match self.cached_field_value(site, receiver) {
+                    Some((value, kind)) => FieldCacheRead::Hit { value, kind },
+                    None => FieldCacheRead::Miss(site),
                 }
             }
             Some(_) | None => FieldCacheRead::Generic,
@@ -484,9 +475,14 @@ impl<H: Host> Vm<H> {
                 self.get_private_proxy_field(p, object, atom)
             }
             FieldCacheRead::Proxy | FieldCacheRead::Generic => self.get_property(p, object, atom),
+            FieldCacheRead::StringGeneric => self.get_property(p, object, atom),
             FieldCacheRead::Miss(site) => {
                 self.profile.field_cache(false);
                 self.get_field_miss(p, object, atom, site)
+            }
+            FieldCacheRead::StringMiss { prototype, site } => {
+                self.profile.field_cache(false);
+                self.get_string_field_miss(p, object, prototype, atom, site)
             }
             FieldCacheRead::Hit { value, kind } => {
                 self.profile.field_cache_hit(usize::from(kind), 0);
@@ -494,6 +490,78 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+
+    #[inline(always)]
+    fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<(Value, u8)> {
+        let receiver_shape = receiver.shape();
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(site) };
+        if cache.receiver == receiver_shape
+            && self
+                .heap
+                .property_get(receiver, cache.slot as usize)
+                .is_some()
+        {
+            // SAFETY: receiver shape and slot were recorded together for an
+            // own data property on the cache miss path.
+            let value = unsafe {
+                self.heap
+                    .property_get_unchecked(receiver, cache.slot as usize)
+            };
+            return Some((value, 0));
+        }
+        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
+            && self
+                .heap
+                .property_get(receiver, cache.slot as usize)
+                .is_some()
+        {
+            // SAFETY: the table is keyed by the immutable receiver shape.
+            let value = unsafe {
+                self.heap
+                    .property_get_unchecked(receiver, cache.slot as usize)
+            };
+            return Some((value, 2));
+        }
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_string_field_miss(
+        &mut self,
+        p: &ResidualProgram,
+        primitive: Value,
+        prototype: Value,
+        atom: Atom,
+        site: usize,
+    ) -> Result<Value, JsError> {
+        if self
+            .property_attributes(prototype, PropertyKey::string(atom))
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return self.get_property_with_receiver(p, prototype, atom, primitive);
+        }
+        let Some(receiver) = self.shape_property_lookup(prototype, atom) else {
+            return self.get_property(p, primitive, atom);
+        };
+        if let Some(slot) = self.shape_slot(receiver.shape(), atom)
+            && let Some(value) = self.heap.property_get(receiver, slot)
+        {
+            if slot < FIELD_CACHE_SLOT_CAPACITY {
+                self.record_field_cache(
+                    site,
+                    FieldCache {
+                        receiver: receiver.shape(),
+                        slot: slot as u16,
+                    },
+                );
+            }
+            return Ok(value);
+        }
+        self.get_property(p, primitive, atom)
+    }
+
     #[cold]
     #[inline(never)]
     pub(super) fn get_field_miss(
