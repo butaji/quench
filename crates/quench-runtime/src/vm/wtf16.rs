@@ -127,6 +127,10 @@ impl JsString {
         }
     }
 
+    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
+        &self.units
+    }
+
     pub(crate) fn units(&self) -> &[u16] {
         &self.units
     }

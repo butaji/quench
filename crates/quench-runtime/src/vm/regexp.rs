@@ -610,6 +610,33 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// The compiled matcher for `source` and `flags`, shared by every RegExp created from them.
+    /// Matching never re-enters JavaScript, so sharing the matcher's capture workspace is safe.
+    pub(super) fn cached_regexp_matcher(
+        &mut self,
+        source: &JsString,
+        flags: &str,
+    ) -> Result<Rc<quench_regexp::Regex>, JsError> {
+        if let Some(matcher) = self.regexp_matchers.find(source, flags) {
+            return Ok(matcher);
+        }
+        let matcher = Rc::new(Self::compile_regexp(source, flags)?);
+        self.regexp_matchers.insert(source, flags, Rc::clone(&matcher));
+        Ok(matcher)
+    }
+
+    /// The prepared form of `input`, rebuilt only when a different string is matched.
+    fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
+        match &self.regexp_subject {
+            Some(subject) if subject.is_text_of(input.shared_units()) => Rc::clone(subject),
+            _ => {
+                let subject = Rc::new(quench_regexp::Subject::new(Rc::clone(input.shared_units())));
+                self.regexp_subject = Some(Rc::clone(&subject));
+                subject
+            }
+        }
+    }
+
     fn regexp_symbol_replace_fast(
         &mut self,
         p: &ResidualProgram,
@@ -629,7 +656,8 @@ impl<H: Host> Vm<H> {
         let mut search_start = 0;
         let sticky = flags.contains('y');
         let unicode = flags.contains('u') || flags.contains('v');
-        while let Some(found) = matcher.find_from_utf16(input.units(), search_start).next() {
+        let subject = self.regexp_subject(input);
+        while let Some(found) = matcher.find_in_subject(&subject, search_start).next() {
             let start = found.range.start;
             let end = found.range.end;
             if sticky && start != search_start {
@@ -1433,7 +1461,7 @@ impl<H: Host> Vm<H> {
         flags: String,
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
-        let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
+        let matcher = self.cached_regexp_matcher(&source, &flags)?;
         self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
     }
 
@@ -1467,8 +1495,8 @@ impl<H: Host> Vm<H> {
         let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
             Some(matcher) => matcher,
             None => {
-                let matcher = Self::compile_regexp(&source, &flags)
-                    .map(Rc::new)
+                let matcher = self
+                    .cached_regexp_matcher(&source, &flags)
                     .map_err(|error| Rc::<str>::from(error.to_string()));
                 if !self
                     .programs
@@ -1568,8 +1596,8 @@ impl<H: Host> Vm<H> {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
 
-                let matcher = match Self::compile_regexp(&source, &flags) {
-                    Ok(matcher) => Rc::new(matcher),
+                let matcher = match vm.cached_regexp_matcher(&source, &flags) {
+                    Ok(matcher) => matcher,
                     Err(error) => {
                         let message = error.to_string();
                         let message = message.strip_prefix("SyntaxError: ").unwrap_or(&message);
@@ -1699,7 +1727,8 @@ impl<H: Host> Vm<H> {
                 )?;
                 return Ok(Value::NULL);
             }
-            let matched = regex.find_from_utf16(input.units(), start).next();
+            let subject = vm.regexp_subject(&input);
+            let matched = regex.find_in_subject(&subject, start).next();
             let matched = matched.filter(|matched| !sticky || matched.range.start == start);
             let Some(matched) = matched else {
                 if stateful {
@@ -2102,3 +2131,38 @@ const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
     ("unicodeSets", Native::RegExpUnicodeSets, 'v'),
     ("sticky", Native::RegExpSticky, 'y'),
 ];
+
+/// Upper bound on cached compiled matchers. Compiled automata are the largest per-RegExp
+/// allocation, so the cache is capped; reaching the cap drops every entry and recompiles on demand.
+const REGEXP_MATCHER_CACHE_LIMIT: usize = 64;
+
+#[derive(Default)]
+pub(super) struct RegExpMatcherCache {
+    by_source: rustc_hash::FxHashMap<JsString, Vec<(String, Rc<quench_regexp::Regex>)>>,
+    entries: usize,
+}
+
+impl RegExpMatcherCache {
+    fn find(&self, source: &JsString, flags: &str) -> Option<Rc<quench_regexp::Regex>> {
+        self.by_source
+            .get(source)?
+            .iter()
+            .find_map(|(cached, matcher)| (cached == flags).then(|| Rc::clone(matcher)))
+    }
+
+    fn insert(&mut self, source: &JsString, flags: &str, matcher: Rc<quench_regexp::Regex>) {
+        if self.entries >= REGEXP_MATCHER_CACHE_LIMIT {
+            self.clear();
+        }
+        self.by_source
+            .entry(source.clone())
+            .or_default()
+            .push((flags.to_owned(), matcher));
+        self.entries += 1;
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.by_source.clear();
+        self.entries = 0;
+    }
+}
