@@ -228,6 +228,100 @@ impl quench_runtime::Host for NodeHost {
         quench_runtime::Host::clock_millis(&mut SystemHost)
     }
 
+    fn resolve_dynamic_import(
+        &mut self,
+        referrer: &str,
+        specifier: &str,
+    ) -> Result<Option<quench_runtime::ModuleSource>, String> {
+        use std::path::Path;
+
+        let builtin_exports: std::collections::BTreeMap<String, Vec<String>> =
+            serde_json::from_str(include_str!("builtin_esm_exports.json"))
+                .expect("generated Node builtin export names are valid JSON");
+        let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
+        if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
+            let exports = builtin_exports.get(builtin_name).map(Vec::as_slice).unwrap_or(&[]);
+            let mut source = format!(
+                "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
+                serde_json::to_string(builtin_name).map_err(|error| error.to_string())?
+            );
+            for name in exports {
+                source.push_str("export const ");
+                source.push_str(name);
+                source.push_str(" = __quenchModule[");
+                source.push_str(&serde_json::to_string(name).map_err(|error| error.to_string())?);
+                source.push_str("];\n");
+            }
+            return Ok(Some(quench_runtime::ModuleSource {
+                name: format!("node:quench-builtin/{builtin_name}"),
+                bytes: source.as_bytes().to_vec(),
+                source,
+            }));
+        }
+
+        let referrer = Path::new(referrer);
+        let internal = specifier.starts_with("internal/");
+        let base = if internal {
+            let node_lib = std::env::current_dir()
+                .map_err(|error| error.to_string())?
+                .join("tests/node/lib");
+            // Node's upstream test suite imports `internal/*` from its own
+            // lib tree. Resolve those requests from that tree rather than
+            // treating them as npm package names.
+            node_lib
+        } else {
+            referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
+        };
+        let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+            extensions: vec![".mjs".into(), ".js".into(), ".json".into(), ".cjs".into()],
+            main_files: vec!["index".into()],
+            condition_names: vec!["node".into(), "import".into(), "default".into()],
+            ..Default::default()
+        });
+        let resolution_specifier = if internal {
+            format!("./{specifier}")
+        } else {
+            specifier.to_owned()
+        };
+        let resolution = match resolver.resolve(&base, &resolution_specifier) {
+            Ok(resolution) => resolution,
+            Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
+                return Ok(None)
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let path = resolution.full_path();
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("module {}: {error}", path.display()))?;
+        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+        if extension == "node" {
+            return Ok(None);
+        }
+        let name = path.to_string_lossy().into_owned();
+        let source = if extension == "json" {
+            format!("export default {};", String::from_utf8_lossy(&bytes))
+        } else {
+            let kind = Self::source_kind(&path)?;
+            if kind == quench_runtime::SourceKind::Module {
+                String::from_utf8(bytes.clone())
+                    .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
+            } else {
+                let filename = serde_json::to_string(&name).map_err(|error| error.to_string())?;
+                format!(
+                    "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
+                )
+            }
+        };
+        // Keep original bytes for import.meta/source APIs while compiling the
+        // generated CJS/JSON interop wrapper when one is required.
+        Ok(Some(quench_runtime::ModuleSource {
+            name,
+            bytes,
+            source,
+        }))
+    }
+
     fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {
         crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state)
             .map(quench_runtime::HostExecutionContext)
