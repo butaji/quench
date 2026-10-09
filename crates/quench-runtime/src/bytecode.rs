@@ -205,6 +205,7 @@ pub(crate) enum ImmediateRole {
     WasmF64BinaryOperator,
     WasmF64UnaryOperator,
     TemplateSiteIndex,
+    RegExpLiteralSiteIndex,
     JumpTarget,
     MethodSiteIndex,
     ObjectSiteIndex,
@@ -528,6 +529,7 @@ opcodes!(
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
     SpreadToArray => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
@@ -1030,6 +1032,12 @@ pub(crate) struct ObjectSite {
     pub atoms: [Atom; 2],
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RegExpLiteralSite {
+    pub pattern_constant: u32,
+    pub flags_constant: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Superinstruction {
     pub code: [Instr; 4],
@@ -1329,6 +1337,7 @@ pub struct ResidualProgram {
     pub(crate) method_arguments: Vec<Register>,
     pub(crate) field_sites: Vec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
+    pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) superinstructions: Vec<Superinstruction>,
     pub(crate) register_roots: Vec<u64>,
 }
@@ -1352,7 +1361,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 78;
+    pub const FORMAT_VERSION: u8 = 79;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

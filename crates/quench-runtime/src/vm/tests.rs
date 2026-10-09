@@ -7752,6 +7752,40 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
 }
 
 #[test]
+fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
+    let program = Engine::specialize(
+        r#"
+        function make() { return /a/g; }
+        var first = make();
+        var second = make();
+        if (first === second) throw new Error('literal object was cached');
+        if (!first.exec('a') || first.lastIndex !== 1 || second.lastIndex !== 0)
+            throw new Error('lastIndex was shared');
+        first.compile('b', 'g');
+        if (!first.test('b') || !second.test('a'))
+            throw new Error('compile changed a shared matcher');
+        var callbackMatcher = make();
+        var nested = false;
+        var replaced = 'a'.replace(callbackMatcher, function () {
+            callbackMatcher.lastIndex = 0;
+            nested = !!callbackMatcher.exec('a');
+            return 'x';
+        });
+        if (!nested || replaced !== 'x') throw new Error('reentrant exec failed');
+        "#,
+        "regexp-literal-site.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        vm.programs
+            .compiled_regexp_literal_count(super::program_store::ProgramId::MAIN),
+        1
+    );
+}
+
+#[test]
 fn native_dispatch_roots_raw_inputs_through_receiver_normalization_and_calls() {
     for compile in [
         Engine::specialize as fn(&str, &str) -> _,
