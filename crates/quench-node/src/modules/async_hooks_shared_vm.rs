@@ -12,7 +12,25 @@ const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
     initializeStorage, enterWith, getStore) {
   class AsyncResource {
-    constructor(type, options) { initializeResource.call(this, type, options); }
+    constructor(type, options) {
+      if (typeof type !== "string") {
+        const error = new TypeError('The "type" argument must be of type string.');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (type.length === 0) {
+        const error = new TypeError('The "type" argument must be a non-empty string.');
+        error.code = "ERR_ASYNC_TYPE";
+        throw error;
+      }
+      if (typeof options === "number" &&
+          (!Number.isSafeInteger(options) || options < 0)) {
+        const error = new RangeError('The "triggerAsyncId" argument must be a non-negative integer.');
+        error.code = "ERR_INVALID_ASYNC_ID";
+        throw error;
+      }
+      initializeResource.call(this, type, options);
+    }
     runInAsyncScope(fn, thisArg, ...args) {
       return runInAsyncScope.call(this, fn, thisArg, ...args);
     }
@@ -26,6 +44,16 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
   const hooks = new Set();
   let nextAsyncId = 1;
   const createHook = (callbacks = {}) => {
+    if (callbacks === null || (typeof callbacks !== "object" && typeof callbacks !== "function")) {
+      throw new TypeError("The argument must be an object");
+    }
+    for (const name of ["init", "before", "after", "destroy", "promiseResolve"]) {
+      if (callbacks[name] !== undefined && typeof callbacks[name] !== "function") {
+        const error = new TypeError(`hook.${name} must be a function`);
+        error.code = "ERR_ASYNC_CALLBACK";
+        throw error;
+      }
+    }
     const hook = {
       enable() { hooks.add(hook); return hook; },
       disable() { hooks.delete(hook); return hook; },
@@ -49,6 +77,8 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     AsyncResource,
     AsyncLocalStorage,
     createHook,
+    enabledHooksExist: () => hooks.size !== 0,
+    symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
     executionAsyncId: () => nextAsyncId,
     triggerAsyncId: () => 1,
     executionAsyncResource: () => undefined,
