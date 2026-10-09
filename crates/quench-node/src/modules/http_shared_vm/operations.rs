@@ -362,7 +362,7 @@ pub(crate) fn server_listen(
         Some(root) => context.is_callable_rooted(root)?,
         None => false,
     };
-    let address = listen_address(context, first, first_is_callback)?;
+    let address = listen_address(context, first, first_is_callback, args.get(1).copied())?;
     let host = context.host_mut().shared_state();
     {
         let mut guard = host.borrow_mut();
@@ -379,8 +379,14 @@ pub(crate) fn server_listen(
     }
     let callback = if first_is_callback {
         first
+    } else if let Some(second) = args.get(1).copied() {
+        if context.is_callable_rooted(second)? {
+            Some(second)
+        } else {
+            args.get(2).copied()
+        }
     } else {
-        args.get(1).copied()
+        args.get(2).copied()
     };
     if let Some(callback) = callback {
         if context.is_callable_rooted(callback)? {
@@ -399,6 +405,7 @@ fn listen_address(
     context: &mut Context<'_>,
     first: Option<RootId>,
     first_is_callback: bool,
+    second: Option<RootId>,
 ) -> Result<SocketAddr, RootedError> {
     let Some(root) = first.filter(|_| !first_is_callback) else {
         return resolve_listen_address(DEFAULT_LISTEN_HOST, 0);
@@ -407,10 +414,10 @@ fn listen_address(
         .rooted_value(root)
         .ok_or_else(|| RootedError::host("shared HTTP listen argument is unavailable"))?;
     if let Some(port) = value.as_number() {
-        return resolve_listen_address(DEFAULT_LISTEN_HOST, numeric_port(port)?);
+        return resolve_listen_address(&listen_host(context, second)?, numeric_port(port)?);
     }
     if let Some(port) = context.string_text(root)? {
-        return resolve_listen_address(DEFAULT_LISTEN_HOST, string_port(&port)?);
+        return resolve_listen_address(&listen_host(context, second)?, string_port(&port)?);
     }
     if value.is_null() || value.as_bool().is_some() {
         return Err(invalid_listen_port());
@@ -425,6 +432,23 @@ fn listen_address(
         _ => context.string_text(host)?.ok_or_else(invalid_listen_port)?,
     };
     resolve_listen_address(&host, port)
+}
+
+fn listen_host(context: &mut Context<'_>, value: Option<RootId>) -> Result<String, RootedError> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_LISTEN_HOST.to_owned());
+    };
+    match context.rooted_value(value) {
+        Some(value) if value.is_undefined() || value.is_null() => {
+            Ok(DEFAULT_LISTEN_HOST.to_owned())
+        }
+        Some(value) if value.as_bool().is_some() || value.as_number().is_some() => {
+            Err(RootedError::host("invalid HTTP listen host"))
+        }
+        _ => context
+            .string_text(value)?
+            .ok_or_else(|| RootedError::host("invalid HTTP listen host")),
+    }
 }
 
 fn listen_port(context: &mut Context<'_>, root: RootId) -> Result<u16, RootedError> {
