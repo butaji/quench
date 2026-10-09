@@ -303,5 +303,84 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   writable: true,
   configurable: true,
 });
+
+if (globalThis.MessagePort === undefined) Object.defineProperty(globalThis, "MessagePort", {
+  value: class MessagePort extends EventTarget {
+    constructor() {
+      super();
+      this.onmessage = null;
+      this._peer = null;
+      this._closed = false;
+      this._refed = true;
+      this._nodeListeners = new Map();
+    }
+    start() {}
+    close(callback) {
+      this._closed = true;
+      this.dispatchEvent(new Event("close"));
+      if (typeof callback === "function") queueMicrotask(callback);
+    }
+    ref() { this._refed = true; return this; }
+    unref() { this._refed = false; return this; }
+    hasRef() { return this._refed; }
+    on(name, listener) {
+      const listeners = this._nodeListeners.get(name) || [];
+      listeners.push(listener);
+      this._nodeListeners.set(name, listeners);
+      if (name === "message") this._refed = true;
+      return this;
+    }
+    addListener(name, listener) { return this.on(name, listener); }
+    once(name, listener) {
+      const wrapped = (...args) => { this.removeListener(name, wrapped); listener(...args); };
+      return this.on(name, wrapped);
+    }
+    removeListener(name, listener) {
+      const listeners = this._nodeListeners.get(name) || [];
+      this._nodeListeners.set(name, listeners.filter((item) => item !== listener));
+      return this;
+    }
+    off(name, listener) { return this.removeListener(name, listener); }
+    postMessage(value, transferList) {
+      if (this._closed || !this._peer || this._peer._closed) return;
+      let data;
+      if (value && value.constructor?.name === "BlockList" && typeof value.toJSON === "function") {
+        data = Object.create(Object.getPrototypeOf(value));
+        data._rules = value._rules;
+      }
+      if (data === undefined) {
+        if (typeof globalThis.structuredClone !== "function") throw new DOMException("Value could not be cloned.", "DataCloneError");
+        data = globalThis.structuredClone(value, transferList === undefined ? undefined : { transfer: [...transferList] });
+      }
+      const peer = this._peer;
+      queueMicrotask(() => {
+        if (peer._closed) return;
+        const event = Object.assign(new Event("message"), { data, ports: [] });
+        peer.dispatchEvent(event);
+        for (const listener of peer._nodeListeners.get("message") || []) listener(data);
+        if (typeof peer.onmessage === "function") peer.onmessage.call(peer, event);
+      });
+    }
+    emit(name, ...args) {
+      for (const listener of this._nodeListeners.get(name) || []) listener(...args);
+      return this.dispatchEvent(Object.assign(new Event(name), { detail: args[0] }));
+    }
+  },
+  writable: true,
+  configurable: true,
+});
+
+if (globalThis.MessageChannel === undefined) Object.defineProperty(globalThis, "MessageChannel", {
+  value: class MessageChannel {
+    constructor() {
+      this.port1 = new MessagePort();
+      this.port2 = new MessagePort();
+      this.port1._peer = this.port2;
+      this.port2._peer = this.port1;
+    }
+  },
+  writable: true,
+  configurable: true,
+});
 "#
 );
