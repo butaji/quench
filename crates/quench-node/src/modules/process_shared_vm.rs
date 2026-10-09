@@ -6,6 +6,8 @@ use quench_runtime::{NativeContext, PromiseRejectionEvent, RootId, RootedError, 
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 struct CallbackFailure {
     exception: Option<RootId>,
@@ -14,6 +16,7 @@ struct CallbackFailure {
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
+static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const HOST_WARNING_STACK_OPTION: &str = "\0quench:process-warning-stack";
 const HOST_WARNING_ID_OPTION: &str = "\0quench:process-warning-id";
@@ -52,6 +55,14 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
+    let hrtime_factory = context.evaluate_script_rooted(
+        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
+        "node:process/shared-hrtime.js",
+    )?;
+    let undefined = context.undefined();
+    let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
+    install(context, process, "hrtime", hrtime)?;
     let on = context.host_function(crate::host::shared_vm::operation("on"))?;
     install(context, process, "on", on)?;
     install(context, process, "addListener", on)?;
@@ -528,6 +539,17 @@ pub(crate) fn getegid(
     #[cfg(not(unix))]
     let id = 0u32;
     Ok(context.number(id as f64))
+}
+
+pub(crate) fn hrtime_now(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let elapsed = HRTIME_ORIGIN.get_or_init(Instant::now).elapsed();
+    let seconds = context.number(elapsed.as_secs() as f64);
+    let nanoseconds = context.number(elapsed.subsec_nanos() as f64);
+    context.array_rooted(&[seconds, nanoseconds])
 }
 
 pub(crate) fn chdir(
