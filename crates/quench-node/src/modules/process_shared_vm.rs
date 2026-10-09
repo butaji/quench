@@ -887,6 +887,8 @@ fn drain_checkpoint(
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
+        || !shared_state.borrow().net_sockets.is_empty()
+        || !shared_state.borrow().net_servers.is_empty()
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
