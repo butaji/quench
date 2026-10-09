@@ -1,12 +1,28 @@
+use std::cell::OnceCell;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
-/// is only the explicit lossy Rust-text view used at host/API boundaries.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// memoizes the lossy Rust-text view only after a host/API boundary requests it.
+#[derive(Clone, Debug)]
 pub(crate) struct JsString {
     units: Rc<[u16]>,
-    host: String,
+    host: OnceCell<Rc<str>>,
+}
+
+impl PartialEq for JsString {
+    fn eq(&self, other: &Self) -> bool {
+        self.units == other.units
+    }
+}
+
+impl Eq for JsString {}
+
+impl Hash for JsString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.units.hash(state);
+    }
 }
 
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
@@ -98,15 +114,16 @@ impl JsStringBuilder {
 
 impl JsString {
     pub(crate) fn from_units(units: &[u16]) -> Self {
-        let units = Rc::from(units);
-        let host = String::from_utf16_lossy(&units);
-        Self { units, host }
+        Self {
+            units: Rc::from(units),
+            host: OnceCell::new(),
+        }
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
         Self {
             units: Rc::from(text.encode_utf16().collect::<Vec<_>>()),
-            host: text.to_owned(),
+            host: OnceCell::new(),
         }
     }
 
@@ -115,23 +132,25 @@ impl JsString {
     }
 
     pub(crate) fn host_string(&self) -> &str {
-        &self.host
+        self.host
+            .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(&self.units)))
+            .as_ref()
     }
 
     pub(crate) fn has_lossless_host_string(&self) -> bool {
-        self.host.encode_utf16().eq(self.units.iter().copied())
+        char::decode_utf16(self.units.iter().copied()).all(|decoded| decoded.is_ok())
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
-        self.units.len() * std::mem::size_of::<u16>() + self.host.capacity()
+        self.units.len() * std::mem::size_of::<u16>() + self.host.get().map_or(0, |host| host.len())
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
         let mut units = self.units.to_vec();
         units.extend(text.units.iter().copied());
         self.units = Rc::from(units);
-        self.host = String::from_utf16_lossy(&self.units);
+        self.host = OnceCell::new();
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
@@ -182,14 +201,14 @@ impl From<String> for JsString {
     fn from(value: String) -> Self {
         Self {
             units: Rc::from(value.encode_utf16().collect::<Vec<_>>()),
-            host: value,
+            host: OnceCell::new(),
         }
     }
 }
 
 impl From<JsString> for String {
     fn from(value: JsString) -> Self {
-        value.host
+        value.host_string().to_owned()
     }
 }
 
@@ -201,13 +220,49 @@ impl FromIterator<char> for JsString {
 
 impl std::fmt::Display for JsString {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.host)
+        formatter.write_str(self.host_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::JsString;
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    fn hash(string: &JsString) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        string.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn host_text_is_lazy_and_does_not_affect_string_identity() {
+        let cold = JsString::from_str("ascii");
+        let warm = JsString::from_units(cold.units());
+
+        assert!(cold.host.get().is_none());
+        assert!(warm.host.get().is_none());
+        assert_eq!(cold, warm);
+        assert_eq!(hash(&cold), hash(&warm));
+
+        assert_eq!(warm.host_string(), "ascii");
+        assert!(warm.host.get().is_some());
+        assert_eq!(cold, warm);
+        assert_eq!(hash(&cold), hash(&warm));
+    }
+
+    #[test]
+    fn lossless_host_view_check_does_not_materialize_the_view() {
+        let paired = JsString::from_units(&[0xD83E, 0xDD80]);
+        let lone = JsString::from_units(&[0xD800]);
+
+        assert!(paired.has_lossless_host_string());
+        assert!(!lone.has_lossless_host_string());
+        assert!(paired.host.get().is_none());
+        assert!(lone.host.get().is_none());
+        assert_eq!(lone.host_string(), "�");
+        assert_eq!(lone.units(), &[0xD800]);
+    }
 
     #[test]
     fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {
