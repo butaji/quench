@@ -1745,6 +1745,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let statfs_promise =
         context.call_rooted(statfs_promise_factory, undefined, &[statfs_sync])?;
     set(context, promises, "statfs", statfs_promise)?;
+    let mkdtemp_disposable_factory = context.evaluate_script_rooted(
+        "(mkdtempSync, rmSync) => async (prefix) => { const absolutePath = await mkdtempSync(prefix); const normalizedPrefix = Buffer.isBuffer(prefix) ? prefix.toString() : prefix instanceof URL ? decodeURIComponent(prefix.pathname) : prefix; const path = normalizedPrefix.startsWith('/') ? absolutePath : `${normalizedPrefix}${absolutePath.slice(-6)}`; const remove = () => Promise.resolve().then(() => rmSync(absolutePath, { recursive: true, force: true })); const disposable = { path, remove }; disposable[Symbol.asyncDispose] = remove; return disposable; }",
+        "node:fs/promises/shared-mkdtemp-disposable.js",
+    )?;
+    let mkdtemp_sync = get(context, module, "mkdtempSync")?;
+    let rm_sync = get(context, module, "rmSync")?;
+    let mkdtemp_disposable = context.call_rooted(
+        mkdtemp_disposable_factory,
+        undefined,
+        &[mkdtemp_sync, rm_sync],
+    )?;
+    set(context, promises, "mkdtempDisposable", mkdtemp_disposable)?;
     let truncate_promise_factory = context.evaluate_script_rooted(
         "(truncateSync) => (...args) => Promise.resolve().then(() => truncateSync(...args))",
         "node:fs/promises/shared-truncate.js",
