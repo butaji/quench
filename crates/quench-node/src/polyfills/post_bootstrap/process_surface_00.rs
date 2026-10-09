@@ -155,7 +155,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.title =
       globalThis.__quench_cli_title || globalThis.process.title || "node";
     globalThis.process.getBuiltinModule ||= (name) =>
-      globalThis.require(String(name).replace(/^node:/, ""));
+      globalThis["\0quench:require"](String(name).replace(/^node:/, ""));
     globalThis.process.loadEnvFile ||= () => undefined;
     globalThis.process.finalization ||= {
       register: () => undefined,
