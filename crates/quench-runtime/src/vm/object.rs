@@ -80,12 +80,18 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
 
 impl<H: Host> Vm<H> {
     /// Name-derived property classes, computed from the atom text once per atom.
+    #[inline(always)]
     pub(super) fn atom_class(&self, atom: Atom) -> AtomClass {
-        let slot = &self.atom_classes[atom as usize];
-        let known = AtomClass(slot.get());
+        let known = AtomClass(self.atom_classes[atom as usize].get());
         if known.contains(AtomClass::DERIVED) {
             return known;
         }
+        self.derive_atom_class(atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn derive_atom_class(&self, atom: Atom) -> AtomClass {
         let name = self.atom_name(atom);
         let mut bits = AtomClass::DERIVED;
         if name.starts_with(PRIVATE_NAME_PREFIX) {
@@ -103,7 +109,7 @@ impl<H: Host> Vm<H> {
         if matches!(name, "caller" | "arguments") {
             bits |= AtomClass::RESTRICTED_FUNCTION_PROPERTY;
         }
-        slot.set(bits);
+        self.atom_classes[atom as usize].set(bits);
         AtomClass(bits)
     }
 
@@ -500,6 +506,19 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        // A site is only populated after the atom and a non-dictionary receiver shape passed
+        // `shape_property_lookup_cell`, and an ordinary object is eligible whenever those hold,
+        // so a monomorphic own-shape hit needs no further eligibility probe.
+        if self.specialized
+            && p.specialized
+            && let Some(Cell::Object(receiver)) = self.heap.get(object)
+            && !receiver.is_module_namespace()
+            && let Some(hit) = self.cached_field_value(self.field_cache_index(site), receiver)
+        {
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
+            return Ok(hit.value);
+        }
         let lookup = match self.heap.get(object) {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
                 if !self.field_cache_atom_eligible(atom) {
@@ -1116,10 +1135,28 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(object).cloned()
+        if self.specialized
+            && p.specialized
+            && !self.is_private_name(atom)
+            && let Some(Cell::Object(data)) = self.heap.get(object)
+            && !data.is_module_namespace()
+            && !data.is_arguments_object()
         {
+            let site = self.field_cache_index(site);
+            let shape = data.shape();
+            if self.try_cached_field_store(object, atom, shape, value, site)
+                || (self.field_cache_atom_eligible(atom)
+                    && self.try_cached_field_add(object, atom, shape, value, site))
+            {
+                return Ok(());
+            }
+        }
+        if let Some((target, handler)) = match self.heap.get(object) {
+            Some(Cell::Proxy {
+                target, handler, ..
+            }) => Some((*target, *handler)),
+            _ => None,
+        } {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
                     let extensible = self.object_is_extensible(p, &[object])?;
@@ -1151,22 +1188,6 @@ impl<H: Host> Vm<H> {
             } else {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
-        }
-        if self.specialized
-            && p.specialized
-            && !self.is_private_name(atom)
-            && let Some(Cell::Object(data)) = self.heap.get(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
-        {
-            let site = self.field_cache_index(site);
-            let shape = data.shape();
-            if self.try_cached_field_store(object, atom, shape, value, site)
-                || (self.field_cache_atom_eligible(atom)
-                    && self.try_cached_field_add(object, atom, shape, value, site))
-            {
-                return Ok(());
-            }
         }
         let own = self.own_property(object, atom).is_some();
         if !own && self.prototype_chain_contains_proxy(object) {

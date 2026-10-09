@@ -347,8 +347,8 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         let descriptor_value = descriptor.value;
-        let descriptor_accessor = descriptor.has_accessor_fields();
-        if descriptor_accessor {
+        // A generic descriptor over an accessor keeps it an accessor, and accessors are holes.
+        if attributes.accessor {
             self.unmap_argument_index(target, index);
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Ok(false);
