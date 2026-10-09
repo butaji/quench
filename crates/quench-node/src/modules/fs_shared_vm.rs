@@ -1121,6 +1121,13 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (Buffer.isBuffer(path)) path = path.toString();
+    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
       try { Reflect.apply(callback, undefined, [null, lstatSync(path)]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
@@ -1139,11 +1146,36 @@ const ASYNC_STAT_API: &str = r#"(statSync) => {
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (Buffer.isBuffer(path)) path = path.toString();
+    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
     queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, statSync(path)]); }
+      try {
+        const stats = statSync(path, options);
+        Reflect.apply(callback, undefined, [null, stats]);
+      }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
   };
+}"#;
+
+const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options) {
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (Buffer.isBuffer(path)) path = path.toString();
+  else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+  try { return hostStatSync(path); }
+  catch (error) {
+    if (options?.throwIfNoEntry === false && error?.code === 'ENOENT') return undefined;
+    throw error;
+  }
 }"#;
 
 const ASYNC_READLINK_API: &str = r#"(readlinkSync) => {
@@ -1314,7 +1346,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let undefined = context.undefined();
     let read_file_async = context.call_rooted(read_file_factory, undefined, &[read_file])?;
     set(context, module, "readFile", read_file_async)?;
-    let stat_sync = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
+    let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
+    let stat_factory = context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
+    let undefined = context.undefined();
+    let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
     set(context, module, "statSync", stat_sync)?;
     let exists_factory = context.evaluate_script_rooted(EXISTS_API, "node:fs/shared-exists.js")?;
     let undefined = context.undefined();
@@ -1342,7 +1377,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "chmodSync", chmod_sync)?;
     set(context, module, "fchmod", fchmod)?;
     set(context, module, "fchmodSync", fchmod_sync)?;
-    let lstat_sync = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
+    let lstat_host = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
+    let lstat_factory = context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
+    let undefined = context.undefined();
+    let lstat_sync = context.call_rooted(lstat_factory, undefined, &[lstat_host])?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory = context.evaluate_script_rooted(
         ASYNC_LSTAT_API,
