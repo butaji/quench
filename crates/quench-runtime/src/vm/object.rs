@@ -4,13 +4,19 @@ use super::*;
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
+struct FieldCacheHit {
+    value: Value,
+    tier: u8,
+    depth: u16,
+}
+
 enum FieldCacheRead {
     Proxy,
     Generic,
     StringGeneric,
     Miss(usize),
     StringMiss { prototype: Value, site: usize },
-    Hit { value: Value, kind: u8 },
+    Hit(FieldCacheHit),
 }
 
 fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
@@ -318,25 +324,27 @@ impl FieldCacheSet {
         }
     }
     #[inline(always)]
-    pub(super) fn get(&self, shape: u32) -> Option<FieldCache> {
+    pub(super) fn get(&self, receiver: u32, holder: u32) -> Option<FieldCache> {
+        let key = field_cache_key(receiver, holder);
         if let Some(entries) = &self.overflow {
-            return entries.get(&shape).copied();
+            return entries.get(&key).copied();
         }
         self.entries[..usize::from(self.len)]
             .iter()
-            .find(|entry| entry.receiver == shape)
+            .find(|entry| entry.receiver == receiver && entry.holder == holder)
             .copied()
     }
     fn insert(&mut self, cache: FieldCache) {
+        let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&cache.receiver) {
-                entries.insert(cache.receiver, cache);
+            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
+                entries.insert(key, cache);
             }
             return;
         }
         if let Some(entry) = self.entries[..usize::from(self.len)]
             .iter_mut()
-            .find(|entry| entry.receiver == cache.receiver)
+            .find(|entry| entry.receiver == cache.receiver && entry.holder == cache.holder)
         {
             *entry = cache;
         } else if usize::from(self.len) < FIELD_MEGAMORPHIC_INLINE {
@@ -344,8 +352,12 @@ impl FieldCacheSet {
             self.len += 1;
         } else {
             let mut entries = FxHashMap::default();
-            entries.extend(self.entries.iter().map(|entry| (entry.receiver, *entry)));
-            entries.insert(cache.receiver, cache);
+            entries.extend(
+                self.entries
+                    .iter()
+                    .map(|entry| (field_cache_key(entry.receiver, entry.holder), *entry)),
+            );
+            entries.insert(key, cache);
             self.overflow = Some(Box::new(entries));
         }
     }
@@ -355,6 +367,11 @@ impl FieldCacheSet {
             .as_ref()
             .map_or(usize::from(self.len), |entries| entries.len())
     }
+}
+
+#[inline(always)]
+fn field_cache_key(receiver: u32, holder: u32) -> u64 {
+    (u64::from(receiver) << u32::BITS) | u64::from(holder)
 }
 impl<H: Host> Vm<H> {
     pub(super) fn object_pair(
@@ -449,7 +466,7 @@ impl<H: Host> Vm<H> {
                     if let Some(receiver) = self.shape_property_lookup(prototype, atom) {
                         let site = self.field_cache_index(site);
                         match self.cached_field_value(site, receiver) {
-                            Some((value, kind)) => FieldCacheRead::Hit { value, kind },
+                            Some(hit) => FieldCacheRead::Hit(hit),
                             None => FieldCacheRead::StringMiss { prototype, site },
                         }
                     } else {
@@ -463,8 +480,11 @@ impl<H: Host> Vm<H> {
                     return self.get_property(p, object, atom);
                 };
                 let site = self.field_cache_index(site);
-                match self.cached_field_value(site, receiver) {
-                    Some((value, kind)) => FieldCacheRead::Hit { value, kind },
+                match self
+                    .cached_field_value(site, receiver)
+                    .or_else(|| self.cached_holder_field_value(site, receiver, atom))
+                {
+                    Some(hit) => FieldCacheRead::Hit(hit),
                     None => FieldCacheRead::Miss(site),
                 }
             }
@@ -484,46 +504,80 @@ impl<H: Host> Vm<H> {
                 self.profile.field_cache(false);
                 self.get_string_field_miss(p, object, prototype, atom, site)
             }
-            FieldCacheRead::Hit { value, kind } => {
-                self.profile.field_cache_hit(usize::from(kind), 0);
-                Ok(value)
+            FieldCacheRead::Hit(hit) => {
+                self.profile
+                    .field_cache_hit(usize::from(hit.tier), hit.depth);
+                Ok(hit.value)
             }
         }
     }
 
     #[inline(always)]
-    fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<(Value, u8)> {
+    fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
         let receiver_shape = receiver.shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
-        if cache.receiver == receiver_shape
-            && self
-                .heap
-                .property_get(receiver, cache.slot as usize)
-                .is_some()
-        {
+        if cache.receiver == receiver_shape && cache.holder == NO_FIELD_HOLDER {
             // SAFETY: receiver shape and slot were recorded together for an
             // own data property on the cache miss path.
             let value = unsafe {
                 self.heap
                     .property_get_unchecked(receiver, cache.slot as usize)
             };
-            return Some((value, 0));
+            return Some(FieldCacheHit {
+                value,
+                tier: 0,
+                depth: 0,
+            });
         }
-        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
-            && self
-                .heap
-                .property_get(receiver, cache.slot as usize)
-                .is_some()
-        {
+        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape, NO_FIELD_HOLDER) {
             // SAFETY: the table is keyed by the immutable receiver shape.
             let value = unsafe {
                 self.heap
                     .property_get_unchecked(receiver, cache.slot as usize)
             };
-            return Some((value, 2));
+            return Some(FieldCacheHit {
+                value,
+                tier: 2,
+                depth: 0,
+            });
         }
         None
+    }
+
+    #[inline(always)]
+    fn cached_holder_field_value(
+        &self,
+        site: usize,
+        receiver: &Object,
+        atom: Atom,
+    ) -> Option<FieldCacheHit> {
+        let holder_value = receiver.proto;
+        let holder_cell = self.heap.get(holder_value)?;
+        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(site) };
+        let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
+        {
+            (cache, 0)
+        } else if let Some(cache) =
+            self.megamorphic_field_cache(site, receiver.shape(), holder.shape())
+        {
+            (cache, 2)
+        } else {
+            return None;
+        };
+        let value = unsafe {
+            // SAFETY: both immutable shapes and the property slot were recorded
+            // together after confirming an immediate-prototype data property.
+            self.heap
+                .property_get_unchecked(holder, cache.slot as usize)
+        };
+        Some(FieldCacheHit {
+            value,
+            tier,
+            depth: 1,
+        })
     }
 
     #[cold]
@@ -553,6 +607,7 @@ impl<H: Host> Vm<H> {
                     site,
                     FieldCache {
                         receiver: receiver.shape(),
+                        holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                     },
                 );
@@ -588,13 +643,48 @@ impl<H: Host> Vm<H> {
                     site,
                     FieldCache {
                         receiver: receiver.shape(),
+                        holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                     },
                 );
             }
             return Ok(value);
         }
+        if let Some((holder_shape, slot, value)) = self.immediate_prototype_data_field(object, atom)
+            && slot < FIELD_CACHE_SLOT_CAPACITY
+        {
+            self.record_field_cache(
+                site,
+                FieldCache {
+                    receiver: receiver.shape(),
+                    holder: holder_shape,
+                    slot: slot as u16,
+                },
+            );
+            return Ok(value);
+        }
         self.get_property(p, object, atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn immediate_prototype_data_field(
+        &self,
+        receiver_value: Value,
+        atom: Atom,
+    ) -> Option<(u32, usize, Value)> {
+        let holder_value = self.object_data(receiver_value)?.proto;
+        let holder_cell = self.heap.get(holder_value)?;
+        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        let holder_shape = holder.shape();
+        let slot = self.shape_slot(holder_shape, atom)?;
+        if self
+            .shape_attribute(holder_shape, slot)
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return None;
+        }
+        Some((holder_shape, slot, self.heap.property_get(holder, slot)?))
     }
     pub(super) fn set_property(
         &mut self,
@@ -1113,6 +1203,7 @@ impl<H: Host> Vm<H> {
                 site,
                 FieldCache {
                     receiver: data_shape,
+                    holder: NO_FIELD_HOLDER,
                     slot: slot as u16,
                 },
             );
@@ -1130,9 +1221,9 @@ impl<H: Host> Vm<H> {
         site: usize,
     ) -> bool {
         let cache = self.field_caches[site];
-        let (cache, kind) = if cache.receiver == shape {
+        let (cache, kind) = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
             (cache, 0)
-        } else if let Some(cache) = self.megamorphic_field_cache(site, shape) {
+        } else if let Some(cache) = self.megamorphic_field_cache(site, shape, NO_FIELD_HOLDER) {
             (cache, 2)
         } else {
             return false;
@@ -1290,7 +1381,9 @@ impl<H: Host> Vm<H> {
             return;
         }
         let entry = &mut self.field_caches[site];
-        if entry.receiver == cache.receiver || entry.receiver == u32::MAX {
+        if (entry.receiver == cache.receiver && entry.holder == cache.holder)
+            || entry.receiver == NO_FIELD_RECEIVER
+        {
             *entry = cache;
             return;
         }
@@ -1303,7 +1396,12 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn megamorphic_field_cache(&self, site: usize, shape: u32) -> Option<FieldCache> {
+    fn megamorphic_field_cache(
+        &self,
+        site: usize,
+        receiver: u32,
+        holder: u32,
+    ) -> Option<FieldCache> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
@@ -1313,7 +1411,7 @@ impl<H: Host> Vm<H> {
         unsafe {
             self.megamorphic_fields
                 .get_unchecked(table_index as usize)
-                .get(shape)
+                .get(receiver, holder)
         }
     }
     pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
