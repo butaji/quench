@@ -61,16 +61,13 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
 
 fn append_compacted_shape(
     shapes: &mut Vec<Shape>,
-    transitions: &mut FxHashMap<(u32, property_key::PropertyKey), u32>,
+    transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
     parent: u32,
     transition: ShapeTransition,
     storage_len: usize,
 ) -> u32 {
-    if let ShapeTransition::Add {
-        key: property_key::PropertyKey::String(_),
-        ..
-    } = transition
-        && let ShapeTransition::Add { key, .. } = transition
+    let cache_key = transition.cache_key();
+    if let Some(key) = cache_key
         && let Some(shape) = transitions.get(&(parent, key))
     {
         return *shape;
@@ -86,11 +83,7 @@ fn append_compacted_shape(
         storage_len,
         dictionary_trigger,
     ));
-    if let ShapeTransition::Add {
-        key: key @ property_key::PropertyKey::String(_),
-        ..
-    } = transition
-    {
+    if let Some(key) = cache_key {
         transitions.insert((parent, key), shape);
     }
     shape
@@ -100,7 +93,7 @@ fn rebuild_shape(
     old_shapes: &[Shape],
     old_shape: u32,
     shapes: &mut Vec<Shape>,
-    transitions: &mut FxHashMap<(u32, property_key::PropertyKey), u32>,
+    transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
 ) -> u32 {
     let mut parent = 0;
     for (slot, entry) in active_shape_attributes(old_shapes, old_shape)

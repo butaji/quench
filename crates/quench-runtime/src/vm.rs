@@ -339,6 +339,53 @@ enum ShapeTransition {
         trigger: DictionaryTrigger,
     },
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ShapeTransitionKey {
+    AddString(Atom),
+    Descriptor {
+        slot: u32,
+        attributes: CachedPropertyAttributes,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+struct CachedPropertyAttributes {
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+    accessor: bool,
+}
+impl ShapeTransition {
+    fn cache_key(self) -> Option<ShapeTransitionKey> {
+        match self {
+            Self::Add {
+                key: PropertyKey::String(atom),
+                ..
+            } => Some(ShapeTransitionKey::AddString(atom)),
+            // The transition table outlives individual properties. Never put
+            // accessor values in a key, where they would become strong roots.
+            Self::Descriptor { slot, attributes }
+                if attributes.getter.is_none() && attributes.setter.is_none() =>
+            {
+                Some(ShapeTransitionKey::Descriptor {
+                    slot,
+                    attributes: CachedPropertyAttributes {
+                        writable: attributes.writable,
+                        enumerable: attributes.enumerable,
+                        configurable: attributes.configurable,
+                        accessor: attributes.accessor,
+                    },
+                })
+            }
+            Self::Root
+            | Self::Add { .. }
+            | Self::Delete { .. }
+            | Self::Vacant
+            | Self::Descriptor { .. }
+            | Self::Dictionary { .. } => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
     PropertyCount,
@@ -572,7 +619,7 @@ pub(crate) struct Vm<H> {
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
-    transitions: FxHashMap<(u32, property_key::PropertyKey), u32>,
+    transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -978,7 +1025,7 @@ impl<H: Host> Vm<H> {
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * size_of::<((u32, property_key::PropertyKey), u32)>(),
+            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>(),
             self.field_caches.capacity() * size_of::<FieldCache>()
                 + self.megamorphic_field_indices.capacity() * size_of::<u32>()
                 + field_add_cache_bytes,

@@ -226,14 +226,12 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
-            let storage_len = self.shapes[shape as usize].storage_len;
-            let next_id = self.append_shape(
+            let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
                     attributes,
                 },
-                storage_len,
             );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
@@ -247,14 +245,12 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let storage_len = self.shapes[shape as usize].storage_len;
-            let next_id = self.append_shape(
+            let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
                     attributes: DEFAULT_PROPERTY_ATTRIBUTES,
                 },
-                storage_len,
             );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
@@ -1528,22 +1524,41 @@ impl<H: Host> Vm<H> {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
-        if matches!(key, PropertyKey::String(_)) {
-            if let Some(next) = self.transitions.get(&(shape, key)).copied() {
-                self.profile.shape_transition(true);
-                return next;
-            }
+        let transition = ShapeTransition::Add {
+            key,
+            slot: u32::try_from(self.shapes[shape as usize].storage_len)
+                .expect("object property index exceeds u32"),
+        };
+        self.append_cached_shape_transition(shape, transition)
+    }
+    fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+        let key = transition.cache_key();
+        if let Some(key) = key
+            && let Some(next) = self.transitions.get(&(shape, key)).copied()
+        {
+            self.profile.shape_transition(true);
+            return next;
         }
-        self.profile.shape_transition(false);
+        if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
+            self.profile.shape_transition(false);
+        }
         let storage_len = self.shapes[shape as usize].storage_len;
-        let next_storage_len = storage_len
-            .checked_add(1)
-            .filter(|length| u32::try_from(*length).is_ok())
-            .expect("object property storage exhausted");
-        let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
-        let mut next =
-            self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
-        if self.shapes[next as usize].dictionary_trigger.is_none()
+        let next_storage_len = match transition {
+            ShapeTransition::Add { .. } => storage_len
+                .checked_add(1)
+                .filter(|length| u32::try_from(*length).is_ok())
+                .expect("object property storage exhausted"),
+            ShapeTransition::Descriptor { .. } => storage_len,
+            ShapeTransition::Root
+            | ShapeTransition::Delete { .. }
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {
+                unreachable!("cached shape transitions are adds or descriptors")
+            }
+        };
+        let mut next = self.append_shape(shape, transition, next_storage_len);
+        if matches!(transition, ShapeTransition::Add { .. })
+            && self.shapes[next as usize].dictionary_trigger.is_none()
             && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
         {
             next = self.append_shape(
@@ -1556,7 +1571,7 @@ impl<H: Host> Vm<H> {
             self.profile
                 .dictionary_transition(DictionaryTrigger::PropertyCount);
         }
-        if matches!(key, PropertyKey::String(_)) {
+        if let Some(key) = key {
             self.transitions.insert((shape, key), next);
         }
         next
