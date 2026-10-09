@@ -94,7 +94,13 @@ fn main() -> ExitCode {
         eprintln!("error: --profile requires a profile name");
         return ExitCode::from(2);
     }
-    run_manifest(profile.map(String::as_str))
+    let timeout = args
+        .iter()
+        .position(|arg| arg == "--timeout-secs")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
+    run_manifest(profile.map(String::as_str), timeout)
 }
 
 fn print_help() {
@@ -106,6 +112,7 @@ fn print_help() {
     println!("  run-parallel --one PATH               run one fixture");
     println!("  run-parallel --all [options]         run the recursive fixture inventory");
     println!("  run-parallel --triage [options]        print passing triage fixtures");
+    println!("  --timeout-secs N                     isolate fixtures for N seconds (default 30)");
     println!();
     println!("options for --all:");
     println!("  --filter NAME       restrict fixtures by filename");
@@ -149,8 +156,8 @@ fn run_one(path: PathBuf) -> ExitCode {
     }
 }
 
-fn run_manifest(profile: Option<&str>) -> ExitCode {
-    quench_node_test::parallel_profile::run(profile, None, DEFAULT_CASE_TIMEOUT_SECS)
+fn run_manifest(profile: Option<&str>, timeout_secs: u64) -> ExitCode {
+    quench_node_test::parallel_profile::run(profile, None, timeout_secs)
 }
 
 fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
