@@ -28,6 +28,18 @@ if (url.domainToASCII.name !== 'domainToASCII' || url.domainToASCII.length !== 1
   throw new Error('domain IDNA helpers');
 }
 const parsed = url.parse('http://x.example/y?z=1');
+if (url.resolve('http://x.example/a/b', '../c?x=1') !== 'http://x.example/c?x=1') {
+  throw new Error('legacy URL resolve');
+}
+const resolvedObject = url.resolveObject('http://x.example/a/b', '../c?x=1');
+if (resolvedObject.hostname !== 'x.example' || resolvedObject.pathname !== '/c' ||
+  resolvedObject.query !== 'x=1') {
+  throw new Error('legacy URL resolveObject');
+}
+const pathBuffer = url.fileURLToPathBuffer(new url.URL('file:///tmp/hello%20world'));
+if (!Buffer.isBuffer(pathBuffer) || pathBuffer.toString() !== '/tmp/hello world') {
+  throw new Error('fileURLToPathBuffer conversion');
+}
 if (!(parsed.query === 'z=1')) throw new Error('query=' + parsed.query);
 const formatted = url.format({ protocol: 'http:', hostname: 'h', pathname: '/p' });
 if (formatted !== 'http://h/p') throw new Error('format=' + formatted);
