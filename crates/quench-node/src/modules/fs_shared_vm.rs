@@ -62,6 +62,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       read: (...readArgs) => Promise.resolve().then(() => {
         ensureOpen("read");
         let [buffer, offset = 0, length, position = null] = readArgs;
+        if (buffer === undefined && readArgs.length === 0) {
+          buffer = Buffer.alloc(16 * 1024);
+          length = buffer.length;
+        }
         if (!ArrayBuffer.isView(buffer) && buffer && typeof buffer === "object") {
           const options = buffer;
           buffer = options.buffer;
