@@ -35,9 +35,13 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       throw error;
     }
     const fd = openSync(...args);
+    let closePromise;
     const handle = {
       fd,
-      close: () => Promise.resolve().then(() => closeSync(fd)),
+      close: () => {
+        closePromise ||= Promise.resolve().then(() => closeSync(fd));
+        return closePromise;
+      },
       read: (...readArgs) => Promise.resolve().then(() => {
         let [buffer, offset = 0, length, position = null] = readArgs;
         if (!ArrayBuffer.isView(buffer) && buffer && typeof buffer === "object") {
