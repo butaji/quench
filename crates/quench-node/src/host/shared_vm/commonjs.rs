@@ -92,6 +92,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
+    // The process.getBuiltinModule bootstrap needs access to the host's
+    // builtin loader in both Script and Module goals. Keep it under a private
+    // global key so ESM does not acquire a user-visible global `require`.
+    let bootstrap_filename = std::env::current_dir()
+        .map_err(|error| RootedError::host(error.to_string()))?
+        .join("[eval]");
+    let bootstrap_require = create_require(context, &bootstrap_filename)?;
+    set(context, global, "\0quench:require", bootstrap_require)?;
+    context.release_root(bootstrap_require);
     if context.is_module()? {
         return Ok(());
     }
@@ -449,6 +458,10 @@ impl BuiltinModule {
     }
 }
 
+pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
+    BuiltinModule::from_specifier(specifier).is_some()
+}
+
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("process", BuiltinModule::Process),
     ("node:process", BuiltinModule::Process),
@@ -487,6 +500,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("timers/promises", BuiltinModule::TimersPromises),
     ("node:timers/promises", BuiltinModule::TimersPromises),
     ("node:test", BuiltinModule::NodeTest),
+    ("test", BuiltinModule::NodeTest),
     ("string_decoder", BuiltinModule::StringDecoder),
     ("node:string_decoder", BuiltinModule::StringDecoder),
     ("worker_threads", BuiltinModule::WorkerThreads),

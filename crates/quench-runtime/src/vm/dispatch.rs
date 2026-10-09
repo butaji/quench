@@ -234,6 +234,12 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.heap.alloc(Cell::String(source_name.into()));
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                    }
                     self.programs.set_import_meta(program, value);
                     value
                 };
