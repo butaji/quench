@@ -1,0 +1,40 @@
+{
+  "engine": "quench",
+  "failed": 0,
+  "families": {},
+  "outcomes": [
+    {
+      "outcome": "pass",
+      "path": "language/export/escaped-as-export-specifier.js",
+      "stage": "9"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/export/escaped-default.js",
+      "stage": "9"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/export/escaped-from.js",
+      "stage": "9"
+    }
+  ],
+  "passed": 3,
+  "provenance": {
+    "binary": "/workspace/quench/target/iteration/run-stages",
+    "host": "linux-x86_64",
+    "jobs": 4,
+    "source_dirty": true,
+    "source_revision": "bb954aaf3e9bc499067bfebd7f3e05c6a75de6bf",
+    "timeout_ms": 60000
+  },
+  "schema": 1,
+  "stages": {
+    "9": {
+      "failed": 0,
+      "passed": 3,
+      "total": 3
+    }
+  },
+  "total": 3
+}
