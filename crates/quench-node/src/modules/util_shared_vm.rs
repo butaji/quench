@@ -104,6 +104,30 @@ const UTIL: &str = quench_js_check::checked_js!(
     return render(value, 0);
   }
 
+  function format(first, ...args) {
+    if (typeof first !== "string") {
+      return [first, ...args].map((value) => typeof value === "string" ? value : inspect(value)).join(" ");
+    }
+    let index = 0;
+    const output = first.replace(/%[sdifjoOc%]/g, (token) => {
+      if (token === "%%") return "%";
+      if (index >= args.length) return token;
+      const value = args[index++];
+      switch (token) {
+        case "%s": return String(value);
+        case "%d": return String(Number(value));
+        case "%i": return String(Number.parseInt(value, 10));
+        case "%f": return String(Number.parseFloat(value));
+        case "%j": try { return JSON.stringify(value); } catch { return "[Circular]"; }
+        case "%o":
+        case "%O": return typeof value === "string" ? value : inspect(value);
+        case "%c": return "";
+        default: return token;
+      }
+    });
+    return output + args.slice(index).map((value) => typeof value === "string" ? value : inspect(value)).map((value) => ` ${value}`).join("");
+  }
+
   inspect.defaultOptions = {
     colors: false,
     depth: 2,
@@ -271,6 +295,7 @@ const UTIL: &str = quench_js_check::checked_js!(
     isDate: (value) => value instanceof Date,
   };
   return {
+    format,
     inspect,
     getCallSites,
     inherits,

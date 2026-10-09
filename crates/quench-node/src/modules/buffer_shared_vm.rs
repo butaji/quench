@@ -133,7 +133,9 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       const result = new Buffer(Math.trunc(size));
       if (typeof fill === "string") {
         const pattern = Buffer.from(fill, encoding);
-        if (pattern.length > 0) {
+        if (pattern.length === 1) {
+          Uint8Array.prototype.fill.call(result, pattern[0]);
+        } else if (pattern.length > 1) {
           for (let index = 0; index < result.length; index++) {
             result[index] = pattern[index % pattern.length];
           }
@@ -368,6 +370,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
         return Uint8Array.prototype.fill.call(this, value, offset, end);
       }
       if (bytes.length === 0) return Uint8Array.prototype.fill.call(this, 0, offset, end);
+      if (bytes.length === 1) return Uint8Array.prototype.fill.call(this, bytes[0], offset, end);
       for (let index = offset; index < end; index++) this[index] = bytes[(index - offset) % bytes.length];
       return this;
     }
