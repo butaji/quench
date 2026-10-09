@@ -365,6 +365,22 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
+            Op::MakeObjectLiteral => {
+                let site = i.object_site_index();
+                let shape = self.object_site_shape(p, site);
+                let window = i.register_window();
+                let start = usize::from(window.base);
+                let end = start + usize::from(window.count);
+                let prototype = self.object_proto;
+                let properties = &self.frames[f].registers[start..end];
+                let object = self
+                    .heap
+                    .alloc_object_with_properties(prototype, shape, properties);
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(object));
+                }
+                self.write(f, i.result_register(), object);
+            }
             Op::SuperConstArrayObject2 => {
                 if let Some(value) = self.execute_const_array_object2(p, f, i)? {
                     return Ok(StepResult::Return(value));

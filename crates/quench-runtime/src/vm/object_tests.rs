@@ -198,6 +198,64 @@ fn cached_field_reads_follow_in_place_writes() {
 }
 
 #[test]
+fn static_three_field_object_literals_share_the_shape_site() {
+    let source = r#"
+      var order = "";
+      function value(item) { order += item; return item * 3; }
+      function make() { return { first: value(1), second: value(2), third: value(3) }; }
+      var result = make();
+      print(order);
+      print(Object.keys(result).join(","));
+      print(result.first + "," + result.second + "," + result.third);
+      print(Object.getOwnPropertyDescriptor(result, "second").enumerable);
+    "#;
+    let expected = ["123", "first,second,third", "3,6,9", "true"];
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let program = compile(source, "static-object-literal.js").unwrap();
+        let function = program
+            .functions
+            .iter()
+            .find(|function| {
+                function
+                    .name
+                    .is_some_and(|name| &program.atoms[name as usize] == "make")
+            })
+            .unwrap();
+        let (pc, instruction) = function
+            .code
+            .iter()
+            .copied()
+            .enumerate()
+            .find(|(_, instruction)| instruction.op() == Op::MakeObjectLiteral)
+            .unwrap_or_else(|| panic!("{mode} compiler did not select the literal site"));
+        let window = instruction.register_window();
+        assert_eq!(window.count, 3, "{mode}");
+        let root_map = program.register_roots[function.register_root_offset as usize + pc];
+        for register in window.base..window.base + window.count {
+            assert_ne!(
+                root_map & (1u64 << register),
+                0,
+                "{mode}: register {register}"
+            );
+        }
+        assert_eq!(
+            program.object_sites[instruction.object_site_index()]
+                .atoms
+                .len(),
+            3
+        );
+
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), expected, "{mode}");
+    }
+}
+
+#[test]
 fn custom_prototype_fallback_tracks_changes_and_rejects_cycles() {
     let source = r#"
       var first = { value: 1 };
