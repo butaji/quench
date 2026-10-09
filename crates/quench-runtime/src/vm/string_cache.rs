@@ -29,12 +29,17 @@ impl<H: Host> Vm<H> {
             let mut text = left.clone();
             text.push_js_string(right);
             #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat_size(text.units().len());
+            self.profile.string_concat_size(text.len());
             text
         };
         #[cfg(feature = "profile-aggregate")]
         self.profile.concat_cache(false);
-        let value = self.intern_dynamic_value(text);
+        // The operand-pair cache above already avoids repeating this concat.
+        // Interning the result would hash every UTF-16 unit, which turns
+        // repeated `out += chunk` into quadratic work for a growing string.
+        // Primitive string identity is not observable, so store this rope
+        // directly in the heap.
+        let value = self.heap.alloc(Cell::String(text));
         let cache = self.string_concats.get_or_insert_with(|| {
             vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
         });
