@@ -23,6 +23,8 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     }
     const flags = settings.flags || "w";
     const autoClose = settings.autoClose !== false;
+    const fileHandle = settings.fd && typeof settings.fd === "object" &&
+      typeof settings.fd.write === "function" ? settings.fd : null;
     const suppliedFd = settings.fd !== undefined && settings.fd !== null;
     let phase = "opening";
     let fd = null;
@@ -37,6 +39,18 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
       if (!pending) return;
       try {
         const position = settings.start === undefined ? null : settings.start + stream.bytesWritten;
+        if (fileHandle) {
+          const result = typeof pending.chunk === "string"
+            ? (position === null
+              ? fileHandle.write(pending.chunk)
+              : fileHandle.write(pending.chunk, position))
+            : fileHandle.write(pending.chunk, 0, pending.chunk.byteLength, position);
+          Promise.resolve(result).then(({ bytesWritten }) => {
+            stream.bytesWritten += bytesWritten;
+            pending.callback();
+          }, pending.callback);
+          return;
+        }
         stream.bytesWritten += writeFile(fd, pending.chunk, position);
         pending.callback();
       } catch (error) {
@@ -49,6 +63,7 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
       const current = fd;
       fd = null;
       stream.fd = null;
+      if (fileHandle) return fileHandle.close();
       closeFile(current);
     };
 
@@ -83,16 +98,21 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
           pendingDestroy = { error, callback };
           return;
         }
-        try {
-          if (autoClose || explicitClose) closeDescriptor();
-          phase = "closed";
-          stream.closed = true;
-          callback(error);
-        } catch (failure) {
+        const complete = (failure) => {
           closeError = error || failure;
           phase = "closed";
           stream.closed = true;
           callback(closeError);
+        };
+        try {
+          const closing = autoClose || explicitClose ? closeDescriptor() : null;
+          if (closing && typeof closing.then === "function") {
+            closing.then(() => complete(), complete);
+            return;
+          }
+          complete();
+        } catch (failure) {
+          complete(failure);
         }
       },
     };
@@ -119,7 +139,7 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
 
     setImmediate(() => {
       try {
-        fd = suppliedFd ? settings.fd : openFile(path, flags);
+        fd = suppliedFd ? (fileHandle ? fileHandle.fd : settings.fd) : openFile(path, flags);
         stream.fd = fd;
         stream.pending = false;
         phase = "open";
@@ -137,16 +157,21 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
               { code: "ERR_STREAM_DESTROYED" },
             ));
           }
-          try {
-            closeDescriptor();
-            phase = "closed";
-            stream.closed = true;
-            pending.callback(pending.error);
-          } catch (error) {
-            closeError = pending.error || error;
+          const complete = (failure) => {
+            closeError = pending.error || failure;
             phase = "closed";
             stream.closed = true;
             pending.callback(closeError);
+          };
+          try {
+            const closing = closeDescriptor();
+            if (closing && typeof closing.then === "function") {
+              closing.then(() => complete(), complete);
+              return;
+            }
+            complete();
+          } catch (error) {
+            complete(error);
           }
           return;
         }
