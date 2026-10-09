@@ -36,13 +36,27 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
     }
     const fd = openSync(...args);
     let closePromise;
+    let closed = false;
+    const ensureOpen = (syscall) => {
+      if (closed) {
+        throw Object.assign(new Error(`EBADF: bad file descriptor, ${syscall}`), {
+          code: "EBADF",
+          syscall,
+        });
+      }
+    };
     const handle = {
       fd,
       close: () => {
-        closePromise ||= Promise.resolve().then(() => closeSync(fd));
+        closePromise ||= Promise.resolve().then(() => {
+          closeSync(fd);
+          closed = true;
+          handle.fd = -1;
+        });
         return closePromise;
       },
       read: (...readArgs) => Promise.resolve().then(() => {
+        ensureOpen("read");
         let [buffer, offset = 0, length, position = null] = readArgs;
         if (!ArrayBuffer.isView(buffer) && buffer && typeof buffer === "object") {
           const options = buffer;
@@ -60,6 +74,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         return { bytesRead, buffer };
       }),
       write: (...writeArgs) => Promise.resolve().then(() => {
+        ensureOpen("write");
         let [data, offset = 0, length, position = null] = writeArgs;
         let buffer = data;
         if (typeof data === 'string') {
@@ -83,6 +98,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         return { bytesWritten, buffer: data };
       }),
       writeFile: async (data, options) => {
+        ensureOpen("write");
         const settings = typeof options === 'string' ? { encoding: options } : (options || {});
         const encoding = settings.encoding || 'utf8';
         const signal = settings.signal;
@@ -125,15 +141,15 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         }
       },
       writev: (buffers, position) => Promise.resolve().then(() => ({
-        bytesWritten: writevSync(fd, buffers, position),
+        bytesWritten: (ensureOpen("writev"), writevSync(fd, buffers, position)),
         buffers,
       })),
       readv: (buffers, position) => Promise.resolve().then(() => ({
-        bytesRead: readvSync(fd, buffers, position),
+        bytesRead: (ensureOpen("readv"), readvSync(fd, buffers, position)),
         buffers,
       })),
-      stat: (...statArgs) => Promise.resolve().then(() => fstatSync(fd, ...statArgs)),
-      chmod: (...chmodArgs) => Promise.resolve().then(() => fchmodSync(fd, ...chmodArgs)),
+      stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fstatSync(fd, ...statArgs))),
+      chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fchmodSync(fd, ...chmodArgs))),
     };
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
