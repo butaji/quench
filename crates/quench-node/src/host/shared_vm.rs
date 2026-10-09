@@ -18,6 +18,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processGeteuid" (0) => crate::modules::process_shared_vm::geteuid,
         method "processGetgid" (0) => crate::modules::process_shared_vm::getgid,
         method "processGetegid" (0) => crate::modules::process_shared_vm::getegid,
+        method "processHrtimeNow" (0) => crate::modules::process_shared_vm::hrtime_now,
         method "processChdir" (1) => crate::modules::process_shared_vm::chdir,
         method "processUmask" (0) => crate::modules::process_shared_vm::umask,
         method "nextTick" (1) => crate::modules::process_shared_vm::next_tick,
