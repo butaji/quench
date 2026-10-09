@@ -99,7 +99,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           error.code = 'ERR_INVALID_ARG_TYPE';
           throw error;
         }
-        await Promise.resolve();
+        await new Promise((resolve) => setImmediate(resolve));
         checkAbort();
         for (const chunk of chunks) {
           checkAbort();
