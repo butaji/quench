@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
                         return Ok(vm.heap.alloc(Cell::Iterator {
                             object: Self::empty_object(prototype),
                             source: data,
-                            next_method: None,
+                            next_method: Value::DELETED,
                             helper: None,
                             helper_running: false,
                             helper_started: false,

@@ -838,7 +838,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(prototype),
             source,
-            next_method: None,
+            next_method: Value::DELETED,
             helper: None,
             helper_running: false,
             helper_started: false,
@@ -884,7 +884,7 @@ impl<H: Host> Vm<H> {
             Ok(self.heap.alloc(Cell::Iterator {
                 object: Self::empty_object(self.iterator_proto),
                 source,
-                next_method: None,
+                next_method: Value::DELETED,
                 helper: None,
                 helper_running: false,
                 helper_started: false,
@@ -989,7 +989,7 @@ impl<H: Host> Vm<H> {
         let wrapper = self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(prototype),
             source,
-            next_method: Some(next_method),
+            next_method,
             helper: None,
             helper_running: false,
             helper_started: false,
@@ -1023,7 +1023,7 @@ impl<H: Host> Vm<H> {
         let iterator = self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(prototype),
             source,
-            next_method: None,
+            next_method: Value::DELETED,
             helper: Some(Box::new(helper)),
             helper_running: false,
             helper_started: false,
@@ -1037,9 +1037,9 @@ impl<H: Host> Vm<H> {
 
     fn iterator_record(&mut self, p: &ResidualProgram, iterator: Value) -> Result<Value, JsError> {
         match self.heap.get(iterator) {
-            Some(Cell::Iterator {
-                next_method: None, ..
-            }) => self.iterator_get_direct(p, iterator),
+            Some(Cell::Iterator { next_method, .. }) if next_method.is_deleted() => {
+                self.iterator_get_direct(p, iterator)
+            }
             _ => Ok(iterator),
         }
     }
@@ -1197,12 +1197,13 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::Iterator {
             source: iterator,
             kind: IteratorKind::Protocol,
-            next_method: Some(next),
+            next_method,
             done: false,
             ..
         }) = self.heap.get(source)
+            && !next_method.is_deleted()
         {
-            return self.iterator_step_with_method(p, *iterator, *next, args);
+            return self.iterator_step_with_method(p, *iterator, *next_method, args);
         }
         let source_root = self.heap.root(source);
         let next_atom = self.intern_atom("next");
@@ -2602,7 +2603,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(self.async_from_sync_iterator_proto),
             source: iterator,
-            next_method: None,
+            next_method: Value::DELETED,
             helper: None,
             helper_running: false,
             helper_started: false,
@@ -2648,7 +2649,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Self::empty_object(self.array_iterator_proto),
             source,
-            next_method: None,
+            next_method: Value::DELETED,
             helper: None,
             helper_running: false,
             helper_started: false,
@@ -2906,10 +2907,9 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::Protocol {
                 let next_method = match vm.heap.get(this) {
-                    Some(Cell::Iterator {
-                        next_method: Some(next_method),
-                        ..
-                    }) => *next_method,
+                    Some(Cell::Iterator { next_method, .. }) if !next_method.is_deleted() => {
+                        *next_method
+                    }
                     _ => {
                         return Err(vm.type_error(p, "iterator next method is not callable".into()));
                     }

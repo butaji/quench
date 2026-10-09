@@ -17,7 +17,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         binding_site_pc: None,
         function: 0,
         slots: vec![Value::number(1.0), kept].into_boxed_slice().into(),
-        dynamic_bindings: Vec::new().into(),
+        dynamic_bindings: Box::new(Vec::new().into()),
         with_objects: Box::default(),
     });
     let slots = heap.clone_environment_slots(owner, &[0]).unwrap();
@@ -28,7 +28,7 @@ fn scope_slot_owners_survive_collection_and_release() {
         binding_site_pc: None,
         function: 0,
         slots,
-        dynamic_bindings: Vec::new().into(),
+        dynamic_bindings: Box::new(Vec::new().into()),
         with_objects: Box::default(),
     });
     *heap.environment_slot_mut(view, 0).unwrap() = Value::number(2.0);
@@ -128,7 +128,7 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {
         object: plain_object(),
-        entries: WeakMapEntries::default(),
+        entries: Box::default(),
     });
     let key = heap.alloc(Cell::Object(plain_object()));
     let value = heap.alloc(Cell::String("value".into()));
@@ -303,6 +303,54 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     assert!(heap.live_payload_bytes()[CellKind::Object as usize] > 0);
 }
 
+#[cfg(feature = "profile-memory")]
+#[test]
+fn boxed_cold_cell_payloads_are_included_in_live_memory_totals() {
+    let mut heap = Heap::new();
+    heap.alloc(Cell::WeakMap {
+        object: plain_object(),
+        entries: Box::default(),
+    });
+    heap.alloc(Cell::Environment {
+        parent: Value::NULL,
+        program: None,
+        root_eval_scope: false,
+        binding_site_pc: None,
+        function: 0,
+        slots: Vec::new().into_boxed_slice().into(),
+        dynamic_bindings: Box::new(Vec::new().into()),
+        with_objects: Box::default(),
+    });
+    heap.alloc(Cell::RegExp {
+        object: Box::new(plain_object()),
+        source: Box::new("pattern".into()),
+        flags: String::new(),
+        matcher: Rc::new(quench_regexp::Regex::with_flags("pattern", Default::default()).unwrap()),
+        legacy_constructor: RegExpLegacyOwner::Disabled(Value::NULL),
+    });
+    heap.alloc(Cell::TemporalDuration {
+        object: Box::new(plain_object()),
+        fields: Box::new([0.0; 10]),
+    });
+    heap.alloc(Cell::TemporalZonedDateTime {
+        object: Box::new(plain_object()),
+        epoch_nanoseconds: 0,
+        time_zone: Box::new("UTC".into()),
+        calendar: "iso8601".into(),
+    });
+
+    let bytes = heap.live_payload_bytes();
+    for kind in [
+        CellKind::WeakMap,
+        CellKind::Environment,
+        CellKind::RegExp,
+        CellKind::TemporalDuration,
+        CellKind::TemporalZonedDateTime,
+    ] {
+        assert!(bytes[kind as usize] > 0, "missing boxed cold-cell payload");
+    }
+}
+
 #[test]
 fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let mut heap = Heap::new();
@@ -352,7 +400,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         let weak_constructor = heap.weak_handle(constructor).unwrap();
         let regexp = heap.alloc(Cell::RegExp {
             object: Box::new(plain_object()),
-            source: "a".into(),
+            source: Box::new("a".into()),
             flags: String::new(),
             matcher: Rc::new(quench_regexp::Regex::with_flags("a", Default::default()).unwrap()),
             legacy_constructor: owner(constructor),
@@ -378,7 +426,7 @@ fn resolved_binding_reference_keeps_its_slot_owner_alive() {
         binding_site_pc: None,
         function: 0,
         slots: vec![value].into_boxed_slice().into(),
-        dynamic_bindings: Vec::new().into(),
+        dynamic_bindings: Box::new(Vec::new().into()),
         with_objects: Box::default(),
     });
     let reference = heap.alloc(Cell::BindingReference {
@@ -404,7 +452,7 @@ fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
     entries.insert(key, value);
     let map = heap.alloc(Cell::WeakMap {
         object: plain_object(),
-        entries,
+        entries: Box::new(entries),
     });
     heap.collect([key]);
     assert!(heap.get(key).is_some());
@@ -422,7 +470,7 @@ fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
     entries.insert(right, left);
     let map = heap.alloc(Cell::WeakMap {
         object: plain_object(),
-        entries,
+        entries: Box::new(entries),
     });
     heap.collect([map]);
     assert!(heap.get(map).is_some());
@@ -444,13 +492,13 @@ fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
         inner_entries.insert(inner_key, value);
         let inner = heap.alloc(Cell::WeakMap {
             object: plain_object(),
-            entries: inner_entries,
+            entries: Box::new(inner_entries),
         });
         let mut outer_entries = WeakMapEntries::default();
         outer_entries.insert(outer_key, inner);
         let outer = heap.alloc(Cell::WeakMap {
             object: plain_object(),
-            entries: outer_entries,
+            entries: Box::new(outer_entries),
         });
         let roots = if keys_first {
             [outer, outer_key, inner_key]
@@ -481,7 +529,7 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
         entries.insert(key, value);
         maps.push(heap.alloc(Cell::WeakMap {
             object: plain_object(),
-            entries,
+            entries: Box::new(entries),
         }));
         values.push(value);
     }

@@ -366,7 +366,7 @@ impl<H: Host> Vm<H> {
             binding_site_pc: None,
             function: 0,
             slots: values.into_boxed_slice().into(),
-            dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
+            dynamic_bindings: Box::new(crate::heap::EnvironmentBindings::Owned(vec![])),
             with_objects: Box::default(),
         });
         let root = self.root(environment);
