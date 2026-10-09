@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -37,6 +37,24 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     error.code = 'ERR_INVALID_ARG_TYPE';
     throw error;
   };
+  const validateOwner = (name, value) => {
+    if (typeof value !== 'number') {
+      const received = value === null || value === undefined
+        ? ` Received ${value}`
+        : typeof value === 'object'
+          ? ` Received an instance of ${Array.isArray(value) ? 'Array' : 'Object'}`
+          : ` Received type ${typeof value} (${String(value)})`;
+      const error = new TypeError(`The "${name}" argument must be of type number.${received}`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(value) || !Number.isFinite(value) || value < -1 || value > 0xFFFFFFFF) {
+      const range = Number.isInteger(value) ? '>= -1 && <= 4294967295' : 'an integer';
+      const error = new RangeError(`The value of "${name}" is out of range. It must be ${range}. Received ${String(value)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+  };
   const writeBytes = (data, options) => {
     const encoding = typeof options === 'string' ? options : options?.encoding;
     if (typeof data === 'string') return Buffer.from(data, encoding);
@@ -67,14 +85,25 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     return mode;
   };
   const validateFd = (fd) => {
-    if (typeof fd === "number") return;
-    let received;
-    if (fd === null || fd === undefined) received = ` Received ${fd}`;
-    else if (typeof fd === "object") received = ` Received an instance of ${Array.isArray(fd) ? "Array" : "Object"}`;
-    else received = ` Received type ${typeof fd} (${typeof fd === "string" ? `'${fd}'` : String(fd)})`;
-    const error = new TypeError(`The "fd" argument must be of type number.${received}`);
-    error.code = "ERR_INVALID_ARG_TYPE";
-    throw error;
+    if (typeof fd !== "number") {
+      let received;
+      if (fd === null || fd === undefined) received = ` Received ${fd}`;
+      else if (typeof fd === "object") received = ` Received an instance of ${Array.isArray(fd) ? "Array" : "Object"}`;
+      else received = ` Received type ${typeof fd} (${typeof fd === "string" ? `'${fd}'` : String(fd)})`;
+      const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isInteger(fd)) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be an integer. Received ${String(fd)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (fd < 0 || fd > 0x7FFFFFFF) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${String(fd)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
   };
   const descriptorArgument = (path) =>
     typeof path === "number" ? path :
@@ -167,6 +196,24 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
     },
     unlinkSync(path) {
       return unlinkSync(normalizePath(path));
+    },
+    chownSync(path, uid, gid) {
+      validateRenamePath(path, 'path');
+      validateOwner('uid', uid);
+      validateOwner('gid', gid);
+      return chownSync(normalizePath(path), uid, gid);
+    },
+    lchownSync(path, uid, gid) {
+      validateRenamePath(path, 'path');
+      validateOwner('uid', uid);
+      validateOwner('gid', gid);
+      return lchownSync(normalizePath(path), uid, gid);
+    },
+    fchownSync(fd, uid, gid) {
+      validateFd(fd);
+      validateOwner('uid', uid);
+      validateOwner('gid', gid);
+      return fchownSync(fd, uid, gid);
     },
     writeFileSync(path, data, options) {
       const fd = descriptorArgument(path);
@@ -282,6 +329,9 @@ pub(crate) fn install(
     let symlink = context.host_function(crate::host::shared_vm::operation("fsSymlinkSync"))?;
     let rename = context.host_function(crate::host::shared_vm::operation("fsRenameSync"))?;
     let unlink = context.host_function(crate::host::shared_vm::operation("fsUnlinkSync"))?;
+    let chown = context.host_function(crate::host::shared_vm::operation("fsChownSync"))?;
+    let lchown = context.host_function(crate::host::shared_vm::operation("fsLchownSync"))?;
+    let fchown = context.host_function(crate::host::shared_vm::operation("fsFchownSync"))?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRmSync"))?;
     let write = context.host_function(crate::host::shared_vm::operation("fsWriteFileSync"))?;
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
@@ -303,6 +353,9 @@ pub(crate) fn install(
             symlink,
             rename,
             unlink,
+            chown,
+            lchown,
+            fchown,
             write,
             open,
             close,
@@ -319,6 +372,9 @@ pub(crate) fn install(
         ("symlinkSync", "symlinkSync"),
         ("renameSync", "renameSync"),
         ("unlinkSync", "unlinkSync"),
+        ("chownSync", "chownSync"),
+        ("lchownSync", "lchownSync"),
+        ("fchownSync", "fchownSync"),
         ("rmSync", "rmSync"),
         ("writeFileSync", "writeFileSync"),
         ("appendFileSync", "appendFileSync"),

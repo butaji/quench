@@ -1048,6 +1048,68 @@ const ASYNC_UNLINK_API: &str = r#"(unlinkSync) => {
   };
 }"#;
 
+const ASYNC_OWNER_API: &str = r#"(ownerSync, descriptor) => {
+  const validateOwner = (name, value) => {
+    if (typeof value !== 'number') {
+      const error = new TypeError(`The "${name}" argument must be of type number.`);
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(value) || !Number.isFinite(value) || value < -1 || value > 0xFFFFFFFF) {
+      const range = Number.isInteger(value) ? '>= -1 && <= 4294967295' : 'an integer';
+      const error = new RangeError(`The value of "${name}" is out of range. It must be ${range}. Received ${String(value)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+  };
+  const validateDescriptor = (fd) => {
+    if (typeof fd !== 'number') {
+      const error = new TypeError('The "fd" argument must be of type number');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    if (!Number.isInteger(fd)) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be an integer. Received ${String(fd)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    if (fd < 0 || fd > 0x7FFFFFFF) {
+      const error = new RangeError(`The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${String(fd)}`);
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+  };
+  return function owner(path, uid, gid, callback) {
+    if (descriptor) {
+      validateDescriptor(path);
+      validateOwner('uid', uid);
+      validateOwner('gid', gid);
+      if (typeof callback !== 'function') {
+        const error = new TypeError('The "cb" argument must be of type function');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+    } else {
+      if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+        const error = new TypeError(`The "path" argument must be of type string or an instance of Buffer or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+      validateOwner('uid', uid);
+      validateOwner('gid', gid);
+      if (typeof callback !== 'function') {
+        const error = new TypeError('The "cb" argument must be of type function');
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+    }
+    queueMicrotask(() => {
+      try { ownerSync(path, uid, gid); Reflect.apply(callback, undefined, [null]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
 const ASYNC_LSTAT_API: &str = r#"(lstatSync) => {
   return function lstat(path, options, callback) {
     if (typeof options === 'function') {
@@ -1382,6 +1444,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let unlink = context.call_rooted(unlink_factory, undefined, &[unlink_sync])?;
     set(context, module, "unlink", unlink)?;
+    for (name, sync_name, descriptor) in [
+        ("chown", "chownSync", false),
+        ("lchown", "lchownSync", false),
+        ("fchown", "fchownSync", true),
+    ] {
+        let owner_sync = get(context, module, sync_name)?;
+        let owner_factory = context.evaluate_script_rooted(
+            ASYNC_OWNER_API,
+            "node:fs/shared-async-owner.js",
+        )?;
+        let descriptor_value = context.boolean(descriptor);
+        let owner = context.call_rooted(
+            owner_factory,
+            undefined,
+            &[owner_sync, descriptor_value],
+        )?;
+        set(context, module, name, owner)?;
+    }
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let fstat_sync = get(context, module, "fstatSync")?;
@@ -1449,6 +1529,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let unlink_promise =
         context.call_rooted(unlink_promise_factory, undefined, &[unlink_sync])?;
     set(context, promises, "unlink", unlink_promise)?;
+    for (name, sync_name) in [("chown", "chownSync"), ("lchown", "lchownSync")] {
+        let owner_sync = get(context, module, sync_name)?;
+        let owner_promise_factory = context.evaluate_script_rooted(
+            "(ownerSync) => (...args) => Promise.resolve().then(() => ownerSync(...args))",
+            "node:fs/promises/shared-owner.js",
+        )?;
+        let owner_promise =
+            context.call_rooted(owner_promise_factory, undefined, &[owner_sync])?;
+        set(context, promises, name, owner_promise)?;
+    }
     let access_promise_factory = context.evaluate_script_rooted(
         "(accessSync) => (...args) => Promise.resolve().then(() => accessSync(...args))",
         "node:fs/shared-access-promise.js",
