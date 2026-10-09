@@ -9,9 +9,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(proxy).cloned()
+        let Some((target, handler)) = self.proxy_parts(proxy)
         else {
             return Err(JsError("proxy call target is invalid".into()));
         };
@@ -51,9 +49,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(proxy).cloned()
+        let Some((target, handler)) = self.proxy_parts(proxy)
         else {
             return Err(JsError("proxy construct target is invalid".into()));
         };

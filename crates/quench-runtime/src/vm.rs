@@ -621,6 +621,9 @@ pub(crate) struct Vm<H> {
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
     dynamic_atoms: Vec<JsString>,
+    // The last string matched by a RegExp, prepared once for repeated matching.
+    regexp_subject: Option<Rc<quench_regexp::Subject>>,
+    regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
     atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
@@ -1066,6 +1069,8 @@ impl<H: Host> Vm<H> {
         self.atom_collisions.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
+        self.regexp_subject = None;
+        self.regexp_matchers.clear();
         self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();

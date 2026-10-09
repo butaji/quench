@@ -461,6 +461,15 @@ impl<H: Host> Vm<H> {
         let slot = self.shape_slot(object.shape(), atom)?;
         self.heap.property_get(object, slot)
     }
+    /// The target and handler of a Proxy, copied out so callers need not clone its cell.
+    pub(super) fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
+        match self.heap.get(value)? {
+            Cell::Proxy {
+                target, handler, ..
+            } => Some((*target, *handler)),
+            _ => None,
+        }
+    }
     pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
         self.heap.get(value)?.object()
     }
@@ -801,9 +810,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(target).cloned()
+        if let Some((target, handler)) = self.proxy_parts(target)
         {
             return self.proxy_set(
                 p,
@@ -849,9 +856,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = self.heap.get(current).cloned()
+            if let Some((target, handler)) = self.proxy_parts(current)
             {
                 return self.proxy_set(
                     p,
@@ -1151,12 +1156,7 @@ impl<H: Host> Vm<H> {
                 return Ok(());
             }
         }
-        if let Some((target, handler)) = match self.heap.get(object) {
-            Some(Cell::Proxy {
-                target, handler, ..
-            }) => Some((*target, *handler)),
-            _ => None,
-        } {
+        if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
                     let extensible = self.object_is_extensible(p, &[object])?;
