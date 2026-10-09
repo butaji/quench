@@ -152,6 +152,21 @@
     "final_live_cells": 1466105,
     "peak_live_cells": 1562166,
     "peak_to_final_live_cells_ratio": 1.0655212280157287,
+    "completion_checkpoint_semantics": "The report does not force a final collection. The summary's final_live_cells_by_kind, final_live_cells, final_tracked_payload_bytes_by_kind, peak_live_cells_by_kind, and peak_live_cells fields are occupied-cell/high-water counts, not reachable-cell counts. estimated_unoccupied_slot_slack_at_completion counts slots already free-listed by the last GC and excludes garbage allocated afterward. Use per_collection[].live_survivors, live_counts_by_kind, and live_payload_bytes_by_kind for post-sweep reachability.",
+    "last_collection_survivors": 781054,
+    "last_collection_survivors_by_kind": {
+      "object": 512343,
+      "array": 256084,
+      "iterator": 16,
+      "weak_map": 4,
+      "function": 1518,
+      "environment": 182,
+      "string": 10868,
+      "symbol": 38,
+      "date": 1
+    },
+    "occupied_before_last_collection": 1562151,
+    "occupied_to_survivor_ratio_at_last_collection": 2.0000550538119004,
     "final_tracked_payload_bytes_by_kind": {
       "object": 216,
       "array": 37407632,
@@ -293,7 +308,7 @@
       }
     ],
     "estimated_unoccupied_slot_slack_at_completion": 96061,
-    "interpretation": "The large-set collections do reach about 2x survivors immediately before GC, as the policy predicts. But the Splay run ends with 1.466M live cells against 1.562M heap slots: peak/final live is only 1.066x, so the roughly 2x collection-boundary ratio does not translate into a 2x peak-to-final-live RSS model. The tracked payload-byte ratio is also about 1.062x. The large majority of slot capacity is required by the live set at this fixture endpoint; do not infer a 120 MB reducible headroom from this run."
+    "interpretation": "Collections 14–20 repeatedly retained about 781K cells after sweep: 512K objects, 256K arrays and 11K strings. This closely matches 8,000 live Splay payload trees, Splay nodes and runtime baseline; it does not show a large extra reachable set. The completion summary did not force collection, so its 1.466M occupied cells are not live-cell counts. The last collection had 1.562M occupied cells before GC and 781,054 survivors after GC (2.00x); the 150 MB slot arena reflects high-water occupancy and retained slot capacity. The Splay RSS may therefore include substantial GC/slot high-water cost. A prior Linux live/2 trial reduced RSS 54.4 MB while lowering Score 16.94%; use a measured M4 curve before changing pacing."
   },
   "per_collection": [
     {
