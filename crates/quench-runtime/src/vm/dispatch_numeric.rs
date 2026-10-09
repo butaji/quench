@@ -108,8 +108,20 @@ impl<H: Host> Vm<H> {
             let outcome = (|| -> Result<StepResult, JsError> {
                 match ins.op() {
                     Op::LoadLocalPlain => {
-                        let value = self.frames[frame].locals[ins.local_slot()];
+                        let local = ins.local_slot();
+                        let value = self.frames[frame].locals[local];
                         self.write(frame, ins.result_register(), value);
+                        if let Some(target) = ins.numeric_local_store_target()
+                            && let Some(integer) = value.as_int()
+                        {
+                            self.numeric_local_inc_store(
+                                frame,
+                                &mut pc,
+                                integer,
+                                target,
+                                local as u32,
+                            );
+                        }
                     }
                     Op::LoadLocal => {
                         let local = ins.local_slot();
