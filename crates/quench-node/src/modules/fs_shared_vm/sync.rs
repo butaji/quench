@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, decorateBigintStats) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, linkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, syncDescriptor, decorateBigintStats) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -359,6 +359,8 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       [offset, length] = validateReadWriteRange(bytes, offset, length);
       return writeDescriptor(fd, bytes.subarray(offset, offset + length), position);
     },
+    fsyncSync(fd) { validateFd(fd); return syncDescriptor(fd, false); },
+    fdatasyncSync(fd) { validateFd(fd); return syncDescriptor(fd, true); },
   };
 }"#;
 
@@ -386,6 +388,7 @@ pub(crate) fn install(
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
     let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
     let write_descriptor = context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
+    let sync_descriptor = context.host_function(crate::host::shared_vm::operation("fsSyncDescriptor"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
     let decorate_bigint_stats = context.evaluate_script_rooted(
         shared_vm::BIGINT_STATS_API,
@@ -416,6 +419,7 @@ pub(crate) fn install(
             fstat,
             read_descriptor,
             write_descriptor,
+            sync_descriptor,
             decorate_bigint_stats,
         ],
     )?;
@@ -442,6 +446,8 @@ pub(crate) fn install(
         ("fstatSync", "fstatSync"),
         ("readSync", "readSync"),
         ("writeSync", "writeSync"),
+        ("fsyncSync", "fsyncSync"),
+        ("fdatasyncSync", "fdatasyncSync"),
     ] {
         let key = context.string_rooted(method);
         let function = context.get_property_rooted(api, key)?;
@@ -583,6 +589,39 @@ pub(crate) fn write_descriptor(
     match result {
         Ok(written) => Ok(context.number(written as f64)),
         Err(error) => Err(super::stream_io_error(context, error, "write", &path)?),
+    }
+}
+
+pub(crate) fn sync_descriptor(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let data_only = args
+        .get(1)
+        .and_then(|value| context.rooted_value(*value))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let (result, path) = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let path = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .map(|descriptor| descriptor.path.clone())
+            .unwrap_or_default();
+        (state.fs.sync_descriptor(fd, data_only), path)
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(super::stream_io_error(
+            context,
+            error,
+            if data_only { "fdatasync" } else { "fsync" },
+            &path,
+        )?),
     }
 }
 

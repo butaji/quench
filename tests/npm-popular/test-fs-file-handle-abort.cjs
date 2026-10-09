@@ -9,6 +9,8 @@ const path = require('node:path');
   process.nextTick(() => controller.abort());
   try {
     await assert.rejects(handle.writeFile(Buffer.alloc(6 * 1024 * 1024), { signal: controller.signal }), { name: 'AbortError' });
+    await handle.sync();
+    await handle.datasync();
   } finally {
     await handle.close();
     assert.equal(handle.fd, -1);
