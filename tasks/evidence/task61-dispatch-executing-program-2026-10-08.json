@@ -1,0 +1,146 @@
+{
+  "schema": 1,
+  "task": "61",
+  "date": "2026-10-08",
+  "kind": "M4 dispatch frame-program lookup hoist",
+  "qualification_ready": false,
+  "decision": "Retain as a focused Stage B candidate. The paired instruction reduction is consistent across both loops, ordinary/strict JS call controls match baseline, and official Wasm return-call files pass; the cross-program control has one recorded trap-wording mismatch unrelated to the program-switch cases.",
+  "binding_time": {
+    "static": "The current frame program is invariant across ordinary bytecodes and same-program inline calls.",
+    "transition": "TailCall may replace the frame program; the cached ProgramId is refreshed only on that edge.",
+    "fallback": "Existing program lookup remains on cross-program TailCall."
+  },
+  "source": {
+    "base_revision": "b4b861d5fcb87d06ff7568b0c67552fab853774f",
+    "candidate_source_sha256": "a7d28f4b5d4e3afecf3b720c5da43f2dbbe67368aafc16d85a21bcd479620d49",
+    "candidate_binary_sha256": "6e5807544369d9dab11e4ae9a9979ede734f1b03e06e6ea0da3f219e44877187",
+    "baseline_binary_sha256": "903fef250c62c0cf273914063f0483edf28dbe00fd7db7855575a9329b888a3d",
+    "baseline_profile": "production, feature-free",
+    "candidate_profile": "production, feature-free",
+    "comparison_binary_segments": {
+      "__TEXT_delta_bytes": 0,
+      "__text_delta_bytes": -1856,
+      "measurement_command": "xcrun size -m <hash-pinned-binary>"
+    }
+  },
+  "host": {
+    "cpu": "Apple M4 ARM64",
+    "os": "macOS 26.5 build 25F71",
+    "kernel": "Darwin 25.5.0",
+    "tool": "/usr/bin/time -l"
+  },
+  "measurement": {
+    "method": "11 alternating Quench-only production binary pairs; retired instructions primary, elapsed time and maximum RSS secondary",
+    "command_template": "/usr/bin/time -l <hash-pinned-quench-node> <fixture.cjs>",
+    "fixtures": [
+      {
+        "path": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+        "sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e"
+      },
+      {
+        "path": "tasks/evidence/task61-dispatch-executing-program-cjs-call-10m-2026-10-08.cjs",
+        "sha256": "9ca4e9511fa1cce15a96ed1acaedf9f9757a8613392e9d4d3f8c46195b553ee9"
+      },
+      {
+        "path": "tasks/evidence/task61-dispatch-executing-program-tailcall-control-2026-10-08.cjs",
+        "sha256": "4372b9358ce6273205c28cc81b0fa5eef65c9a139dcf8b47728567f6f567fba6",
+        "role": "same-program ordinary and strict tail-call correctness control; output matches baseline"
+      }
+    ],
+    "raw_csv": {
+      "path": "tasks/evidence/task61-dispatch-executing-program-pairs-2026-10-08.csv",
+      "sha256": "be480e75b8f3976d631e90ab5a97de09bf38741261468f29d47c088f2c396efb",
+      "rows": 22
+    },
+    "bootstrap": {
+      "method": "paired percentile bootstrap of per-pair percent deltas and byte deltas; median statistic",
+      "replicates": 100000,
+      "seed": 610823
+    },
+    "summary": [
+      {
+        "fixture": "local_store",
+        "pairs": 11,
+        "baseline_instruction_median": 9972398775,
+        "candidate_instruction_median": 9772762068,
+        "instruction_delta_median_percent": -2.003202718203212,
+        "instruction_delta_95_percentile_interval": [
+          -2.0063050687547657,
+          -2.0007351346877478
+        ],
+        "candidate_lower_instruction_pairs": 11,
+        "elapsed_delta_median_percent": 0.0,
+        "max_rss_delta_median_bytes": -180224,
+        "max_rss_delta_95_percentile_interval_bytes": [
+          -376832,
+          32768
+        ],
+        "candidate_lower_rss_pairs": 7
+      },
+      {
+        "fixture": "cjs_call",
+        "pairs": 11,
+        "baseline_instruction_median": 32963586103,
+        "candidate_instruction_median": 32503431449,
+        "instruction_delta_median_percent": -1.3954295596896427,
+        "instruction_delta_95_percentile_interval": [
+          -1.3973633462406654,
+          -1.39416392995797
+        ],
+        "candidate_lower_instruction_pairs": 11,
+        "elapsed_delta_median_percent": -2.67857142857143,
+        "max_rss_delta_median_bytes": -180224,
+        "max_rss_delta_95_percentile_interval_bytes": [
+          -393216,
+          -98304
+        ],
+        "candidate_lower_rss_pairs": 10
+      }
+    ],
+    "pair_runner": {
+      "path": "tasks/evidence/task61-dispatch-executing-program-pairs.py",
+      "sha256": "c66de51db82ca46ca3762275ad3885c6d7176e7dc4722b90f64b22fb51a03a01"
+    }
+  },
+  "correctness": {
+    "same_program_js": {
+      "fixture": "tasks/evidence/task61-dispatch-executing-program-tailcall-control-2026-10-08.cjs",
+      "baseline_candidate_stdout": "1000 1250025000",
+      "result": "baseline and candidate match; ordinary calls plus 50,000 strict tail-recursive calls complete"
+    },
+    "runtime_tests": [
+      {
+        "command": "cargo test -p quench-runtime --features profile-memory --lib regression_captured_values_and_calls_preserve_runtime_binding_state",
+        "result": "passed (1 test)"
+      },
+      {
+        "command": "cargo test -p quench-runtime --features profile-memory --lib regression_stack_errors_preserve_realm_intrinsics_through_collection",
+        "result": "passed (1 test)"
+      },
+      {
+        "command": "cargo test -p quench-runtime --features profile-memory --lib regression_call_target_ast_preserves_source_and_abrupt_reference_order",
+        "result": "failed before dispatch in an existing lowering assertion at bytecode/instruction.rs:655 (AtomIndex vs LocalSlot); not attributable to this dispatch-only change"
+      }
+    ],
+    "wasm": {
+      "command": "WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report <report.json> crates/quench-wasm-test/testsuite/return_call.wast crates/quench-wasm-test/testsuite/return_call_indirect.wast tasks/evidence/task61-dispatch-executing-program-wasm-controls-2026-10-08.wast",
+      "official_return_call": "49/49 passed",
+      "official_return_call_indirect": "81/81 passed",
+      "cross_program_control": "61/62 passed; one null-call trap text mismatch: actual \"null function reference\", expected \"trap (null reference)\"; foreign-call/program-switch cases passed",
+      "raw_report": {
+        "path": "tasks/evidence/task61-dispatch-executing-program-wasm-2026-10-08.json",
+        "sha256": "c56a4d0d366a6f79aaa97f765bb8205d72c2cf1c270a51992263fab3d83a2ee3"
+      },
+      "control_fixture": {
+        "path": "tasks/evidence/task61-dispatch-executing-program-wasm-controls-2026-10-08.wast",
+        "sha256": "e3be6447f0018c2196faaa52214701d119611953e77157c7df654e591c2c23fa"
+      }
+    }
+  },
+  "limitations": [
+    "Only microloops measured; no V8-v7 fixture score gate yet.",
+    "M4 only; Linux evidence remains open.",
+    "RSS on the loops is diagnostic and does not prove the Task 61 per-fixture minimum-RSS outcome.",
+    "One focused call-target Rust test currently aborts in lowering before reaching the changed dispatch loop; the isolated dispatch tests and official Wasm return-call suites pass."
+  ]
+}

@@ -697,6 +697,7 @@ impl<H: Host> Vm<H> {
                 self.enter_stack()?
             };
             let initial_function = self.frames[frame].function as usize;
+            let mut executing_program = self.frames[frame].program;
             let mut pc = self.frames[frame].pc;
             if let Some(error) = initial_error {
                 pc = self.exception_handler_target(
@@ -713,7 +714,6 @@ impl<H: Host> Vm<H> {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);
                 }
-                let executing_program = self.frames[frame].program;
                 let function = self.frames[frame].function as usize;
                 let code = &p.functions[function].code;
                 let instruction_pc = pc;
@@ -766,13 +766,15 @@ impl<H: Host> Vm<H> {
                         pc = self.frames[frame].pc;
                     }
                     Ok(StepResult::TailCall) => {
-                        if self.frames[frame].program != executing_program {
-                            self.active_program = self.frames[frame].program;
+                        let replacement_program = self.frames[frame].program;
+                        if replacement_program != executing_program {
+                            self.active_program = replacement_program;
                             current_program =
-                                Some(self.programs.get(self.frames[frame].program).ok_or_else(
-                                    || JsError::validation("missing tail-call program".into()),
-                                )?);
+                                Some(self.programs.get(replacement_program).ok_or_else(|| {
+                                    JsError::validation("missing tail-call program".into())
+                                })?);
                         }
+                        executing_program = replacement_program;
                         pc = self.frames[frame].pc;
                         // The replacement frame publishes all callee roots before this back edge.
                         self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
