@@ -36,6 +36,7 @@ pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_state;
+pub(crate) mod readline_shared_vm;
 pub(crate) mod querystring_data;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod shared_event_loop;

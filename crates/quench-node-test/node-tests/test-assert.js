@@ -21,7 +21,7 @@ function expectAssertion(fn, operator) {
 assert(true);
 assert(1);
 assert('x');
-const errOk = expectAssertion(() => assert(false), 'ok');
+const errOk = expectAssertion(() => assert(false), '==');
 if (errOk.message.indexOf('falsy') === -1) throw new Error('ok message: ' + errOk.message);
 assert.ok(1, 'custom message');
 const errCustom = expectAssertion(() => assert.ok(0, 'boom message'));
@@ -29,7 +29,7 @@ if (errCustom.message !== 'boom message') throw new Error('custom: ' + errCustom
 
 // strict namespace / subpath identity
 if (strict.strictEqual !== assert.strictEqual) throw new Error('assert/strict mismatch');
-if (assert.strict !== assert) throw new Error('assert.strict !== assert');
+if (assert.strict === assert) throw new Error('assert.strict should be the strict assert function');
 assert.strict(true);
 expectAssertion(() => strict.strictEqual(1, '1'), 'strictEqual');
 
@@ -48,10 +48,10 @@ expectAssertion(() => assert.notStrictEqual(2, 2), 'notStrictEqual');
 assert.equal(1, '1');
 assert.equal(null, undefined);
 assert.equal(0, false);
-expectAssertion(() => assert.equal(1, 2), 'equal');
+expectAssertion(() => assert.equal(1, 2), '==');
 assert.notEqual(1, 2);
 assert.notEqual('a', 'b');
-expectAssertion(() => assert.notEqual(1, '1'), 'notEqual');
+expectAssertion(() => assert.notEqual(1, '1'), '!=');
 
 // deepStrictEqual / notDeepStrictEqual
 assert.deepStrictEqual({ a: 1, b: [1, 2, { c: 'x' }] }, { a: 1, b: [1, 2, { c: 'x' }] });

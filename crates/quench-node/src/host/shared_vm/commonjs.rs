@@ -170,6 +170,9 @@ pub(super) fn require(
         Some(BuiltinModule::Url) => {
             return cached_builtin(context, BuiltinModule::Url);
         }
+        Some(BuiltinModule::Readline) => {
+            return cached_builtin(context, BuiltinModule::Readline);
+        }
         Some(BuiltinModule::Querystring) => {
             return cached_builtin(context, BuiltinModule::Querystring);
         }
@@ -280,6 +283,7 @@ enum BuiltinModule {
     ChildProcess,
     Url,
     Querystring,
+    Readline,
     Events,
     Console,
     Tty,
@@ -323,6 +327,7 @@ impl BuiltinModule {
             Self::ChildProcess => Some("child_process"),
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
+            Self::Readline => Some("readline"),
             Self::Events => Some("events"),
             Self::Console => Some("console"),
             Self::Tty => Some("tty"),
@@ -394,6 +399,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:url", BuiltinModule::Url),
     ("querystring", BuiltinModule::Querystring),
     ("node:querystring", BuiltinModule::Querystring),
+    ("readline", BuiltinModule::Readline),
+    ("node:readline", BuiltinModule::Readline),
     ("events", BuiltinModule::Events),
     ("node:events", BuiltinModule::Events),
     ("console", BuiltinModule::Console),
@@ -488,6 +495,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
+        BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
