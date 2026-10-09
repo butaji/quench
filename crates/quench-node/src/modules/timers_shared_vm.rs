@@ -598,6 +598,7 @@ fn schedule_timer(
             "cannot initialize Timeout reference state",
         ));
     }
+    crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout")?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
     let callback_args = args
@@ -916,6 +917,7 @@ pub(crate) fn set_immediate(
             "cannot initialize Immediate reference state",
         ));
     }
+    crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Immediate")?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
     let args = args[1..]
