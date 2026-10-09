@@ -10,7 +10,132 @@ const EXPONENTIATION_ZERO: f64 = 0.0;
 const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
 const ODD_INTEGER_PARITY: f64 = 1.0;
+const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
 const LAST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::BitwiseAnd as u32;
+const NUMERIC_BINARY_OPERATOR_COUNT: usize =
+    (LAST_NUMERIC_BINARY_OPERATOR - FIRST_NUMERIC_BINARY_OPERATOR + 1) as usize;
+const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] = [
+    BinaryOperator::Addition,
+    BinaryOperator::Subtraction,
+    BinaryOperator::Multiplication,
+    BinaryOperator::Division,
+    BinaryOperator::Remainder,
+    BinaryOperator::Exponential,
+    BinaryOperator::ShiftLeft,
+    BinaryOperator::ShiftRight,
+    BinaryOperator::ShiftRightZeroFill,
+    BinaryOperator::BitwiseOR,
+    BinaryOperator::BitwiseXOR,
+    BinaryOperator::BitwiseAnd,
+];
+
+#[inline(always)]
+fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
+    let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
+    let operator = *NUMERIC_BINARY_OPERATORS.get(index)?;
+    (operator as u32 == immediate).then_some(operator)
+}
+
+#[inline(always)]
+fn is_numeric_binary_operator(immediate: u32) -> bool {
+    (FIRST_NUMERIC_BINARY_OPERATOR..=LAST_NUMERIC_BINARY_OPERATOR).contains(&immediate)
+}
+
+#[inline(always)]
+fn numeric_number_result(operator: BinaryOperator, left: f64, right: f64) -> f64 {
+    match operator {
+        BinaryOperator::Addition => left + right,
+        BinaryOperator::Subtraction => left - right,
+        BinaryOperator::Multiplication => left * right,
+        BinaryOperator::Division => left / right,
+        BinaryOperator::Remainder => left % right,
+        BinaryOperator::Exponential => exponentiate(left, right),
+        BinaryOperator::ShiftLeft => {
+            ((number_to_u32(left) as i32) << (number_to_u32(right) & 31)) as f64
+        }
+        BinaryOperator::ShiftRight => {
+            ((number_to_u32(left) as i32) >> (number_to_u32(right) & 31)) as f64
+        }
+        BinaryOperator::ShiftRightZeroFill => {
+            (number_to_u32(left) >> (number_to_u32(right) & 31)) as f64
+        }
+        BinaryOperator::BitwiseOR => {
+            ((number_to_u32(left) as i32) | (number_to_u32(right) as i32)) as f64
+        }
+        BinaryOperator::BitwiseXOR => {
+            ((number_to_u32(left) as i32) ^ (number_to_u32(right) as i32)) as f64
+        }
+        BinaryOperator::BitwiseAnd => {
+            ((number_to_u32(left) as i32) & (number_to_u32(right) as i32)) as f64
+        }
+        _ => unreachable!("numeric operator table only contains numeric operators"),
+    }
+}
+
+#[inline(always)]
+pub(super) fn numeric_integer_add_result(left: i32, right: i32) -> Value {
+    match left.checked_add(right) {
+        Some(sum) => Value::integer(sum),
+        None => Value::number(f64::from(left) + f64::from(right)),
+    }
+}
+
+#[inline(always)]
+pub(super) fn numeric_integer_multiply_result(left: i32, right: i32) -> Value {
+    match left.checked_mul(right) {
+        Some(0) if (left < 0) != (right < 0) => Value::number(-0.0),
+        Some(product) => Value::integer(product),
+        None => Value::number(f64::from(left) * f64::from(right)),
+    }
+}
+
+#[inline(always)]
+fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
+    Some(match operator {
+        BinaryOperator::Addition => numeric_integer_add_result(left, right),
+        BinaryOperator::Subtraction => left
+            .checked_sub(right)
+            .map(Value::integer)
+            .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right))),
+        BinaryOperator::Multiplication => numeric_integer_multiply_result(left, right),
+        BinaryOperator::Division => {
+            if right == 0 || (left == 0 && right < 0) {
+                return None;
+            }
+            let remainder = left.checked_rem(right)?;
+            if remainder != 0 {
+                return None;
+            }
+            Value::integer(left.checked_div(right)?)
+        }
+        BinaryOperator::Remainder => {
+            if right == 0 {
+                return None;
+            }
+            let remainder = left.checked_rem(right)?;
+            if remainder == 0 && left < 0 {
+                Value::number(-0.0)
+            } else {
+                Value::integer(remainder)
+            }
+        }
+        BinaryOperator::Exponential => return None,
+        BinaryOperator::ShiftLeft => Value::integer(left.wrapping_shl((right as u32) & 31)),
+        BinaryOperator::ShiftRight => Value::integer(left >> ((right as u32) & 31)),
+        BinaryOperator::ShiftRightZeroFill => {
+            let result = (left as u32) >> ((right as u32) & 31);
+            if result <= i32::MAX as u32 {
+                Value::integer(result as i32)
+            } else {
+                Value::number(f64::from(result))
+            }
+        }
+        BinaryOperator::BitwiseOR => Value::integer(left | right),
+        BinaryOperator::BitwiseXOR => Value::integer(left ^ right),
+        BinaryOperator::BitwiseAnd => Value::integer(left & right),
+        _ => unreachable!("numeric operator table only contains numeric operators"),
+    })
+}
 
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -40,6 +165,12 @@ impl RelationalOperator {
             _ => false,
         }
     }
+
+    #[inline(always)]
+    fn compare_numbers(self, left: f64, right: f64) -> bool {
+        left.partial_cmp(&right)
+            .is_some_and(|ordering| self.matches(ordering))
+    }
 }
 
 pub(super) enum OperandCoercion {
@@ -49,6 +180,45 @@ pub(super) enum OperandCoercion {
 }
 
 impl<H: Host> Vm<H> {
+    #[inline(always)]
+    pub(super) fn record_binary_value_path(
+        &mut self,
+        operator: u32,
+        left: Value,
+        right: Value,
+        path: crate::profile::BinaryValuePath,
+    ) {
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.binary_value_path(
+            operator as usize,
+            left.profile_kind(),
+            right.profile_kind(),
+            path,
+        );
+        #[cfg(not(feature = "profile-aggregate"))]
+        let _ = (operator, left, right, path);
+    }
+
+    #[inline(always)]
+    pub(super) fn numeric_integer_binary(
+        &self,
+        operator: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<Value> {
+        if !is_numeric_binary_operator(operator) {
+            return None;
+        }
+        let (left, right) = Value::int_pair(left, right)?;
+        if operator == BinaryOperator::Addition as u32 {
+            return Some(numeric_integer_add_result(left, right));
+        }
+        if operator == BinaryOperator::Multiplication as u32 {
+            return Some(numeric_integer_multiply_result(left, right));
+        }
+        numeric_integer_result(numeric_binary_operator(operator)?, left, right)
+    }
+
     pub(super) fn call_native(
         &mut self,
         p: &ResidualProgram,
@@ -994,12 +1164,62 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        let numeric =
-            (BinaryOperator::Subtraction as u32..=BinaryOperator::BitwiseAnd as u32).contains(&op);
-        if numeric {
-            if left.as_number().is_some() && right.as_number().is_some() {
-                return self.binary_slow(p, op, left, right);
+        if is_numeric_binary_operator(op) {
+            if let Some(value) = self.numeric_integer_binary(op, left, right) {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::IntegerFastPath,
+                );
+                return Ok(value);
             }
+            let operator = numeric_binary_operator(op)
+                .expect("numeric operator range is represented in the operator table");
+            if let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::NumberFastPath,
+                );
+                return Ok(Value::number(numeric_number_result(
+                    operator,
+                    left_number,
+                    right_number,
+                )));
+            }
+            if operator == BinaryOperator::Addition {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::Fallback,
+                );
+                return self.with_coerced_operands(
+                    p,
+                    OperandCoercion::PrimitiveDefault,
+                    left,
+                    right,
+                    |vm, left, right| {
+                        if !vm.is_string(left)
+                            && !vm.is_string(right)
+                            && (matches!(vm.heap.get(left), Some(Cell::BigInt(_)))
+                                || matches!(vm.heap.get(right), Some(Cell::BigInt(_))))
+                        {
+                            vm.binary_bigint(p, op, left, right)
+                        } else {
+                            vm.binary_slow(p, op, left, right)
+                        }
+                    },
+                );
+            }
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::Fallback,
+            );
             return self.with_coerced_operands(
                 p,
                 OperandCoercion::Numeric,
@@ -1017,37 +1237,35 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(operator) = RelationalOperator::from_immediate(op) {
-            let result = self.compare_relational(p, operator, left, right)?;
-            return Ok(Self::integrity_bool(result));
-        }
-        if op == BinaryOperator::Addition as u32 {
-            if let Some((a, b)) = Value::int_pair(left, right) {
-                return Ok(a
-                    .checked_add(b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number(a as f64 + b as f64)));
+            if let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::NumberFastPath,
+                );
+                return Ok(Self::integrity_bool(
+                    operator.compare_numbers(left_number, right_number),
+                ));
             }
-            return self.with_coerced_operands(
-                p,
-                OperandCoercion::PrimitiveDefault,
+            self.record_binary_value_path(
+                op,
                 left,
                 right,
-                |vm, left, right| {
-                    if !vm.is_string(left)
-                        && !vm.is_string(right)
-                        && (matches!(vm.heap.get(left), Some(Cell::BigInt(_)))
-                            || matches!(vm.heap.get(right), Some(Cell::BigInt(_))))
-                    {
-                        vm.binary_bigint(p, op, left, right)
-                    } else {
-                        vm.binary_slow(p, op, left, right)
-                    }
-                },
+                crate::profile::BinaryValuePath::Fallback,
             );
+            let result = self.compare_relational(p, operator, left, right)?;
+            return Ok(Self::integrity_bool(result));
         }
         if op <= BinaryOperator::StrictInequality as u32
             && let Some((a, b)) = Value::int_pair(left, right)
         {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
             return Ok(Self::integrity_bool(
                 if op == BinaryOperator::Equality as u32
                     || op == BinaryOperator::StrictEquality as u32
@@ -1058,6 +1276,27 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
+        if op <= BinaryOperator::StrictInequality as u32
+            && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
+        {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::NumberFastPath,
+            );
+            let equal = a == b;
+            return Ok(Self::integrity_bool(
+                if op == BinaryOperator::Equality as u32
+                    || op == BinaryOperator::StrictEquality as u32
+                {
+                    equal
+                } else {
+                    !equal
+                },
+            ));
+        }
+        self.record_binary_value_path(op, left, right, crate::profile::BinaryValuePath::Fallback);
         self.binary_slow(p, op, left, right)
     }
 
@@ -1165,66 +1404,10 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
-        if op <= LAST_NUMERIC_BINARY_OPERATOR
+        if let Some(operator) = numeric_binary_operator(op)
             && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
         {
-            return Ok(match op {
-                0 | 2 => {
-                    if a == b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                1 | 3 => {
-                    if a != b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                4 => {
-                    if a < b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                5 => {
-                    if a <= b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                6 => {
-                    if a > b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                7 => {
-                    if a >= b {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    }
-                }
-                8 => Value::number(a + b),
-                9 => Value::number(a - b),
-                10 => Value::number(a * b),
-                11 => Value::number(a / b),
-                12 => Value::number(a % b),
-                13 => Value::number(exponentiate(a, b)),
-                14 => Value::number(((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64),
-                15 => Value::number(((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64),
-                16 => Value::number((number_to_u32(a) >> (number_to_u32(b) & 31)) as f64),
-                17 => Value::number(((number_to_u32(a) as i32) | (number_to_u32(b) as i32)) as f64),
-                18 => Value::number(((number_to_u32(a) as i32) ^ (number_to_u32(b) as i32)) as f64),
-                19 => Value::number(((number_to_u32(a) as i32) & (number_to_u32(b) as i32)) as f64),
-                _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
-            });
+            return Ok(Value::number(numeric_number_result(operator, a, b)));
         }
         if op == 8 && (self.is_string(left) || self.is_string(right)) {
             if let Some(value) = self.intern_dynamic_concat(left, right) {
@@ -1264,6 +1447,12 @@ impl<H: Host> Vm<H> {
         if op <= 7
             && let Some((a, b)) = Value::int_pair(left, right)
         {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
             return Ok(match op {
                 0 | 2 => a == b,
                 1 | 3 => a != b,
@@ -1286,21 +1475,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<f64, JsError> {
         let a = self.to_number(p, left)?;
         let b = self.to_number(p, right)?;
-        Ok(match op {
-            8 => a + b,
-            9 => a - b,
-            10 => a * b,
-            11 => a / b,
-            12 => a % b,
-            13 => exponentiate(a, b),
-            14 => ((number_to_u32(a) as i32) << (number_to_u32(b) & 31)) as f64,
-            15 => ((number_to_u32(a) as i32) >> (number_to_u32(b) & 31)) as f64,
-            16 => (number_to_u32(a) >> (number_to_u32(b) & 31)) as f64,
-            17 => ((number_to_u32(a) as i32) | (number_to_u32(b) as i32)) as f64,
-            18 => ((number_to_u32(a) as i32) ^ (number_to_u32(b) as i32)) as f64,
-            19 => ((number_to_u32(a) as i32) & (number_to_u32(b) as i32)) as f64,
-            _ => return Err(JsError(format!("unsupported binary operator {op}").into())),
-        })
+        let operator = numeric_binary_operator(op)
+            .ok_or_else(|| JsError(format!("unsupported binary operator {op}").into()))?;
+        Ok(numeric_number_result(operator, a, b))
     }
 
     pub(super) fn call_argument_list(

@@ -17,6 +17,21 @@ mod virtual_opcode;
 #[cfg(feature = "profile-aggregate")]
 const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as usize + 1;
 
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(crate) enum BinaryValuePath {
+    Fallback,
+    IntegerFastPath,
+    NumberFastPath,
+}
+
+#[cfg(feature = "profile-aggregate")]
+impl BinaryValuePath {
+    const COUNT: usize = Self::NumberFastPath as usize + 1;
+    const NAMES: [&'static str; Self::COUNT] =
+        ["fallback", "integer_fast_path", "number_fast_path"];
+}
+
 #[cfg(feature = "profile-aggregate")]
 #[derive(Default)]
 pub(crate) struct Profile {
@@ -60,6 +75,8 @@ pub(crate) struct Profile {
     pub operand_tags: [u64; crate::bytecode::OperandKind::COUNT],
     pub binary_ops: [u64; BINARY_OPERATOR_COUNT],
     pub binary_operand_modes: Vec<u64>,
+    pub binary_value_paths: [[[[u64; BinaryValuePath::COUNT]; crate::value::ProfileKind::COUNT];
+        crate::value::ProfileKind::COUNT]; BINARY_OPERATOR_COUNT],
     pub method_argc: [u64; 9],
     pub call_sources: [u64; 5],
     pub call_targets: [u64; 3],
@@ -129,7 +146,10 @@ impl Profile {
         let site_total = self.site_counts.iter().flatten().sum::<u64>();
         assert_eq!(total, site_total, "dispatch opcode/site counters diverged");
         eprint!(
-            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"counts\":{{"
+            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"binary_value_paths\":{{\"operator_order\":\"oxc_ast::ast::BinaryOperator discriminant\",\"value_tag_order\":{:?},\"path_order\":{:?},\"counts\":{:?}}},\"counts\":{{",
+            crate::value::ProfileKind::NAMES,
+            BinaryValuePath::NAMES,
+            self.binary_value_paths,
         );
         for opcode in 0..crate::bytecode::Op::COUNT {
             if opcode != 0 {
@@ -297,6 +317,18 @@ impl Profile {
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = (op, left, right);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
+    pub fn binary_value_path(
+        &mut self,
+        op: usize,
+        left: crate::value::ProfileKind,
+        right: crate::value::ProfileKind,
+        path: BinaryValuePath,
+    ) {
+        self.binary_value_paths[op][left as usize][right as usize][path as usize] += 1;
     }
 
     #[inline(always)]
