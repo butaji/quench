@@ -173,6 +173,9 @@ pub(super) fn require(
         Some(BuiltinModule::Readline) => {
             return cached_builtin(context, BuiltinModule::Readline);
         }
+        Some(BuiltinModule::StreamConsumers) => {
+            return cached_builtin(context, BuiltinModule::StreamConsumers);
+        }
         Some(BuiltinModule::Querystring) => {
             return cached_builtin(context, BuiltinModule::Querystring);
         }
@@ -284,6 +287,7 @@ enum BuiltinModule {
     Url,
     Querystring,
     Readline,
+    StreamConsumers,
     Events,
     Console,
     Tty,
@@ -328,6 +332,7 @@ impl BuiltinModule {
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
             Self::Readline => Some("readline"),
+            Self::StreamConsumers => Some("stream/consumers"),
             Self::Events => Some("events"),
             Self::Console => Some("console"),
             Self::Tty => Some("tty"),
@@ -382,6 +387,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:stream/promises", BuiltinModule::StreamPromises),
     ("stream/web", BuiltinModule::WebStreams),
     ("node:stream/web", BuiltinModule::WebStreams),
+    ("stream/consumers", BuiltinModule::StreamConsumers),
+    ("node:stream/consumers", BuiltinModule::StreamConsumers),
     ("timers", BuiltinModule::Timers),
     ("node:timers", BuiltinModule::Timers),
     ("timers/promises", BuiltinModule::TimersPromises),
@@ -496,6 +503,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
         BuiltinModule::Querystring => crate::modules::querystring_shared_vm::module(context),
         BuiltinModule::Readline => crate::modules::readline_shared_vm::module(context),
+        BuiltinModule::StreamConsumers => {
+            crate::modules::web_stream_consumers_shared_vm::module(context)
+        }
         BuiltinModule::Events => crate::modules::events_shared_vm::module(context),
         BuiltinModule::Console => crate::modules::console_shared_vm::module(context),
         BuiltinModule::Tty => crate::modules::tty_shared_vm::module(context),
@@ -513,7 +523,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "stateful builtin passed to generic shared module builder",
         )),
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
-        BuiltinModule::ChildProcess => context.object_rooted(),
+        BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
         // Fastify imports both alternatives at module initialization. Its
         // selected HTTP/1 path does not access these TLS-only exports.
         BuiltinModule::Https | BuiltinModule::Http2 => context.object_rooted(),
