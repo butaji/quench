@@ -1021,6 +1021,33 @@ const ASYNC_SYMLINK_API: &str = r#"(symlinkSync) => {
   };
 }"#;
 
+const ASYNC_LINK_API: &str = r#"(linkSync) => {
+  const validatePath = (path, name) => {
+    if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
+    const received = path === null || path === undefined
+      ? ` Received ${path}`
+      : typeof path === 'object'
+        ? ` Received an instance of ${Array.isArray(path) ? 'Array' : 'Object'}`
+        : ` Received type ${typeof path} (${String(path)})`;
+    const error = new TypeError(`The "${name}" argument must be of type string, Buffer, or URL.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  };
+  return function link(existingPath, newPath, callback) {
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "cb" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    validatePath(existingPath, 'existingPath');
+    validatePath(newPath, 'newPath');
+    queueMicrotask(() => {
+      try { linkSync(existingPath, newPath); Reflect.apply(callback, undefined, [null]); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); }
+    });
+  };
+}"#;
+
 const ASYNC_RENAME_API: &str = r#"(renameSync) => {
   const validatePath = (path, name) => {
     if (typeof path === 'string' || Buffer.isBuffer(path) || path instanceof URL) return;
@@ -1685,6 +1712,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let symlink = context.call_rooted(symlink_factory, undefined, &[symlink_sync])?;
     set(context, module, "symlink", symlink)?;
+    let link_sync = get(context, module, "linkSync")?;
+    let link_factory = context.evaluate_script_rooted(ASYNC_LINK_API, "node:fs/shared-async-link.js")?;
+    let link = context.call_rooted(link_factory, undefined, &[link_sync])?;
+    set(context, module, "link", link)?;
     let rename_sync = get(context, module, "renameSync")?;
     let rename_factory = context.evaluate_script_rooted(
         ASYNC_RENAME_API,
@@ -1814,6 +1845,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let symlink_promise =
         context.call_rooted(symlink_promise_factory, undefined, &[symlink_sync])?;
     set(context, promises, "symlink", symlink_promise)?;
+    let link_sync = get(context, module, "linkSync")?;
+    let link_promise_factory = context.evaluate_script_rooted(
+        "(linkSync) => (...args) => Promise.resolve().then(() => linkSync(...args))",
+        "node:fs/promises/shared-link.js",
+    )?;
+    let link_promise =
+        context.call_rooted(link_promise_factory, undefined, &[link_sync])?;
+    set(context, promises, "link", link_promise)?;
     let rename_promise_factory = context.evaluate_script_rooted(
         "(renameSync) => (...args) => Promise.resolve().then(() => renameSync(...args))",
         "node:fs/promises/shared-rename.js",
