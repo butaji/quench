@@ -1,6 +1,8 @@
 //! One deadline and result protocol for isolated Node fixture processes.
 use std::{
+    collections::hash_map::DefaultHasher,
     fs,
+    hash::{Hash, Hasher},
     path::Path,
     process::{Command, ExitCode, Stdio},
     time::Duration,
@@ -158,6 +160,15 @@ fn observe_case_with_environment(
     if skip_flag_check {
         // The official Node test runner sets this after applying fixture Env.
         command.env("NODE_SKIP_FLAG_CHECK", "true");
+        // Node's common/tmpdir.js otherwise defaults every isolated fixture to
+        // the same `.tmp.0` path. Parallel workers then delete and recreate one
+        // another's files, making the recursive inventory nondeterministic.
+        let mut hasher = DefaultHasher::new();
+        fixture.hash(&mut hasher);
+        command.env(
+            "TEST_SERIAL_ID",
+            format!("{}-{:x}", std::process::id(), hasher.finish()),
+        );
     }
     observe_process_in(command, timeout, &directory, Some(&result))
 }
