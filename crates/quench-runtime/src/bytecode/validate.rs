@@ -154,58 +154,6 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
     })
 }
 
-fn numeric_local_store_sequence_valid(
-    function: &super::Function,
-    pc: usize,
-    load: super::WideInstruction,
-    target: super::NumericLocalStoreTarget,
-) -> bool {
-    if !matches!(load.op(), super::Op::LoadLocal | super::Op::LoadLocalPlain) {
-        return false;
-    }
-    let (update_pc, numeric_result) = if target.through_to_numeric {
-        let Some(packed) = function.code.get(pc + 1).copied() else {
-            return false;
-        };
-        let Some(numeric) = instruction_at(function, packed) else {
-            return false;
-        };
-        if numeric.op() != super::Op::ToNumeric
-            || numeric.register_b() != load.result_register()
-            || numeric.result_register() != load.result_register()
-        {
-            return false;
-        }
-        (pc + 2, numeric.result_register())
-    } else {
-        (pc + 1, load.result_register())
-    };
-    let Some(update_packed) = function.code.get(update_pc).copied() else {
-        return false;
-    };
-    let Some(update) = instruction_at(function, update_packed) else {
-        return false;
-    };
-    let store_pc = update_pc + 1;
-    let Some(store_packed) = function.code.get(store_pc).copied() else {
-        return false;
-    };
-    let Some(store) = instruction_at(function, store_packed) else {
-        return false;
-    };
-    update.op() == super::Op::IncDec
-        && update.register_b() == numeric_result
-        && update.boolean_flag() == Some(target.decrement)
-        && update.result_register() == target.register
-        && matches!(
-            store.op(),
-            super::Op::StoreLocal | super::Op::StoreLocalPlain
-        )
-        && store.register_a() == target.register
-        && store.optional_register_b().is_none()
-        && store.local_slot() == load.local_slot()
-}
-
 fn immediate_domains_in_bounds(
     instruction: super::WideInstruction,
     bounds: ValidationBounds,
@@ -622,22 +570,12 @@ impl ResidualProgram {
                     }
                 }
             }
-            for (pc, packed) in function.code.iter().enumerate() {
+            for packed in &function.code {
                 let Some(instruction) = instruction_at(function, *packed) else {
                     return Err(format!("function {index} wide instruction is invalid"));
                 };
                 if instruction.op().is_wide_marker() {
                     return Err(format!("function {index} contains nested wide instruction"));
-                }
-                if instruction.op().field_layout(super::InstructionField::B)
-                    == super::FieldLayout::NumericLocalTarget
-                    && let Some(target) = instruction.numeric_local_store_target()
-                    && (function.dispatch != super::DispatchClass::Numeric
-                        || !numeric_local_store_sequence_valid(function, pc, instruction, target))
-                {
-                    return Err(format!(
-                        "function {index} at {pc} has an invalid numeric local update fusion"
-                    ));
                 }
                 if matches!(
                     instruction.op(),
@@ -672,10 +610,8 @@ impl ResidualProgram {
                             && ((instruction.op() == super::Op::StoreLocal
                                 && u16::try_from(slot)
                                     .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
-                                || matches!(
-                                    instruction.op(),
-                                    super::Op::LoadLocal | super::Op::LoadLocalPlain
-                                ) && instruction.numeric_local_store_target().is_some()
+                                || instruction.op() == super::Op::LoadLocal
+                                    && instruction.numeric_local_store_target().is_some()
                                     && u16::try_from(slot)
                                         .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
                         || function.dispatch == super::DispatchClass::Numeric

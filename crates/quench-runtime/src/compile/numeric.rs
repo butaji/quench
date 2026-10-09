@@ -32,7 +32,6 @@ const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
 
 pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
     if let Some(live) = live {
-        fuse_local_inc_store_after_to_numeric(function, live);
         compact_binary_stores(function, live, NUMERIC_COMPACT_RULES, TRIPLE_COMPACT_RULES);
     }
     for pc in 0..function.code.len() {
@@ -45,28 +44,6 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
             && let Some(op) = specialized_numeric_op(instruction.binary_operator())
         {
             instruction.set_op(op);
-        }
-    }
-}
-
-fn fuse_local_inc_store_after_to_numeric(function: &mut Function, live: &[u64]) {
-    let protected = protected_positions(
-        &function.code,
-        &function.handlers,
-        function.parameter_end_pc,
-        &function.binding_sites,
-    );
-    for pc in 0..function.code.len() {
-        let after_numeric = function.code.get(pc..pc + 4).and_then(|code| {
-            let protected_interior = protected
-                .get(pc + 1..pc + 4)
-                .is_none_or(|positions| positions.iter().any(|protected| *protected));
-            local_inc_store_after_to_numeric(code, live.get(pc + 4).copied(), protected_interior)
-        });
-        if let Some((target, numeric_result)) = after_numeric {
-            function.code[pc].set_result_register(numeric_result);
-            function.code[pc + 1].set_b(numeric_result);
-            function.code[pc].set_numeric_local_store_target(Some(target));
         }
     }
 }
@@ -191,45 +168,7 @@ fn local_inc_store(code: &[Instr]) -> Option<NumericLocalStoreTarget> {
     .then(|| NumericLocalStoreTarget {
         register: update.result_register(),
         decrement: update.boolean_flag() == Some(true),
-        through_to_numeric: false,
     })
-}
-
-fn local_inc_store_after_to_numeric(
-    code: &[Instr],
-    live_after: Option<u64>,
-    protected_interior: bool,
-) -> Option<(NumericLocalStoreTarget, u16)> {
-    let [load, numeric, update, store] = code else {
-        return None;
-    };
-    let load_result = load.result_register();
-    let numeric_result = numeric.result_register();
-    let load_result_is_dead = load_result == numeric_result
-        || usize::from(load_result) < u64::BITS as usize
-            && live_after.is_some_and(|live| live & (1 << load_result) == 0);
-    (load.op() == Op::LoadLocal
-        && numeric.op() == Op::ToNumeric
-        && numeric.register_b() == load_result
-        && update.op() == Op::IncDec
-        && update.register_b() == numeric_result
-        && update.boolean_flag().is_some()
-        && store.op() == Op::StoreLocal
-        && store.register_a() == update.result_register()
-        && store.optional_register_b().is_none()
-        && store.local_slot() == load.local_slot()
-        && load_result_is_dead
-        && !protected_interior)
-        .then(|| {
-            (
-                NumericLocalStoreTarget {
-                    register: update.result_register(),
-                    decrement: update.boolean_flag() == Some(true),
-                    through_to_numeric: true,
-                },
-                numeric_result,
-            )
-        })
 }
 
 #[cfg(test)]
@@ -249,7 +188,6 @@ mod tests {
             Some(NumericLocalStoreTarget {
                 register: 3,
                 decrement: false,
-                through_to_numeric: false,
             })
         );
         let mut mismatch = code;
@@ -262,35 +200,6 @@ mod tests {
             mismatch[1] = Instr::new(non_update, 0, 0, 0, 0);
             assert_eq!(local_inc_store(&mismatch), None);
         }
-    }
-
-    #[test]
-    fn local_update_fusion_retargets_a_dead_load_register() {
-        let code = [
-            Instr::new(Op::LoadLocal, 2, 0, 0, 4),
-            Instr::new(Op::ToNumeric, 5, 2, 0, 0),
-            Instr::new(Op::IncDec, 3, 5, 0, 0),
-            Instr::new(Op::StoreLocal, 3, 0, 0, 4),
-        ];
-        assert_eq!(
-            local_inc_store_after_to_numeric(&code, Some(1 << 5), false),
-            Some((
-                NumericLocalStoreTarget {
-                    register: 3,
-                    decrement: false,
-                    through_to_numeric: true,
-                },
-                5,
-            ))
-        );
-        assert_eq!(
-            local_inc_store_after_to_numeric(&code, Some(1 << 2), false),
-            None
-        );
-        assert_eq!(
-            local_inc_store_after_to_numeric(&code, Some(1 << 5), true),
-            None
-        );
     }
 
     #[test]
