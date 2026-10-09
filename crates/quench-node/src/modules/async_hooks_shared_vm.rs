@@ -256,6 +256,27 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     Ok(module)
 }
 
+/// Notify enabled JavaScript async hooks when the shared timer scheduler
+/// creates a Node timer resource. The emitter is installed with the
+/// async_hooks module and remains optional for programs that never load it.
+pub(crate) fn emit_init(
+    context: &mut NativeContext<'_, NodeHost>,
+    resource: RootId,
+    resource_type: &str,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let key = context.string_rooted("\0quench:async_hooks:emit_init");
+    let emitter = context.get_property_rooted(global, key)?;
+    if !context.is_callable_rooted(emitter)? {
+        return Ok(());
+    }
+    let resource_type = context.string_rooted(resource_type);
+    let undefined = context.undefined();
+    let result = context.call_rooted(emitter, undefined, &[resource, resource_type])?;
+    context.release_root(result);
+    Ok(())
+}
+
 pub(crate) fn initialize_resource(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
