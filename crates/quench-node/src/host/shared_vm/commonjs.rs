@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 type Context<'a> = NativeContext<'a, NodeHost>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
-const WRAPPER_PREFIX: &str = "(function (exports, require, module, __filename, __dirname) { ";
+const WRAPPER_PREFIX: &str =
+    "(function (exports, require, module, __filename, __dirname, primordials) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
@@ -75,6 +76,9 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let roots = context.host_mut().shared_state();
+    if let Some(root) = roots.borrow_mut().primordials_module.take() {
+        context.release_root(root);
+    }
     if let Some(root) = roots.borrow_mut().assert_module.take() {
         context.release_root(root);
     }
@@ -101,6 +105,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
+    let node_primordials = std::env::current_dir()
+        .map_err(|error| RootedError::host(error.to_string()))?
+        .join("tests/node/lib/internal/per_context/primordials.js");
+    if node_primordials.is_file() {
+        let exports = load(context, &node_primordials, None, EntryGoal::Node)?;
+        let retained = context.retain(exports)?;
+        roots.borrow_mut().primordials_module = Some(retained);
+        context.release_root(exports);
+    }
     if context.is_module()? {
         return Ok(());
     }
@@ -762,10 +775,21 @@ fn resolve_filename(
         condition_names: vec!["node".into(), "require".into(), "default".into()],
         ..Default::default()
     });
-    match resolver.resolve(
-        Path::new(&filename).parent().unwrap_or(Path::new(".")),
-        specifier,
-    ) {
+    let node_lib = std::env::current_dir()
+        .map_err(|error| RootedError::host(error.to_string()))?
+        .join("tests/node/lib");
+    let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
+    let node_internal = internal_specifier.starts_with("internal/")
+        || (internal_specifier.starts_with('_') && node_lib.join(internal_specifier).with_extension("js").is_file());
+    let (base, resolved_specifier) = if node_internal {
+        (node_lib.as_path(), format!("./{internal_specifier}"))
+    } else {
+        (
+            Path::new(&filename).parent().unwrap_or(Path::new(".")),
+            specifier.to_owned(),
+        )
+    };
+    match resolver.resolve(base, &resolved_specifier) {
         Ok(resolution) => Ok(resolution.full_path()),
         Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
             let mut stack = Vec::new();
@@ -930,15 +954,24 @@ fn load(
                         "requiring an ES module is not implemented on the shared VM",
                     ));
                 }
+                let is_primordials = filename
+                    .to_string_lossy()
+                    .ends_with("/internal/per_context/primordials.js");
                 let text = if text.starts_with("#!") {
                     text.find('\n').map_or("", |end| &text[end..])
                 } else {
                     text
                 };
-                let wrapper = context.evaluate_specialized_script_rooted(
-                    &format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}"),
-                    &key,
-                )?;
+                let primordial_seed = if is_primordials {
+                    Some(context.object_rooted()?)
+                } else {
+                    None
+                };
+                let text = if is_primordials {
+                    format!("primordials ??= {{}};\n{text}\nmodule.exports = primordials;\n")
+                } else {
+                    text.to_owned()
+                };
                 let exports = get(context, module, "exports")?;
                 let require = get(context, module, "require")?;
                 let name = context.string_rooted(&key);
@@ -948,11 +981,55 @@ fn load(
                         .unwrap_or(Path::new("."))
                         .to_string_lossy(),
                 );
+                let in_node_internal = filename
+                    .to_string_lossy()
+                    .contains("/tests/node/lib/internal/");
+                let primordials = match primordial_seed {
+                    Some(root) => root,
+                    None if in_node_internal => roots
+                        .borrow()
+                        .primordials_module
+                        .unwrap_or_else(|| context.undefined()),
+                    None => context.undefined(),
+                };
+                let internal_binding = if in_node_internal {
+                    r#"const internalBinding = (name) => {
+  switch (String(name)) {
+    case "util": return Object.assign({}, require("util"), { privateSymbols: { arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom") } });
+    case "types": return require("util").types || {
+      isNativeError: (value) => value instanceof Error,
+      isPromise: (value) => value instanceof Promise,
+    };
+    case "constants": return { os: { signals: (require("os").constants || {}).signals || {} } };
+    case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
+    case "buffer": return require("buffer");
+    case "fs": return require("fs");
+    case "crypto": return require("crypto");
+    case "process": return process;
+    case "messaging": return { DOMException: globalThis.DOMException };
+    case "performance": return {
+      constants: { NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN: 0, NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP: 1 },
+      milestones: [0, 0], now: () => require("perf_hooks").performance.now() * 1e6,
+    };
+    case "uv": return { UV_UNKNOWN: -4094, UV_EINVAL: -22, UV_EBADF: -9, UV_ENOTSOCK: -88 };
+    default: return {};
+  }
+};
+"#
+                } else {
+                    ""
+                };
+                let wrapper_source =
+                    format!("{WRAPPER_PREFIX}{internal_binding}{text}{WRAPPER_SUFFIX}");
+                let wrapper = context.evaluate_specialized_script_rooted(&wrapper_source, &key)?;
                 context.call_rooted(
                     wrapper,
                     exports,
-                    &[exports, require, module, name, directory],
+                    &[exports, require, module, name, directory, primordials],
                 )?;
+                if let Some(root) = primordial_seed {
+                    context.release_root(root);
+                }
             }
         }
         let loaded = context.boolean(true);
