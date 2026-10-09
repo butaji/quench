@@ -6,6 +6,51 @@ pub(super) enum TypedArrayElement {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
+        let (buffer, offset, byte_length) = match self.heap.get(value)? {
+            Cell::TypedArray {
+                buffer,
+                offset,
+                kind,
+                ..
+            } => (
+                *buffer,
+                *offset,
+                self.typed_array_length(value)?.checked_mul(kind.width())?,
+            ),
+            Cell::DataView {
+                buffer,
+                offset,
+                length,
+                length_tracking,
+                ..
+            } => {
+                let byte_length = if self.array_buffer_detached(*buffer) {
+                    0
+                } else if *length_tracking {
+                    match self.heap.get(*buffer) {
+                        Some(Cell::ArrayBuffer { bytes, .. }) => bytes.len().saturating_sub(*offset),
+                        _ => return None,
+                    }
+                } else if self.array_buffer_out_of_bounds(*buffer, *offset, *length) {
+                    0
+                } else {
+                    *length
+                };
+                (*buffer, *offset, byte_length)
+            }
+            _ => return None,
+        };
+        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else {
+            return None;
+        };
+        if *detached {
+            return Some(Vec::new());
+        }
+        let end = offset.checked_add(byte_length)?;
+        Some(bytes.get(offset..end)?.to_vec())
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let (buffer, offset, kind) = match self.heap.get(object) {
             Some(Cell::TypedArray {
