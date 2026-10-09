@@ -1038,6 +1038,9 @@ pub(super) fn byte_view(
     let Some(data) = data else {
         return Err(invalid_data(context)?);
     };
+    if let Some(bytes) = context.view_bytes_rooted(data) {
+        return Ok(bytes);
+    }
     let length_root = property(context, data, "byteLength")?;
     let Some(length) = context
         .rooted_value(length_root)
