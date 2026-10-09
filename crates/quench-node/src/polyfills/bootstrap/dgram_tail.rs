@@ -410,6 +410,7 @@ class __QuenchUDPHandle {
     this._address = { address, family, port: resolvedPort };
     globalThis.__quenchDgramUdpFds.add(this.fd);
     globalThis.__quenchDgramActiveFds.add(this.fd);
+    globalThis.__quenchDgramUdpHandleInfo.set(this.fd, this._address);
     return 0;
   }
   getsockname(result) {

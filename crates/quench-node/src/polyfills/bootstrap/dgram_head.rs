@@ -41,8 +41,9 @@ const __quenchDgramBufferError = (type, code, message) => {
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
-  error.info = { errno: undefined, code, message, syscall };
-  let errorErrno;
+  const errno = code === "EBADF" ? -9 : code === "EINVAL" ? -22 : undefined;
+  error.info = { errno, code, message, syscall };
+  let errorErrno = errno;
   Object.defineProperty(error, "errno", {
     enumerable: true,
     get: () => errorErrno,
