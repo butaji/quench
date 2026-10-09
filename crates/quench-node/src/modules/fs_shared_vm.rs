@@ -10,7 +10,7 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -49,13 +49,40 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         });
       }
     };
+    const listeners = new Map();
+    const addListener = (event, listener, once) => {
+      if (typeof listener !== "function") throw new TypeError('The "listener" argument must be of type function.');
+      const records = listeners.get(event) || [];
+      records.push({ listener, once });
+      listeners.set(event, records);
+    };
     const handle = {
       fd,
+      on(event, listener) { addListener(event, listener, false); return this; },
+      addListener(event, listener) { addListener(event, listener, false); return this; },
+      once(event, listener) { addListener(event, listener, true); return this; },
+      removeListener(event, listener) {
+        const records = listeners.get(event) || [];
+        const index = records.findIndex((record) => record.listener === listener);
+        if (index !== -1) records.splice(index, 1);
+        if (records.length) listeners.set(event, records); else listeners.delete(event);
+        return this;
+      },
+      off(event, listener) { return this.removeListener(event, listener); },
+      emit(event, ...args) {
+        const records = listeners.get(event) || [];
+        for (const record of [...records]) {
+          if (record.once) this.removeListener(event, record.listener);
+          Reflect.apply(record.listener, this, args);
+        }
+        return records.length !== 0;
+      },
       close: () => {
         closePromise ||= Promise.resolve().then(() => {
           closeSync(fd);
           closed = true;
           handle.fd = -1;
+          handle.emit("close");
         });
         return closePromise;
       },
@@ -111,6 +138,13 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         }
         const result = buffer.subarray(0, offset);
         return settings.encoding ? result.toString(settings.encoding) : result;
+      },
+      createReadStream: (options) => {
+        ensureOpen("read");
+        const settings = typeof options === "string" ? { encoding: options } : { ...(options || {}) };
+        settings.fd = fd;
+        settings.autoClose = false;
+        return createReadStream(null, settings);
       },
       write: (...writeArgs) => Promise.resolve().then(() => {
         ensureOpen("write");
@@ -829,13 +863,19 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    const settings = typeof options === "string" ? { encoding: options } : options || {};
+    const fileHandleFd = settings.fd && typeof settings.fd === "object" &&
+      typeof settings.fd.fd === "number" ? settings.fd.fd : null;
+    const suppliedFd = typeof settings.fd === "number" || fileHandleFd !== null;
+    const descriptor = typeof settings.fd === "number" ? settings.fd : fileHandleFd;
     if (typeof path !== "string" && typeof path !== "number" &&
         !Buffer.isBuffer(path) && !(path instanceof URL)) {
+      if (!(path == null && suppliedFd)) {
       const error = new TypeError('The "path" argument must be of type string, Buffer, or URL.');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
+      }
     }
-    const settings = typeof options === "string" ? { encoding: options } : options || {};
     for (const name of ["start", "end"]) {
       const value = settings[name];
       if (value === undefined || (name === "end" && value === Infinity)) continue;
@@ -855,13 +895,15 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
-    const autoClose = settings.autoClose !== false;
-    let phase = "idle";
-    let fd = null;
+    const autoClose = settings.autoClose !== false && fileHandleFd === null;
+    let explicitClose = false;
+    let phase = suppliedFd ? "open" : "idle";
+    let fd = suppliedFd ? descriptor : null;
     let bytesRead = 0;
     const stream = this;
 
     const closeFileOnce = () => {
+      if (!autoClose && !explicitClose) return false;
       if (fd === null) return false;
       const current = fd;
       fd = null;
@@ -921,6 +963,7 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
               stream.fd = fd;
               phase = "open";
               stream.emit("open", fd);
+              stream.emit("ready");
               scheduleRead(size);
             } catch (error) {
               fail(error);
@@ -938,9 +981,10 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
         }
       },
     });
-    stream.fd = null;
+    stream.fd = fd;
     stream.bytesRead = 0;
     stream.close = function close(callback) {
+      explicitClose = true;
       closeFileOnce();
       if (callback) {
         if (stream.closed) setImmediate(callback);
@@ -949,6 +993,9 @@ const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readabl
       stream.destroy();
       return stream;
     };
+    if (suppliedFd) setImmediate(() => {
+      if (!stream.destroyed) stream.emit("ready");
+    });
     if (settings.encoding !== undefined) stream.setEncoding(settings.encoding);
     return stream;
   }
@@ -2174,6 +2221,22 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let append_file = context.call_rooted(append_file_factory, undefined, &[append_file_sync])?;
     set(context, module, "appendFile", append_file)?;
+    let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
+    let readable = get(context, streams, "Readable")?;
+    let read_stream_factory = context
+        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
+    let read_stream_open = context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
+    let read_stream_read = context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
+    let read_stream_close = context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
+    let read_stream_api = context.call_rooted(
+        read_stream_factory,
+        undefined,
+        &[read_stream_open, read_stream_read, read_stream_close, readable],
+    )?;
+    let create_read_stream = get(context, read_stream_api, "createReadStream")?;
+    let read_stream = get(context, read_stream_api, "ReadStream")?;
+    set(context, module, "createReadStream", create_read_stream)?;
+    set(context, module, "ReadStream", read_stream)?;
     let promises = promises_module(
         context,
         constants,
@@ -2193,6 +2256,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         copy_file_sync,
         readv_sync,
         writev_sync,
+        create_read_stream,
     )?;
     set(context, promises, "opendir", opendir_promise)?;
     for name in ["stat", "lstat"] {
@@ -2294,25 +2358,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
-    let readable = get(context, streams, "Readable")?;
-    let factory = context
-        .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
-    let undefined = context.undefined();
-    let open_file = context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
-    let read_file_chunk =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
-    let close_file =
-        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
-    let stream_api = context.call_rooted(
-        factory,
-        undefined,
-        &[open_file, read_file_chunk, close_file, readable],
-    )?;
-    let create_read_stream = get(context, stream_api, "createReadStream")?;
-    let read_stream = get(context, stream_api, "ReadStream")?;
-    set(context, module, "createReadStream", create_read_stream)?;
-    set(context, module, "ReadStream", read_stream)?;
-
     let writable = get(context, streams, "Writable")?;
     write_stream::install(context, module, writable)?;
 
@@ -2338,6 +2383,7 @@ pub(crate) fn promises_module(
     copy_file_sync: RootId,
     readv_sync: RootId,
     writev_sync: RootId,
+    create_read_stream: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(PROMISES_FACTORY, "node:fs/promises/shared.js")?;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
@@ -2369,6 +2415,7 @@ pub(crate) fn promises_module(
             append_file_sync,
             readv_sync,
             writev_sync,
+            create_read_stream,
         ],
     )?;
     set(context, promises, "constants", constants)?;
