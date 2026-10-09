@@ -42,6 +42,20 @@ const UTIL: &str = quench_js_check::checked_js!(
         return current.name ? `[Function: ${current.name}]` : "[Function (anonymous)]";
       }
       if (current instanceof Error) {
+        if (current.name === "SystemError" && current.code === "ERR_SOCKET_BUFFER_SIZE" && current.info) {
+          const { code, message, errno, syscall } = current.info;
+          return `SystemError [ERR_SOCKET_BUFFER_SIZE]: ${current.message}\n` +
+            `  code: 'ERR_SOCKET_BUFFER_SIZE',\n` +
+            `  info: {\n` +
+            `    errno: ${errno},\n` +
+            `    code: '${code}',\n` +
+            `    message: '${message}',\n` +
+            `    syscall: '${syscall}'\n` +
+            `  },\n` +
+            `  errno: [Getter/Setter: ${current.errno}],\n` +
+            `  syscall: [Getter/Setter: '${current.syscall}']\n` +
+            `}`;
+        }
         if (typeof current.stack === "string") return current.stack;
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
