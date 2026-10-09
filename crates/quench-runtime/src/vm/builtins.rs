@@ -1048,6 +1048,7 @@ impl<H: Host> Vm<H> {
     fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
         self.dynamic_atoms.push(name);
+        self.atom_classes.push(Default::default());
         self.index_atom(hash, atom);
         self.profile.dynamic_atom();
         atom

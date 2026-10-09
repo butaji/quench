@@ -2,6 +2,23 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
+
+/// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
+#[derive(Clone, Copy)]
+pub(super) struct AtomClass(u8);
+
+impl AtomClass {
+    const DERIVED: u8 = 1 << 0;
+    pub(super) const PRIVATE: u8 = 1 << 1;
+    pub(super) const ARRAY_INDEX: u8 = 1 << 2;
+    pub(super) const TYPED_ARRAY_INDEX: u8 = 1 << 3;
+    pub(super) const RESTRICTED_FUNCTION_PROPERTY: u8 = 1 << 4;
+
+    #[inline(always)]
+    pub(super) fn contains(self, bits: u8) -> bool {
+        self.0 & bits == bits
+    }
+}
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
 struct FieldCacheHit {
@@ -62,8 +79,37 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
 }
 
 impl<H: Host> Vm<H> {
+    /// Name-derived property classes, computed from the atom text once per atom.
+    pub(super) fn atom_class(&self, atom: Atom) -> AtomClass {
+        let slot = &self.atom_classes[atom as usize];
+        let known = AtomClass(slot.get());
+        if known.contains(AtomClass::DERIVED) {
+            return known;
+        }
+        let name = self.atom_name(atom);
+        let mut bits = AtomClass::DERIVED;
+        if name.starts_with(PRIVATE_NAME_PREFIX) {
+            bits |= AtomClass::PRIVATE;
+        }
+        if super::object_static::array_index(name).is_some() {
+            bits |= AtomClass::ARRAY_INDEX;
+        }
+        if !matches!(
+            Self::typed_array_index_key(name),
+            super::object_descriptors::TypedArrayIndexKey::NotCanonical
+        ) {
+            bits |= AtomClass::TYPED_ARRAY_INDEX;
+        }
+        if matches!(name, "caller" | "arguments") {
+            bits |= AtomClass::RESTRICTED_FUNCTION_PROPERTY;
+        }
+        slot.set(bits);
+        AtomClass(bits)
+    }
+
+    #[inline(always)]
     pub(super) fn is_private_name(&self, atom: Atom) -> bool {
-        self.atom_name(atom).starts_with(PRIVATE_NAME_PREFIX)
+        self.atom_class(atom).contains(AtomClass::PRIVATE)
     }
 
     #[inline(always)]

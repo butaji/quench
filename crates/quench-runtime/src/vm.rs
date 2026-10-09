@@ -95,7 +95,6 @@ mod json;
 mod method_cache;
 mod module;
 mod number;
-mod numeric_site;
 mod object;
 mod object_array;
 mod object_builtins;
@@ -110,13 +109,12 @@ mod object_tests;
 mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
-use numeric_site::NumericSite;
+use object::AtomClass;
 use program_store::{ModuleImport, ProgramId, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
 mod primitives;
-mod profile_edges;
 pub(crate) mod program_store;
 mod promise;
 mod promise_aggregate;
@@ -617,13 +615,14 @@ pub(crate) struct Vm<H> {
     program_cache_layouts: Vec<ProgramCacheLayout>,
     active_program: ProgramId,
     profile: Profile,
-    numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
     transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
     dynamic_atoms: Vec<JsString>,
+    // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
+    atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: FxHashMap<String, Value>,
@@ -1060,13 +1059,14 @@ impl<H: Host> Vm<H> {
         self.eval_script_context = false;
         self.construct_target = None;
         self.realm.promise = Default::default();
-        self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();
         self.atom_collisions.clear();
         self.dynamic_atoms.clear();
+        self.atom_classes.clear();
+        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();
         self.well_known_symbols.clear();

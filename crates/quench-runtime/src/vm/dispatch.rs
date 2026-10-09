@@ -780,27 +780,13 @@ impl<H: Host> Vm<H> {
                     .binary(operator as usize, left_operand.0, right_operand.0);
                 let left = self.resolve_operand(p, f, left_operand)?;
                 let right = self.resolve_operand(p, f, right_operand)?;
-                let site_pc = *pc - 1;
-                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
-                let v = if armed {
-                    match self.numeric_binary(operator, left, right) {
-                        Some(value) => {
-                            self.record_binary_value_path(
-                                operator,
-                                left,
-                                right,
-                                crate::profile::BinaryValuePath::IntegerFastPath,
-                            );
-                            value
-                        }
-                        None => {
-                            self.deopt_numeric_site(f, site_pc);
-                            self.binary(p, operator, left, right)?
-                        }
-                    }
-                } else {
-                    self.binary(p, operator, left, right)?
-                };
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.regional_binary(
+                    self.frames[f].function,
+                    (*pc - 1) as u32,
+                    self.numeric_binary(operator, left, right).is_some(),
+                );
+                let v = self.binary(p, operator, left, right)?;
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
