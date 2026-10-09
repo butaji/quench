@@ -250,11 +250,22 @@ struct FieldCache {
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
+// DeltaBlue's measured inherited writes reach three prototypes; keep the
+// residual cache bounded while covering that common constructor shape.
+const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: NO_FIELD_RECEIVER,
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
+#[derive(Clone)]
+struct FieldAddCache {
+    atom: Atom,
+    source_shape: u32,
+    target_shape: u32,
+    slot: u16,
+    prototype_shapes: Vec<u32>,
+}
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
@@ -562,6 +573,7 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
+    field_add_caches: FxHashMap<usize, FieldAddCache>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
@@ -945,6 +957,13 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
+        let field_add_cache_bytes = self.field_add_caches.capacity()
+            * size_of::<(usize, FieldAddCache)>()
+            + self
+                .field_add_caches
+                .values()
+                .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
+                .sum::<usize>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -952,7 +971,8 @@ impl<H: Host> Vm<H> {
             self.transitions.len(),
             self.transitions.capacity() * size_of::<((u32, property_key::PropertyKey), u32)>(),
             self.field_caches.capacity() * size_of::<FieldCache>()
-                + self.megamorphic_field_indices.capacity() * size_of::<u32>(),
+                + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+                + field_add_cache_bytes,
             self.megamorphic_fields.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
             self.megamorphic_methods.len(),
@@ -1005,6 +1025,7 @@ impl<H: Host> Vm<H> {
             new_target,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_add_caches.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
