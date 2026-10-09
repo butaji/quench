@@ -1,6 +1,7 @@
 use crate::value::Value;
 use crate::value_vec::ValueArena;
 use rustc_hash::FxHashMap;
+use std::rc::Rc;
 mod access;
 mod cell;
 mod cell_access;
@@ -14,6 +15,14 @@ pub(crate) use cell::*;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::SlotArena;
+
+// Keep implicit holes in dense storage when their one-time allocation is
+// bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
+// still sending genuinely large `new Array(length)` allocations to the sparse
+// representation. The slot limit is derived from Value's representation.
+const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
+const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+
 pub(super) struct Slot {
     cell: Option<Cell>,
 }
@@ -503,14 +512,57 @@ impl Heap {
         let elements = arrays.entry(array.heap_index().unwrap()).or_default();
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
+        let length = elements.length;
+        if length <= MAX_DENSE_ARRAY_HOLE_LENGTH {
+            self.sparse_set_length(array, length);
+        }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
+        let Some(Cell::Array { elements, .. }) = self.get(array) else {
+            return;
+        };
+        let dense_length = elements.len();
+        let sparse_length = self.sparse_length(array);
+        if sparse_length.is_none() && length == dense_length {
+            return;
+        }
+        if length <= MAX_DENSE_ARRAY_HOLE_LENGTH || length <= dense_length {
+            self.materialize_sparse_array(array, length);
+            return;
+        }
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
         let elements = arrays.entry(array.heap_index().unwrap()).or_default();
-        elements.values.retain(|index, _| *index < length);
+        if length < elements.length {
+            elements.values.retain(|index, _| *index < length);
+        }
         elements.length = length;
+    }
+    fn materialize_sparse_array(&mut self, array: Value, length: usize) {
+        let Some(index) = array.heap_index() else {
+            return;
+        };
+        let sparse = self
+            .sparse_arrays
+            .as_mut()
+            .and_then(|arrays| arrays.remove(&index));
+        if let Some(arrays) = &mut self.sparse_arrays
+            && arrays.is_empty()
+        {
+            self.sparse_arrays = None;
+        }
+        let Some(Cell::Array { elements, .. }) = self.get_mut(array) else {
+            return;
+        };
+        let dense_length = elements.len();
+        let elements = Rc::make_mut(elements);
+        elements.resize(length, Value::DELETED);
+        for (index, value) in sparse.into_iter().flat_map(|elements| elements.values) {
+            if index < length && (index >= dense_length || elements[index].is_deleted()) {
+                elements[index] = value;
+            }
+        }
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         self.properties
