@@ -267,6 +267,9 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
+  const types = {
+    isDate: (value) => value instanceof Date,
+  };
   return {
     inspect,
     getCallSites,
@@ -274,6 +277,7 @@ const UTIL: &str = quench_js_check::checked_js!(
     debuglog,
     deprecate,
     promisify,
+    types,
     TextEncoder: globalThis.TextEncoder,
     TextDecoder: globalThis.TextDecoder,
   };

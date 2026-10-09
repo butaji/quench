@@ -63,7 +63,7 @@ const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
   }
   for (const name of ["isDirectory", "isFile", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
     const result = stats[name];
-    Object.defineProperty(stats, name, { value: () => result, configurable: true });
+    Object.defineProperty(stats, name, { value: () => result, configurable: true, enumerable: false });
   }
   return stats;
 }"#);

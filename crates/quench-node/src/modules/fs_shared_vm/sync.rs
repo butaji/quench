@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
-const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor) => {
+const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSync, symlinkSync, renameSync, unlinkSync, chownSync, lchownSync, fchownSync, truncateSync, ftruncateSync, writeFileSync, openSync, closeSync, fstatSync, readDescriptor, writeDescriptor, decorateBigintStats) => {
   let warnedMkdtempX = false;
   const normalizePath = (path) =>
     typeof path === 'string' ? path : Buffer.isBuffer(path) ? path.toString() : ArrayBuffer.isView(path) && !(path instanceof DataView) ? Buffer.from(path).toString() : path instanceof URL ? decodeURIComponent(path.pathname) : path;
@@ -266,9 +266,9 @@ const SYNC_API: &str = r#"(mkdirSync, rmdirSync, mkdtempSync, rmSync, copyFileSy
       validateFd(fd);
       return closeSync(fd);
     },
-    fstatSync(fd) {
+    fstatSync(fd, options) {
       validateFd(fd);
-      return fstatSync(fd);
+      return decorateBigintStats(fstatSync(fd), options);
     },
     readSync(fd, buffer, offset = 0, length, position = null) {
       validateFd(fd);
@@ -367,6 +367,10 @@ pub(crate) fn install(
     let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
     let write_descriptor = context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
+    let decorate_bigint_stats = context.evaluate_script_rooted(
+        shared_vm::BIGINT_STATS_API,
+        "node:fs/shared-bigint-stats.js",
+    )?;
     let undefined = context.undefined();
     let api = context.call_rooted(
         factory,
@@ -391,6 +395,7 @@ pub(crate) fn install(
             fstat,
             read_descriptor,
             write_descriptor,
+            decorate_bigint_stats,
         ],
     )?;
     for (name, method) in [
