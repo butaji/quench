@@ -1,0 +1,33 @@
+stage  31 batch   1/31  passed=100 failed=0 total=100
+stage  31 batch   2/31  passed=100 failed=0 total=100
+stage  31 batch   3/31  passed=100 failed=0 total=100
+stage  31 batch   4/31  passed=100 failed=0 total=100
+stage  31 batch   5/31  passed=100 failed=0 total=100
+stage  31 batch   6/31  passed=100 failed=0 total=100
+stage  31 batch   7/31  passed=100 failed=0 total=100
+stage  31 batch   8/31  passed=100 failed=0 total=100
+stage  31 batch   9/31  passed=100 failed=0 total=100
+stage  31 batch  10/31  passed=100 failed=0 total=100
+stage  31 batch  11/31  passed=100 failed=0 total=100
+stage  31 batch  12/31  passed=100 failed=0 total=100
+stage  31 batch  13/31  passed=100 failed=0 total=100
+stage  31 batch  14/31  passed=100 failed=0 total=100
+stage  31 batch  15/31  passed=100 failed=0 total=100
+stage  31 batch  16/31  passed=100 failed=0 total=100
+stage  31 batch  17/31  passed=100 failed=0 total=100
+stage  31 batch  18/31  passed=100 failed=0 total=100
+stage  31 batch  19/31  passed=100 failed=0 total=100
+stage  31 batch  20/31  passed=100 failed=0 total=100
+stage  31 batch  21/31  passed=100 failed=0 total=100
+stage  31 batch  22/31  passed=100 failed=0 total=100
+stage  31 batch  23/31  passed=100 failed=0 total=100
+stage  31 batch  24/31  passed=100 failed=0 total=100
+stage  31 batch  25/31  passed=100 failed=0 total=100
+stage  31 batch  26/31  passed=100 failed=0 total=100
+stage  31 batch  27/31  passed=100 failed=0 total=100
+stage  31 batch  28/31  passed=100 failed=0 total=100
+stage  31 batch  29/31  passed=100 failed=0 total=100
+stage  31 batch  30/31  passed=100 failed=0 total=100
+stage  31 batch  31/31  passed=81 failed=0 total=81
+stage  31: built-ins/Array passed=3081 failed=0 total=3081
+stages=1 passed=3081 failed=0 total=3081
