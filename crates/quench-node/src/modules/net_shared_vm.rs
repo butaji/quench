@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation) => {
   const invalidArgValue = (value, message) => {
     const error = new TypeError(message || `The argument 'options' is invalid. Received ${String(value)}`);
     error.code = 'ERR_INVALID_ARG_VALUE'; return error;
@@ -31,21 +31,53 @@ const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOpera
     return port;
   };
   const listeners = (socket) => socket._listeners;
-  class Socket {
-    constructor() { this._listeners = new Map(); this._encoding = null; }
-    on(event, callback) { const list = listeners(this).get(event) || []; list.push(callback); listeners(this).set(event, list); return this; }
-    addListener(event, callback) { return this.on(event, callback); }
-    once(event, callback) {
-      const wrapper = (...args) => { this.removeListener(event, wrapper); callback.apply(this, args); };
-      wrapper.listener = callback; return this.on(event, wrapper);
+  class Socket extends Duplex {
+    constructor(options = {}) {
+      super({
+        ...options, autoDestroy: true, allowHalfOpen: true,
+        read() {},
+        write(chunk, encoding, callback) { try { writeOperation(this, chunk); this.bytesWritten += chunk.length || 0; callback(); } catch (error) { callback(error); } },
+        final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
+        destroy(error, callback) { try { destroyOperation(this, error); callback(error); } catch (failure) { callback(failure); } },
+      });
+      this.allowHalfOpen = false;
+      this._encoding = null;
+      this.connecting = false;
+      this.pending = true;
+      this.bytesRead = 0;
+      this.bytesWritten = 0;
+      this._quenchPreconnectWrites = [];
+      this._quenchPreconnectEnd = null;
     }
-    removeListener(event, callback) { const list = listeners(this).get(event) || []; listeners(this).set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; }
-    off(event, callback) { return this.removeListener(event, callback); }
-    emit(event, ...args) { for (const callback of [...(listeners(this).get(event) || [])]) callback.apply(this, args); if (event === 'end' && !this.allowHalfOpen) this.end(); return true; }
-    setEncoding(encoding) { this._encoding = String(encoding); encodingOperation(this, this._encoding); return this; }
-    write(chunk) { writeOperation(this, typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')); return true; }
-    end(chunk) { if (chunk !== undefined) this.write(chunk); endOperation(this); return this; }
-    destroy(error) { destroyOperation(this, error); return this; }
+    emit(event, ...args) {
+      if (event === 'connect') { this.connecting = false; this.pending = false; }
+      if (event === 'close') this.pending = true;
+      if (event === 'data' && args[0]) this.bytesRead += args[0].length || 0;
+      if (event === 'end' && !this.allowHalfOpen) {
+        const result = super.emit(event, ...args);
+        this.end();
+        return result;
+      }
+      return super.emit(event, ...args);
+    }
+    setEncoding(encoding) { this._encoding = String(encoding); encodingOperation(this, this._encoding); super.setEncoding(encoding); return this; }
+    write(chunk, encoding, callback) {
+      if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+      if (!this.__quenchNetSocketId && !this.connecting) {
+        this._quenchPreconnectWrites.push([chunk, encoding, callback]);
+        return this.writableHighWaterMark !== 0;
+      }
+      return super.write(chunk, encoding, callback);
+    }
+    end(chunk, encoding, callback) {
+      if (typeof chunk === 'function') { callback = chunk; chunk = undefined; encoding = undefined; }
+      else if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
+      if (!this.__quenchNetSocketId && !this.connecting) {
+        this._quenchPreconnectEnd = [chunk, encoding, callback];
+        return this;
+      }
+      return super.end(chunk, encoding, callback);
+    }
     connect(port, host, callback) {
       if (port && typeof port === 'object') {
         const options = port;
@@ -60,11 +92,14 @@ const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOpera
       if (typeof host === 'function') { callback = host; host = undefined; }
       port = validatePort(port, true, true);
       if (typeof callback === 'function') this.once('connect', callback);
+      this.connecting = true;
+      this.pending = true;
       connectOperation(this, port, host);
+      for (const args of this._quenchPreconnectWrites.splice(0)) super.write(...args);
+      if (this._quenchPreconnectEnd) super.end(...this._quenchPreconnectEnd);
+      this._quenchPreconnectEnd = null;
       return this;
     }
-    resume() { this._flowing = true; return this; }
-    pause() { this._flowing = false; return this; }
     ref() { return this; }
     unref() { return this; }
   }
@@ -72,14 +107,19 @@ const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOpera
     const socket = new Socket();
     return socket.connect(port, host, callback);
   };
-  class Server {
-    constructor(options, listener) { this._listeners = new Map(); this.listening = false; if (typeof options === 'function') listener = options; if (typeof listener === 'function') this.on('connection', listener); }
-    on(event, callback) { const list = this._listeners.get(event) || []; list.push(callback); this._listeners.set(event, list); return this; }
-    addListener(event, callback) { return this.on(event, callback); }
-    once(event, callback) { const wrapped = (...args) => { this.removeListener(event, wrapped); callback.apply(this, args); }; wrapped.listener = callback; return this.on(event, wrapped); }
-    removeListener(event, callback) { const list = this._listeners.get(event) || []; this._listeners.set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; }
-    emit(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; }
-    listen(port, host, callback) {
+  function Server(options, listener) {
+    if (!(this instanceof Server)) return new Server(options, listener);
+    this._listeners = new Map();
+    this.listening = false;
+    if (typeof options === 'function') listener = options;
+    if (typeof listener === 'function') this.on('connection', listener);
+  }
+  Server.prototype.on = function(event, callback) { const list = this._listeners.get(event) || []; list.push(callback); this._listeners.set(event, list); return this; };
+  Server.prototype.addListener = function(event, callback) { return this.on(event, callback); };
+  Server.prototype.once = function(event, callback) { const wrapped = (...args) => { this.removeListener(event, wrapped); callback.apply(this, args); }; wrapped.listener = callback; return this.on(event, wrapped); };
+  Server.prototype.removeListener = function(event, callback) { const list = this._listeners.get(event) || []; this._listeners.set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; };
+  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };
+  Server.prototype.listen = function(port, host, callback) {
       if (typeof port === 'function') { callback = port; port = 0; }
       if (port && typeof port === 'object') {
         const options = port;
@@ -97,12 +137,14 @@ const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOpera
       listenOperation(this, port, host);
       this.listening = true;
       return this;
-    }
-    address() { return addressOperation(this); }
-    close(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; }
-  }
+    };
+  Server.prototype.address = function() { return addressOperation(this); };
+  Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
   const createServer = function createServer(listener) { return new Server(listener); };
-  return { Socket, Server, connect, createConnection: connect, createServer };
+  function Stream(options) { return new Socket(options); }
+  Stream.prototype = Socket.prototype;
+  Object.setPrototypeOf(Stream, Socket);
+  return { Socket, Stream, Server, connect, createConnection: connect, createServer };
 })"#;
 
 /// TCP resources for the shared-VM projection. Protocol modules keep only
@@ -206,6 +248,10 @@ pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Res
         .ok_or_else(|| "shared TCP socket is not connected".to_owned())?;
     stream.pending_write.extend_from_slice(bytes);
     Ok(())
+}
+
+pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
+    transport.sockets.contains_key(&socket)
 }
 
 pub(crate) fn end(transport: &mut Transport, socket: u64) -> Result<(), String> {
@@ -478,14 +524,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
     let close = context.host_function(crate::host::shared_vm::operation("netServerClose"))?;
     let address = context.host_function(crate::host::shared_vm::operation("netServerAddress"))?;
+    let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
+    let duplex_key = context.string_rooted("Duplex");
+    let duplex = context.get_property_rooted(stream, duplex_key)?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
         factory,
         undefined,
-        &[connect, write, end, destroy, encoding, listen, close, address],
+        &[duplex, connect, write, end, destroy, encoding, listen, close, address],
     )?;
-    for name in ["Socket", "Server", "connect", "createConnection", "createServer"] {
+    for name in ["Socket", "Stream", "Server", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(surface, key)?;
         if !context.set_property_rooted(module, key, value, module)? {
@@ -601,16 +650,15 @@ pub(crate) fn write_operation(
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.write requires a socket"))?;
     let id = socket_id(context, socket)?;
-    let bytes = args
-        .get(1)
-        .copied()
-        .map(|value| context.to_string(value))
-        .transpose()?
-        .unwrap_or_default();
+    let bytes = args.get(1).copied().map(|value| {
+        context
+            .view_bytes_rooted(value)
+            .unwrap_or_else(|| context.to_string(value).unwrap_or_default().into_bytes())
+    }).unwrap_or_default();
     context
         .host_mut()
         .net_pending_writes
-        .push((id, bytes.into_bytes()));
+        .push((id, bytes));
     Ok(context.boolean(true))
 }
 
@@ -637,7 +685,10 @@ pub(crate) fn destroy_operation(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.destroy requires a socket"))?;
-    let id = socket_id(context, socket)?;
+    let id = match socket_id(context, socket) {
+        Ok(id) => id,
+        Err(_) => return Ok(socket),
+    };
     context.host_mut().net_pending_writes.retain(|(socket, _)| *socket != id);
     context.host_mut().net_pending_ends.retain(|socket| *socket != id);
     let state = context.host_mut().shared_state();
