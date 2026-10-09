@@ -968,6 +968,8 @@ struct ObjectExtras {
     deferred_module: Option<crate::ModuleSource>,
     private_names: Vec<PrivateBrand>,
     stack_data: Option<StackData>,
+    /// An index-keyed property descriptor has been recorded for this object; never cleared.
+    indexed_descriptors: bool,
 }
 impl ObjectExtras {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
@@ -1118,6 +1120,14 @@ impl Object {
         self.extras
             .as_deref()
             .is_some_and(|extras| extras.arguments_object)
+    }
+    pub(crate) fn has_indexed_descriptors(&self) -> bool {
+        self.extras
+            .as_deref()
+            .is_some_and(|extras| extras.indexed_descriptors)
+    }
+    pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
         self.extras.as_deref().is_some_and(|extras| extras.raw_json)
