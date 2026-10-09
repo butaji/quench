@@ -98,10 +98,95 @@ const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
+const URL_SEARCH_PARAMS_FACTORY: &str = quench_js_check::checked_js!(
+    r#"() => {
+  const state = new WeakMap();
+  const decode = (value) => {
+    try { return decodeURIComponent(value.replace(/\+/g, " ")); }
+    catch { return value.replace(/\+/g, " "); }
+  };
+  const encode = (value) => encodeURIComponent(value)
+    .replace(/[!'()~]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/%20/g, "+");
+  const entriesFrom = (init) => {
+    if (init === undefined) return [];
+    if (typeof init === "string") {
+      const query = init.startsWith("?") ? init.slice(1) : init;
+      if (!query) return [];
+      return query.split("&").filter(Boolean).map((part) => {
+        const index = part.indexOf("=");
+        return [decode(index < 0 ? part : part.slice(0, index)),
+          decode(index < 0 ? "" : part.slice(index + 1))];
+      });
+    }
+    if (init !== null && typeof init[Symbol.iterator] === "function") {
+      const entries = [];
+      for (const pair of init) {
+        if (pair === null || typeof pair[Symbol.iterator] !== "function") {
+          throw new TypeError("Each query pair must be an iterable");
+        }
+        const values = Array.from(pair);
+        if (values.length !== 2) throw new TypeError("Each query pair must have exactly two elements");
+        entries.push([String(values[0]), String(values[1])]);
+      }
+      return entries;
+    }
+    if (typeof init === "object") {
+      return Object.keys(init).map((key) => [key, String(init[key])]);
+    }
+    throw new TypeError("Failed to construct 'URLSearchParams': parameter 1 is not of type 'object'.");
+  };
+  const pairs = (receiver) => {
+    const value = state.get(receiver);
+    if (value === undefined) throw new TypeError("Illegal invocation");
+    return value;
+  };
+  class URLSearchParams {
+    constructor(init) { state.set(this, entriesFrom(init)); }
+    append(name, value) { pairs(this).push([String(name), String(value)]); }
+    delete(name, value) {
+      name = String(name);
+      const list = pairs(this);
+      const matchValue = arguments.length > 1;
+      const expected = matchValue ? String(value) : undefined;
+      for (let index = list.length - 1; index >= 0; index--) {
+        if (list[index][0] === name && (!matchValue || list[index][1] === expected)) list.splice(index, 1);
+      }
+    }
+    get(name) { name = String(name); const pair = pairs(this).find((entry) => entry[0] === name); return pair ? pair[1] : null; }
+    getAll(name) { name = String(name); return pairs(this).filter((entry) => entry[0] === name).map((entry) => entry[1]); }
+    has(name, value) {
+      name = String(name);
+      return pairs(this).some((entry) => entry[0] === name && (arguments.length < 2 || entry[1] === String(value)));
+    }
+    set(name, value) {
+      name = String(name); value = String(value);
+      const list = pairs(this); const index = list.findIndex((entry) => entry[0] === name);
+      if (index < 0) list.push([name, value]);
+      else { list[index][1] = value; for (let i = list.length - 1; i > index; i--) if (list[i][0] === name) list.splice(i, 1); }
+    }
+    sort() { pairs(this).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); }
+    forEach(callback, thisArg) {
+      if (typeof callback !== "function") throw new TypeError("callback must be a function");
+      for (const [name, value] of pairs(this).slice()) callback.call(thisArg, value, name, this);
+    }
+    *entries() { for (const pair of pairs(this)) yield pair.slice(); }
+    *keys() { for (const pair of pairs(this)) yield pair[0]; }
+    *values() { for (const pair of pairs(this)) yield pair[1]; }
+    [Symbol.iterator]() { return this.entries(); }
+    toString() { return pairs(this).map(([name, value]) => `${encode(name)}=${encode(value)}`).join("&"); }
+    get size() { return pairs(this).length; }
+  }
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag, { value: "URLSearchParams", configurable: true });
+  return URLSearchParams;
+}"#
+);
+
 const WHATWG_PARSE_MARKER: &str = "\0quench:node:url:whatwg-parse";
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let constructor = url_constructor(context)?;
+    let search_params = url_search_params_constructor(context)?;
     let legacy_constructor =
         context.evaluate_script_rooted(URL_CONSTRUCTOR_SOURCE, "node:url/Url")?;
     let module = context.object_rooted()?;
@@ -111,6 +196,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     set(context, module, "parse", parse)?;
     set(context, module, "URL", constructor)?;
+    set(context, module, "URLSearchParams", search_params)?;
     set(context, module, "Url", legacy_constructor)?;
     let format = context.host_function(crate::host::shared_vm::operation("urlFormat"))?;
     set(context, module, "format", format)?;
@@ -551,13 +637,32 @@ fn coded_url_type_error(
 /// same rooted constructor from host state.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
     let constructor = url_constructor(context)?;
+    let search_params = url_search_params_constructor(context)?;
     let install = context.evaluate_script_rooted(
-        "(value) => Object.defineProperty(globalThis, 'URL', { value, writable: true, configurable: true })",
+        "(url, params) => { Object.defineProperty(globalThis, 'URL', { value: url, writable: true, configurable: true }); Object.defineProperty(globalThis, 'URLSearchParams', { value: params, writable: true, configurable: true }); }",
         "node:url/install-global.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[constructor])?;
+    context.call_rooted(install, undefined, &[constructor, search_params])?;
     Ok(())
+}
+
+fn url_search_params_constructor(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    let roots = context.host_mut().shared_state();
+    if let Some(constructor) = roots.borrow().url_search_params_constructor {
+        return Ok(constructor);
+    }
+    let factory = context.evaluate_script_rooted(
+        URL_SEARCH_PARAMS_FACTORY,
+        "node:url/url-search-params.js",
+    )?;
+    let undefined = context.undefined();
+    let constructor = context.call_rooted(factory, undefined, &[])?;
+    let retained = context.retain(constructor)?;
+    roots.borrow_mut().url_search_params_constructor = Some(retained);
+    Ok(constructor)
 }
 
 fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
