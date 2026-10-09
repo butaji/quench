@@ -25,6 +25,61 @@ const FIXTURES: &[&str] = &[
 const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
+const FIXED_WORK_REPORT_SCHEMA: u32 = 1;
+const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
+const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
+const FIXED_WORK_SUITE_COUNT: usize = 1;
+const FIXED_WORK_MARKER_COUNT: usize = 1;
+const FIXED_WORK_PLANS: &[FixedWorkPlan] = &[
+    FixedWorkPlan {
+        fixture: "crypto.js",
+        suite: "Crypto",
+        benchmark_count: 2,
+        iterations_per_benchmark: 4,
+    },
+    FixedWorkPlan {
+        fixture: "deltablue.js",
+        suite: "DeltaBlue",
+        benchmark_count: 1,
+        iterations_per_benchmark: 40,
+    },
+    FixedWorkPlan {
+        fixture: "earley-boyer.js",
+        suite: "EarleyBoyer",
+        benchmark_count: 2,
+        iterations_per_benchmark: 3,
+    },
+    FixedWorkPlan {
+        fixture: "navier-stokes.js",
+        suite: "NavierStokes",
+        benchmark_count: 1,
+        iterations_per_benchmark: 5,
+    },
+    FixedWorkPlan {
+        fixture: "raytrace.js",
+        suite: "RayTrace",
+        benchmark_count: 1,
+        iterations_per_benchmark: 10,
+    },
+    FixedWorkPlan {
+        fixture: "regexp.js",
+        suite: "RegExp",
+        benchmark_count: 1,
+        iterations_per_benchmark: 1,
+    },
+    FixedWorkPlan {
+        fixture: "richards.js",
+        suite: "Richards",
+        benchmark_count: 1,
+        iterations_per_benchmark: 100,
+    },
+    FixedWorkPlan {
+        fixture: "splay.js",
+        suite: "Splay",
+        benchmark_count: 1,
+        iterations_per_benchmark: 300,
+    },
+];
 const RUNNER: &str = r#"
 let __quenchBenchSucceeded = true;
 const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
@@ -108,6 +163,21 @@ impl Sample {
             && self.score.is_some_and(f64::is_finite)
             && self.peak_rss_bytes.is_some_and(|rss| rss > 0)
     }
+
+    fn valid_fixed_work(&self, plan: FixedWorkPlan) -> bool {
+        let marker = fixed_work_marker(plan);
+        let marker_count = self
+            .stdout
+            .lines()
+            .filter(|line| line.starts_with(FIXED_WORK_MARKER_PREFIX))
+            .count();
+        self.status == 0
+            && !self.timed_out
+            && self.score.is_none()
+            && self.peak_rss_bytes.is_some_and(|rss| rss > 0)
+            && marker_count == FIXED_WORK_MARKER_COUNT
+            && self.stdout.lines().any(|line| line == marker)
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -162,6 +232,60 @@ struct HostRecord {
     process_metrics_backend: String,
 }
 
+#[derive(Clone, Copy, Serialize)]
+struct FixedWorkPlan {
+    fixture: &'static str,
+    suite: &'static str,
+    benchmark_count: usize,
+    iterations_per_benchmark: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkSummary {
+    median_wall_ns: Option<u128>,
+    median_cycles: Option<u64>,
+    median_instructions: Option<u64>,
+    median_max_rss_bytes: Option<u64>,
+    valid_samples: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkRound {
+    round: usize,
+    execution_order: Vec<String>,
+    samples: BTreeMap<String, Sample>,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkFixtureRecord {
+    source: Artifact,
+    materialized_source: Artifact,
+    plan: FixedWorkPlan,
+    valid: bool,
+    output_equal: bool,
+    summaries: BTreeMap<String, FixedWorkSummary>,
+    rounds: Vec<FixedWorkRound>,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkReport {
+    schema: u32,
+    measurement_mode: String,
+    created_unix_ns: u128,
+    rounds_requested: usize,
+    timeout_ms: u64,
+    source_revision: String,
+    source_dirty: bool,
+    corpus: CorpusRecord,
+    host: HostRecord,
+    measurement_runner: Artifact,
+    engines: Vec<EngineRecord>,
+    suite_inputs: Vec<Artifact>,
+    fixtures: BTreeMap<String, FixedWorkFixtureRecord>,
+    complete: bool,
+    qualification_ready: bool,
+}
+
 struct Options {
     fixture: Option<PathBuf>,
     all: bool,
@@ -170,7 +294,9 @@ struct Options {
     bun: PathBuf,
     qjs: PathBuf,
     quench: PathBuf,
+    quench_peer: Option<PathBuf>,
     rounds: usize,
+    fixed_work: bool,
     timeout_ms: u64,
     output: Option<PathBuf>,
     checkpoint: Option<PathBuf>,
@@ -190,7 +316,11 @@ fn main() {
     if env::var_os("QUENCH_EXEC_TRACE").is_some() {
         fail("scored runs must not inherit QUENCH_EXEC_TRACE");
     }
-    let engines = prepare_engines(&options);
+    let engines = if options.fixed_work && options.quench_peer.is_some() {
+        prepare_quench_pair(&options)
+    } else {
+        prepare_engines(&options)
+    };
     let engine_records = engines.iter().map(EngineSpec::record).collect::<Vec<_>>();
     if options.preflight_only {
         println!("{}", serde_json::to_string_pretty(&engine_records).unwrap());
@@ -199,6 +329,28 @@ fn main() {
 
     let files = selected_fixtures(&options);
     let (source_revision, source_dirty) = source_identity();
+    if options.fixed_work {
+        let report = run_fixed_work_report(
+            &options,
+            &files,
+            &engines,
+            engine_records,
+            source_revision,
+            source_dirty,
+        );
+        let bytes = serde_json::to_vec_pretty(&report).unwrap();
+        if let Some(path) = options.output {
+            write_new_report(&path, &bytes);
+            println!("wrote {}", path.display());
+        } else {
+            println!("{}", String::from_utf8(bytes).unwrap());
+        }
+        if !report.complete {
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let mut report = SuiteRecord {
         schema: 5,
         created_unix_ns: now_ns(),
@@ -282,12 +434,7 @@ fn main() {
     }
     let bytes = serde_json::to_vec_pretty(&report).unwrap();
     if let Some(path) = options.output {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .unwrap_or_else(|error| fail(&format!("cannot create {}: {error}", path.display())));
-        file.write_all(&bytes).expect("write benchmark report");
+        write_new_report(&path, &bytes);
         println!("wrote {}", path.display());
     } else {
         println!("{}", String::from_utf8(bytes).unwrap());
@@ -348,6 +495,15 @@ fn write_checkpoint(path: &Path, report: &SuiteRecord) {
     }
 }
 
+fn write_new_report(path: &Path, bytes: &[u8]) {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap_or_else(|error| fail(&format!("cannot create {}: {error}", path.display())));
+    file.write_all(bytes).expect("write benchmark report");
+}
+
 fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
     let metadata_matches = saved.schema == expected.schema
         && saved.rounds_requested == expected.rounds_requested
@@ -359,7 +515,9 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
         && same_json(&saved.engines, &expected.engines)
         && same_json(&saved.suite_inputs, &expected.suite_inputs);
     if !metadata_matches {
-        fail("checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout");
+        fail(
+            "checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout",
+        );
     }
     if saved.source_dirty {
         fail("cannot resume a checkpoint recorded from a dirty source tree");
@@ -428,7 +586,9 @@ fn parse_options() -> Options {
         bun: "bun".into(),
         qjs: "qjs".into(),
         quench: "target/production/quench-node".into(),
+        quench_peer: None,
         rounds: MIN_QUALIFYING_ROUNDS,
+        fixed_work: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
         output: None,
         checkpoint: None,
@@ -443,6 +603,10 @@ fn parse_options() -> Options {
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
             "--quench" => options.quench = required_path(&mut args, "--quench"),
+            "--quench-peer" => {
+                options.quench_peer = Some(required_path(&mut args, "--quench-peer"))
+            }
+            "--fixed-work" => options.fixed_work = true,
             "--runs" => {
                 options.rounds = usize::try_from(required_number(&mut args, "--runs"))
                     .unwrap_or_else(|_| usage("--runs is too large"));
@@ -474,6 +638,14 @@ fn parse_options() -> Options {
     }
     if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
         usage("--preflight-only cannot use checkpoints");
+    }
+    if options.quench_peer.is_some() && !options.fixed_work {
+        usage("--quench-peer requires --fixed-work");
+    }
+    if options.fixed_work
+        && (options.preflight_only || options.checkpoint.is_some() || options.resume.is_some())
+    {
+        usage("--fixed-work cannot use preflight or checkpoints");
     }
     if let (Some(checkpoint), Some(output)) = (
         options.checkpoint.as_ref().or(options.resume.as_ref()),
@@ -560,6 +732,28 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
         "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled".into();
 
     vec![quench, qjs, bun, node]
+}
+
+fn prepare_quench_pair(options: &Options) -> Vec<EngineSpec> {
+    let mut baseline = spec("quench_baseline", &options.quench, vec![], BTreeMap::new());
+    let mut candidate = spec(
+        "quench_candidate",
+        options.quench_peer.as_ref().expect("pair mode has a peer"),
+        vec![],
+        BTreeMap::new(),
+    );
+    let version = format!(
+        "Quench shared-VM interpreter build; package {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    for engine in [&mut baseline, &mut candidate] {
+        engine.version = version.clone();
+        engine.jit_proof_command = vec![engine.executable.display().to_string()];
+        engine.jit_proof =
+            "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+                .into();
+    }
+    vec![baseline, candidate]
 }
 
 fn spec(
@@ -681,6 +875,240 @@ fn selected_fixtures(options: &Options) -> Vec<PathBuf> {
             .collect();
     }
     vec![options.fixture.clone().unwrap()]
+}
+
+fn fixed_work_plan(file: &Path) -> FixedWorkPlan {
+    let Some(plan) = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| FIXED_WORK_PLANS.iter().find(|plan| plan.fixture == name))
+        .copied()
+    else {
+        fail(&format!("no fixed-work plan for {}", file.display()));
+    };
+    let expected = Path::new(SUITE_DIR).join(plan.fixture);
+    let selected_path = file.canonicalize().unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot resolve fixed-work fixture {}: {error}",
+            file.display()
+        ))
+    });
+    let expected_path = expected.canonicalize().unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot resolve fixed-work corpus input {}: {error}",
+            expected.display()
+        ))
+    });
+    if selected_path != expected_path {
+        fail("fixed-work plans are restricted to the pinned V8-v7 fixtures");
+    }
+    plan
+}
+
+fn fixed_work_runner(plan: FixedWorkPlan) -> String {
+    format!(
+        r#"
+var __quenchFixedSuites = BenchmarkSuite.suites;
+var __quenchFixedPrint = typeof console !== "undefined" && typeof console.log === "function"
+  ? console.log.bind(console)
+  : print;
+if (__quenchFixedSuites.length !== {suite_count}) throw new Error("fixed-work suite count mismatch");
+var __quenchFixedSuite = __quenchFixedSuites[0];
+if (__quenchFixedSuite.name !== "{suite}") throw new Error("fixed-work suite name mismatch");
+if (__quenchFixedSuite.benchmarks.length !== {benchmark_count}) throw new Error("fixed-work benchmark count mismatch");
+for (var __quenchFixedIndex = 0; __quenchFixedIndex < __quenchFixedSuite.benchmarks.length; __quenchFixedIndex++) {{
+  var __quenchFixedBenchmark = __quenchFixedSuite.benchmarks[__quenchFixedIndex];
+  __quenchFixedBenchmark.Setup();
+  try {{
+    for (var __quenchFixedRun = 0; __quenchFixedRun < {iterations_per_benchmark}; __quenchFixedRun++) {{
+      __quenchFixedBenchmark.run();
+    }}
+  }} finally {{
+    __quenchFixedBenchmark.TearDown();
+  }}
+}}
+__quenchFixedPrint("{marker_prefix}{suite}:{benchmark_count}:{iterations_per_benchmark}");
+"#,
+        suite = plan.suite,
+        suite_count = FIXED_WORK_SUITE_COUNT,
+        marker_prefix = FIXED_WORK_MARKER_PREFIX,
+        benchmark_count = plan.benchmark_count,
+        iterations_per_benchmark = plan.iterations_per_benchmark,
+    )
+}
+
+fn fixed_work_marker(plan: FixedWorkPlan) -> String {
+    format!(
+        "{}{}:{}:{}",
+        FIXED_WORK_MARKER_PREFIX, plan.suite, plan.benchmark_count, plan.iterations_per_benchmark
+    )
+}
+
+fn run_fixed_work_report(
+    options: &Options,
+    files: &[PathBuf],
+    engines: &[EngineSpec],
+    engine_records: Vec<EngineRecord>,
+    source_revision: String,
+    source_dirty: bool,
+) -> FixedWorkReport {
+    let mut fixtures = BTreeMap::new();
+    for file in files {
+        let key = file.display().to_string();
+        let plan = fixed_work_plan(file);
+        let record =
+            run_fixed_work_fixture(file, plan, engines, options.rounds, options.timeout_ms);
+        eprintln!(
+            "{}: fixed work {} ({}/{} rounds, {} iterations per benchmark)",
+            file.display(),
+            if record.valid && record.output_equal {
+                "valid"
+            } else {
+                "invalid"
+            },
+            record
+                .rounds
+                .iter()
+                .filter(|round| {
+                    round
+                        .samples
+                        .values()
+                        .all(|sample| sample.valid_fixed_work(plan))
+                })
+                .count(),
+            options.rounds,
+            plan.iterations_per_benchmark,
+        );
+        fixtures.insert(key, record);
+    }
+    let complete = !fixtures.is_empty()
+        && fixtures
+            .values()
+            .all(|fixture| fixture.valid && fixture.output_equal);
+    FixedWorkReport {
+        schema: FIXED_WORK_REPORT_SCHEMA,
+        measurement_mode: FIXED_WORK_MEASUREMENT_MODE.into(),
+        created_unix_ns: now_ns(),
+        rounds_requested: options.rounds,
+        timeout_ms: options.timeout_ms,
+        source_revision,
+        source_dirty,
+        corpus: corpus_record(files),
+        host: host_identity(),
+        measurement_runner: artifact(&env::current_exe().expect("current benchmark executable")),
+        engines: engine_records,
+        suite_inputs: corpus_inputs(),
+        fixtures,
+        complete,
+        qualification_ready: false,
+    }
+}
+
+fn run_fixed_work_fixture(
+    file: &Path,
+    plan: FixedWorkPlan,
+    engines: &[EngineSpec],
+    rounds: usize,
+    timeout_ms: u64,
+) -> FixedWorkFixtureRecord {
+    let runner = fixed_work_runner(plan);
+    let temporary = materialize_with_runner(file, runner.as_bytes());
+    let materialized_source = artifact(&temporary);
+    let mut results = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        let order = rotated_order(engines, round);
+        let mut samples = BTreeMap::new();
+        for engine in &order {
+            samples.insert(engine.name.to_string(), run(engine, &temporary, timeout_ms));
+        }
+        results.push(FixedWorkRound {
+            round,
+            execution_order: order.iter().map(|engine| engine.name.to_string()).collect(),
+            samples,
+        });
+        if !results
+            .last()
+            .unwrap()
+            .samples
+            .values()
+            .all(|sample| sample.valid_fixed_work(plan))
+        {
+            break;
+        }
+    }
+    let _ = fs::remove_file(temporary);
+    let valid = results.len() == rounds
+        && results.iter().all(|round| {
+            round
+                .samples
+                .values()
+                .all(|sample| sample.valid_fixed_work(plan))
+        });
+    let output_equal = fixed_work_outputs_equal(&results, engines);
+    let summaries = engines
+        .iter()
+        .map(|engine| {
+            (
+                engine.name.to_string(),
+                fixed_work_summary(&results, engine.name, plan),
+            )
+        })
+        .collect();
+    FixedWorkFixtureRecord {
+        source: artifact(file),
+        materialized_source,
+        plan,
+        valid,
+        output_equal,
+        summaries,
+        rounds: results,
+    }
+}
+
+fn fixed_work_outputs_equal(rounds: &[FixedWorkRound], engines: &[EngineSpec]) -> bool {
+    rounds.iter().all(|round| {
+        let Some(first) = engines
+            .first()
+            .and_then(|engine| round.samples.get(engine.name))
+        else {
+            return false;
+        };
+        engines.iter().all(|engine| {
+            round.samples.get(engine.name).is_some_and(|sample| {
+                sample.status == first.status
+                    && semantic_output(&sample.stdout) == semantic_output(&first.stdout)
+            })
+        })
+    })
+}
+
+fn fixed_work_summary(
+    rounds: &[FixedWorkRound],
+    engine: &str,
+    plan: FixedWorkPlan,
+) -> FixedWorkSummary {
+    let samples = rounds
+        .iter()
+        .filter_map(|round| round.samples.get(engine))
+        .filter(|sample| sample.valid_fixed_work(plan))
+        .collect::<Vec<_>>();
+    FixedWorkSummary {
+        median_wall_ns: median_u128(samples.iter().map(|sample| sample.wall_ns).collect()),
+        median_cycles: median_u64(samples.iter().filter_map(|sample| sample.cycles).collect()),
+        median_instructions: median_u64(
+            samples
+                .iter()
+                .filter_map(|sample| sample.instructions)
+                .collect(),
+        ),
+        median_max_rss_bytes: median_u64(
+            samples
+                .iter()
+                .filter_map(|sample| sample.peak_rss_bytes)
+                .collect(),
+        ),
+        valid_samples: samples.len(),
+    }
 }
 
 fn run_fixture(
@@ -1021,7 +1449,16 @@ fn median_u64(mut values: Vec<u64>) -> Option<u64> {
     values.get(values.len() / 2).copied()
 }
 
+fn median_u128(mut values: Vec<u128>) -> Option<u128> {
+    values.sort_unstable();
+    values.get(values.len() / 2).copied()
+}
+
 fn materialize(file: &Path) -> PathBuf {
+    materialize_with_runner(file, RUNNER.as_bytes())
+}
+
+fn materialize_with_runner(file: &Path, runner: &[u8]) -> PathBuf {
     let nonce = now_ns();
     let name = file.file_name().unwrap_or_default().to_string_lossy();
     let path = Path::new("/tmp").join(format!(
@@ -1031,12 +1468,12 @@ fn materialize(file: &Path) -> PathBuf {
     let base = fs::read(Path::new(SUITE_DIR).join("base.js"))
         .unwrap_or_else(|error| fail(&error.to_string()));
     let fixture = fs::read(file).unwrap_or_else(|error| fail(&error.to_string()));
-    let mut source = Vec::with_capacity(base.len() + fixture.len() + RUNNER.len() + 2);
+    let mut source = Vec::with_capacity(base.len() + fixture.len() + runner.len() + 2);
     source.extend_from_slice(&base);
     source.push(b'\n');
     source.extend_from_slice(&fixture);
     source.push(b'\n');
-    source.extend_from_slice(RUNNER.as_bytes());
+    source.extend_from_slice(runner);
     fs::write(&path, source).unwrap_or_else(|error| fail(&error.to_string()));
     path
 }
@@ -1048,6 +1485,7 @@ fn semantic_output(stdout: &str) -> String {
             !line.starts_with("Score: ")
                 && *line != "----"
                 && !line.starts_with("__quenchBenchResult: ")
+                && !line.starts_with("__quenchFixedWork:")
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1223,7 +1661,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -1231,6 +1669,84 @@ fn usage(message: &str) -> ! {
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2)
+}
+
+#[cfg(test)]
+mod fixed_work_tests {
+    use super::{
+        fixed_work_marker, fixed_work_runner, FixedWorkPlan, Sample, FIXED_WORK_PLANS, FIXTURES,
+    };
+
+    #[test]
+    fn fixed_work_plan_covers_each_fixture_once_with_positive_work() {
+        let planned = FIXED_WORK_PLANS
+            .iter()
+            .map(|plan| plan.fixture)
+            .collect::<Vec<_>>();
+        assert_eq!(planned, FIXTURES);
+        assert!(FIXED_WORK_PLANS.iter().all(|plan| {
+            !plan.suite.is_empty() && plan.benchmark_count > 0 && plan.iterations_per_benchmark > 0
+        }));
+    }
+
+    #[test]
+    fn fixed_work_runner_keeps_setup_run_and_teardown_order_explicit() {
+        let plan = *FIXED_WORK_PLANS
+            .iter()
+            .find(|plan| plan.fixture == "splay.js")
+            .unwrap();
+        let runner = fixed_work_runner(plan);
+        let setup = runner.find("__quenchFixedBenchmark.Setup();").unwrap();
+        let iterations = format!("__quenchFixedRun < {}", plan.iterations_per_benchmark);
+        let run_loop = runner.find(&iterations).unwrap();
+        let run_call = runner.find("__quenchFixedBenchmark.run();").unwrap();
+        let teardown = runner.find("__quenchFixedBenchmark.TearDown();").unwrap();
+        let marker = runner.find(&fixed_work_marker(plan)).unwrap();
+        assert!(
+            setup < run_loop && run_loop < run_call && run_call < teardown && teardown < marker
+        );
+        assert!(runner.contains("finally"));
+        assert!(!runner.contains("RunSuites"));
+        assert!(!runner.contains("Date"));
+    }
+
+    #[test]
+    fn fixed_work_sample_requires_completion_marker_without_a_score() {
+        let plan = FixedWorkPlan {
+            fixture: "crypto.js",
+            suite: "Crypto",
+            benchmark_count: 2,
+            iterations_per_benchmark: 10,
+        };
+        let sample = Sample {
+            status: 0,
+            timed_out: false,
+            wall_ns: 1,
+            peak_rss_bytes: Some(1),
+            score: None,
+            instructions: Some(2),
+            cycles: Some(3),
+            page_faults: None,
+            page_reclaims: None,
+            involuntary_context_switches: None,
+            stdout: format!("{}\n", fixed_work_marker(plan)),
+            stderr: String::new(),
+        };
+        assert!(sample.valid_fixed_work(plan));
+
+        let scored_sample = Sample {
+            score: Some(1.0),
+            ..sample.clone()
+        };
+        assert!(!scored_sample.valid_fixed_work(plan));
+        let mut wrong_plan = plan;
+        wrong_plan.iterations_per_benchmark += 1;
+        let wrong_marker = Sample {
+            stdout: format!("{}\n", fixed_work_marker(wrong_plan)),
+            ..sample
+        };
+        assert!(!wrong_marker.valid_fixed_work(plan));
+    }
 }
 
 #[cfg(all(test, unix, not(target_os = "macos")))]
