@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "task": "78",
+  "related_task": "61",
+  "experiment": "Keep decoded function code and function identity in a loop-local cursor",
+  "decision": "retain candidate pending full task-61 fixture qualification",
+  "hypothesis": "A loop-local code cursor removes per-instruction frame-function lookup and code-vector derivation while preserving the central dispatch match and per-instruction PC publication.",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "memory_bytes": 17179869184,
+    "logical_cpus": 10,
+    "low_power_mode": false
+  },
+  "source": {
+    "base_revision": "d6798dfa6b9bf6ecadf23889042fdada0c0a8e8a",
+    "candidate_owner_file": "crates/quench-runtime/src/vm/dispatch_frame.rs",
+    "candidate_owner_file_sha256": "f8535c6effc0e20dd05b0c86a1052ac0c062ee34449e9ededcf5b00b6de7e80d",
+    "candidate_source_diff_sha256": "ccc7333b097aea24ca47d6f9dff35dfa179e8d00527ee0c4fb7b027e7d3e6b2c",
+    "baseline_binary_sha256": "d2429f973f90b5f95996bc964a7572b170268c6d16a2b3697a66d42f8adf17fc",
+    "candidate_binary_sha256": "9175e3ac9ef03874f5a9d046963645ced1f427a0c8bd21de6b10632090e54783",
+    "profile": "production"
+  },
+  "measurement": {
+    "pairs": 11,
+    "order": "alternating candidate-first on odd pairs",
+    "command": "python3.14 tasks/evidence/task61-dispatch-executing-program-pairs.py --baseline target/iteration/task61-closure-candidate-20261009/production/quench-node --candidate target/iteration/task61-code-cursor-candidate-20261009/production/quench-node --output tasks/evidence/task61-dispatch-code-cursor-pairs-2026-10-09.csv",
+    "timer": "/usr/bin/time -l; retired instructions are the primary metric",
+    "raw_csv": {
+      "path": "tasks/evidence/task61-dispatch-code-cursor-pairs-2026-10-09.csv",
+      "sha256": "544e7d6ccee8438cfffb2b49a3f506769cce35aa7e29d42e0b4e88e7c8155a7c"
+    },
+    "instruction_statistics": {
+      "paired_delta_method": "median of per-pair candidate/baseline percentage changes",
+      "bootstrap_replicates": 100000,
+      "bootstrap_seed": 7809,
+      "local_store": {
+        "baseline_median": 10303689812,
+        "candidate_median": 9083017752,
+        "paired_median_delta_percent": -11.847238399765603,
+        "paired_bootstrap_95_percentile_interval": [-11.856227224919314, -11.843819002619327],
+        "candidate_lower_pairs": 11
+      },
+      "cjs_call": {
+        "baseline_median": 29955466791,
+        "candidate_median": 28364696219,
+        "paired_median_delta_percent": -5.3102357436704555,
+        "paired_bootstrap_95_percentile_interval": [-5.312988623218795, -5.307688268108524],
+        "candidate_lower_pairs": 11
+      }
+    },
+    "elapsed_time": {
+      "note": "Wall time is secondary to retired instructions for these short loops.",
+      "local_store_paired_median_delta_percent": -13.793103448275856,
+      "cjs_call_paired_median_delta_percent": -5.940594059405946
+    },
+    "maximum_rss": {
+      "local_store_baseline_median_bytes": 18563072,
+      "local_store_candidate_median_bytes": 18546688,
+      "local_store_candidate_lower_pairs": 6,
+      "cjs_call_baseline_median_bytes": 18546688,
+      "cjs_call_candidate_median_bytes": 18546688,
+      "cjs_call_candidate_lower_pairs": 6
+    },
+    "fixtures": {
+      "local_store": {
+        "path": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+        "sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e"
+      },
+      "cjs_call": {
+        "path": "tasks/evidence/task61-dispatch-executing-program-cjs-call-10m-2026-10-08.cjs",
+        "sha256": "9ca4e9511fa1cce15a96ed1acaedf9f9757a8613392e9d4d3f8c46195b553ee9"
+      }
+    }
+  },
+  "binary_size": {
+    "baseline_text_segment_bytes": 10387456,
+    "candidate_text_segment_bytes": 10403840,
+      "text_segment_delta_bytes": 16384,
+    "baseline_text_section_bytes": 7140496,
+    "candidate_text_section_bytes": 7148112,
+    "text_section_delta_bytes": 7616
+  },
+  "correctness": {
+    "runtime_library_tests": {
+      "command": "CARGO_INCREMENTAL=0 cargo test --locked --offline -p quench-runtime --lib",
+      "result": "530/530 passed"
+    },
+    "test262_selected_stages": {
+      "1": "263/263 passed",
+      "8": "347/347 passed",
+      "11": "217/217 passed",
+      "36-38": "89/89 passed",
+      "48": "508/509 passed; sole failure built-ins/Function/call-bind-this-realm-value.js is a byte-identical failure on the pinned baseline, documented in task61-closure-prototype-skip-2026-10-09.json",
+      "49-50": "84/84 passed",
+      "61": "729/729 passed"
+    },
+    "wasm": {
+      "command": "WASM_FILE_TIMEOUT_MS=60000 CARGO_INCREMENTAL=0 cargo run --locked --offline --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/cursor-wasm-report.json crates/quench-wasm-test/testsuite",
+      "result": "67,124/67,124 passed"
+    },
+    "output": "both instruction-loop fixtures completed their guest result assertions successfully"
+  },
+  "interpretation": "The code cursor is a broad loop-level win on both focused workloads with unchanged RSS medians. The production binary's __TEXT grew by one 16 KiB page, so fixture-level Score/RSS qualification remains necessary. PC publication and StepResult representation were unchanged; the change only caches function identity and instruction-table pointers and refreshes them at frame/program transitions."
+}

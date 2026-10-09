@@ -657,7 +657,7 @@
       "id": "78",
       "file": "78.md",
       "title": "Measure dispatch alternatives against the central match",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": ["86", "62"]
     },
     {
