@@ -1,0 +1,144 @@
+{
+  "schema": "quench.task61.experiment.v1",
+  "task": 61,
+  "experiment": "Loop-local active-program pointer cursor",
+  "decision": "rejected",
+  "source_revision": "a4d239fe2f1412fc12ff9b820aea0789e1f9111d",
+  "evidence_revision": "7bf7e7b46",
+  "candidate_source_diff_sha256": "fcce9fb5ef6acf3efc14661e0bc5474a4aa2104f9720f0f8b892d242d4dbd278",
+  "candidate_patch": "tasks/evidence/task61-dispatch-active-program-cursor-rejected-2026-10-09.patch",
+  "candidate_patch_sha256": "fcce9fb5ef6acf3efc14661e0bc5474a4aa2104f9720f0f8b892d242d4dbd278",
+  "host": {
+    "platform": "macOS-26.5-arm64",
+    "cpu": "Apple M4",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "python": "3.14.8",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported"
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=target/candidate-a CARGO_INCREMENTAL=0 cargo build --profile production -p quench-node",
+    "baseline_binary": "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+    "baseline_binary_sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+    "candidate_binary": "target/pinned/39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7/quench-node",
+    "candidate_binary_sha256": "39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7"
+  },
+  "short_pair_screen": {
+    "pairs_per_fixture": 11,
+    "order": "alternating; candidate first on odd pairs",
+    "runner": "tasks/evidence/task61-dispatch-executing-program-pairs.py",
+    "runner_sha256": "c66de51db82ca46ca3762275ad3885c6d7176e7dc4722b90f64b22fb51a03a01",
+    "command": "python3.14 tasks/evidence/task61-dispatch-executing-program-pairs.py --baseline target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node --candidate target/pinned/39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7/quench-node --output tasks/evidence/task61-dispatch-active-program-cursor-pairs-2026-10-09.csv",
+    "raw_pairs": "tasks/evidence/task61-dispatch-active-program-cursor-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "0f9a3f2b261915444d68812acd4d04a9a8933c4d7e02dc45d65ecbf61a7feebd",
+    "results": {
+      "cjs_call": {
+        "instructions": {
+          "paired_median_delta_percent": -2.7865857319717358,
+          "candidate_better_pairs": 11,
+          "candidate_worse_pairs": 0,
+          "min_paired_delta_percent": -2.791238194594081,
+          "max_paired_delta_percent": -2.7819832452516735
+        },
+        "elapsed_seconds": {
+          "paired_median_delta_percent": 0.0,
+          "candidate_better_pairs": 2,
+          "candidate_worse_pairs": 5,
+          "min_paired_delta_percent": -1.0526315789473717,
+          "max_paired_delta_percent": 4.210526315789487
+        },
+        "user_seconds": {
+          "paired_median_delta_percent": 0.0,
+          "candidate_better_pairs": 2,
+          "candidate_worse_pairs": 5,
+          "min_paired_delta_percent": -1.0526315789473717,
+          "max_paired_delta_percent": 5.319148936170226
+        },
+        "max_rss_bytes": {
+          "paired_median_delta_percent": 0.18298261665141702,
+          "candidate_better_pairs": 3,
+          "candidate_worse_pairs": 7,
+          "min_paired_delta_percent": -0.45745654162854255,
+          "max_paired_delta_percent": 1.3761467889908285
+        }
+      },
+      "local_store": {
+        "instructions": {
+          "paired_median_delta_percent": -4.407311714801909,
+          "candidate_better_pairs": 11,
+          "candidate_worse_pairs": 0,
+          "min_paired_delta_percent": -4.41750693923868,
+          "max_paired_delta_percent": -4.371945393672149
+        },
+        "elapsed_seconds": {
+          "paired_median_delta_percent": 8.000000000000007,
+          "candidate_better_pairs": 0,
+          "candidate_worse_pairs": 11,
+          "min_paired_delta_percent": 3.703703703703698,
+          "max_paired_delta_percent": 12.00000000000001
+        },
+        "user_seconds": {
+          "paired_median_delta_percent": 8.000000000000007,
+          "candidate_better_pairs": 0,
+          "candidate_worse_pairs": 11,
+          "min_paired_delta_percent": 4.0000000000000036,
+          "max_paired_delta_percent": 12.00000000000001
+        },
+        "max_rss_bytes": {
+          "paired_median_delta_percent": 0.7400555041628065,
+          "candidate_better_pairs": 2,
+          "candidate_worse_pairs": 9,
+          "min_paired_delta_percent": -0.4512635379061325,
+          "max_paired_delta_percent": 1.098901098901095
+        }
+      }
+    }
+  },
+  "extended_local_store_screen": {
+    "pairs": 11,
+    "order": "alternating; candidate first on odd pairs",
+    "runner": "tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.py",
+    "runner_sha256": "17a9cb1a2c1bcb6311ebdefabc15774e52907a84d5efb9adc9ba122c0f6e2e51",
+    "command": "python3.14 tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.py --baseline target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node --candidate target/pinned/39624b8355b2dedd8b4deb1937b7cf45918a5fe35f6fb12370bd3559f48fc9f7/quench-node --fixture tasks/evidence/task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs --output tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
+    "input": "tasks/evidence/task61-dispatch-active-program-cursor-local-store-100m-2026-10-09.cjs",
+    "input_sha256": "43f00d72c3bd12b5ad05ea2ebe4be1d311b86214d1dff7aa9fc2c55746eae682",
+    "raw_pairs": "tasks/evidence/task61-dispatch-active-program-cursor-100m-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "9098c560104530f96528bdf992d5f75121dc04ccea95285eb0755f12a984a055",
+    "results": {
+      "instructions": {
+        "paired_median_delta_percent": -4.503340538689504,
+        "candidate_better_pairs": 11,
+        "candidate_worse_pairs": 0,
+        "min_paired_delta_percent": -4.509462165718592,
+        "max_paired_delta_percent": -4.489253806806359
+      },
+      "elapsed_seconds": {
+        "paired_median_delta_percent": 7.916666666666661,
+        "candidate_better_pairs": 0,
+        "candidate_worse_pairs": 11,
+        "min_paired_delta_percent": 2.5104602510460206,
+        "max_paired_delta_percent": 16.18257261410787
+      },
+      "user_seconds": {
+        "paired_median_delta_percent": 7.949790794979084,
+        "candidate_better_pairs": 0,
+        "candidate_worse_pairs": 11,
+        "min_paired_delta_percent": 2.5000000000000133,
+        "max_paired_delta_percent": 16.250000000000007
+      },
+      "max_rss_bytes": {
+        "paired_median_delta_percent": 0.6381039197812299,
+        "candidate_better_pairs": 3,
+        "candidate_worse_pairs": 8,
+        "min_paired_delta_percent": -0.36596523330283404,
+        "max_paired_delta_percent": 1.2832263978001857
+      }
+    }
+  },
+  "correctness": {
+    "production_build": "passed",
+    "stdout_and_exit_status": "baseline and candidate matched for both short fixtures",
+    "conformance_tests": "not run; candidate rejected on elapsed time before qualification"
+  },
+  "rationale": "The longer 100M local-store loop retires 4.50% fewer instructions in all 11 pairs but takes 7.92% longer in all 11. The short CJS-call loop retires 2.79% fewer instructions, while elapsed time is flat. Since fixture Score depends on elapsed execution time, the instruction reduction does not justify retaining this raw-pointer cursor."
+}
