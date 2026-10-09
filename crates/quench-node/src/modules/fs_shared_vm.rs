@@ -11,7 +11,11 @@ pub(crate) mod sync;
 pub(crate) mod write_stream;
 
 const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync) => ({
-  readFile: (...args) => Promise.resolve().then(() => readFile(...args)),
+  readFile: (...args) => Promise.resolve().then(() => {
+    const handle = args[0];
+    if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
+    return readFile(...args);
+  }),
   writeFile: (...args) => Promise.resolve().then(() => writeFileSync(...args)),
   appendFile: (...args) => Promise.resolve().then(() => appendFileSync(...args)),
   stat: (...args) => Promise.resolve().then(() => stat(...args)),
@@ -73,6 +77,37 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         const bytesRead = readSync(fd, buffer, offset, length, position);
         return { bytesRead, buffer };
       }),
+      readFile: async (options) => {
+        ensureOpen("read");
+        const settings = typeof options === 'string' ? { encoding: options } : (options || {});
+        const signal = settings.signal;
+        const checkAbort = () => {
+          if (!signal?.aborted) return;
+          const error = new Error('The operation was aborted');
+          error.name = 'AbortError';
+          error.code = 'ABORT_ERR';
+          throw error;
+        };
+        checkAbort();
+        await new Promise((resolve) => setImmediate(resolve));
+        checkAbort();
+        const size = fstatSync(fd).size;
+        if (size > 0x7FFFFFFF) {
+          const error = new RangeError('File size is greater than 2 GiB');
+          error.code = 'ERR_FS_FILE_TOO_LARGE';
+          throw error;
+        }
+        const buffer = Buffer.alloc(size);
+        let offset = 0;
+        while (offset < size) {
+          checkAbort();
+          const bytesRead = readSync(fd, buffer, offset, size - offset, null);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+        }
+        const result = buffer.subarray(0, offset);
+        return settings.encoding ? result.toString(settings.encoding) : result;
+      },
       write: (...writeArgs) => Promise.resolve().then(() => {
         ensureOpen("write");
         let [data, offset = 0, length, position = null] = writeArgs;
