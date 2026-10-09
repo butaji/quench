@@ -729,6 +729,58 @@ const _: () = {
     }
 };
 
+/// Entries after which a function's packed code is expanded into fixed-width instructions.
+/// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
+/// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
+const HOT_DECODE_ENTRIES: u32 = 64;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HotDecoding {
+    entries: std::cell::Cell<u32>,
+    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    #[allow(clippy::box_collection)]
+    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
+}
+
+impl HotDecoding {
+    /// Counts one entry and returns the expanded code once the function is hot.
+    #[inline(always)]
+    pub(crate) fn on_entry(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+    ) -> Option<&[WideInstruction]> {
+        if let Some(decoded) = self.code.get() {
+            return Some(decoded);
+        }
+        let entries = self.entries.get() + 1;
+        self.entries.set(entries);
+        if entries >= HOT_DECODE_ENTRIES {
+            return Some(self.expand(code, wide));
+        }
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+        self.code
+            .get_or_init(|| {
+                code.iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .as_slice()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
@@ -782,6 +834,8 @@ pub struct Function {
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
+    /// Fixed-width view of `code`, derived once the function proves hot.
+    pub(crate) decoded: HotDecoding,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
 }

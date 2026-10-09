@@ -2705,6 +2705,7 @@ impl<'a> Compiler<'a> {
             wide: function.wide,
             registers: function.max_reg,
             dispatch: DispatchClass::General,
+            decoded: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
         };

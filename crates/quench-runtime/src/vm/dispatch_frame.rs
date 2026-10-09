@@ -6,26 +6,37 @@ struct GeneralCodeCursor {
     function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
+    /// Fixed-width expansion of `code`; null while the function is cold.
+    decoded: *const WideInstruction,
 }
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
         let function_code = &program.functions[function as usize];
+        let decoded = function_code
+            .decoded
+            .on_entry(&function_code.code, &function_code.wide)
+            .map_or(std::ptr::null(), <[WideInstruction]>::as_ptr);
         Self {
             program: program_id,
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
+            decoded,
         }
     }
 
+    #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
-        // operand index. This cursor stays local to `run_frame_general_until`:
-        // the borrowed entry residual remains alive for the whole call, and a
-        // switched residual is retained by `current_program` until the cursor
-        // is refreshed. Inline frame pushes are restricted to the same program.
-        // The loop refreshes the cursor whenever the active frame changes.
+        // operand index, and `decoded` has one entry per code word. This cursor stays local
+        // to `run_frame_general_until`: the borrowed entry residual remains alive for the
+        // whole call, and a switched residual is retained by `current_program` until the
+        // cursor is refreshed. Inline frame pushes are restricted to the same program. The
+        // loop refreshes the cursor whenever the active frame changes.
+        if !self.decoded.is_null() {
+            return unsafe { *self.decoded.add(pc) };
+        }
         let packed = unsafe { *self.code.add(pc) };
         if packed.is_wide() {
             // SAFETY: the same validation guarantees this packed wide index is
