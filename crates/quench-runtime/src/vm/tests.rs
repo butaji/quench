@@ -78,6 +78,120 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 }
 
 #[test]
+fn equivalent_data_descriptor_transitions_share_one_shape() {
+    use super::property_key::PropertyKey;
+
+    let program = Engine::specialize("", "descriptor-transition.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let atom = vm.intern_atom("field");
+    let attributes = super::PropertyAttributes {
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        accessor: false,
+        getter: None,
+        setter: None,
+    };
+    let first = vm.object();
+    vm.set_property(first, atom, Value::integer(1)).unwrap();
+    vm.set_property_attributes(first, PropertyKey::string(atom), attributes);
+    let first_shape = vm.object_data(first).unwrap().shape();
+    let shape_count = vm.shapes.len();
+
+    let second = vm.object();
+    vm.set_property(second, atom, Value::integer(2)).unwrap();
+    vm.set_property_attributes(second, PropertyKey::string(atom), attributes);
+
+    assert_eq!(vm.object_data(second).unwrap().shape(), first_shape);
+    assert_eq!(vm.shapes.len(), shape_count);
+}
+
+#[test]
+fn repeated_normal_closures_reuse_function_descriptor_shapes() {
+    const CLOSURES: usize = 32;
+
+    let program = Engine::specialize(
+        "function outer() { return function plainName(x) { return x; }; }",
+        "closure-shape-transition.js",
+    )
+    .unwrap();
+    let closure_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function.parent.is_some()
+                && function
+                    .name
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "plainName")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let first = vm.closure(&program, closure_id, Value::NULL).unwrap();
+    let first_shape = vm.object_data(first).unwrap().shape();
+    let shapes_after_first = vm.shapes.len();
+    let mut roots = vec![vm.heap.root(first)];
+
+    for _ in 1..CLOSURES {
+        let closure = vm.closure(&program, closure_id, Value::NULL).unwrap();
+        assert_eq!(vm.object_data(closure).unwrap().shape(), first_shape);
+        roots.push(vm.heap.root(closure));
+    }
+
+    assert_eq!(vm.shapes.len(), shapes_after_first);
+    assert_eq!(roots.len(), CLOSURES);
+}
+
+#[test]
+fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
+    use super::property_key::PropertyKey;
+
+    let program = Engine::specialize("", "accessor-transition.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let atom = vm.intern_atom("field");
+    let first_getter = vm.native_value(Native::Object);
+    let second_getter = vm.native_value(Native::Array);
+    let first = vm.object();
+    let second = vm.object();
+    for (object, getter) in [(first, first_getter), (second, second_getter)] {
+        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+        vm.set_property_attributes(
+            object,
+            PropertyKey::string(atom),
+            super::PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+    }
+
+    let first_attributes = vm
+        .property_attributes(first, PropertyKey::string(atom))
+        .unwrap();
+    let second_attributes = vm
+        .property_attributes(second, PropertyKey::string(atom))
+        .unwrap();
+    assert_eq!(first_attributes.getter, Some(first_getter));
+    assert_eq!(second_attributes.getter, Some(second_getter));
+    assert_ne!(
+        vm.object_data(first).unwrap().shape(),
+        vm.object_data(second).unwrap().shape()
+    );
+}
+
+#[test]
 fn realm_lexical_state_follows_the_active_global_and_stays_rooted() {
     let mut vm = Vm::new(SilentHost);
     let first_global = vm.object();
