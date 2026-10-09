@@ -845,11 +845,14 @@ impl<H: Host> Vm<H> {
                 let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
-                self.profile.opcode(
-                    ins.op() as usize,
-                    frame,
+                self.profile
+                    .opcode(ins.op() as usize, frame, cursor.function, instruction_pc);
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.object_literal_instruction(
+                    cursor.program.raw(),
                     cursor.function,
                     instruction_pc,
+                    ins.op(),
                 );
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);

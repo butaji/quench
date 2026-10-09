@@ -75,6 +75,13 @@ impl<H: Host> Vm<H> {
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .opcode(ins.op() as usize, frame, function as u32, _instruction_pc);
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.object_literal_instruction(
+                self.frames[frame].program.raw(),
+                function as u32,
+                _instruction_pc,
+                ins.op(),
+            );
             #[cfg(not(feature = "profile-aggregate"))]
             self.profile.opcode(ins.op() as usize);
             let outcome = (|| -> Result<StepResult, JsError> {
