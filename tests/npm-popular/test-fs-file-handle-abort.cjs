@@ -5,6 +5,8 @@ const path = require('node:path');
 (async () => {
   const file = path.join(process.cwd(), `quench-filehandle-abort-${process.pid}`);
   const handle = await fs.promises.open(file, 'w+');
+  let closeEvents = 0;
+  handle.on('close', () => closeEvents++);
   const controller = new AbortController();
   process.nextTick(() => controller.abort());
   try {
@@ -13,6 +15,7 @@ const path = require('node:path');
     await handle.datasync();
   } finally {
     await handle.close();
+    assert.equal(closeEvents, 1);
     assert.equal(handle.fd, -1);
     const otherHandle = await fs.promises.open(__filename, 'r');
     try {
@@ -44,5 +47,13 @@ const path = require('node:path');
     assert.ok(result.bytesRead > 0);
   } finally {
     await defaultReader.close();
+  }
+  const streamReader = await fs.promises.open(__filename, 'r');
+  try {
+    const chunks = [];
+    for await (const chunk of streamReader.createReadStream()) chunks.push(Buffer.from(chunk));
+    assert.ok(Buffer.concat(chunks).toString('utf8').includes('createReadStream'));
+  } finally {
+    await streamReader.close();
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
