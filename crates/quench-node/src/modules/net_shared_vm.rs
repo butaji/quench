@@ -8,7 +8,28 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOperation, encodingOperation, listenOperation, closeOperation, addressOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation) => {
+  const invalidArgValue = (value, message) => {
+    const error = new TypeError(message || `The argument 'options' is invalid. Received ${String(value)}`);
+    error.code = 'ERR_INVALID_ARG_VALUE'; return error;
+  };
+  const invalidArgType = (value) => {
+    const error = new TypeError(`The "port" argument must be of type number. Received ${String(value)}`);
+    error.code = 'ERR_INVALID_ARG_TYPE'; return error;
+  };
+  const validatePort = (value, allowZero, connecting = false) => {
+    if (value === undefined) { if (allowZero && !connecting) return 0; throw invalidArgType(value); }
+    if (allowZero && !connecting && value === null) return 0;
+    if (typeof value !== 'number' && typeof value !== 'string') {
+      throw connecting ? invalidArgType(value) : invalidArgValue(value);
+    }
+    const port = typeof value === 'string' ? (value.trim() === '' ? Number.NaN : Number(value)) : value;
+    if (!Number.isFinite(port) || !Number.isInteger(port) || port < (allowZero ? 0 : 1) || port > 65535) {
+      const error = new RangeError(`Port should be >= ${allowZero ? 0 : 1} and < 65536. Received ${String(value)}`);
+      error.code = 'ERR_SOCKET_BAD_PORT'; throw error;
+    }
+    return port;
+  };
   const listeners = (socket) => socket._listeners;
   class Socket {
     constructor() { this._listeners = new Map(); this._encoding = null; }
@@ -20,29 +41,63 @@ const NET_MODULE_FACTORY: &str = r#"((connectOperation, writeOperation, endOpera
     }
     removeListener(event, callback) { const list = listeners(this).get(event) || []; listeners(this).set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; }
     off(event, callback) { return this.removeListener(event, callback); }
-    emit(event, ...args) { for (const callback of [...(listeners(this).get(event) || [])]) callback.apply(this, args); return true; }
+    emit(event, ...args) { for (const callback of [...(listeners(this).get(event) || [])]) callback.apply(this, args); if (event === 'end' && !this.allowHalfOpen) this.end(); return true; }
     setEncoding(encoding) { this._encoding = String(encoding); encodingOperation(this, this._encoding); return this; }
     write(chunk) { writeOperation(this, typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8')); return true; }
     end(chunk) { if (chunk !== undefined) this.write(chunk); endOperation(this); return this; }
-    destroy() { endOperation(this); return this; }
+    destroy(error) { destroyOperation(this, error); return this; }
+    connect(port, host, callback) {
+      if (port && typeof port === 'object') {
+        const options = port;
+        callback = typeof host === 'function' ? host : callback;
+        host = options.host ?? options.hostname;
+        if (options.hints !== undefined && (!Number.isInteger(options.hints) || (options.hints & ~49) !== 0)) {
+          const error = new TypeError(`The argument 'hints' is invalid. Received ${String(options.hints)}`);
+          error.code = 'ERR_INVALID_ARG_VALUE'; throw error;
+        }
+        port = options.port;
+      }
+      if (typeof host === 'function') { callback = host; host = undefined; }
+      port = validatePort(port, true, true);
+      if (typeof callback === 'function') this.once('connect', callback);
+      connectOperation(this, port, host);
+      return this;
+    }
+    resume() { this._flowing = true; return this; }
+    pause() { this._flowing = false; return this; }
     ref() { return this; }
     unref() { return this; }
   }
   const connect = function connect(port, host, callback) {
-    if (typeof host === 'function') { callback = host; host = undefined; }
     const socket = new Socket();
-    if (typeof callback === 'function') socket.once('connect', callback);
-    connectOperation(socket, port, host);
-    return socket;
+    return socket.connect(port, host, callback);
   };
   class Server {
-    constructor(listener) { this._listeners = new Map(); this.listening = false; if (typeof listener === 'function') this.on('connection', listener); }
+    constructor(options, listener) { this._listeners = new Map(); this.listening = false; if (typeof options === 'function') listener = options; if (typeof listener === 'function') this.on('connection', listener); }
     on(event, callback) { const list = this._listeners.get(event) || []; list.push(callback); this._listeners.set(event, list); return this; }
     addListener(event, callback) { return this.on(event, callback); }
     once(event, callback) { const wrapped = (...args) => { this.removeListener(event, wrapped); callback.apply(this, args); }; wrapped.listener = callback; return this.on(event, wrapped); }
     removeListener(event, callback) { const list = this._listeners.get(event) || []; this._listeners.set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; }
     emit(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; }
-    listen(port, host, callback) { if (typeof host === 'function') { callback = host; host = undefined; } if (typeof callback === 'function') this.once('listening', callback); listenOperation(this, port, host); this.listening = true; return this; }
+    listen(port, host, callback) {
+      if (typeof port === 'function') { callback = port; port = 0; }
+      if (port && typeof port === 'object') {
+        const options = port;
+        callback = typeof host === 'function' ? host : callback;
+        if (!('port' in options) && !('path' in options)) {
+          throw invalidArgValue(options, `The argument 'options' must have the property "port" or "path". Received ${String(options)}`);
+        }
+        if ('path' in options && !('port' in options)) throw invalidArgValue(options);
+        host = options.host;
+        port = options.port;
+      }
+      if (typeof host === 'function') { callback = host; host = undefined; }
+      port = validatePort(port, true);
+      if (typeof callback === 'function') this.once('listening', callback);
+      listenOperation(this, port, host);
+      this.listening = true;
+      return this;
+    }
     address() { return addressOperation(this); }
     close(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; }
   }
@@ -365,16 +420,25 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
 fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, String> {
     let addresses = (host, port)
         .to_socket_addrs()
-        .map_err(|error| error.to_string())?
+        .map_err(|_| format!("getaddrinfo ENOTFOUND {host}"))?
         .collect::<Vec<_>>();
     let mut last_error = None;
     for address in addresses {
         match TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT) {
             Ok(stream) => return Ok(stream),
-            Err(error) => last_error = Some(error.to_string()),
+            Err(error) => {
+                let code = match error.kind() {
+                    std::io::ErrorKind::ConnectionRefused => "ECONNREFUSED",
+                    std::io::ErrorKind::TimedOut => "ETIMEDOUT",
+                    std::io::ErrorKind::AddrNotAvailable => "EADDRNOTAVAIL",
+                    std::io::ErrorKind::PermissionDenied => "EACCES",
+                    _ => "ENETUNREACH",
+                };
+                last_error = Some(format!("connect {code} {address} ({error})"));
+            }
         }
     }
-    Err(last_error.unwrap_or_else(|| "host resolved to no TCP addresses".into()))
+    Err(last_error.unwrap_or_else(|| format!("getaddrinfo ENOTFOUND {host}")))
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -409,6 +473,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let connect = context.host_function(crate::host::shared_vm::operation("netConnect"))?;
     let write = context.host_function(crate::host::shared_vm::operation("netSocketWrite"))?;
     let end = context.host_function(crate::host::shared_vm::operation("netSocketEnd"))?;
+    let destroy = context.host_function(crate::host::shared_vm::operation("netSocketDestroy"))?;
     let encoding = context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
     let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
     let close = context.host_function(crate::host::shared_vm::operation("netServerClose"))?;
@@ -418,7 +483,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let surface = context.call_rooted(
         factory,
         undefined,
-        &[connect, write, end, encoding, listen, close, address],
+        &[connect, write, end, destroy, encoding, listen, close, address],
     )?;
     for name in ["Socket", "Server", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
@@ -443,8 +508,8 @@ pub(crate) fn is_ip(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
-    let family = input.as_deref().and_then(|input| input.parse::<IpAddr>().ok());
+    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
+    let family = input.as_deref().and_then(parse_ip);
     Ok(context.number(match family {
         Some(IpAddr::V4(_)) => 4.0,
         Some(IpAddr::V6(_)) => 6.0,
@@ -457,7 +522,7 @@ pub(crate) fn is_ipv4(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
+    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
     let is_ipv4 = input.is_some_and(|input| input.parse::<Ipv4Addr>().is_ok());
     Ok(context.boolean(is_ipv4))
 }
@@ -467,9 +532,24 @@ pub(crate) fn is_ipv6(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.string_text(root).ok().flatten());
-    let is_ipv6 = input.is_some_and(|input| input.parse::<Ipv6Addr>().is_ok());
+    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
+    let is_ipv6 = input.as_deref().and_then(parse_ip).is_some_and(|ip| ip.is_ipv6());
     Ok(context.boolean(is_ipv6))
+}
+
+fn parse_ip(input: &str) -> Option<IpAddr> {
+    if let Ok(address) = input.parse::<IpAddr>() {
+        return Some(address);
+    }
+    let (address, zone) = input.rsplit_once('%')?;
+    if zone.is_empty()
+        || !zone
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return None;
+    }
+    address.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
 }
 
 pub(crate) fn connect_operation(
@@ -485,7 +565,7 @@ pub(crate) fn connect_operation(
         .get(1)
         .and_then(|root| context.rooted_value(*root))
         .and_then(Value::as_number)
-        .filter(|port| port.fract() == 0.0 && (1.0..=65535.0).contains(port))
+        .filter(|port| port.fract() == 0.0 && (0.0..=65535.0).contains(port))
         .ok_or_else(|| RootedError::host("invalid TCP port"))? as u16;
     let host = match args.get(2).copied() {
         Some(host) => context.string_text(host)?.unwrap_or_else(|| "localhost".to_owned()),
@@ -545,6 +625,24 @@ pub(crate) fn end_operation(
         .ok_or_else(|| RootedError::host("net.Socket.end requires a socket"))?;
     let id = socket_id(context, socket)?;
     context.host_mut().net_pending_ends.push(id);
+    Ok(socket)
+}
+
+pub(crate) fn destroy_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("net.Socket.destroy requires a socket"))?;
+    let id = socket_id(context, socket)?;
+    context.host_mut().net_pending_writes.retain(|(socket, _)| *socket != id);
+    context.host_mut().net_pending_ends.retain(|socket| *socket != id);
+    let state = context.host_mut().shared_state();
+    close_socket(&mut state.borrow_mut().tcp, id);
+    context.host_mut().net_pending_destroys.push(id);
     Ok(socket)
 }
 
