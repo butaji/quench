@@ -150,10 +150,12 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return super.end(chunk, encoding, callback);
     }
     connect(port, host, callback) {
+      let blockList;
       if (port && typeof port === 'object') {
         const options = port;
         callback = typeof host === 'function' ? host : callback;
         host = options.host ?? options.hostname;
+        blockList = options.blockList;
         if (options.hints !== undefined && (!Number.isInteger(options.hints) || (options.hints & ~49) !== 0)) {
           const error = new TypeError(`The argument 'hints' is invalid. Received ${String(options.hints)}`);
           error.code = 'ERR_INVALID_ARG_VALUE'; throw error;
@@ -165,6 +167,16 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (typeof callback === 'function') this.once('connect', callback);
       this.connecting = true;
       this.pending = true;
+      const blockedHost = host === 'localhost' && blockList?.check?.('127.0.0.1', 'ipv4')
+        ? '127.0.0.1' : host;
+      if (blockList?.check?.(blockedHost, String(blockedHost).includes(':') ? 'ipv6' : 'ipv4')) {
+        queueMicrotask(() => {
+          this.connecting = false;
+          this.pending = false;
+          this.emit('error', Object.assign(new Error(`Blocked address: ${blockedHost}`), { code: 'ERR_IP_BLOCKED' }));
+        });
+        return this;
+      }
       connectOperation(this, port, host);
       return this;
     }
@@ -218,22 +230,158 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
   Object.setPrototypeOf(Stream, Socket);
+  const blockError = (code, message) => Object.assign(
+    code === 'ERR_OUT_OF_RANGE' ? new RangeError(`${code}: ${message}`) : new TypeError(`${code}: ${message}`),
+    { code },
+  );
+  const parseAddress = (value, family) => {
+    if (value && typeof value === 'object') {
+      family = value.family === 'IPv6' ? 'ipv6' : 'ipv4';
+      value = value.address;
+    }
+    if (typeof value !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'The "address" argument must be of type string');
+    if (family !== undefined && typeof family !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'The "type" argument must be of type string');
+    family = family === undefined ? (value.includes(':') ? 'ipv6' : 'ipv4') : String(family).toLowerCase();
+    if (family !== 'ipv4' && family !== 'ipv6') throw blockError('ERR_INVALID_ARG_VALUE', 'The "type" argument must be either ipv4 or ipv6');
+    let text = value.toLowerCase();
+    if (family === 'ipv4') {
+      const parts = text.split('.');
+      if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part) || Number(part) > 255)) throw blockError('ERR_INVALID_ARG_VALUE', `Invalid IPv4 address: ${value}`);
+      const n = parts.reduce((acc, part) => (acc << 8n) | BigInt(Number(part)), 0n);
+      return { text, family, value: n, bits: 32 };
+    }
+    if (text.includes('.')) {
+      const lastColon = text.lastIndexOf(':');
+      const v4 = parseAddress(text.slice(lastColon + 1), 'ipv4').value;
+      text = `${text.slice(0, lastColon)}:${Number((v4 >> 16n) & 65535n).toString(16)}:${Number(v4 & 65535n).toString(16)}`;
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) throw blockError('ERR_INVALID_ARG_VALUE', `Invalid IPv6 address: ${value}`);
+    const left = halves[0] ? halves[0].split(':') : [];
+    const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    const zeros = halves.length === 2 ? 8 - left.length - right.length : 0;
+    const parts = [...left, ...Array(zeros).fill('0'), ...right];
+    if (parts.length !== 8 || parts.some((part) => !/^[\da-f]{1,4}$/.test(part))) throw blockError('ERR_INVALID_ARG_VALUE', `Invalid IPv6 address: ${value}`);
+    const n = parts.reduce((acc, part) => (acc << 16n) | BigInt(`0x${part}`), 0n);
+    return { text: value, family, value: n, bits: 128 };
+  };
+  const addressValue = (value, family) => parseAddress(value, family);
+  const ipv4Mapped = (parsed) => parsed.family === 'ipv6' && (parsed.value >> 32n) === 65535n
+    ? { family: 'ipv4', value: parsed.value & 0xffffffffn, bits: 32, text: '' } : null;
+  class SocketAddress {
+    constructor(options = {}) {
+      if (!options || typeof options !== 'object') throw blockError('ERR_INVALID_ARG_TYPE', 'The "options" argument must be an object');
+      let parsed;
+      try { parsed = parseAddress(options.address, options.family); }
+      catch (error) { throw blockError('ERR_INVALID_ADDRESS', error.message); }
+      this.address = parsed.text;
+      this.family = parsed.family === 'ipv4' ? 'IPv4' : 'IPv6';
+      this.port = options.port === undefined ? 0 : options.port;
+      this.flowlabel = options.flowlabel === undefined ? 0 : options.flowlabel;
+    }
+    toJSON() { return { address: this.address, family: this.family, port: this.port, flowlabel: this.flowlabel }; }
+    static isSocketAddress(value) { return value instanceof SocketAddress; }
+  }
   class BlockList {
-    constructor() { this._addresses = []; }
-    addAddress(address, type) {
-      if (typeof address !== 'string') throw invalidArgValue(address);
-      const family = type === undefined ? (address.includes(':') ? 'ipv6' : 'ipv4') : String(type).toLowerCase();
-      if (family !== 'ipv4' && family !== 'ipv6') throw invalidArgValue(type);
-      this._addresses.push({ address, family });
+    constructor() { this._rules = []; }
+    _insert(kind, first, last = first, prefix) {
+      if (this._rules.some((rule) => rule.kind === kind && rule.family === first.family && rule.start === first.value && rule.end === last.value)) return;
+      this._rules.push({ kind, family: first.family, start: first.value, end: last.value, address: first.text, endAddress: last.text, bits: first.bits, prefix });
+    }
+    addAddress(address, type) { const first = addressValue(address, type); this._insert('Address', first); }
+    addAddresses(addresses, type) {
+      if (!Array.isArray(addresses)) throw blockError('ERR_INVALID_ARG_TYPE', 'The "addresses" argument must be an array');
+      const parsed = addresses.map((address) => parseAddress(address, type));
+      for (const address of parsed) this._insert('Address', address);
+    }
+    addRange(start, end, type) {
+      const first = parseAddress(start, type); const last = parseAddress(end, type || first.family);
+      if (first.family !== last.family || last.value < first.value) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid address range');
+      this._insert('Range', first, last);
+    }
+    addSubnet(address, prefix, type) {
+      const first = parseAddress(address, type);
+      if (typeof prefix !== 'number') throw blockError('ERR_INVALID_ARG_TYPE', 'The "prefix" argument must be of type number');
+      if (!Number.isInteger(prefix) || prefix < 0 || prefix > first.bits) throw blockError('ERR_OUT_OF_RANGE', 'The "prefix" argument is out of range');
+      const shift = BigInt(first.bits - prefix); const start = (first.value >> shift) << shift;
+      const end = start + ((1n << shift) - 1n);
+      this._insert('Subnet', { ...first, value: start }, { ...first, value: end }, prefix);
+    }
+    addCIDR(cidr) {
+      if (typeof cidr !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'The "cidr" argument must be of type string');
+      const slash = cidr.lastIndexOf('/'); if (slash < 0) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid CIDR');
+      const address = cidr.slice(0, slash); const prefixText = cidr.slice(slash + 1);
+      if (!/^\d+$/.test(prefixText)) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid CIDR');
+      this.addSubnet(address, Number(prefixText));
+    }
+    addCIDRs(cidrs) {
+      if (!Array.isArray(cidrs)) throw blockError('ERR_INVALID_ARG_TYPE', 'The "cidrs" argument must be an array');
+      const parsed = cidrs.map((cidr) => {
+        if (typeof cidr !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'CIDR entries must be strings');
+        const slash = cidr.lastIndexOf('/'); if (slash < 0 || !/^\d+$/.test(cidr.slice(slash + 1))) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid CIDR');
+        return [cidr.slice(0, slash), Number(cidr.slice(slash + 1))];
+      });
+      for (const [address, prefix] of parsed) this.addSubnet(address, prefix);
+    }
+    _remove(kind, address, second, type) {
+      const first = parseAddress(address, type);
+      let start = first.value; let end = start;
+      if (kind === 'Range') { const last = parseAddress(second, type || first.family); end = last.value; }
+      if (kind === 'Subnet') {
+        if (typeof second !== 'number') throw blockError('ERR_INVALID_ARG_TYPE', 'The "prefix" argument must be of type number');
+        if (!Number.isInteger(second) || second < 0 || second > first.bits) throw blockError('ERR_OUT_OF_RANGE', 'The "prefix" argument is out of range');
+        const shift = BigInt(first.bits - second); start = (start >> shift) << shift; end = start + ((1n << shift) - 1n);
+      }
+      this._rules = this._rules.filter((rule) => !(rule.kind === kind && rule.family === first.family && rule.start === start && rule.end === end));
+    }
+    removeAddress(address, type) { this._remove('Address', address, undefined, type); }
+    removeRange(start, end, type) { this._remove('Range', start, end, type); }
+    removeSubnet(address, prefix, type) { this._remove('Subnet', address, prefix, type); }
+    removeCIDR(cidr) {
+      if (typeof cidr !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'The "cidr" argument must be of type string');
+      const slash = cidr.lastIndexOf('/'); if (slash < 0 || !/^\d+$/.test(cidr.slice(slash + 1))) throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid CIDR');
+      this.removeSubnet(cidr.slice(0, slash), Number(cidr.slice(slash + 1)));
     }
     check(address, type) {
-      if (address && typeof address === 'object') { type = address.family === 'IPv6' ? 'ipv6' : 'ipv4'; address = address.address; }
-      const family = String(type || (String(address).includes(':') ? 'ipv6' : 'ipv4')).toLowerCase();
-      return this._addresses.some((entry) => entry.address === address && entry.family === family);
+      if (type === undefined) type = address && typeof address === 'object'
+        ? (address.family === 'IPv6' ? 'ipv6' : 'ipv4') : 'ipv4';
+      let parsed;
+      try { parsed = parseAddress(address, type); }
+      catch (error) { if (error && error.code === 'ERR_INVALID_ARG_VALUE') return false; throw error; }
+      const candidates = [parsed]; const mapped = ipv4Mapped(parsed); if (mapped) candidates.push(mapped);
+      if (parsed.family === 'ipv4') candidates.push({ family: 'ipv6', value: (65535n << 32n) | parsed.value, bits: 128 });
+      return candidates.some((candidate) => this._rules.some((rule) => rule.family === candidate.family && candidate.value >= rule.start && candidate.value <= rule.end));
     }
-    get rules() { return this._addresses.map(({ address, family }) => `Address: ${family === 'ipv4' ? 'IPv4' : 'IPv6'} ${address}`); }
+    clear() { this._rules = []; }
+    toJSON() { return this.rules; }
+    [Symbol.for('nodejs.util.inspect.custom')](depth) {
+      if (depth < 0) return '[BlockList]';
+      return `BlockList { rules: ${JSON.stringify(this.rules)} }`;
+    }
+    fromJSON(input) {
+      if (typeof input === 'string') { try { input = JSON.parse(input); } catch { throw blockError('ERR_INVALID_ARG_VALUE', 'Invalid JSON'); } }
+      if (!Array.isArray(input)) throw blockError('ERR_INVALID_ARG_TYPE', 'The "rules" argument must be an array');
+      const parsed = [];
+      for (const rule of input) {
+        if (typeof rule !== 'string') throw blockError('ERR_INVALID_ARG_TYPE', 'Rules must be strings');
+        const match = /^(Address|Range|Subnet): IPv(4|6) (.+)$/.exec(rule); if (!match) continue;
+        try {
+          const family = match[2] === '4' ? 'ipv4' : 'ipv6'; const data = match[3];
+          if (match[1] === 'Address') parsed.push(['Address', data, undefined, family]);
+          else if (match[1] === 'Range') { const dash = data.indexOf('-'); parsed.push(['Range', data.slice(0, dash), data.slice(dash + 1), family]); }
+          else { const slash = data.lastIndexOf('/'); parsed.push(['Subnet', data.slice(0, slash), Number(data.slice(slash + 1)), family]); }
+        } catch {}
+      }
+      for (const [kind, first, second, family] of parsed) {
+        try { if (kind === 'Address') this.addAddress(first, family); else if (kind === 'Range') this.addRange(first, second, family); else this.addSubnet(first, second, family); } catch {}
+      }
+    }
+    get rules() { return this._rules.map((rule) => `${rule.kind}: ${rule.family === 'ipv4' ? 'IPv4' : 'IPv6'} ${rule.address}${rule.kind === 'Range' ? `-${rule.endAddress}` : rule.kind === 'Subnet' ? `/${rule.prefix}` : ''}`); }
+    get size() { return this._rules.length; }
   }
-  return { Socket, Stream, Server, BlockList, connect, createConnection: connect, createServer };
+  BlockList.isBlockList = (value) => value instanceof BlockList;
+  BlockList.PRIVATE_RANGES = Object.freeze(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16', '::1/128', 'fe80::/10', 'fc00::/7']);
+  return { Socket, Stream, Server, BlockList, SocketAddress, connect, createConnection: connect, createServer };
 })"#;
 
 /// TCP resources for the shared-VM projection. Protocol modules keep only
@@ -623,7 +771,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         undefined,
         &[duplex, connect, write, end, destroy, encoding, listen, close, address],
     )?;
-    for name in ["Socket", "Stream", "Server", "BlockList", "connect", "createConnection", "createServer"] {
+    for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(surface, key)?;
         if !context.set_property_rooted(module, key, value, module)? {
