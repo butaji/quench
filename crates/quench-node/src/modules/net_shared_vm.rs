@@ -43,17 +43,39 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.allowHalfOpen = false;
       this._encoding = null;
       this._handle = options.handle || null;
+      this._noDelay = Boolean(options.noDelay);
       this.connecting = false;
       this.pending = true;
       this.bytesRead = 0;
       this.bytesWritten = 0;
       this._quenchPreconnectWrites = [];
       this._quenchPreconnectEnd = null;
+      this._quenchConnectingEmit = false;
       this._quenchTimeout = 0;
       this._quenchTimeoutTimer = null;
+      this.on('close', () => {
+        this.pending = true;
+        if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer);
+        this._quenchTimeoutTimer = null;
+      });
+      this.on('data', (chunk) => {
+        if (chunk) this.bytesRead += chunk.length || 0;
+        this._quenchResetTimeout();
+      });
     }
     emit(event, ...args) {
-      if (event === 'connect') { this.connecting = false; this.pending = false; this._quenchResetTimeout(); }
+      if (event === 'connect') {
+        this.connecting = false;
+        this.pending = false;
+        this._quenchResetTimeout();
+        this._quenchConnectingEmit = true;
+        const result = super.emit(event, ...args);
+        this._quenchConnectingEmit = false;
+        for (const queued of this._quenchPreconnectWrites.splice(0)) super.write(...queued);
+        if (this._quenchPreconnectEnd) super.end(...this._quenchPreconnectEnd);
+        this._quenchPreconnectEnd = null;
+        return result;
+      }
       if (event === 'close') { this.pending = true; if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer); this._quenchTimeoutTimer = null; }
       if (event === 'data' && args[0]) { this.bytesRead += args[0].length || 0; this._quenchResetTimeout(); }
       if (event === 'end' && !this.allowHalfOpen) {
@@ -72,8 +94,21 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (this.writable) return 'writeOnly';
       return 'closed';
     }
+    get bufferSize() { return this.writableLength || 0; }
+    address() {
+      if (!this.localAddress) return undefined;
+      return { address: this.localAddress, family: this.localFamily || 'IPv4', port: this.localPort || 0 };
+    }
     setNoDelay(noDelay = true) {
-      if (noDelay && this._handle && typeof this._handle.setNoDelay === 'function') this._handle.setNoDelay(true);
+      const enable = Boolean(noDelay);
+      if (!this._handle) {
+        this._noDelay = enable;
+        return this;
+      }
+      if (typeof this._handle.setNoDelay === 'function' && enable !== this._noDelay) {
+        this._noDelay = enable;
+        this._handle.setNoDelay(enable);
+      }
       return this;
     }
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -98,7 +133,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
       this._quenchResetTimeout();
       this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk && chunk.length || 0);
-      if (!this.__quenchNetSocketId && !this.connecting) {
+      if ((!this.__quenchNetSocketId && !this.connecting) || this.connecting || this._quenchConnectingEmit) {
         this._quenchPreconnectWrites.push([chunk, encoding, callback]);
         return this.writableHighWaterMark !== 0;
       }
@@ -108,7 +143,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (typeof chunk === 'function') { callback = chunk; chunk = undefined; encoding = undefined; }
       else if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
       if (chunk !== undefined && chunk !== null) this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk.length || 0);
-      if (!this.__quenchNetSocketId && !this.connecting) {
+      if ((!this.__quenchNetSocketId && !this.connecting) || this.connecting || this._quenchConnectingEmit) {
         this._quenchPreconnectEnd = [chunk, encoding, callback];
         return this;
       }
@@ -131,9 +166,6 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.connecting = true;
       this.pending = true;
       connectOperation(this, port, host);
-      for (const args of this._quenchPreconnectWrites.splice(0)) super.write(...args);
-      if (this._quenchPreconnectEnd) super.end(...this._quenchPreconnectEnd);
-      this._quenchPreconnectEnd = null;
       return this;
     }
     ref() { return this; }
@@ -154,6 +186,10 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   Server.prototype.addListener = function(event, callback) { return this.on(event, callback); };
   Server.prototype.once = function(event, callback) { const wrapped = (...args) => { this.removeListener(event, wrapped); callback.apply(this, args); }; wrapped.listener = callback; return this.on(event, wrapped); };
   Server.prototype.removeListener = function(event, callback) { const list = this._listeners.get(event) || []; this._listeners.set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; };
+  Server.prototype.off = Server.prototype.removeListener;
+  Server.prototype.listeners = function(event) { return (this._listeners.get(event) || []).map((item) => item.listener || item); };
+  Server.prototype.listenerCount = function(event) { return this.listeners(event).length; };
+  Server.prototype.removeAllListeners = function(event) { if (event === undefined) this._listeners.clear(); else this._listeners.delete(event); return this; };
   Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };
   Server.prototype.listen = function(port, host, callback) {
       if (typeof port === 'function') { callback = port; port = 0; }
@@ -176,6 +212,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     };
   Server.prototype.address = function() { return addressOperation(this); };
   Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
+  Server.prototype.ref = function() { return this; };
+  Server.prototype.unref = function() { return this; };
   const createServer = function createServer(listener) { return new Server(listener); };
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
