@@ -2,7 +2,6 @@
 
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-use std::collections::HashSet;
 
 const MISSING_ASSERT_ARGS: &str = "The \"actual\" and \"expected\" arguments must be specified";
 const ASSERTION_FAILED: &str = "Expected values to be strictly equal";
@@ -30,8 +29,12 @@ pub(crate) fn module(
     let not_deep_strict_equal =
         context.host_function(crate::host::shared_vm::operation("notDeepStrictEqual"))?;
     let match_string = context.host_function(crate::host::shared_vm::operation("match"))?;
+    let does_not_match =
+        context.host_function(crate::host::shared_vm::operation("doesNotMatch"))?;
     let fail = context.host_function(crate::host::shared_vm::operation("fail"))?;
     let throws = context.host_function(crate::host::shared_vm::operation("throws"))?;
+    let does_not_throw =
+        context.host_function(crate::host::shared_vm::operation("doesNotThrow"))?;
     let inspect = get(context, util, "inspect")?;
     let if_error =
         context.host_function_with_data(crate::host::shared_vm::operation("ifError"), inspect)?;
@@ -67,14 +70,42 @@ AssertionError"#
     let rejects = context.call_rooted(rejects_factory, undefined, &[assertion_error])?;
 
     set(context, assert, "ok", ok)?;
+    let aliases = context.evaluate_script_rooted(
+        r#"(assert, deepStrictEqual, notDeepStrictEqual) => {
+  function equal(actual, expected, message) {
+    if (actual == expected) return;
+    throw new assert.AssertionError({ actual, expected, operator: "==", message });
+  }
+  function notEqual(actual, expected, message) {
+    if (actual != expected) return;
+    throw new assert.AssertionError({ actual, expected, operator: "!=", message });
+  }
+  return { equal, notEqual, deepEqual: deepStrictEqual,
+    notDeepEqual: notDeepStrictEqual };
+}"#,
+        "node:assert/legacy-aliases.js",
+    )?;
+    let undefined = context.undefined();
+    let aliases = context.call_rooted(
+        aliases,
+        undefined,
+        &[assert, deep_strict_equal, not_deep_strict_equal],
+    )?;
+    for name in ["equal", "notEqual", "deepEqual", "notDeepEqual"] {
+        let key = context.string_rooted(name);
+        let value = context.get_property_rooted(aliases, key)?;
+        set(context, assert, name, value)?;
+    }
     set(context, assert, "strictEqual", strict_equal)?;
     set(context, assert, "notStrictEqual", not_strict_equal)?;
     set(context, assert, "deepStrictEqual", deep_strict_equal)?;
     set(context, assert, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, assert, "match", match_string)?;
+    set(context, assert, "doesNotMatch", does_not_match)?;
     set(context, assert, "fail", fail)?;
     set(context, assert, "strict", strict)?;
     set(context, assert, "throws", throws)?;
+    set(context, assert, "doesNotThrow", does_not_throw)?;
     set(context, assert, "ifError", if_error)?;
     set(context, assert, "rejects", rejects)?;
     set(context, assert, "AssertionError", assertion_error)?;
@@ -84,10 +115,12 @@ AssertionError"#
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
     set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
+    set(context, strict, "doesNotMatch", does_not_match)?;
     set(context, strict, "fail", fail)?;
     set(context, strict, "equal", strict_equal)?;
     set(context, strict, "strict", strict)?;
     set(context, strict, "throws", throws)?;
+    set(context, strict, "doesNotThrow", does_not_throw)?;
     set(context, strict, "ifError", if_error)?;
     set(context, strict, "rejects", rejects)?;
     set(context, strict, "AssertionError", assertion_error)?;
@@ -170,7 +203,7 @@ pub(crate) fn deep_strict_equal(
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
-    if deep_equal(context, actual, expected, &mut HashSet::new())? {
+    if deep_equal(context, actual, expected, &mut Vec::new())? {
         return Ok(context.undefined());
     }
     let (message, generated) = assertion_message(
@@ -197,7 +230,7 @@ pub(crate) fn not_deep_strict_equal(
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
-    if !deep_equal(context, actual, expected, &mut HashSet::new())? {
+    if !deep_equal(context, actual, expected, &mut Vec::new())? {
         return Ok(context.undefined());
     }
     let (message, generated) =
@@ -244,6 +277,37 @@ pub(crate) fn match_string(
     }
 }
 
+pub(crate) fn does_not_match(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if args.len() < 2 {
+        return missing_assert_arguments(context);
+    }
+    let (actual, expected) = (args[0], args[1]);
+    if context.string_text(actual)?.is_none() {
+        let error = context.type_error_rooted("The \"string\" argument must be of type string")?;
+        return Err(context.throw(error));
+    }
+    match regexp_match(context, expected, actual)? {
+        Some(false) => Ok(context.undefined()),
+        Some(true) => {
+            let (message, generated) = assertion_message(
+                context,
+                args.get(2).copied(),
+                "The input was expected not to match the regular expression",
+            )?;
+            assertion_error(context, actual, expected, "doesNotMatch", &message, generated)
+        }
+        None => {
+            let error =
+                context.type_error_rooted("The \"regexp\" argument must be an instance of RegExp")?;
+            Err(context.throw(error))
+        }
+    }
+}
+
 fn missing_assert_arguments(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
@@ -257,7 +321,7 @@ fn deep_equal(
     context: &mut NativeContext<'_, NodeHost>,
     actual: RootId,
     expected: RootId,
-    seen: &mut HashSet<(RootId, RootId)>,
+    seen: &mut Vec<(RootId, RootId)>,
 ) -> Result<bool, RootedError> {
     if context.same_value_rooted(actual, expected)? {
         return Ok(true);
@@ -265,9 +329,14 @@ fn deep_equal(
     if is_primitive(context, actual) || is_primitive(context, expected) {
         return Ok(false);
     }
-    if !seen.insert((actual, expected)) {
-        return Ok(true);
+    for (left, right) in seen.iter().copied() {
+        if context.same_value_rooted(actual, left)?
+            && context.same_value_rooted(expected, right)?
+        {
+            return Ok(true);
+        }
     }
+    seen.push((actual, expected));
     if !same_prototype(context, actual, expected)?
         || array_kind(context, actual)? != array_kind(context, expected)?
     {
@@ -370,7 +439,16 @@ pub(crate) fn throws(
         return Ok(undefined);
     };
     if context.is_callable_rooted(expected)? {
-        let matched = context.call_rooted(expected, undefined, &[thrown])?;
+        let prototype = get(context, expected, "prototype")?;
+        let matched = if context.is_object_rooted(prototype)? {
+            let global = context.global_root()?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            context.call_rooted(is_prototype_of, prototype, &[thrown])?
+        } else {
+            context.call_rooted(expected, undefined, &[thrown])?
+        };
         if context.truthy_rooted(matched)? {
             return Ok(thrown);
         }
@@ -435,6 +513,35 @@ pub(crate) fn throws(
             "The error did not match the expected object.",
             true,
         )
+    }
+}
+
+pub(crate) fn does_not_throw(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        return invalid_assert_callback(context, "undefined");
+    };
+    if !context.is_callable_rooted(callback)? {
+        let received = context.to_string(callback)?;
+        return invalid_assert_callback(context, &received);
+    }
+    let undefined = context.undefined();
+    match context.call_rooted(callback, undefined, &[]) {
+        Ok(_) => Ok(undefined),
+        Err(error) => match error.exception {
+            Some(exception) => assertion_error(
+                context,
+                exception,
+                undefined,
+                "doesNotThrow",
+                "Got unwanted exception.",
+                true,
+            ),
+            None => Err(error),
+        },
     }
 }
 
