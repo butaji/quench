@@ -16,6 +16,11 @@ const CREATE_WRITE_STREAM: &str = r#"(openFile, writeFile, closeFile, Writable) 
     }
 
     const settings = typeof options === "string" ? { encoding: options } : (options || {});
+    if (settings.flush !== undefined && settings.flush !== null && typeof settings.flush !== "boolean") {
+      const error = new TypeError('The "flush" option must be of type boolean');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const flags = settings.flags || "w";
     const autoClose = settings.autoClose !== false;
     const suppliedFd = settings.fd !== undefined && settings.fd !== null;
