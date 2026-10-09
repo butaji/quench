@@ -1218,6 +1218,87 @@ const ASYNC_STATFS_API: &str = r#"(statfsSync) => function statfs(path, options,
   });
 }"#;
 
+const ASYNC_TRUNCATE_API: &str = r#"(truncateSync) => function truncate(path, length, callback) {
+  if (typeof length === 'function') {
+    callback = length;
+    length = undefined;
+  }
+  if (length !== undefined && typeof length !== 'number') {
+    const received = length === null ? ' Received null' : typeof length === 'object'
+      ? ` Received an instance of ${Array.isArray(length) ? 'Array' : 'Object'}`
+      : ` Received type ${typeof length} (${typeof length === 'string' ? `'${length}'` : String(length)})`;
+    const error = new TypeError(`The "len" argument must be of type number.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (typeof length === 'number' && !Number.isSafeInteger(length)) {
+    const error = new RangeError(`The value of "len" is out of range. It must be an integer. Received ${String(length)}`);
+    error.code = 'ERR_OUT_OF_RANGE';
+    throw error;
+  }
+  if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
+    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (typeof callback !== 'function') {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  queueMicrotask(() => {
+    try { truncateSync(path, length); Reflect.apply(callback, undefined, [null]); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#;
+
+const ASYNC_FTRUNCATE_API: &str = r#"(ftruncateSync) => function ftruncate(fd, length, callback) {
+  if (typeof length === 'function') {
+    callback = length;
+    length = undefined;
+  }
+  if (typeof fd !== 'number') {
+    const received = fd === null || fd === undefined ? ` Received ${fd}` : typeof fd === 'object'
+      ? ` Received an instance of ${Array.isArray(fd) ? 'Array' : 'Object'}`
+      : ` Received type ${typeof fd} (${typeof fd === 'string' ? `'${fd}'` : String(fd)})`;
+    const error = new TypeError(`The "fd" argument must be of type number.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (!Number.isInteger(fd)) {
+    const error = new RangeError(`The value of "fd" is out of range. It must be an integer. Received ${String(fd)}`);
+    error.code = 'ERR_OUT_OF_RANGE';
+    throw error;
+  }
+  if (fd < 0 || fd > 0x7FFFFFFF) {
+    const error = new RangeError(`The value of "fd" is out of range. It must be >= 0 && <= 2147483647. Received ${String(fd)}`);
+    error.code = 'ERR_OUT_OF_RANGE';
+    throw error;
+  }
+  if (length !== undefined && typeof length !== 'number') {
+    const received = length === null ? ' Received null' : typeof length === 'object'
+      ? ` Received an instance of ${Array.isArray(length) ? 'Array' : 'Object'}`
+      : ` Received type ${typeof length} (${typeof length === 'string' ? `'${length}'` : String(length)})`;
+    const error = new TypeError(`The "len" argument must be of type number.${received}`);
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  if (typeof length === 'number' && !Number.isSafeInteger(length)) {
+    const error = new RangeError(`The value of "len" is out of range. It must be an integer. Received ${String(length)}`);
+    error.code = 'ERR_OUT_OF_RANGE';
+    throw error;
+  }
+  if (typeof callback !== 'function') {
+    const error = new TypeError('The "cb" argument must be of type function');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    throw error;
+  }
+  queueMicrotask(() => {
+    try { ftruncateSync(fd, length); Reflect.apply(callback, undefined, [null]); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); }
+  });
+}"#;
+
 const READLINK_SYNC_API: &str = r#"(hostReadlinkSync) => function readlinkSync(path, options) {
   if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
@@ -1485,6 +1566,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
     sync::install(context, module)?;
+    let truncate_sync = get(context, module, "truncateSync")?;
+    let truncate_factory =
+        context.evaluate_script_rooted(ASYNC_TRUNCATE_API, "node:fs/shared-async-truncate.js")?;
+    let truncate = context.call_rooted(truncate_factory, undefined, &[truncate_sync])?;
+    set(context, module, "truncate", truncate)?;
+    let ftruncate_sync = get(context, module, "ftruncateSync")?;
+    let ftruncate_factory = context
+        .evaluate_script_rooted(ASYNC_FTRUNCATE_API, "node:fs/shared-async-ftruncate.js")?;
+    let ftruncate = context.call_rooted(ftruncate_factory, undefined, &[ftruncate_sync])?;
+    set(context, module, "ftruncate", ftruncate)?;
     let stat_factory = context.evaluate_script_rooted(
         ASYNC_STAT_API,
         "node:fs/shared-async-stat.js",
@@ -1624,6 +1715,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let statfs_promise =
         context.call_rooted(statfs_promise_factory, undefined, &[statfs_sync])?;
     set(context, promises, "statfs", statfs_promise)?;
+    let truncate_promise_factory = context.evaluate_script_rooted(
+        "(truncateSync) => (...args) => Promise.resolve().then(() => truncateSync(...args))",
+        "node:fs/promises/shared-truncate.js",
+    )?;
+    let truncate_promise =
+        context.call_rooted(truncate_promise_factory, undefined, &[truncate_sync])?;
+    set(context, promises, "truncate", truncate_promise)?;
     set(context, promises, "cp", cp_promise)?;
     let symlink_promise_factory = context.evaluate_script_rooted(
         "(symlinkSync) => (...args) => Promise.resolve().then(() => symlinkSync(...args))",
