@@ -311,14 +311,25 @@ if (globalThis.MessagePort === undefined) Object.defineProperty(globalThis, "Mes
       this.onmessage = null;
       this._peer = null;
       this._closed = false;
-      this._refed = true;
+      this._refed = false;
       this._nodeListeners = new Map();
+      globalThis["\0quench:async_hooks:emit_init"]?.(this, "MESSAGEPORT");
     }
     start() {}
     close(callback) {
       this._closed = true;
-      this.dispatchEvent(new Event("close"));
-      if (typeof callback === "function") queueMicrotask(callback);
+      const peer = this._peer;
+      queueMicrotask(() => {
+        this._refed = false;
+        if (peer) peer._refed = false;
+        this.dispatchEvent(new Event("close"));
+        for (const listener of this._nodeListeners.get("close") || []) listener();
+        if (peer && !peer._closed) {
+          peer.dispatchEvent(new Event("close"));
+          for (const listener of peer._nodeListeners.get("close") || []) listener();
+        }
+        if (typeof callback === "function") callback();
+      });
     }
     ref() { this._refed = true; return this; }
     unref() { this._refed = false; return this; }
@@ -350,7 +361,8 @@ if (globalThis.MessagePort === undefined) Object.defineProperty(globalThis, "Mes
       }
       if (data === undefined) {
         if (typeof globalThis.structuredClone !== "function") throw new DOMException("Value could not be cloned.", "DataCloneError");
-        data = globalThis.structuredClone(value, transferList === undefined ? undefined : { transfer: [...transferList] });
+        const transfers = transferList?.transfer ?? transferList;
+        data = globalThis.structuredClone(value, transfers === undefined ? undefined : { transfer: [...transfers] });
       }
       const peer = this._peer;
       queueMicrotask(() => {

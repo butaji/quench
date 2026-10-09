@@ -23,7 +23,36 @@ const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, em
     enterWith(store) { return enterWith.call(this, store); }
     getStore() { return getStore.call(this); }
   }
-  return { AsyncResource, AsyncLocalStorage };
+  const hooks = new Set();
+  let nextAsyncId = 1;
+  const createHook = (callbacks = {}) => {
+    const hook = {
+      enable() { hooks.add(hook); return hook; },
+      disable() { hooks.delete(hook); return hook; },
+    };
+    hook.callbacks = callbacks;
+    return hook;
+  };
+  Object.defineProperty(globalThis, "\0quench:async_hooks:emit_init", {
+    configurable: true,
+    value(resource, type) {
+      const asyncId = ++nextAsyncId;
+      for (const hook of hooks) {
+        if (typeof hook.callbacks?.init === "function") {
+          hook.callbacks.init(asyncId, type, 1, resource);
+        }
+      }
+      return asyncId;
+    },
+  });
+  return {
+    AsyncResource,
+    AsyncLocalStorage,
+    createHook,
+    executionAsyncId: () => nextAsyncId,
+    triggerAsyncId: () => 1,
+    executionAsyncResource: () => undefined,
+  };
 })"#;
 
 /// Allocate an async identity for a host-created request context.
