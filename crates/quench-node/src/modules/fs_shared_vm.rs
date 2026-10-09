@@ -358,6 +358,126 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync
   });
 }"#);
 
+const OPENDIR_API: &str = quench_js_check::checked_js!(r#"(readdirSync) => {
+  const states = new WeakMap();
+  class Dirent {
+    constructor(entry, parentPath) {
+      this.name = entry.name;
+      this.parentPath = parentPath;
+      for (const name of ['isFile', 'isDirectory', 'isSymbolicLink', 'isBlockDevice', 'isCharacterDevice', 'isFIFO', 'isSocket']) {
+        Object.defineProperty(this, name, { value: () => entry[name]() });
+      }
+    }
+    isFile() { return false; }
+    isDirectory() { return false; }
+    isSymbolicLink() { return false; }
+    isBlockDevice() { return false; }
+    isCharacterDevice() { return false; }
+    isFIFO() { return false; }
+    isSocket() { return false; }
+  }
+  const invalidThis = () => {
+    const error = new TypeError('Receiver must be an instance of class Dir');
+    error.code = 'ERR_INVALID_THIS';
+    throw error;
+  };
+  const dirError = (code, message) => Object.assign(new Error(message), { code });
+  const invalidCallback = () => {
+    const error = new TypeError('The "callback" argument must be of type function');
+    error.code = 'ERR_INVALID_ARG_TYPE';
+    error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
+    return error;
+  };
+  class Dir {
+    constructor(path, entries) {
+      states.set(this, { path, entries, index: 0, closed: false, busy: false, pending: 0 });
+    }
+    get path() {
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      return state.path;
+    }
+    readSync() {
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      if (state.busy) throw dirError('ERR_DIR_CONCURRENT_OPERATION', 'Directory is already processing a request');
+      if (state.closed) throw dirError('ERR_DIR_CLOSED', 'Directory handle was closed');
+      const entry = state.entries[state.index++];
+      return entry === undefined ? null : entry;
+    }
+    closeSync() {
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      if (state.busy) throw dirError('ERR_DIR_CONCURRENT_OPERATION', 'Directory is already processing a request');
+      if (state.closed) throw dirError('ERR_DIR_CLOSED', 'Directory handle was closed');
+      state.closed = true;
+    }
+    read(callback) {
+      if (callback === undefined) return new Promise((resolve, reject) => this.read((error, entry) => error ? reject(error) : resolve(entry)));
+      if (typeof callback !== 'function') throw invalidCallback();
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      state.pending++;
+      state.busy = true;
+      queueMicrotask(() => {
+        state.pending--;
+        state.busy = state.pending > 0;
+        try {
+          if (state.closed) throw dirError('ERR_DIR_CLOSED', 'Directory handle was closed');
+          const entry = state.entries[state.index++];
+          callback(null, entry === undefined ? null : entry);
+        } catch (error) { callback(error); }
+      });
+    }
+    close(callback) {
+      if (callback === undefined) return new Promise((resolve, reject) => this.close((error) => error ? reject(error) : resolve()));
+      if (callback !== undefined && typeof callback !== 'function') throw invalidCallback();
+      const state = states.get(this);
+      if (!state) return invalidThis();
+      const finish = () => {
+        if (state.pending > 0) { queueMicrotask(finish); return; }
+        try { this.closeSync(); callback(null); } catch (error) { callback(error); }
+      };
+      queueMicrotask(finish);
+    }
+    async next() {
+      const value = await new Promise((resolve, reject) => this.read((error, entry) => error ? reject(error) : resolve(entry)));
+      if (value === null) { await this.close(); return { done: true, value: undefined }; }
+      return { done: false, value };
+    }
+    async return() {
+      const state = states.get(this);
+      if (!state.closed) await this.close();
+      return { done: true, value: undefined };
+    }
+    [Symbol.asyncIterator]() { return this; }
+  }
+  const makeDir = (path, options) => {
+    if (options != null && typeof options !== 'object') throw Object.assign(new TypeError('The "options" argument must be of type object'), { code: 'ERR_INVALID_ARG_TYPE' });
+    const bufferSize = options && Object.prototype.hasOwnProperty.call(options, 'bufferSize') ? options.bufferSize : 32;
+    if (typeof bufferSize !== 'number') throw Object.assign(new TypeError('The "bufferSize" argument must be of type number.'), { code: 'ERR_INVALID_ARG_TYPE' });
+    if (!Number.isInteger(bufferSize) || bufferSize < 1) throw Object.assign(new RangeError('The value of "bufferSize" is out of range. It must be >= 1'), { code: 'ERR_OUT_OF_RANGE' });
+    const entries = readdirSync(path, { withFileTypes: true }).map((entry) => new Dirent(entry, path));
+    return new Dir(path, entries);
+  };
+  function opendirSync(path, options) { return makeDir(path, options); }
+  function opendir(path, options, callback) {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    if (typeof callback !== 'function') {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      error.toString = () => `TypeError [ERR_INVALID_ARG_TYPE]: ${error.message}`;
+      throw error;
+    }
+    if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) throw Object.assign(new TypeError('The "path" argument must be of type string, Buffer, or URL.'), { code: 'ERR_INVALID_ARG_TYPE' });
+    if (Buffer.isBuffer(path)) path = path.toString();
+    else if (path instanceof URL) path = decodeURIComponent(path.pathname);
+    queueMicrotask(() => { try { callback(null, makeDir(path, options)); } catch (error) { callback(error); } });
+  }
+  const opendirPromise = (path, options) => Promise.resolve().then(() => makeDir(path, options));
+  return { Dir, Dirent, opendir, opendirSync, opendirPromise };
+}"#);
+
 const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(readFileSync) => function readFile(path, options, callback) {
   if (typeof options === "function") {
     callback = options;
@@ -1533,6 +1653,7 @@ fn make_readdir_async(
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
+    let opendir_promise;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
     let read_file_factory = context.evaluate_script_rooted(
@@ -1607,6 +1728,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "readdirSync", readdir_sync)?;
     let readdir = make_readdir_async(context, readdir_sync)?;
     set(context, module, "readdir", readdir)?;
+    let opendir_factory = context.evaluate_script_rooted(OPENDIR_API, "node:fs/shared-opendir.js")?;
+    let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync])?;
+    let dir_constructor = get(context, opendir_api, "Dir")?;
+    let dirent_constructor = get(context, opendir_api, "Dirent")?;
+    let opendir = get(context, opendir_api, "opendir")?;
+    let opendir_sync = get(context, opendir_api, "opendirSync")?;
+    opendir_promise = get(context, opendir_api, "opendirPromise")?;
+    set(context, module, "Dir", dir_constructor)?;
+    set(context, module, "Dirent", dirent_constructor)?;
+    set(context, module, "opendir", opendir)?;
+    set(context, module, "opendirSync", opendir_sync)?;
     let readlink_host = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let readlink_factory =
         context.evaluate_script_rooted(READLINK_SYNC_API, "node:fs/shared-readlink-sync.js")?;
@@ -1793,6 +1925,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         mkdtemp_sync,
         copy_file_sync,
     )?;
+    set(context, promises, "opendir", opendir_promise)?;
     for name in ["stat", "lstat"] {
         let sync = get(context, module, &format!("{name}Sync"))?;
         let promise_factory = context.evaluate_script_rooted(
