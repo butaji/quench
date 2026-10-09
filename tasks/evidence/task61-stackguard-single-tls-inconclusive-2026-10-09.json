@@ -3,10 +3,10 @@
   "task": "61",
   "date": "2026-10-09",
   "kind": "M4 StackGuard TLS-state candidate",
-  "decision": "rejected",
+  "decision": "inconclusive",
   "qualification_ready": false,
   "hypothesis": "Combine ACTIVE_TRANSITIONS and STACK_ORIGIN into one thread-local StackState to reduce per-enter/drop TLS accesses while preserving the same depth limit, stack origin, stack-distance check, and RangeError behavior.",
-  "decision_reason": "The candidate increased retired instructions on both the CJS call loop and local-store control. In 11 pairs, the call loop retired 0.5939% more instructions, with 0.9908% more cycles at the median; elapsed time was 1.0417% worse at the median. The control retired 2.6268% more instructions, used 8.1170% more cycles, and took 8.0000% longer. The broad regression fails the keep gate.",
+  "decision_reason": "The CJS call-loop candidate used 0.9908% more cycles at the median, but the unrelated local-store control used 8.1170% more. Because control movement exceeded target movement, this campaign does not isolate a candidate effect and cannot support a performance rejection. This experiment merged TLS cells and retained a TLS lookup; it did not test the distinct VM-cached stack-boundary design that removes TLS from ordinary JS-to-JS calls.",
   "source": {
     "base_revision": "974d31f09",
     "candidate_patch": "tasks/evidence/task61-stackguard-single-tls-rejected-2026-10-09.patch",
@@ -173,6 +173,8 @@
   },
   "notes": [
     "The first three-pair screen against a symbolized, differently sized baseline was discarded as unmatched; the 11-pair measurements use baseline and candidate binaries built with identical production strip settings.",
-    "All paired stdout hashes match. The source candidate was restored; this record is rejection evidence only."
-  ]
+    "All paired stdout hashes match. The source candidate was restored; this record is rejection evidence only.",
+    "Per the revised Stage A protocol, use target-minus-control movement for this and future small candidates; this result is inconclusive rather than a measured StackGuard regression."
+  ],
+  "next_hypothesis": "At an active VM execution boundary, cache the shared thread stack origin in the VM; on ordinary JS-to-JS frame push, check the current SP against that origin and a named logical depth bound without touching TLS. Nested host-to-guest VM entry must inherit or validate the existing thread origin."
 }
