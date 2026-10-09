@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Narrow direct-number Binary path",
+  "decision": "reject as a general change: the NavierStokes Score gain did not generalize to Crypto, and neither fixture established an RSS reduction",
+  "source": {
+    "base_revision": "2ebe153e7df82b7d6f778e0956650a6ad82493f3",
+    "candidate_patch_sha256": "49b2fa7ef42b05f77e65b3d47bc3c8eb998a52128e6e5e5abc8a02ea3a5888c3",
+    "files": [
+      "crates/quench-runtime/src/vm/operations.rs"
+    ],
+    "baseline_binary_sha256": "5e28dca54c3596935dbe9c411c898a53bb8257e99236dee9525e7ec91adfeed0",
+    "candidate_binary_sha256": "eef0ac047074cc3e6172433938fab46aead33c0a39dfb6da0c12c4167352cbd6",
+    "build_profile": "production",
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+  },
+  "research_and_hypothesis": {
+    "v2_commit": "d8a4a0987e86250ae7aa6442c28c808aa87cf6d3",
+    "v2_evidence": "tasks/evidence/task61-numeric-binary-fast-paths-2026-10-08.json",
+    "v2_limit": "Three-pair Apple M4 instruction microbenchmarks: integer add, multiply, and compare were effectively neutral; subtraction, shifts, bitwise operations, and double-multiply-add improved. This is not Linux V8-v7 fixture qualification.",
+    "linux_profile": "One instrumented NavierStokes run counted 191,835,195 general Binary operations; 173,535,552 (90.46%) used the generic fallback. The profiler then aborted on its dispatch/opcode accounting assertion. Its timing is excluded.",
+    "profile_artifact": "target/iteration/task61-current-profile/navier.stderr",
+    "candidate_scope": "Reuse the existing numeric operator semantics for direct Number operands in the generic Binary path. Integer, coercion, BigInt, string, and exceptional cases keep their existing paths."
+  },
+  "host": {
+    "platform": "Linux x86_64",
+    "cpu": "AMD EPYC 9V74",
+    "cpu_quota": "400000 100000",
+    "rss_backend": "Linux wait4 rusage",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)"
+  },
+  "method": {
+    "kind": "alternating paired production-binary comparison against the same-source baseline",
+    "pairs_per_fixture": 11,
+    "interval": "100000-replicate paired percentile bootstrap interval for the median difference",
+    "output_comparison": "benchmark output with score and per-case result lines removed"
+  },
+  "fixtures": {
+    "navier-stokes": {
+      "fixture_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "baseline_score_median": 87.1,
+      "candidate_score_median": 89,
+      "score_delta_median": 2.299999999999997,
+      "score_delta_95_ci": [
+        0.7999999999999972,
+        3.200000000000003
+      ],
+      "baseline_max_rss_median_bytes": 22839296,
+      "candidate_max_rss_median_bytes": 22720512,
+      "max_rss_delta_median_bytes": -155648,
+      "max_rss_delta_95_ci_bytes": [
+        -221184,
+        65536
+      ],
+      "all_outputs_equal": true,
+      "raw_report": "target/production/stageb-candidates/numeric-binary-fastpath-candidate2/navier-stokes-11pair.json"
+    },
+    "crypto": {
+      "fixture_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+      "baseline_score_median": 156,
+      "candidate_score_median": 153,
+      "score_delta_median": -3,
+      "score_delta_95_ci": [
+        -4,
+        3
+      ],
+      "baseline_max_rss_median_bytes": 21299200,
+      "candidate_max_rss_median_bytes": 21401600,
+      "max_rss_delta_median_bytes": 12288,
+      "max_rss_delta_95_ci_bytes": [
+        -233472,
+        290816
+      ],
+      "all_outputs_equal": true,
+      "raw_report": "target/production/stageb-candidates/numeric-binary-fastpath-candidate2/crypto-paired.json"
+    }
+  },
+  "correctness": {
+    "node": {
+      "version": "v24.19.0",
+      "oracle_sha256": "328799291c8ddebf34b28b1b60126d06b0f294b2563dd74dcb2185c56d363aa5",
+      "coverage": "All 20 binary operators across 8 numeric values (2,560 combinations), including NaN, signed zero, infinities, fractional and large bitwise inputs, plus object coercion, string addition, BigInt, and Symbol errors.",
+      "baseline_and_candidate_match": true
+    },
+    "test262_stage_10": {
+      "baseline": {
+        "passed": 11087,
+        "failed": 15,
+        "total": 11102
+      },
+      "candidate": {
+        "passed": 11087,
+        "failed": 15,
+        "total": 11102
+      },
+      "compare_runs_regressions": 0,
+      "baseline_report": "target/iteration/task61-numeric-binary-candidate2-baseline-stage10.json",
+      "candidate_report": "target/iteration/task61-numeric-binary-candidate2-candidate-stage10.json"
+    }
+  },
+  "qualification_ready": false,
+  "limitations": [
+    "Only Crypto and NavierStokes were measured; this is not an eight-fixture or four-engine qualification.",
+    "Score and maximum-RSS intervals include a tie on Crypto; the NavierStokes RSS interval includes a tie.",
+    "The candidate source was dirty during its build and Stage 10 run; its exact patch hash is recorded above."
+  ]
+}
