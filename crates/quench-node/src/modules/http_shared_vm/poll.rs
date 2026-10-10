@@ -141,6 +141,7 @@ pub(crate) fn poll(
                                 root: accepted,
                                 encoding: None,
                                 parent_server: Some(listener),
+                                connection_event_pending: true,
                             },
                         );
                         if let Some(server) = host.net_servers.get_mut(&listener) {

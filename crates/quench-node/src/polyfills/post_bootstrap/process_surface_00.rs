@@ -201,7 +201,8 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
       };
     }
     globalThis.process.getActiveResourcesInfo = () => [
-      ...activeTimers.values()
+      ...activeTimers.values(),
+      ...globalThis.process.__quenchGetActiveNetworkResources()
     ];
     globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER;
     globalThis.process.constrainedMemory ||= () => Number.MAX_SAFE_INTEGER;
