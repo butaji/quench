@@ -30,6 +30,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processChdir" (1) => crate::modules::process_shared_vm::chdir,
         method "processUmask" (0) => crate::modules::process_shared_vm::umask,
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
+        method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "nextTick" (1) => crate::modules::process_shared_vm::next_tick,
         method "on" (2) => crate::modules::process_shared_vm::on,
         method "processOnce" (2) => crate::modules::process_shared_vm::once,
