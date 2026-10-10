@@ -165,6 +165,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.versions.cjs_module_lexer ??= "1.2.2";
     globalThis.process.title =
       globalThis.__quench_cli_title || globalThis.process.title || "node";
+    delete globalThis.__quench_cli_title;
     globalThis.process.getBuiltinModule ||= (name) => {
       if (typeof name !== "string") {
         const received = name === null ? "Received null" : name === undefined
