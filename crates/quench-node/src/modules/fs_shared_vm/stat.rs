@@ -99,7 +99,59 @@ pub(crate) fn install(
     let constructor_factory =
         context.evaluate_script_rooted(STATS_CONSTRUCTOR, "node:fs/shared-stats-constructor.js")?;
     let stats = context.call_rooted(constructor_factory, undefined, &[emit_warning])?;
-    set(context, module, "Stats", stats)
+    set(context, module, "Stats", stats)?;
+    let utimes = context.host_function(crate::host::shared_vm::operation("fsUtimesSync"))?;
+    set(context, module, "utimesSync", utimes)
+}
+
+pub(crate) fn utimes_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let seconds = |index: usize| {
+        args.get(index)
+            .copied()
+            .and_then(|value| context.rooted_value(value))
+            .and_then(|value| value.as_number())
+            .unwrap_or(0.0)
+    };
+    let atime = seconds(1);
+    let mtime = seconds(2);
+    #[cfg(unix)]
+    let result = {
+        let path = CString::new(path.as_bytes()).map_err(|_| {
+            RootedError::host("utimes path contains an interior null byte")
+        })?;
+        let times = [to_timespec(atime), to_timespec(mtime)];
+        // SAFETY: path and times point to valid C values for the duration of the call.
+        let result = unsafe {
+            libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0)
+        };
+        if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "utime")?),
+    }
+}
+
+#[cfg(unix)]
+fn to_timespec(seconds: f64) -> libc::timespec {
+    let whole = seconds.floor();
+    libc::timespec {
+        tv_sec: whole as libc::time_t,
+        tv_nsec: ((seconds - whole) * 1_000_000_000.0) as libc::c_long,
+    }
 }
 
 pub(crate) fn metadata(

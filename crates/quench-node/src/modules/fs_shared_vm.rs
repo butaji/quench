@@ -1322,7 +1322,7 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
   };
 }"#;
 
-const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync, symlinkSync, readlinkSync, realpathSync) => {
+const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync, symlinkSync, readlinkSync, realpathSync, utimesSync) => {
   const exists = (path) => {
     try { statSync(path); return true; } catch { return false; }
   };
@@ -1445,6 +1445,9 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
         const dest = `${destination.replace(/[\\/]$/, '')}/${name}`;
         cpSync(src, dest, options);
       }
+      if (options.preserveTimestamps) {
+        utimesSync(destination, sourceStats.atime.getTime() / 1000, sourceStats.mtime.getTime() / 1000);
+      }
       return undefined;
     }
     let dest = destination;
@@ -1471,6 +1474,9 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     }
     ensureParent(dest);
     copyFileSync(source, dest, options.mode || 0);
+    if (options.preserveTimestamps) {
+      utimesSync(dest, sourceStats.atime.getTime() / 1000, sourceStats.mtime.getTime() / 1000);
+    }
     return undefined;
   }
   function lstatExists(path) {
@@ -1515,6 +1521,9 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
         mkdirSync(dest, { recursive: true });
         for (const name of readdirSync(src)) {
           await copy(`${String(src).replace(/[\\/]$/, '')}/${name}`, `${String(dest).replace(/[\\/]$/, '')}/${name}`, opts);
+        }
+        if (opts.preserveTimestamps) {
+          utimesSync(dest, stats.atime.getTime() / 1000, stats.mtime.getTime() / 1000);
         }
         return;
       }
@@ -2286,6 +2295,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let symlink_sync_for_cp = get(context, module, "symlinkSync")?;
     let readlink_sync_for_cp = get(context, module, "readlinkSync")?;
     let realpath_sync_for_cp = get(context, module, "realpathSync")?;
+    let utimes_sync_for_cp = get(context, module, "utimesSync")?;
     let cp_api = context.call_rooted(
         cp_factory,
         undefined,
@@ -2300,6 +2310,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             symlink_sync_for_cp,
             readlink_sync_for_cp,
             realpath_sync_for_cp,
+            utimes_sync_for_cp,
         ],
     )?;
     let cp_sync = get(context, cp_api, "cpSync")?;
