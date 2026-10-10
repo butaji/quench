@@ -57,7 +57,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
-        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
+        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
         "node:process/shared-hrtime.js",
     )?;
     let undefined = context.undefined();
@@ -107,6 +107,12 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     set_text(context, process, "execPath", &node_executable.to_string_lossy())?;
     let pid = context.number(std::process::id() as f64);
     install(context, process, "pid", pid)?;
+    #[cfg(unix)]
+    let ppid = unsafe { libc::getppid() };
+    #[cfg(not(unix))]
+    let ppid = 0;
+    let ppid = context.number(ppid as f64);
+    install(context, process, "ppid", ppid)?;
     let version = format!("v{}", process_state::NODE_VERSION);
     set_text(context, process, "version", &version)?;
     let global = context.global_root()?;
