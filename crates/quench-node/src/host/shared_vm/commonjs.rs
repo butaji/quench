@@ -93,6 +93,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
     crate::modules::url_shared_vm::install_global(context)?;
     install_shared_web_globals(context, buffer_module)?;
+    install_vfs_globals(context, buffer_module)?;
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -138,6 +139,30 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         let dirname = context.string_rooted(&cwd.to_string_lossy());
         set(context, global, "__dirname", dirname)?;
     }
+    Ok(())
+}
+
+fn install_vfs_globals(
+    context: &mut Context<'_>,
+    buffer_module: RootId,
+) -> Result<(), RootedError> {
+    let fs = cached_builtin(context, BuiltinModule::Fs)?;
+    let path = crate::modules::path_shared_vm::module(context)?;
+    let buffer = get(context, buffer_module, "Buffer")?;
+    let install = context.evaluate_script_rooted(
+        "(buffer, fs, path) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+        "node:bootstrap/vfs-globals.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(install, undefined, &[buffer, fs, path])?;
+
+    let source = format!(
+        "{}\n{}",
+        crate::polyfills::bootstrap::vfs_head::JS,
+        crate::polyfills::bootstrap::vfs::JS
+    );
+    let root = context.evaluate_script_rooted(&source, "node:bootstrap/vfs.js")?;
+    context.release_root(root);
     Ok(())
 }
 
@@ -339,6 +364,7 @@ pub(super) fn require(
         Some(
             module @ (BuiltinModule::Fs
             | BuiltinModule::FsPromises
+            | BuiltinModule::Vfs
             | BuiltinModule::Net
             | BuiltinModule::Http
             | BuiltinModule::Dgram
@@ -396,6 +422,7 @@ enum BuiltinModule {
     PathWin32,
     Fs,
     FsPromises,
+    Vfs,
     Net,
     Http,
     Os,
@@ -454,6 +481,7 @@ impl BuiltinModule {
         match self {
             Self::Fs => Some("fs"),
             Self::FsPromises => Some("fs/promises"),
+            Self::Vfs => Some("vfs"),
             Self::Net => Some("net"),
             Self::Http => Some("http"),
             Self::Os => Some("os"),
@@ -529,6 +557,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:fs", BuiltinModule::Fs),
     ("fs/promises", BuiltinModule::FsPromises),
     ("node:fs/promises", BuiltinModule::FsPromises),
+    ("vfs", BuiltinModule::Vfs),
+    ("node:vfs", BuiltinModule::Vfs),
     ("net", BuiltinModule::Net),
     ("node:net", BuiltinModule::Net),
     ("http", BuiltinModule::Http),
@@ -649,6 +679,10 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::FsPromises => {
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
+        }
+        BuiltinModule::Vfs => {
+            let global = context.global_root()?;
+            get(context, global, "__nodeVfs")
         }
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
