@@ -1100,13 +1100,11 @@ impl<H: Host> Vm<H> {
                     && !i.returns_from_frame() =>
             {
                 self.profile.call_source(1);
-                let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.frames[f].pc = *pc;
                 let stack_guard = self.push_wasm_frame(
                     p,
                     f,
                     u32::from(i.known_function_index()),
-                    parent,
                     i.call_window(),
                 )?;
                 return Ok(StepResult::PushFrame {
