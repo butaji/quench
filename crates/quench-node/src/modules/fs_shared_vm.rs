@@ -391,7 +391,13 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
     }
     validatePath(path);
     mode = normalizeMode(mode);
+    const activeRequests = globalThis.process.__quenchActiveRequests ||
+      (globalThis.process.__quenchActiveRequests = []);
+    const request = {};
+    activeRequests.push(request);
     queueMicrotask(() => {
+      const requestIndex = activeRequests.indexOf(request);
+      if (requestIndex !== -1) activeRequests.splice(requestIndex, 1);
       try { Reflect.apply(callback, undefined, [null, openSync(path, flags, mode)]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
