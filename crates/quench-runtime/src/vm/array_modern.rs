@@ -484,7 +484,7 @@ impl<H: Host> Vm<H> {
         roots.extend(state.iterator.map(|value| self.heap.root(value)));
         roots.extend(state.mapper.map(|value| self.heap.root(value)));
         roots.extend(state.array_like.map(|(value, _)| self.heap.root(value)));
-        let state_value = self.heap.alloc(Cell::ArrayFromAsyncState(state));
+        let state_value = self.heap.alloc(Cell::ArrayFromAsyncState(Box::new(state)));
         for root in roots {
             self.heap.release_root(root);
         }
@@ -570,7 +570,7 @@ impl<H: Host> Vm<H> {
 
     fn array_from_async_state(&self, state: Value) -> Result<ArrayFromAsyncState, JsError> {
         match self.heap.get(state) {
-            Some(Cell::ArrayFromAsyncState(state)) => Ok(*state),
+            Some(Cell::ArrayFromAsyncState(state)) => Ok(**state),
             _ => Err(JsError(
                 "Array.fromAsync continuation state is invalid".into(),
             )),
@@ -663,7 +663,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         state.index += 1;
         if let Some(Cell::ArrayFromAsyncState(current)) = self.heap.get_mut(state_value) {
-            *current = state;
+            **current = state;
         }
         if state.iterator.is_some() {
             self.array_from_async_next(p, state_value)

@@ -1,5 +1,19 @@
 use super::*;
 use crate::heap::PrivateBrand;
+
+// Publish the current resume PC only while a binding-site consumer runs.
+macro_rules! with_binding_site_pc {
+    ($vm:expr, $frame:expr, $resume_pc:expr, $action:expr) => {{
+        let previous = std::mem::replace(
+            &mut $vm.frames[$frame].binding_site_pc,
+            Some($resume_pc as u32),
+        );
+        let result = $action;
+        $vm.frames[$frame].binding_site_pc = previous;
+        result
+    }};
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn module_import_value(
         &self,
@@ -36,8 +50,8 @@ impl<H: Host> Vm<H> {
         f: usize,
         i: WideInstruction,
         pc: &mut usize,
+        allow_inline_calls: bool,
     ) -> Result<StepResult, JsError> {
-        self.frames[f].binding_site_pc = Some(*pc as u32);
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
@@ -55,6 +69,16 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
+                self.write(f, i.result_register(), value);
+            }
+            Op::CreateRegExpLiteral => {
+                let value = self.regexp_literal(p, f, i.regexp_literal_site_index())?;
+                self.write(f, i.result_register(), value);
+            }
+            Op::LoadLocalPlain => {
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
             Op::LoadLocal | Op::LoadEnvLocal => {
@@ -96,7 +120,7 @@ impl<H: Host> Vm<H> {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
                 }
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)
@@ -106,6 +130,15 @@ impl<H: Host> Vm<H> {
                 }
                 self.mirror_global_lexical_binding(p, f, slot, value);
                 self.mapped_argument_store(p, f, slot, value);
+                if let Some(register) = i.optional_register_b() {
+                    self.write(f, register, value);
+                }
+            }
+            Op::StoreLocalPlain => {
+                let value = self.read(f, i.register_a());
+                // SAFETY: validated bytecode bounds the slot by Function.locals,
+                // and frame setup sizes locals to that count.
+                unsafe { self.write_validated_local(f, i.local_slot(), value) };
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
                 }
@@ -176,7 +209,7 @@ impl<H: Host> Vm<H> {
                 {
                     self.realm.global_lexical_bindings.insert(atom, value);
                 }
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)
@@ -201,27 +234,49 @@ impl<H: Host> Vm<H> {
                 self.read(f, i.register_a()),
             )?,
             Op::LoadName => {
-                let v = self.load_name(p, i.atom_index(), Some(i.cache_site_index()))?;
+                let v = with_binding_site_pc!(
+                    self,
+                    f,
+                    *pc,
+                    self.load_name(p, i.atom_index(), Some(i.cache_site_index()))
+                )?;
                 self.write(f, i.result_register(), v);
             }
             Op::LoadNameCall => {
-                let (callee, this) =
-                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()), false)?;
+                let (callee, this) = with_binding_site_pc!(
+                    self,
+                    f,
+                    *pc,
+                    self.load_name_call(p, i.atom_index(), Some(i.cache_site_index()), false)
+                )?;
                 self.write(f, i.result_register(), callee);
                 self.write(f, i.register_b(), this);
             }
             Op::LoadNameTypeof => {
-                let v = self.load_name_typeof(p, i.atom_index(), i.cache_site_index())?;
+                let v = with_binding_site_pc!(
+                    self,
+                    f,
+                    *pc,
+                    self.load_name_typeof(p, i.atom_index(), i.cache_site_index())
+                )?;
                 self.write(f, i.result_register(), v);
             }
-            Op::StoreName => self.store_name(
-                p,
-                i.atom_index(),
-                self.read(f, i.register_a()),
-                i.cache_site_index(),
-                i.boolean_field(crate::bytecode::InstructionField::B)
-                    .expect("validated initialization flag"),
-            )?,
+            Op::StoreName => {
+                let value = self.read(f, i.register_a());
+                with_binding_site_pc!(
+                    self,
+                    f,
+                    *pc,
+                    self.store_name(
+                        p,
+                        i.atom_index(),
+                        value,
+                        i.cache_site_index(),
+                        i.boolean_field(crate::bytecode::InstructionField::B)
+                            .expect("validated initialization flag"),
+                    )
+                )?;
+            }
             Op::LoadThis => {
                 let this = self.checked_this_binding(p, f)?;
                 self.write(f, i.result_register(), this);
@@ -280,7 +335,7 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::MakeClosure => {
-                let env = self.capture_binding_environment(f)?;
+                let env = with_binding_site_pc!(self, f, *pc, self.capture_binding_environment(f))?;
                 let module_root = p.is_module()
                     && self.frames[f].function == super::ROOT_FUNCTION_ID
                     && self.programs.module_environment(self.frames[f].program) == Some(env);
@@ -316,6 +371,22 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Return(v));
                 }
                 self.write(f, i.result_register(), v);
+            }
+            Op::MakeObjectLiteral => {
+                let site = i.object_site_index();
+                let shape = self.object_site_shape(p, site);
+                let window = i.register_window();
+                let start = usize::from(window.base);
+                let end = start + usize::from(window.count);
+                let prototype = self.object_proto;
+                let properties = &self.frames[f].registers[start..end];
+                let object = self
+                    .heap
+                    .alloc_object_with_properties(prototype, shape, properties);
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(object));
+                }
+                self.write(f, i.result_register(), object);
             }
             Op::SuperConstArrayObject2 => {
                 if let Some(value) = self.execute_const_array_object2(p, f, i)? {
@@ -443,7 +514,12 @@ impl<H: Host> Vm<H> {
                 let strict = i
                     .boolean_field(crate::bytecode::InstructionField::B)
                     .ok_or_else(|| JsError::validation("invalid resolve-name flag".into()))?;
-                let value = self.resolve_name(p, i.atom_index(), strict)?;
+                let value = with_binding_site_pc!(
+                    self,
+                    f,
+                    *pc,
+                    self.resolve_name(p, i.atom_index(), strict)
+                )?;
                 self.write(f, i.result_register(), value);
             }
             Op::LoadResolvedName => {
@@ -462,7 +538,8 @@ impl<H: Host> Vm<H> {
                 }
             }
             Op::DeleteName => {
-                let value = self.delete_name(p, i.atom_index())?;
+                let value =
+                    with_binding_site_pc!(self, f, *pc, self.delete_name(p, i.atom_index()))?;
                 self.write(f, i.result_register(), value);
             }
             Op::StoreResolvedName => {
@@ -530,7 +607,7 @@ impl<H: Host> Vm<H> {
             }
             Op::InitializeTdz => {
                 let slot = i.local_slot();
-                if self.frames[f].captured {
+                if self.local_slot_is_environment_owned(p, f, slot) {
                     *self
                         .heap
                         .environment_slot_mut(self.frames[f].env, slot)
@@ -731,7 +808,15 @@ impl<H: Host> Vm<H> {
                 let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
                 let v = if armed {
                     match self.numeric_binary(operator, left, right) {
-                        Some(value) => value,
+                        Some(value) => {
+                            self.record_binary_value_path(
+                                operator,
+                                left,
+                                right,
+                                crate::profile::BinaryValuePath::IntegerFastPath,
+                            );
+                            value
+                        }
                         None => {
                             self.deopt_numeric_site(f, site_pc);
                             self.binary(p, operator, left, right)?
@@ -743,7 +828,13 @@ impl<H: Host> Vm<H> {
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
-                self.write(f, i.result_register(), v);
+                if let Some(local) = i.numeric_local_target() {
+                    self.frames[f].locals[local as usize] = v;
+                    self.profile
+                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
+                } else {
+                    self.write(f, i.result_register(), v);
+                }
             }
             Op::WasmIndirectTarget => {
                 let table = self.read(f, i.register_b());
@@ -1405,7 +1496,8 @@ impl<H: Host> Vm<H> {
                 let value = self.read(f, i.register_a());
                 let truthy = self.truthy(value);
                 #[cfg(feature = "profile-aggregate")]
-                self.profile.branch_value(value.profile_kind(), truthy);
+                self.profile
+                    .branch_value(value.profile_kind() as usize, truthy);
                 if !truthy {
                     *pc = i.jump_target() as usize;
                 }
@@ -1446,6 +1538,14 @@ impl<H: Host> Vm<H> {
                             ..
                         }) if *realm == self.realm.globals
                     );
+                let previous_binding_site_pc = if direct_eval {
+                    Some(std::mem::replace(
+                        &mut self.frames[f].binding_site_pc,
+                        Some(*pc as u32),
+                    ))
+                } else {
+                    None
+                };
                 let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
@@ -1467,6 +1567,60 @@ impl<H: Host> Vm<H> {
                                 packed.op() == Op::Return
                             }
                         });
+                if allow_inline_calls
+                    && i.op() == Op::Call
+                    && !direct_eval
+                    && !previous_direct_eval
+                    && !previous_parameter_eval
+                    && !terminal
+                    && p.kind != crate::bytecode::ProgramKind::Wasm
+                    && f + 1 == self.frames.len()
+                    && self.frames[f].function != super::ROOT_FUNCTION_ID
+                    && p.functions
+                        .get(self.frames[f].function as usize)
+                        .is_some_and(|function| {
+                            function.dispatch == DispatchClass::General
+                        })
+                    && let Some(CallTarget::User(program_id, id, env)) =
+                        self.call_target(callee).ok()
+                    && id != super::ROOT_FUNCTION_ID
+                    && program_id == self.frames[f].program
+                    && program_id == self.active_program
+                    && self.heap.get(callee).is_some_and(|cell| {
+                        matches!(cell, Cell::Function { realm, .. } if *realm == self.realm.globals)
+                    })
+                    && p.functions.get(id as usize).is_some_and(|function| {
+                        function.dispatch == DispatchClass::General
+                            && !function.is_async
+                            && !function.is_generator
+                            && !function.is_class_constructor
+                            && !function.derived_constructor
+                            && !function.class_field_initializer
+                            && !function.parameter_eval_arguments_error
+                    })
+                {
+                    self.profile.call_target(1, args.len());
+                    let result = self.with_call_roots(
+                        [callee, this].into_iter().chain(args.iter().copied()),
+                        |vm| {
+                            vm.push_general_user_frame(
+                                p,
+                                id,
+                                env,
+                                this,
+                                args,
+                                CallContext::user_function(id, callee),
+                            )
+                        },
+                    );
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    let stack_guard = result?;
+                    return Ok(StepResult::PushFrame {
+                        destination: i.result_register(),
+                        stack_guard,
+                    });
+                }
                 if p.kind == crate::bytecode::ProgramKind::Wasm
                     && i.returns_from_frame()
                     && let Some(CallTarget::User(program_id, id, env)) =
@@ -1531,7 +1685,9 @@ impl<H: Host> Vm<H> {
                     self.profile.terminal_call(0);
                     return Ok(StepResult::TailCall);
                 }
-                if p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame() {
+                let discarded_wasm_frame =
+                    p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame();
+                if discarded_wasm_frame {
                     // Native/host calls need argument roots, not the discarded guest activation.
                     self.with_stack.truncate(self.frames[f].with_base);
                     let frame = &mut self.frames[f];
@@ -1545,7 +1701,15 @@ impl<H: Host> Vm<H> {
                     frame.this = Value::UNDEFINED;
                     frame.captured = false;
                 }
-                let value = match self.call_value(p, callee, this, args) {
+                let called = if discarded_wasm_frame {
+                    self.call_value(p, callee, this, args)
+                } else {
+                    self.call_value_from_frame(p, callee, this, args)
+                };
+                if let Some(binding_site_pc) = previous_binding_site_pc {
+                    self.frames[f].binding_site_pc = binding_site_pc;
+                }
+                let value = match called {
                     Ok(value) => value,
                     Err(error) => {
                         if let Some(previous_this) = previous_this {

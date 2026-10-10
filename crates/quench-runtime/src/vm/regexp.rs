@@ -377,6 +377,13 @@ impl<H: Host> Vm<H> {
                 };
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
                 vm.with_call_roots([input_value], |vm| {
+                    if let Some(template) = template.as_ref()
+                        && let Some((matcher, flags)) = vm.regexp_replace_fast_matcher(receiver)
+                    {
+                        return vm.regexp_symbol_replace_fast(
+                            p, receiver, &input, template, &matcher, &flags,
+                        );
+                    }
                     let atom = vm.intern_atom("flags");
                     let flags = vm.get_property(p, receiver, atom)?;
                     let flags = vm.coerce_js_string(p, flags)?;
@@ -509,6 +516,148 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    fn regexp_replace_fast_matcher(
+        &self,
+        receiver: Value,
+    ) -> Option<(Rc<quench_regexp::Regex>, String)> {
+        let Some(Cell::RegExp { matcher, flags, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        if !flags.contains('g') || matcher.capture_count() != 0 {
+            return None;
+        }
+        let intrinsics = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)?;
+        if self.object_data(receiver)?.proto != intrinsics.prototype {
+            return None;
+        }
+        let exec = self.lookup_atom("exec")?;
+        let flags_atom = self.lookup_atom("flags")?;
+        let last_index = self.lookup_atom("lastIndex")?;
+        if self
+            .property_attributes(receiver, PropertyKey::string(exec))
+            .is_some()
+            || self
+                .property_attributes(receiver, PropertyKey::string(flags_atom))
+                .is_some()
+            || !self
+                .property_attributes(receiver, PropertyKey::string(last_index))
+                .is_some_and(|attributes| attributes.writable && !attributes.accessor)
+            || !self.regexp_prototype_native_property(
+                intrinsics.prototype,
+                exec,
+                Native::RegExpExec,
+                false,
+            )
+            || !self.regexp_prototype_native_property(
+                intrinsics.prototype,
+                flags_atom,
+                Native::RegExpFlags,
+                true,
+            )
+        {
+            return None;
+        }
+        for (name, native, _) in REGEXP_FLAG_ACCESSORS {
+            let atom = self.lookup_atom(name)?;
+            if self
+                .property_attributes(receiver, PropertyKey::string(atom))
+                .is_some()
+                || !self.regexp_prototype_native_property(intrinsics.prototype, atom, *native, true)
+            {
+                return None;
+            }
+        }
+        Some((Rc::clone(matcher), flags.clone()))
+    }
+
+    fn regexp_prototype_native_property(
+        &self,
+        prototype: Value,
+        atom: Atom,
+        expected: Native,
+        accessor: bool,
+    ) -> bool {
+        let Some(attributes) = self.property_attributes(prototype, PropertyKey::string(atom))
+        else {
+            return false;
+        };
+        if attributes.accessor != accessor {
+            return false;
+        }
+        let value = if accessor {
+            let Some(getter) = attributes.getter else {
+                return false;
+            };
+            getter
+        } else {
+            let Some(value) = self.own_property(prototype, atom) else {
+                return false;
+            };
+            value
+        };
+        matches!(
+            self.heap.get(value),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(native),
+                ..
+            }) if *native == expected
+        )
+    }
+
+    fn regexp_symbol_replace_fast(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        template: &JsString,
+        matcher: &quench_regexp::Regex,
+        flags: &str,
+    ) -> Result<Value, JsError> {
+        let last_index = self
+            .lookup_atom("lastIndex")
+            .expect("RegExp installation interns lastIndex");
+        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+
+        let mut output = super::wtf16::JsStringBuilder::default();
+        let mut next_source = 0;
+        let mut search_start = 0;
+        let sticky = flags.contains('y');
+        let unicode = flags.contains('u') || flags.contains('v');
+        while let Some(found) = matcher.find_from_utf16(input.units(), search_start).next() {
+            let start = found.range.start;
+            let end = found.range.end;
+            if sticky && start != search_start {
+                break;
+            }
+            output.append_slice(input, next_source..start);
+            let matched = JsString::from_units(&input.units()[start..end]);
+            let replacement = self.replacement_substitution(
+                p,
+                template,
+                input,
+                start,
+                &matched,
+                &[],
+                Value::UNDEFINED,
+            )?;
+            output.append(&replacement);
+            next_source = end;
+            search_start = if start == end {
+                advance_string_index_units(input.units(), end, unicode)
+            } else {
+                end
+            };
+        }
+        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+        output.append_slice(input, next_source..input.units().len());
+        let output = self.string_build_result(p, output.finish())?;
+        Ok(self.heap.alloc(Cell::String(output)))
     }
 
     pub(super) fn replacement_substitution(
@@ -1285,8 +1434,80 @@ impl<H: Host> Vm<H> {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let matcher = Rc::new(Self::compile_regexp(&source, &flags)?);
+        self.regexp_from_matcher(prototype, source, flags, matcher, legacy_constructor)
+    }
+
+    pub(super) fn regexp_literal(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        site_index: usize,
+    ) -> Result<Value, JsError> {
+        let program = self.frames[frame].program;
+        let site = p
+            .regexp_literal_sites
+            .get(site_index)
+            .ok_or_else(|| JsError::validation("RegExp literal site is outside program".into()))?;
+        let source = self
+            .programs
+            .constant(program, site.pattern_constant as usize)
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(source)) => Some(source.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| JsError::validation("RegExp literal pattern is not a string".into()))?;
+        let flags = self
+            .programs
+            .constant(program, site.flags_constant as usize)
+            .and_then(|value| match self.heap.get(value) {
+                Some(Cell::String(flags)) => Some(flags.host_string().to_owned()),
+                _ => None,
+            })
+            .ok_or_else(|| JsError::validation("RegExp literal flags are not a string".into()))?;
+        let matcher = match self.programs.regexp_literal_matcher(program, site_index) {
+            Some(matcher) => matcher,
+            None => {
+                let matcher = Self::compile_regexp(&source, &flags)
+                    .map(Rc::new)
+                    .map_err(|error| Rc::<str>::from(error.to_string()));
+                if !self
+                    .programs
+                    .cache_regexp_literal_matcher(program, site_index, matcher.clone())
+                {
+                    return Err(JsError::validation(
+                        "RegExp literal cache site is invalid".into(),
+                    ));
+                }
+                matcher
+            }
+        }
+        .map_err(|message| JsError(message.to_string().into()))?;
+        let (prototype, constructor) = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)
+            .map(|intrinsics| (intrinsics.prototype, intrinsics.constructor))
+            .expect("RegExp intrinsics are installed for the active realm");
+        self.regexp_from_matcher(
+            prototype,
+            source,
+            flags,
+            matcher,
+            crate::heap::RegExpLegacyOwner::Enabled(constructor),
+        )
+    }
+
+    fn regexp_from_matcher(
+        &mut self,
+        prototype: Value,
+        source: JsString,
+        flags: String,
+        matcher: Rc<quench_regexp::Regex>,
+        legacy_constructor: crate::heap::RegExpLegacyOwner,
+    ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             source,
             flags,
             matcher,

@@ -3,7 +3,7 @@ use super::{
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
     MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
     ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    SourcePosition, Superinstruction, WideInstruction,
+    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 8] = &[
@@ -209,6 +209,14 @@ pub(super) fn write_program(
                 out.u16(*slot);
             }
         }
+        match &function.selective_capture_slots {
+            Some(slots) => {
+                out.u8(1);
+                out.u16s(slots);
+            }
+            None => out.u8(0),
+        }
+        out.u8(u8::from(function.inherited_with_scope));
         out.u32(function.lexical_atoms.len() as u32);
         for atom in &function.lexical_atoms {
             out.u32(*atom);
@@ -296,8 +304,15 @@ pub(super) fn write_program(
     }
     out.u32(program.object_sites.len() as u32);
     for site in &program.object_sites {
-        out.u32(site.atoms[0]);
-        out.u32(site.atoms[1]);
+        out.u32(site.atoms.len() as u32);
+        for atom in &site.atoms {
+            out.u32(*atom);
+        }
+    }
+    out.u32(program.regexp_literal_sites.len() as u32);
+    for site in &program.regexp_literal_sites {
+        out.u32(site.pattern_constant);
+        out.u32(site.flags_constant);
     }
     out.u32(program.superinstructions.len() as u32);
     for site in &program.superinstructions {
@@ -486,6 +501,16 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let environment_atoms = input.list(|input| input.u32())?;
         let name_bindings = input.list(read_eval_binding)?;
         let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
+        let selective_capture_slots = match input.u8()? {
+            0 => None,
+            1 => Some(input.u16s()?),
+            _ => return Err("invalid selective capture layout".into()),
+        };
+        let inherited_with_scope = match input.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err("invalid inherited with-scope flag".into()),
+        };
         let lexical_atoms = input.list(|input| input.u32())?;
         let global_lexical_atoms = input.list(|input| input.u32())?;
         let global_var_atoms = input.list(|input| input.u32())?;
@@ -590,6 +615,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             locals,
             local_atoms,
             environment_atoms,
+            selective_capture_slots,
+            inherited_with_scope,
             environment_clones,
             name_bindings,
             lexical_atoms,
@@ -629,7 +656,13 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     })?;
     let object_sites = input.list(|input| {
         Ok(ObjectSite {
-            atoms: [input.u32()?, input.u32()?],
+            atoms: input.list(|input| input.u32())?.into(),
+        })
+    })?;
+    let regexp_literal_sites = input.list(|input| {
+        Ok(RegExpLiteralSite {
+            pattern_constant: input.u32()?,
+            flags_constant: input.u32()?,
         })
     })?;
     let superinstructions = input.list(|input| {
@@ -671,6 +704,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         method_arguments,
         field_sites,
         object_sites,
+        regexp_literal_sites,
         superinstructions,
         register_roots,
     };

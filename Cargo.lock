@@ -1424,6 +1424,7 @@ dependencies = [
  "quench-stack",
  "quench-temporal",
  "rustc-hash",
+ "smallvec",
  "unicode-normalization",
  "unicode-segmentation",
  "wasmparser",

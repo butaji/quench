@@ -399,23 +399,36 @@ impl quench_runtime::Host for NodeHost {
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
         crate::modules::process_shared_vm::initialize(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process");
         let abort = context.evaluate_script_rooted(
             crate::polyfills::shared_vm::ABORT,
             "node:bootstrap/shared-vm/abort.js",
         )?;
         context.release_root(abort);
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_abort_polyfill");
         let event_target = context.evaluate_script_rooted(
             crate::polyfills::shared_vm::EVENT_TARGET,
             "node:bootstrap/shared-vm/event-target.js",
         )?;
         context.release_root(event_target);
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_event_target_polyfill");
         let event_emitter = context.evaluate_script_rooted(
             crate::polyfills::bootstrap::event_emitter::JS,
             "node:bootstrap/event-emitter.js",
         )?;
         context.release_root(event_emitter);
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::modules::text_decoder_shared_vm::install_global(context)?;
-        commonjs::initialize(context)
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_text_decoder");
+        commonjs::initialize(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_commonjs");
+        Ok(())
     }
 }
 

@@ -3,12 +3,15 @@ use crate::bytecode::ResidualProgram;
 use rustc_hash::FxHashSet;
 
 impl Profile {
-    pub fn gc_frame(&mut self, function: u32, pc: u32, active: bool) {
-        *self.gc_frame_pcs.entry((function, pc, active)).or_default() += 1;
+    pub fn gc_frame(&mut self, program: u32, function: u32, pc: u32, active: bool) {
+        *self
+            .gc_frame_pcs
+            .entry((program, function, pc, active))
+            .or_default() += 1;
     }
 }
 
-pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
     let distinct: FxHashSet<_> = program.register_roots.iter().copied().collect();
     let runs = program
         .functions
@@ -19,13 +22,22 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
     let observed_masks: FxHashSet<_> = profile
         .gc_frame_pcs
         .keys()
-        .filter_map(|&(function, pc, _)| root_mask(program, function, pc))
+        .filter_map(|&(site_program, function, pc, _)| {
+            (site_program == program_id)
+                .then(|| root_mask(program, function, pc))
+                .flatten()
+        })
         .collect();
-    let observations = profile.gc_frame_pcs.values().sum::<u64>();
+    let observations = profile
+        .gc_frame_pcs
+        .iter()
+        .filter(|((site_program, _, _, _), _)| *site_program == program_id)
+        .map(|(_, count)| *count)
+        .sum::<u64>();
     let active = profile
         .gc_frame_pcs
         .iter()
-        .filter(|((_, _, active), _)| *active)
+        .filter(|((site_program, _, _, active), _)| *site_program == program_id && *active)
         .map(|(_, count)| *count)
         .sum::<u64>();
     eprint!(
@@ -33,7 +45,11 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
         program.register_roots.len(),
         program.register_roots.len() * size_of::<u64>(),
         distinct.len(),
-        profile.gc_frame_pcs.len(),
+        profile
+            .gc_frame_pcs
+            .keys()
+            .filter(|(site_program, _, _, _)| *site_program == program_id)
+            .count(),
         observed_masks.len(),
         observations - active,
     );

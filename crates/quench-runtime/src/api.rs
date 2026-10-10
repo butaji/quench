@@ -2571,6 +2571,7 @@ print(Names.plain.name==='plain'); print(Names[symbol].name==='[slot]'); print(N
   var first=plain.arguments, second=plain.arguments;
   print(first !== second); print(first.length === 4); print(first[0] === 7); print(first[1] === undefined); print(first[2] === 9); print(first[3] === 11);
   print(first.callee === plain); print(Object.prototype.toString.call(first) === '[object Arguments]'); print(Object.getPrototypeOf(first) === Object.prototype);
+  print(Reflect.ownKeys(first).map(String).join(',') === '0,1,2,3,length,callee,Symbol(Symbol.iterator)');
   first[0]=17; delete first[2]; first.length=0;
   print(second[0] === 7); print(second[2] === 9); print(plain.arguments[0] === 7); print(a === 7);
   a=19; arguments[1]=23; arguments=null; $262.gc();
@@ -2619,7 +2620,7 @@ shadow(47);
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
                         "true", "true", "true", "true", "true", "true", "true", "true", "true",
-                        "true"
+                        "true", "true"
                     ]
                 );
             }
