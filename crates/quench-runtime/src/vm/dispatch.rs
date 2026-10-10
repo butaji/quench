@@ -1561,18 +1561,16 @@ impl<H: Host> Vm<H> {
                     })
                 {
                     self.profile.call_target(1, args.len());
-                    let result = self.with_call_roots(
-                        [callee, this].into_iter().chain(args.iter().copied()),
-                        |vm| {
-                            vm.push_general_user_frame(
-                                p,
-                                id,
-                                env,
-                                this,
-                                args,
-                                CallContext::user_function(id, callee),
-                            )
-                        },
+                    // Collection happens only at back edges, tail calls and explicit host
+                    // safepoints, none of which can run while a frame is pushed; afterwards the
+                    // new frame itself roots the callee, receiver and arguments.
+                    let result = self.push_general_user_frame(
+                        p,
+                        id,
+                        env,
+                        this,
+                        args,
+                        CallContext::user_function(id, callee),
                     );
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
