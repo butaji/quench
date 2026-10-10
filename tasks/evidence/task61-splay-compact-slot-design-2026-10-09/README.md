@@ -3,8 +3,9 @@
 This probe checks whether the proposed Object/Array payload dimensions fit a
 safe Rust tagged enum on the current M4 toolchain. It uses machine-word
 stand-ins for `Value` and the storage metadata; `Rc<Vec<u64>>` matches the
-pointer-sized `Rc<Vec<Value>>` representation. The cold enum is deliberately
-larger, then boxed behind the common `Cell` enum.
+pointer-sized `Rc<Vec<Value>>` representation. The first payload word models
+the packed prototype/shape identity; the cold enum is deliberately larger,
+then boxed behind the common `Cell` enum.
 
 Command:
 

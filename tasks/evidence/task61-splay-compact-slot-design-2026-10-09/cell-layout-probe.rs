@@ -6,13 +6,13 @@ use std::rc::Rc;
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct ObjectData {
-    property_storage: u64,
+    packed_prototype_shape: u64,
     inline_values: [u64; 2],
 }
 
 #[repr(C)]
 struct ArrayData {
-    property_storage: u64,
+    packed_prototype_shape: u64,
     elements: ManuallyDrop<Rc<Vec<u64>>>,
     inline_property: u64,
 }
