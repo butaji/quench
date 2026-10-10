@@ -170,6 +170,11 @@ pub(crate) fn ok(
     if context.truthy_rooted(actual)? {
         return Ok(context.undefined());
     }
+    if let Some(message) = args.get(1).copied() {
+        if error_instance(context, message)? {
+            return Err(context.throw(message));
+        }
+    }
     let expected = context.boolean(true);
     let (message, generated) = assertion_message(context, args.get(1).copied(), ASSERTION_NOT_OK)?;
     assertion_error(context, actual, expected, "==", &message, generated)

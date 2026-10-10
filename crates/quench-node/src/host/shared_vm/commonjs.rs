@@ -294,6 +294,9 @@ pub(super) fn require(
                 "internal/vfs/fd.js",
             );
         }
+        Some(BuiltinModule::Vm) => {
+            return crate::modules::vm_shared_vm::module(context);
+        }
         Some(BuiltinModule::InternalUndici) => {
             let filename = std::env::current_dir()
                 .map_err(|error| RootedError::host(error.to_string()))?
@@ -453,7 +456,6 @@ pub(super) fn require(
             | BuiltinModule::ChildProcess
             | BuiltinModule::Https
             | BuiltinModule::Http2
-            | BuiltinModule::Vm
             | BuiltinModule::Inspector
             | BuiltinModule::Repl
             | BuiltinModule::Sea
@@ -809,6 +811,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         }
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
+        BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
             context.evaluate_script_rooted(
                 "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
@@ -870,7 +873,6 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "node:https.js",
         ),
         BuiltinModule::Http2
-        | BuiltinModule::Vm
         | BuiltinModule::Inspector
         | BuiltinModule::Repl
         | BuiltinModule::Cluster
