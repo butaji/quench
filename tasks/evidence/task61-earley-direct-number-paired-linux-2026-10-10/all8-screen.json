@@ -1,0 +1,296 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "direct Number binary dispatch; one paired sample across all eight V8-v7 fixtures",
+  "source_revision": "1c67c75b9e9c4f5dd032c131287a7e5c9c5b130d",
+  "binary_sha256": {
+    "baseline": "d6165b53df0198b58e5c3887fed1afad351bde17e237a6f711d495987cb79158",
+    "candidate": "e83200ec7666a02f8e4807fdb476eeb4dcef449ef469d15eefce1413f11369d5"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "qualification_ready": false,
+  "fixtures": {
+    "crypto": {
+      "materialized_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 154.0,
+      "candidate_score": 157.0,
+      "baseline_maximum_rss_bytes": 22409216,
+      "candidate_maximum_rss_bytes": 21573632,
+      "baseline_wall_ns": 26823216006,
+      "candidate_wall_ns": 27000140179,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 154.0,
+          "maximum_rss_bytes": 22409216,
+          "wall_ns": 26823216006,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 154\n----\nScore: 154\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 157.0,
+          "maximum_rss_bytes": 21573632,
+          "wall_ns": 27000140179,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Crypto: 157\n----\nScore: 157\n",
+          "stderr": ""
+        }
+      }
+    },
+    "deltablue": {
+      "materialized_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 92.6,
+      "candidate_score": 98.8,
+      "baseline_maximum_rss_bytes": 20856832,
+      "candidate_maximum_rss_bytes": 20545536,
+      "baseline_wall_ns": 4216411539,
+      "candidate_wall_ns": 4205612610,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 98.8,
+          "maximum_rss_bytes": 20545536,
+          "wall_ns": 4205612610,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: DeltaBlue: 98.8\n----\nScore: 98.8\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 92.6,
+          "maximum_rss_bytes": 20856832,
+          "wall_ns": 4216411539,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: DeltaBlue: 92.6\n----\nScore: 92.6\n",
+          "stderr": ""
+        }
+      }
+    },
+    "earley-boyer": {
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 213.0,
+      "candidate_score": 198.0,
+      "baseline_maximum_rss_bytes": 50638848,
+      "candidate_maximum_rss_bytes": 48967680,
+      "baseline_wall_ns": 38550581283,
+      "candidate_wall_ns": 39696137583,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 213.0,
+          "maximum_rss_bytes": 50638848,
+          "wall_ns": 38550581283,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 213\n----\nScore: 213\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 198.0,
+          "maximum_rss_bytes": 48967680,
+          "wall_ns": 39696137583,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: EarleyBoyer: 198\n----\nScore: 198\n",
+          "stderr": ""
+        }
+      }
+    },
+    "navier-stokes": {
+      "materialized_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 222.0,
+      "candidate_score": 238.0,
+      "baseline_maximum_rss_bytes": 20426752,
+      "candidate_maximum_rss_bytes": 19673088,
+      "baseline_wall_ns": 23010390902,
+      "candidate_wall_ns": 21421561227,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 238.0,
+          "maximum_rss_bytes": 19673088,
+          "wall_ns": 21421561227,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: NavierStokes: 238\n----\nScore: 238\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 222.0,
+          "maximum_rss_bytes": 20426752,
+          "wall_ns": 23010390902,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: NavierStokes: 222\n----\nScore: 222\n",
+          "stderr": ""
+        }
+      }
+    },
+    "raytrace": {
+      "materialized_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 147.0,
+      "candidate_score": 153.0,
+      "baseline_maximum_rss_bytes": 20332544,
+      "candidate_maximum_rss_bytes": 21291008,
+      "baseline_wall_ns": 18560230029,
+      "candidate_wall_ns": 17480027883,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 147.0,
+          "maximum_rss_bytes": 20332544,
+          "wall_ns": 18560230029,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: RayTrace: 147\n----\nScore: 147\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 153.0,
+          "maximum_rss_bytes": 21291008,
+          "wall_ns": 17480027883,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: RayTrace: 153\n----\nScore: 153\n",
+          "stderr": ""
+        }
+      }
+    },
+    "regexp": {
+      "materialized_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 54.9,
+      "candidate_score": 51.2,
+      "baseline_maximum_rss_bytes": 31866880,
+      "candidate_maximum_rss_bytes": 31051776,
+      "baseline_wall_ns": 56569003589,
+      "candidate_wall_ns": 60871153287,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 51.2,
+          "maximum_rss_bytes": 31051776,
+          "wall_ns": 60871153287,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: RegExp: 51.2\n----\nScore: 51.2\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 54.9,
+          "maximum_rss_bytes": 31866880,
+          "wall_ns": 56569003589,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: RegExp: 54.9\n----\nScore: 54.9\n",
+          "stderr": ""
+        }
+      }
+    },
+    "richards": {
+      "materialized_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+      "execution_order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 149.0,
+      "candidate_score": 143.0,
+      "baseline_maximum_rss_bytes": 19091456,
+      "candidate_maximum_rss_bytes": 18083840,
+      "baseline_wall_ns": 2072438906,
+      "candidate_wall_ns": 2083445199,
+      "results": {
+        "baseline": {
+          "exit_code": 0,
+          "score": 149.0,
+          "maximum_rss_bytes": 19091456,
+          "wall_ns": 2072438906,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Richards: 149\n----\nScore: 149\n",
+          "stderr": ""
+        },
+        "candidate": {
+          "exit_code": 0,
+          "score": 143.0,
+          "maximum_rss_bytes": 18083840,
+          "wall_ns": 2083445199,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Richards: 143\n----\nScore: 143\n",
+          "stderr": ""
+        }
+      }
+    },
+    "splay": {
+      "materialized_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+      "execution_order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 861.0,
+      "candidate_score": 1139.0,
+      "baseline_maximum_rss_bytes": 200888320,
+      "candidate_maximum_rss_bytes": 200114176,
+      "baseline_wall_ns": 2731486063,
+      "candidate_wall_ns": 2881918560,
+      "results": {
+        "candidate": {
+          "exit_code": 0,
+          "score": 1139.0,
+          "maximum_rss_bytes": 200114176,
+          "wall_ns": 2881918560,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Splay: 1139\n----\nScore: 1139\n",
+          "stderr": ""
+        },
+        "baseline": {
+          "exit_code": 0,
+          "score": 861.0,
+          "maximum_rss_bytes": 200888320,
+          "wall_ns": 2731486063,
+          "semantic_output": [],
+          "stdout": "__quenchBenchResult: Splay: 861\n----\nScore: 861\n",
+          "stderr": ""
+        }
+      }
+    }
+  },
+  "all_valid": true,
+  "overall_decision_limit": "Single paired sample per fixture is diagnostic only; it cannot establish a Score interval or Task 61 qualification."
+}

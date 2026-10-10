@@ -997,6 +997,11 @@ impl<H: Host> Vm<H> {
         let numeric =
             (BinaryOperator::Subtraction as u32..=BinaryOperator::BitwiseAnd as u32).contains(&op);
         if numeric {
+            if op == BinaryOperator::Multiplication as u32
+                && let (Some(a), Some(b)) = (left.as_number(), right.as_number())
+            {
+                return Ok(Value::number(a * b));
+            }
             if left.as_number().is_some() && right.as_number().is_some() {
                 return self.binary_slow(p, op, left, right);
             }
@@ -1026,6 +1031,9 @@ impl<H: Host> Vm<H> {
                     .checked_add(b)
                     .map(Value::integer)
                     .unwrap_or_else(|| Value::number(a as f64 + b as f64)));
+            }
+            if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
+                return Ok(Value::number(a + b));
             }
             return self.with_coerced_operands(
                 p,
