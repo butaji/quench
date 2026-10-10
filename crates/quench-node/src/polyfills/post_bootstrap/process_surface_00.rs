@@ -46,12 +46,17 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     };
     const processEnv = globalThis.process.env;
     if (processEnv) {
+      const setEnv = globalThis.process.__quenchSetEnv;
+      const deleteEnv = globalThis.process.__quenchDeleteEnv;
+      Object.defineProperty(globalThis.process, "__quenchSetEnv", { enumerable: false });
+      Object.defineProperty(globalThis.process, "__quenchDeleteEnv", { enumerable: false });
       globalThis.process.env = new Proxy(processEnv, {
         set(target, key, value) {
           if (typeof key === "symbol" || typeof value === "symbol") {
             throw new TypeError("Cannot convert a Symbol value to a string");
           }
           if (key === "") return true;
+          const text = String(value);
           if (typeof value !== "string" && typeof value !== "number" &&
               typeof value !== "boolean" &&
               globalThis.process.execArgv.includes("--pending-deprecation")) {
@@ -60,7 +65,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
               { type: "DeprecationWarning", code: "DEP0104" }
             );
           }
-          return Reflect.set(target, key, String(value), target);
+          const result = Reflect.set(target, key, text, target);
+          if (result && typeof key !== "symbol") setEnv(String(key), text);
+          return result;
         },
         defineProperty(target, key, descriptor) {
           const invalid = (message) => {
@@ -71,6 +78,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
           if (typeof key === "symbol") {
             throw invalid("'process.env' does not accept symbol properties");
           }
+          if (key === "") return true;
           if ("get" in descriptor || "set" in descriptor) {
             throw invalid("'process.env' does not accept an accessor(getter/setter) descriptor");
           }
@@ -80,12 +88,20 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
           if (typeof descriptor.value === "symbol") {
             throw new TypeError("Cannot convert a Symbol value to a string");
           }
-          return Reflect.defineProperty(target, key, {
-            value: String(descriptor.value),
+          const value = String(descriptor.value);
+          const result = Reflect.defineProperty(target, key, {
+            value,
             configurable: true,
             writable: true,
             enumerable: true
           });
+          if (result) setEnv(String(key), value);
+          return result;
+        },
+        deleteProperty(target, key) {
+          const result = Reflect.deleteProperty(target, key);
+          if (result && key !== "" && typeof key !== "symbol") deleteEnv(String(key));
+          return result;
         }
       });
     }
