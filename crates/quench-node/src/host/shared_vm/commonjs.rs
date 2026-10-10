@@ -148,13 +148,14 @@ fn install_vfs_globals(
 ) -> Result<(), RootedError> {
     let fs = cached_builtin(context, BuiltinModule::Fs)?;
     let path = crate::modules::path_shared_vm::module(context)?;
+    let stream = cached_builtin(context, BuiltinModule::Stream)?;
     let buffer = get(context, buffer_module, "Buffer")?;
     let install = context.evaluate_script_rooted(
-        "(buffer, fs, path) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+        "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[buffer, fs, path])?;
+    context.call_rooted(install, undefined, &[buffer, fs, path, stream])?;
 
     let source = format!(
         "{}\n{}",
