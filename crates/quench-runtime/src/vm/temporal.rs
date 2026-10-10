@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn lock_temporal_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
-        let prototype = self.intern_atom("prototype");
+        let prototype = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype),
@@ -299,7 +299,7 @@ impl<H: Host> Vm<H> {
         self.validate_duration_fields(p, &fields)?;
         Ok(self.heap.alloc(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
-            fields,
+            fields: Box::new(fields),
         }))
     }
 
@@ -340,7 +340,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<[f64; 10], JsError> {
         match self.heap.get(value) {
-            Some(Cell::TemporalDuration { fields, .. }) => Ok(*fields),
+            Some(Cell::TemporalDuration { fields, .. }) => Ok(**fields),
             _ => Err(self.type_error(
                 p,
                 "Temporal.Duration method called on incompatible receiver".into(),
@@ -545,7 +545,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<[f64; 10], JsError> {
         if let Some(Cell::TemporalDuration { fields, .. }) = self.heap.get(value) {
-            return Ok(*fields);
+            return Ok(**fields);
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
             return quench_temporal::parse_duration(text.host_string())
@@ -584,11 +584,11 @@ impl<H: Host> Vm<H> {
         let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
         let duration_atom = self.intern_atom("Duration");
         let constructor = self.get_property(p, temporal, duration_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let value = self.heap.alloc(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),
-            fields,
+            fields: Box::new(fields),
         });
         if let Some(Cell::TemporalDuration { object, .. }) = self.heap.get_mut(value) {
             object.proto = prototype;
@@ -637,9 +637,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
-            epoch_nanoseconds: relative.epoch_nanoseconds,
-            time_zone: relative.time_zone.clone(),
-            calendar: relative.calendar.clone(),
+            epoch_nanoseconds: Box::new(relative.epoch_nanoseconds),
+            time_zone: Box::new(relative.time_zone.to_string()),
+            calendar: Box::new(relative.calendar.to_string()),
         });
         let mut fields = [Value::number(0.0); 10];
         fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = Value::number(1.0);
@@ -682,9 +682,9 @@ impl<H: Host> Vm<H> {
         {
             let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: zoned.epoch_nanoseconds,
-                time_zone: zoned.time_zone.clone(),
-                calendar: zoned.calendar.clone(),
+                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
+                time_zone: Box::new(zoned.time_zone.to_string()),
+                calendar: Box::new(zoned.calendar.to_string()),
             });
             let result = self.temporal_zoned_date_time_arithmetic(
                 p,
@@ -698,7 +698,7 @@ impl<H: Host> Vm<H> {
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            *epoch_nanoseconds
+            **epoch_nanoseconds
         } else {
             zoned.epoch_nanoseconds
         };
@@ -897,9 +897,9 @@ impl<H: Host> Vm<H> {
                     calendar,
                     ..
                 }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
-                    epoch_nanoseconds: *epoch_nanoseconds,
-                    time_zone: time_zone.clone(),
-                    calendar: calendar.clone(),
+                    epoch_nanoseconds: **epoch_nanoseconds,
+                    time_zone: time_zone.to_string(),
+                    calendar: calendar.to_string(),
                 }),
                 _ => None,
             };
@@ -1386,9 +1386,9 @@ impl<H: Host> Vm<H> {
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
             let start = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: zoned.epoch_nanoseconds,
-                time_zone: zoned.time_zone.clone(),
-                calendar: zoned.calendar.clone(),
+                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
+                time_zone: Box::new(zoned.time_zone.to_string()),
+                calendar: Box::new(zoned.calendar.to_string()),
             });
             let date_endpoint = self.temporal_zoned_date_time_arithmetic(
                 p,
@@ -1405,9 +1405,9 @@ impl<H: Host> Vm<H> {
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            let date_endpoint_epoch = *date_endpoint_epoch;
-            let time_zone = time_zone.clone();
-            let calendar = calendar.clone();
+            let date_endpoint_epoch = **date_endpoint_epoch;
+            let time_zone = time_zone.to_string();
+            let calendar = calendar.to_string();
             let actual = self.relative_duration_nanoseconds(p, &relative_date, &fields)?;
             let residual = zoned
                 .epoch_nanoseconds
@@ -1419,9 +1419,9 @@ impl<H: Host> Vm<H> {
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
             let date_endpoint = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: date_endpoint_epoch,
-                time_zone,
-                calendar,
+                epoch_nanoseconds: Box::new(date_endpoint_epoch),
+                time_zone: Box::new(time_zone),
+                calendar: Box::new(calendar),
             });
             let next_day = self.temporal_zoned_date_time_arithmetic(
                 p,
