@@ -698,10 +698,21 @@ impl Engine {
                 .checked_add(locals.len())
                 .and_then(|count| u16::try_from(count).ok())
                 .ok_or_else(|| error("too many Wasm locals"))?;
+            let operators = operators
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
+            let mut memory_registers = Vec::with_capacity(memories.len());
+            let mut reserved: Register = 0;
+            for used in memory::direct_access_memories(memories, &operators) {
+                memory_registers.push(used.then_some(reserved));
+                reserved += Register::from(used);
+            }
             let mut lowering = Lowering {
                 name,
                 locals: local_count,
                 temporary_locals: 0,
+                memory_registers,
                 code: Vec::new(),
                 wide: Vec::new(),
                 constants,
@@ -713,9 +724,10 @@ impl Engine {
                 elements,
                 tags,
                 handlers: vec![],
-                depth: 0,
-                registers: 1,
-                controls: vec![Control::function(results)],
+                depth: reserved,
+                // The function base register always exists: it carries a void result.
+                registers: reserved + 1,
+                controls: vec![Control::function(reserved, results)],
                 path: Reachability::Live,
             };
             // Defaultable locals get residual defaults; others remain uninitialized.
@@ -734,9 +746,19 @@ impl Engine {
                     lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
                 }
             }
+            for (memory, register) in lowering.memory_registers.clone().into_iter().enumerate() {
+                if let Some(register) = register {
+                    let slot = lowering.globals.len() + memory;
+                    lowering.emit(
+                        Op::LoadCapture,
+                        register,
+                        0,
+                        0,
+                        crate::bytecode::ImmediateLayout::capture_immediate(0, slot as u16),
+                    )?;
+                }
+            }
             for operator in operators {
-                let operator =
-                    operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
                 if lowering.controls.is_empty() {
                     return Err(error("operators after Wasm function end"));
                 }
@@ -1256,6 +1278,8 @@ struct Lowering<'a> {
     name: &'a str,
     locals: u16,
     temporary_locals: u16,
+    // Prologue-loaded binding register per memory used by direct accesses.
+    memory_registers: Vec<Option<Register>>,
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
     constants: Vec<Constant>,
