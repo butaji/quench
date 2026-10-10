@@ -1347,15 +1347,18 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(env)
         {
-            let (with_objects, root_eval_scope) = (&scope.with_objects, &scope.root_eval_scope);
-            let dynamic_bindings = self.heap.environment_bindings(env)?;
-            let lexical_this_wrapper = !*root_eval_scope
+            // Only a slotless, function-less, non-eval layer can be a lexical-this wrapper, so
+            // its dynamic bindings are read only after those field checks pass.
+            let lexical_this_wrapper = !scope.root_eval_scope
                 && *function == u32::MAX
                 && slots.is_empty()
-                && (dynamic_bindings.is_empty()
-                    || (dynamic_bindings.len() == 1
-                        && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this));
-            if with_objects.is_empty() && !lexical_this_wrapper {
+                && {
+                    let dynamic_bindings = self.heap.environment_bindings(env)?;
+                    dynamic_bindings.is_empty()
+                        || (dynamic_bindings.len() == 1
+                            && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this)
+                };
+            if scope.with_objects.is_empty() && !lexical_this_wrapper {
                 break;
             }
             env = *parent;
