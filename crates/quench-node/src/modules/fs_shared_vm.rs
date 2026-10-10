@@ -1322,7 +1322,7 @@ const ASYNC_COPYFILE_API: &str = r#"(copyFileSync) => {
   };
 }"#;
 
-const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync) => {
+const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync, unlinkSync, copyFileSync, symlinkSync, readlinkSync, realpathSync) => {
   const exists = (path) => {
     try { statSync(path); return true; } catch { return false; }
   };
@@ -1332,30 +1332,82 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     if (path !== undefined) error.path = path;
     throw error;
   };
-  function cpSync(source, destination, options = {}) {
+  const validateOptions = (options) => {
     if (options == null || typeof options !== 'object') {
       const error = new TypeError('The "options" argument must be of type object.');
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    if (options.recursive !== undefined && typeof options.recursive !== 'boolean') {
-      const error = new TypeError('The "options.recursive" property must be of type boolean.');
+    if (options.mode !== undefined && (!Number.isInteger(options.mode) || options.mode < 0 || options.mode > 0o777)) {
+      const error = new RangeError('The value of "mode" is out of range.');
+      error.code = 'ERR_OUT_OF_RANGE';
+      throw error;
+    }
+    for (const name of ['recursive', 'force', 'errorOnExist', 'dereference', 'preserveTimestamps', 'verbatimSymlinks']) {
+      if (options[name] !== undefined && typeof options[name] !== 'boolean') {
+        const error = new TypeError(`The "options.${name}" property must be of type boolean.`);
+        error.code = 'ERR_INVALID_ARG_TYPE';
+        throw error;
+      }
+    }
+    if (options.filter !== undefined && typeof options.filter !== 'function') {
+      const error = new TypeError('The "options.filter" property must be of type function.');
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+  };
+  const samePath = (left, right) => String(left).replace(/[\\/]$/, '') === String(right).replace(/[\\/]$/, '');
+  const isWithin = (parent, child) => {
+    const prefix = `${String(parent).replace(/[\\/]$/, '')}/`;
+    return String(child).startsWith(prefix);
+  };
+  function cpSync(source, destination, options = {}) {
+    validateOptions(options);
+    if (typeof options.filter === 'function') {
+      const accepted = options.filter(source, destination);
+      if (accepted && typeof accepted.then === 'function') {
+        const error = new TypeError('The "filter" function must return a boolean.');
+        error.code = 'ERR_INVALID_RETURN_VALUE';
+        throw error;
+      }
+      if (accepted === false) return undefined;
+    }
+    if (samePath(source, destination)) fail('ERR_FS_CP_EINVAL', `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
+    if (isWithin(source, destination)) fail('ERR_FS_CP_EINVAL', `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
+    const sourceLstat = lstatSync(source);
+    if (sourceLstat.isSymbolicLink() && options.dereference !== true) {
+      let dest = destination;
+      if (exists(destination) && statSync(destination).isDirectory()) {
+        const sourceParts = String(source).split(/[\\/]/);
+        dest = `${destination.replace(/[\\/]$/, '')}/${sourceParts[sourceParts.length - 1]}`;
+      }
+      if (exists(dest) || lstatExists(dest)) {
+        if (options.errorOnExist && options.force === false) {
+          fail('ERR_FS_CP_EEXIST', `Target already exists: ${dest}`, dest);
+        }
+        if (options.force === false) return undefined;
+        unlinkSync(dest);
+      }
+      let target = readlinkSync(source);
+      if (options.verbatimSymlinks !== true && !/^(?:[A-Za-z]:[\\/]|[\\/]{1,2})/.test(target)) {
+        target = realpathSync(source);
+      }
+      ensureParent(dest, options.mode);
+      symlinkSync(target, dest);
+      return undefined;
+    }
     const sourceStats = statSync(source);
     if (sourceStats.isDirectory()) {
+      if (exists(destination) && !statSync(destination).isDirectory()) {
+        fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory with directory: ${destination}`);
+      }
       if (options.recursive !== true) {
         fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${source}`);
-      }
-      if (exists(destination) && !statSync(destination).isDirectory()) {
-        fail('ERR_FS_CP_EINVAL', `Cannot overwrite non-directory with directory: ${destination}`);
       }
       mkdirSync(destination, { recursive: true, mode: options.mode });
       for (const name of readdirSync(source)) {
         const src = `${source.replace(/[\\/]$/, '')}/${name}`;
         const dest = `${destination.replace(/[\\/]$/, '')}/${name}`;
-        if (typeof options.filter === 'function' && options.filter(src, dest) === false) continue;
         cpSync(src, dest, options);
       }
       return undefined;
@@ -1365,8 +1417,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       unlinkSync(destination);
     }
     if (exists(destination) && statSync(destination).isDirectory()) {
-      const sourceParts = String(source).split(/[\\/]/);
-      dest = `${destination.replace(/[\\/]$/, '')}/${sourceParts[sourceParts.length - 1]}`;
+      fail('ERR_FS_CP_NON_DIR_TO_DIR', `Cannot overwrite directory with non-directory: ${destination}`);
     }
     if (exists(dest)) {
       if (options.errorOnExist && options.force === false) {
@@ -1374,8 +1425,16 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       }
       if (options.force === false) return undefined;
     }
+    ensureParent(dest, options.mode);
     copyFileSync(source, dest, options.mode || 0);
     return undefined;
+  }
+  function lstatExists(path) {
+    try { lstatSync(path); return true; } catch { return false; }
+  }
+  function ensureParent(path, mode) {
+    const parent = String(path).replace(/[\\/][^\\/]*$/, '');
+    if (parent && !exists(parent)) mkdirSync(parent, { recursive: true, mode });
   }
   function cp(source, destination, options, callback) {
     if (typeof options === 'function') {
@@ -1387,13 +1446,38 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
-    queueMicrotask(() => {
-      try { cpSync(source, destination, options || {}); Reflect.apply(callback, undefined, [null]); }
+    validateOptions(options === undefined ? {} : options);
+    const copy = async (src, dest, opts) => {
+      validateOptions(opts);
+      if (samePath(src, dest) || isWithin(src, dest)) {
+        fail('ERR_FS_CP_EINVAL', `Cannot copy '${src}' to a subdirectory of self '${dest}'`, dest);
+      }
+      if (typeof opts.filter === 'function' && await opts.filter(src, dest) === false) return;
+      const stats = opts.dereference === true ? statSync(src) : lstatSync(src);
+      if (stats.isSymbolicLink() && opts.dereference !== true) {
+        cpSync(src, dest, { ...opts, filter: undefined });
+        return;
+      }
+      if (stats.isDirectory()) {
+        if (exists(dest) && !statSync(dest).isDirectory()) fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory with directory: ${dest}`);
+        if (opts.recursive !== true) fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${src}`);
+        mkdirSync(dest, { recursive: true, mode: opts.mode });
+        for (const name of readdirSync(src)) {
+          await copy(`${String(src).replace(/[\\/]$/, '')}/${name}`, `${String(dest).replace(/[\\/]$/, '')}/${name}`, opts);
+        }
+        return;
+      }
+      if (exists(dest) && statSync(dest).isDirectory()) fail('ERR_FS_CP_NON_DIR_TO_DIR', `Cannot overwrite directory with non-directory: ${dest}`);
+      cpSync(src, dest, { ...opts, filter: undefined });
+    };
+    queueMicrotask(async () => {
+      try { await copy(source, destination, options || {}); Reflect.apply(callback, undefined, [null]); }
       catch (error) { Reflect.apply(callback, undefined, [error]); }
     });
   }
-  const cpPromise = (source, destination, options) =>
-    Promise.resolve().then(() => cpSync(source, destination, options || {}));
+  const cpPromise = (source, destination, options) => new Promise((resolve, reject) => {
+    cp(source, destination, options, (error) => error ? reject(error) : resolve());
+  });
   return { cp, cpSync, cpPromise };
 }"#;
 
@@ -2140,6 +2224,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let cp_factory = context.evaluate_script_rooted(CP_API, "node:fs/shared-cp.js")?;
     let lstat_sync = get(context, module, "lstatSync")?;
     let unlink_sync = get(context, module, "unlinkSync")?;
+    let symlink_sync_for_cp = get(context, module, "symlinkSync")?;
+    let readlink_sync_for_cp = get(context, module, "readlinkSync")?;
+    let realpath_sync_for_cp = get(context, module, "realpathSync")?;
     let cp_api = context.call_rooted(
         cp_factory,
         undefined,
@@ -2151,6 +2238,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             mkdir_sync,
             unlink_sync,
             copy_file_sync,
+            symlink_sync_for_cp,
+            readlink_sync_for_cp,
+            realpath_sync_for_cp,
         ],
     )?;
     let cp_sync = get(context, cp_api, "cpSync")?;
