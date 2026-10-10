@@ -436,19 +436,6 @@ impl SharedEventLoop {
         Some((listener.callback, event_root, true))
     }
 
-    pub fn shared_listener_roots(
-        &self,
-        event: &SharedEventKey,
-    ) -> Vec<(quench_runtime::RootId, quench_runtime::RootId)> {
-        self.shared
-            .listeners
-            .get(event)
-            .into_iter()
-            .flatten()
-            .map(|listener| (listener.callback.callback, listener.callback.receiver))
-            .collect()
-    }
-
     pub fn shared_listener_count(&self) -> usize {
         self.shared.listeners.len()
     }
