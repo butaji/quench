@@ -1,0 +1,176 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..074725286 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -666,6 +666,7 @@ opcodes!(
+     SetThisFieldStrictLocal => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(LocalSlot, Unused, CacheSiteIndex),
+     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
++    CapturedInstanceof => CALL_EFFECT; layout CaptureDepthAndSlot, @ NumericReturnable, @ fields(ResultRegister, Operand, WriteRegister),
+ 
+ );
+ 
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..c825b718b 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -697,7 +697,7 @@ impl ResidualProgram {
+                         ));
+                     }
+                 }
+-                if instruction.op() == super::Op::Binary
++                if matches!(instruction.op(), super::Op::Binary | super::Op::CapturedInstanceof)
+                     && instruction.numeric_local_target().is_some_and(|slot| {
+                         function.dispatch != super::DispatchClass::Numeric
+                             && !plain_local_slots
+@@ -850,7 +850,9 @@ impl ResidualProgram {
+             {
+                 if !matches!(
+                     instruction.op(),
+-                    super::Op::LoadCapture | super::Op::StoreCapture
++                    super::Op::LoadCapture
++                        | super::Op::CapturedInstanceof
++                        | super::Op::StoreCapture
+                 ) {
+                     continue;
+                 }
+diff --git a/crates/quench-runtime/src/compile/capture_layout.rs b/crates/quench-runtime/src/compile/capture_layout.rs
+index e50d0141c..7c6d43381 100644
+--- a/crates/quench-runtime/src/compile/capture_layout.rs
++++ b/crates/quench-runtime/src/compile/capture_layout.rs
+@@ -27,7 +27,10 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
+ 
+     for (id, function) in functions.iter().enumerate() {
+         for instruction in &function.code {
+-            if !matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture) {
++            if !matches!(
++                instruction.op(),
++                Op::LoadCapture | Op::CapturedInstanceof | Op::StoreCapture
++            ) {
+                 continue;
+             }
+             let depth = usize::from(instruction.capture_depth()) + 1;
+@@ -39,7 +42,10 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
+             }
+         }
+         for instruction in &function.wide {
+-            if !matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture) {
++            if !matches!(
++                instruction.op(),
++                Op::LoadCapture | Op::CapturedInstanceof | Op::StoreCapture
++            ) {
+                 continue;
+             }
+             let depth = usize::from(instruction.capture_depth()) + 1;
+diff --git a/crates/quench-runtime/src/compile/capture_profile.rs b/crates/quench-runtime/src/compile/capture_profile.rs
+index 0b8245f22..59ea54fe2 100644
+--- a/crates/quench-runtime/src/compile/capture_profile.rs
++++ b/crates/quench-runtime/src/compile/capture_profile.rs
+@@ -17,8 +17,11 @@ pub(super) fn report(functions: &[Function]) {
+                 Op::MakeClosure => defining_closures[id] += 1,
+                 Op::LoadEnvLocal => environment_loads += 1,
+                 Op::StoreEnvLocal => environment_stores += 1,
+-                Op::LoadCapture | Op::StoreCapture => {
+-                    capture_loads += usize::from(instruction.op() == Op::LoadCapture);
++                Op::LoadCapture | Op::CapturedInstanceof | Op::StoreCapture => {
++                    capture_loads += usize::from(matches!(
++                        instruction.op(),
++                        Op::LoadCapture | Op::CapturedInstanceof
++                    ));
+                     capture_stores += usize::from(instruction.op() == Op::StoreCapture);
+                     let depth = usize::from(instruction.capture_depth());
+                     max_depth = max_depth.max(depth);
+@@ -48,7 +51,12 @@ pub(super) fn report(functions: &[Function]) {
+             !function
+                 .code
+                 .iter()
+-                .any(|instruction| matches!(instruction.op(), Op::LoadCapture | Op::StoreCapture))
++                .any(|instruction| {
++                    matches!(
++                        instruction.op(),
++                        Op::LoadCapture | Op::CapturedInstanceof | Op::StoreCapture
++                    )
++                })
+         })
+         .count();
+     eprintln!(
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..e8234b598 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -34,6 +34,21 @@ macro_rules! fusion_recipes {
+ // Ordered recipe entries are the complete overlap and semantic policy. The
+ // macro derives recipe identity, pattern rows, and recipe dispatch together.
+ fusion_recipes! {
++    CapturedInstanceof: [LoadCapture, Binary] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if second.binary_operator() != oxc_ast::ast::BinaryOperator::Instanceof as u32
++                || second.operand_c().register_index() != Some(first.result_register())
++            {
++                return None;
++            }
++            Instr::try_new(
++                Op::CapturedInstanceof,
++                second.a(),
++                second.operand_b().0,
++                first.result_register(),
++                first.imm(),
++            )
++        };
+     ConstantLeft: [LoadConst, Binary] =>
+         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+             let result = first.result_register();
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..0a0ab79c2 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -240,6 +240,49 @@ impl<H: Host> Vm<H> {
+                 let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
+                 self.write(f, i.result_register(), v);
+             }
++            Op::CapturedInstanceof => {
++                let right = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
++                self.write(f, i.register_c(), right);
++                let operator = oxc_ast::ast::BinaryOperator::Instanceof as u32;
++                let left_operand = i.operand_b();
++                self.profile.binary(
++                    operator as usize,
++                    left_operand.0,
++                    crate::bytecode::Operand::register(i.register_c()).0,
++                );
++                let left = self.resolve_operand(p, f, left_operand)?;
++                let site_pc = *pc - 1;
++                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
++                let value = if armed {
++                    match self.numeric_binary(operator, left, right) {
++                        Some(value) => {
++                            self.record_binary_value_path(
++                                operator,
++                                left,
++                                right,
++                                crate::profile::BinaryValuePath::IntegerFastPath,
++                            );
++                            value
++                        }
++                        None => {
++                            self.deopt_numeric_site(f, site_pc);
++                            self.binary(p, operator, left, right)?
++                        }
++                    }
++                } else {
++                    self.binary(p, operator, left, right)?
++                };
++                if i.returns_from_frame() {
++                    return Ok(StepResult::Return(value));
++                }
++                if let Some(local) = i.numeric_local_target() {
++                    self.frames[f].locals[local as usize] = value;
++                    self.profile
++                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
++                } else {
++                    self.write(f, i.result_register(), value);
++                }
++            }
+             Op::StoreCapture => self.store_capture(
+                 p,
+                 f,
