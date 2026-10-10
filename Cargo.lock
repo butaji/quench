@@ -1461,12 +1461,14 @@ dependencies = [
 name = "quench-wasm-test"
 version = "0.1.0"
 dependencies = [
+ "quench-runtime",
  "quench-stack",
  "quench-wasm",
  "serde_json",
  "sha2",
  "tempfile",
  "walkdir",
+ "wasmparser",
 ]
 
 [[package]]
