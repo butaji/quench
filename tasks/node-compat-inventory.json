@@ -1,6 +1,26 @@
 {
   "schema": 2,
   "state": "input_sources_classified_capability_audit_pending",
+  "module_progress": [
+    {
+      "module": "process",
+      "source_revision": "613c4cc57336c204db9e4254190135b645d1d013",
+      "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+      "node_version": "v24.19.0",
+      "rustc_version": "1.99.0",
+      "platform": "linux-x86_64",
+      "command": "target/iteration/run-parallel --all --filter test-process- --timeout-secs 10 --jobs 8",
+      "inventory_hash": "55829c463e82016b",
+      "counts": {
+        "pass": 42,
+        "skip": 3,
+        "fail": 52,
+        "timeout": 0,
+        "crash": 0,
+        "total": 97
+      }
+    }
+  ],
   "membership_policy": "Implemented-capability ownership determines final inclusion, including existing failures. Static module specifiers locate review obligations; they are not proof that all exercised behavior is implemented. No outcome was used to classify entry roles. Support inputs never qualify standalone passes. Observation cases require matched oracle observations, not just exit zero. The audit includes existing local fixtures and the curated upstream manifest. The framework-core profile is tagged in that manifest and remains a derived test selection, not a second inventory or proof of implementation. Source membership and input hashes are census projections, not frozen implemented membership. Neither historical passes nor lexical assertion detection prove implementation ownership; owner review and oracle observations remain required. Local Node invocation flags are declared once in fixture Flags headers and are forwarded into process.execArgv; the audited local stream/iter fixtures record their required experimental flag there.",
   "source_head": "b4b3ca277daf0edb739129fc4315f3ffd5dfb9ac",
   "entries": [
