@@ -1535,6 +1535,20 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     setPublicKey: { value: undefined, writable: true, configurable: true },
   });
   const createDiffieHellmanGroup = (name) => new DiffieHellmanGroup(name);
+  class ECDHImpl {
+    constructor(curve) {
+      if (typeof curve !== "string") {
+        const error = new TypeError(`The "curve" argument must be of type string. ${receivedArgument(curve)}`);
+        error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+      }
+      this.curve = curve;
+    }
+    generateKeys() { const error = new Error("ECDH key operations are not supported"); error.code = "ERR_CRYPTO_OPERATION_FAILED"; throw error; }
+  }
+  function ECDH(curve) { return new ECDHImpl(curve); }
+  ECDH.prototype = ECDHImpl.prototype;
+  ECDH.prototype.constructor = ECDH;
+  const createECDH = (curve) => new ECDH(curve);
   const generateKeyPairSync = (type, options) => {
     if (typeof type !== "string") {
       const error = new TypeError(`The "type" argument must be of type string. ${receivedArgument(type)}`);
@@ -1616,6 +1630,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     DiffieHellmanGroup,
     createDiffieHellman,
     createDiffieHellmanGroup,
+    ECDH,
+    createECDH,
     getDiffieHellman,
     generateKeyPair,
     generateKeyPairSync,
