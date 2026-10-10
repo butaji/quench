@@ -72,6 +72,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn initialize_activation_bindings(
         &mut self,
         frame: &mut Frame,
@@ -1112,13 +1113,16 @@ impl<H: Host> Vm<H> {
         layers.into_iter().flatten().collect()
     }
 
+    #[inline(always)]
     pub(super) fn captured_with_objects_for_function(
         &self,
         env: Value,
         function: &crate::bytecode::Function,
         program_kind: crate::bytecode::ProgramKind,
     ) -> Vec<Value> {
-        if !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval {
+        if !self.with_scope_entered
+            || !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval
+        {
             return Vec::new();
         }
         self.captured_with_objects(env)
