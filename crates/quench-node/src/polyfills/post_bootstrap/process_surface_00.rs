@@ -165,9 +165,12 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
       }
       const builtin = name.replace(/^node:/, "");
       const builtinNames = globalThis["\0quench:require"]("module").builtinModules;
-      if (!builtinNames.includes(name)) return undefined;
+      if (
+        !builtinNames.includes(name) &&
+        !(name.startsWith("node:") && builtinNames.includes(builtin))
+      ) return undefined;
       try {
-        return globalThis["\0quench:require"](builtin);
+        return globalThis["\0quench:require"](name);
       } catch (error) {
         if (error?.code === "MODULE_NOT_FOUND" || error?.code === "ERR_UNKNOWN_BUILTIN_MODULE") {
           return undefined;

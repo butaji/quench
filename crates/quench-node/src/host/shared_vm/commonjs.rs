@@ -300,7 +300,7 @@ pub(super) fn require(
             );
         }
         Some(BuiltinModule::Vm) => {
-            return crate::modules::vm_shared_vm::module(context);
+            return cached_builtin(context, BuiltinModule::Vm);
         }
         Some(BuiltinModule::InternalUndici) => {
             let filename = std::env::current_dir()
@@ -470,6 +470,9 @@ pub(super) fn require(
         ) => {
             return cached_builtin(context, module);
         }
+        Some(module @ BuiltinModule::Internal(_)) => {
+            return cached_builtin(context, module);
+        }
         None => {}
     }
     let parent = context.host_function_data()?;
@@ -503,6 +506,7 @@ pub(super) fn resolve(
 
 #[derive(Clone, Copy)]
 enum BuiltinModule {
+    Internal(&'static str),
     Process,
     Assert,
     AssertStrict,
@@ -572,6 +576,7 @@ impl BuiltinModule {
 
     fn cache_key(self) -> Option<&'static str> {
         match self {
+            Self::Internal(name) => Some(name),
             Self::Fs => Some("fs"),
             Self::FsPromises => Some("fs/promises"),
             Self::Vfs => Some("vfs"),
@@ -638,6 +643,45 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 }
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    ("constants", BuiltinModule::Internal("constants")),
+    ("node:constants", BuiltinModule::Internal("constants")),
+    ("dns/promises", BuiltinModule::Internal("dns/promises")),
+    ("node:dns/promises", BuiltinModule::Internal("dns/promises")),
+    ("inspector/promises", BuiltinModule::Internal("inspector/promises")),
+    ("node:inspector/promises", BuiltinModule::Internal("inspector/promises")),
+    ("punycode", BuiltinModule::Internal("punycode")),
+    ("node:punycode", BuiltinModule::Internal("punycode")),
+    ("readline/promises", BuiltinModule::Internal("readline/promises")),
+    ("node:readline/promises", BuiltinModule::Internal("readline/promises")),
+    ("node:test/reporters", BuiltinModule::Internal("node:test/reporters")),
+    ("_http_agent", BuiltinModule::Internal("_http_agent")),
+    ("node:_http_agent", BuiltinModule::Internal("_http_agent")),
+    ("_http_client", BuiltinModule::Internal("_http_client")),
+    ("node:_http_client", BuiltinModule::Internal("_http_client")),
+    ("_http_common", BuiltinModule::Internal("_http_common")),
+    ("node:_http_common", BuiltinModule::Internal("_http_common")),
+    ("_http_incoming", BuiltinModule::Internal("_http_incoming")),
+    ("node:_http_incoming", BuiltinModule::Internal("_http_incoming")),
+    ("_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
+    ("node:_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
+    ("_http_server", BuiltinModule::Internal("_http_server")),
+    ("node:_http_server", BuiltinModule::Internal("_http_server")),
+    ("_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
+    ("node:_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
+    ("_stream_passthrough", BuiltinModule::Internal("_stream_passthrough")),
+    ("node:_stream_passthrough", BuiltinModule::Internal("_stream_passthrough")),
+    ("_stream_readable", BuiltinModule::Internal("_stream_readable")),
+    ("node:_stream_readable", BuiltinModule::Internal("_stream_readable")),
+    ("_stream_transform", BuiltinModule::Internal("_stream_transform")),
+    ("node:_stream_transform", BuiltinModule::Internal("_stream_transform")),
+    ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
+    ("node:_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
+    ("_stream_writable", BuiltinModule::Internal("_stream_writable")),
+    ("node:_stream_writable", BuiltinModule::Internal("_stream_writable")),
+    ("_tls_common", BuiltinModule::Internal("_tls_common")),
+    ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
+    ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
+    ("node:_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
     ("process", BuiltinModule::Process),
     ("node:process", BuiltinModule::Process),
     ("assert", BuiltinModule::Assert),
@@ -685,6 +729,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("util", BuiltinModule::Util),
     // Node keeps the deprecated `sys` specifier as an alias of `util`.
     ("sys", BuiltinModule::Util),
+    ("node:sys", BuiltinModule::Util),
     ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
     ("node:util/types", BuiltinModule::UtilTypes),
@@ -779,6 +824,7 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => cached_builtin(context, BuiltinModule::Url),
         BuiltinModule::UtilTypes => {
