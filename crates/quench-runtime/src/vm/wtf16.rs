@@ -4,49 +4,24 @@ use std::ops::Range;
 use std::rc::Rc;
 
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
-/// is only the explicit lossy Rust-text view used at host/API boundaries.
-#[derive(Clone)]
+/// memoizes the lossy Rust-text view only after a host/API boundary requests it.
+#[derive(Clone, Debug)]
 pub(crate) struct JsString {
-    inner: Rc<JsStringInner>,
+    units: Rc<[u16]>,
+    host: OnceCell<Rc<str>>,
 }
 
-enum JsStringData {
-    Flat(Rc<[u16]>),
-    Concat(Rc<JsStringInner>, Rc<JsStringInner>),
-}
-
-struct JsStringInner {
-    data: JsStringData,
-    length: usize,
-    flat: OnceCell<Rc<[u16]>>,
-    host: OnceCell<String>,
-}
-
-impl JsStringInner {
-    fn flat(units: Rc<[u16]>, host: Option<String>) -> Self {
-        let length = units.len();
-        let flat = OnceCell::new();
-        let _ = flat.set(units.clone());
-        let host_cell = OnceCell::new();
-        if let Some(host) = host {
-            let _ = host_cell.set(host);
-        }
-        Self {
-            data: JsStringData::Flat(units),
-            length,
-            flat,
-            host: host_cell,
-        }
+impl PartialEq for JsString {
+    fn eq(&self, other: &Self) -> bool {
+        self.units == other.units
     }
+}
 
-    fn concat(left: Rc<Self>, right: Rc<Self>) -> Self {
-        let length = left.length.saturating_add(right.length);
-        Self {
-            data: JsStringData::Concat(left, right),
-            length,
-            flat: OnceCell::new(),
-            host: OnceCell::new(),
-        }
+impl Eq for JsString {}
+
+impl Hash for JsString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.units.hash(state);
     }
 }
 
@@ -92,16 +67,10 @@ impl Default for JsStringBuilder {
 
 impl JsStringBuilder {
     pub(super) fn append(&mut self, string: &JsString) {
-        let units = string.shared_units();
-        let length = units.len();
-        self.append_units(units, 0..length);
+        self.append_slice(string, 0..string.units.len());
     }
 
     pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
-        self.append_units(string.shared_units(), range);
-    }
-
-    fn append_units(&mut self, units: Rc<[u16]>, range: Range<usize>) {
         if range.is_empty() {
             return;
         }
@@ -114,7 +83,7 @@ impl JsStringBuilder {
             return;
         }
         if let Some(previous) = self.parts.last_mut() {
-            if Rc::ptr_eq(&previous.units, &units) && previous.range.end == range.start {
+            if Rc::ptr_eq(&previous.units, &string.units) && previous.range.end == range.start {
                 previous.range.end = range.end;
                 return;
             }
@@ -125,7 +94,7 @@ impl JsStringBuilder {
             return;
         }
         self.parts.push(StringPart {
-            units,
+            units: Rc::clone(&string.units),
             range,
         });
     }
@@ -145,132 +114,93 @@ impl JsStringBuilder {
 
 impl JsString {
     pub(crate) fn from_units(units: &[u16]) -> Self {
-        let units = Rc::from(units);
-        let host = String::from_utf16_lossy(&units);
         Self {
-            inner: Rc::new(JsStringInner::flat(units, Some(host))),
+            units: Rc::from(units),
+            host: OnceCell::new(),
         }
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
         Self {
-            inner: Rc::new(JsStringInner::flat(
-                Rc::from(text.encode_utf16().collect::<Vec<_>>()),
-                Some(text.to_owned()),
-            )),
+            units: Rc::from(text.encode_utf16().collect::<Vec<_>>()),
+            host: OnceCell::new(),
         }
     }
 
-    pub(crate) fn units(&self) -> &[u16] {
-        self.inner
-            .flat
-            .get_or_init(|| {
-                let mut output = Vec::with_capacity(self.inner.length);
-                let mut pending = vec![self.inner.clone()];
-                while let Some(part) = pending.pop() {
-                    match &part.data {
-                        JsStringData::Flat(units) => output.extend_from_slice(units),
-                        JsStringData::Concat(left, right) => {
-                            pending.push(right.clone());
-                            pending.push(left.clone());
-                        }
-                    }
-                }
-                Rc::from(output)
-            })
-            .as_ref()
+    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
+        &self.units
     }
 
-    fn shared_units(&self) -> Rc<[u16]> {
-        self.inner
-            .flat
-            .get_or_init(|| {
-                let mut output = Vec::with_capacity(self.inner.length);
-                let mut pending = vec![self.inner.clone()];
-                while let Some(part) = pending.pop() {
-                    match &part.data {
-                        JsStringData::Flat(units) => output.extend_from_slice(units),
-                        JsStringData::Concat(left, right) => {
-                            pending.push(right.clone());
-                            pending.push(left.clone());
-                        }
-                    }
-                }
-                Rc::from(output)
-            })
-            .clone()
+    pub(crate) fn units(&self) -> &[u16] {
+        &self.units
     }
 
     pub(crate) fn host_string(&self) -> &str {
-        self.inner
-            .host
-            .get_or_init(|| String::from_utf16_lossy(self.units()))
-    }
-
-    #[cfg(feature = "profile-aggregate")]
-    pub(crate) fn len(&self) -> usize {
-        self.inner.length
+        self.host
+            .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(&self.units)))
+            .as_ref()
     }
 
     pub(crate) fn has_lossless_host_string(&self) -> bool {
-        self.host_string().encode_utf16().eq(self.units().iter().copied())
+        char::decode_utf16(self.units.iter().copied()).all(|decoded| decoded.is_ok())
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
-        self.units().len() * std::mem::size_of::<u16>() + self.host_string().capacity()
+        self.units.len() * std::mem::size_of::<u16>() + self.host.get().map_or(0, |host| host.len())
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
+        const RC_HEADER_WORDS: usize = 2;
+        let rc_header_bytes = RC_HEADER_WORDS * std::mem::size_of::<usize>();
+        let units = (
+            Rc::as_ptr(&self.units) as *const u16 as usize,
+            rc_header_bytes + self.units.len() * std::mem::size_of::<u16>(),
+        );
+        let host = self.host.get().map(|host| {
+            (
+                Rc::as_ptr(host) as *const u8 as usize,
+                rc_header_bytes + host.len(),
+            )
+        });
+        (units, host)
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
-        if self.inner.length == 0 {
-            *self = text.clone();
-            return;
-        }
-        if text.inner.length == 0 {
-            return;
-        }
-        self.inner = Rc::new(JsStringInner::concat(
-            self.inner.clone(),
-            text.inner.clone(),
-        ));
+        // A chain of slice iterators has an exact length, so this allocates the result once.
+        self.units = self
+            .units
+            .iter()
+            .chain(text.units.iter())
+            .copied()
+            .collect();
+        self.host = OnceCell::new();
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
-        let mut count = count;
-        let mut result = Self::from_str("");
-        let mut power = self.clone();
-        while count > 0 {
-            if count & 1 != 0 {
-                result.push_js_string(&power);
-            }
-            count >>= 1;
-            if count > 0 {
-                power = Self {
-                    inner: Rc::new(JsStringInner::concat(
-                        power.inner.clone(),
-                        power.inner.clone(),
-                    )),
-                };
-            }
+        let mut units = Vec::with_capacity(self.units.len().saturating_mul(count));
+        for _ in 0..count {
+            units.extend(self.units.iter().copied());
         }
-        result
+        Self::from_units(&units)
     }
 
     pub(crate) fn find_units(&self, search: &[u16], start: usize) -> Option<usize> {
         if search.is_empty() {
-            return Some(start.min(self.units().len()));
+            return Some(start.min(self.units.len()));
         }
-        if search.len() > self.units().len() {
+        if search.len() > self.units.len() {
             return None;
         }
-        (start..=self.units().len().saturating_sub(search.len()))
-            .find(|index| self.units()[*index..*index + search.len()] == *search)
+        (start..=self.units.len().saturating_sub(search.len()))
+            .find(|index| self.units[*index..*index + search.len()] == *search)
     }
 
     pub(crate) fn split_units(&self, separator: &[u16]) -> Vec<Self> {
         if separator.is_empty() {
             return self
-                .units()
+                .units
                 .iter()
                 .map(|unit| Self::from_units(std::slice::from_ref(unit)))
                 .collect();
@@ -278,31 +208,11 @@ impl JsString {
         let mut parts = Vec::new();
         let mut cursor = 0;
         while let Some(offset) = self.find_units(separator, cursor) {
-            parts.push(Self::from_units(&self.units()[cursor..offset]));
+            parts.push(Self::from_units(&self.units[cursor..offset]));
             cursor = offset + separator.len();
         }
-        parts.push(Self::from_units(&self.units()[cursor..]));
+        parts.push(Self::from_units(&self.units[cursor..]));
         parts
-    }
-}
-
-impl PartialEq for JsString {
-    fn eq(&self, other: &Self) -> bool {
-        self.units() == other.units()
-    }
-}
-
-impl Eq for JsString {}
-
-impl Hash for JsString {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.units().hash(state);
-    }
-}
-
-impl std::fmt::Debug for JsString {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_tuple("JsString").field(&self.host_string()).finish()
     }
 }
 
@@ -314,9 +224,9 @@ impl From<&str> for JsString {
 
 impl From<String> for JsString {
     fn from(value: String) -> Self {
-        let units = Rc::from(value.encode_utf16().collect::<Vec<_>>());
         Self {
-            inner: Rc::new(JsStringInner::flat(units, Some(value))),
+            units: Rc::from(value.encode_utf16().collect::<Vec<_>>()),
+            host: OnceCell::new(),
         }
     }
 }
@@ -422,15 +332,6 @@ mod tests {
     fn encodes_unicode_scalars_as_utf16_units() {
         let value = JsString::from_str("A🦀");
         assert_eq!(value.units(), &[u16::from(b'A'), 0xD83E, 0xDD80]);
-    }
-
-    #[test]
-    fn concatenation_keeps_utf16_units_and_flattens_on_demand() {
-        let mut value = JsString::from_units(&[0xD800, b'a' as u16]);
-        value.push_js_string(&JsString::from_str("bc"));
-        assert_eq!(value.units().len(), 4);
-        assert_eq!(value.units(), &[0xD800, b'a' as u16, b'b' as u16, b'c' as u16]);
-        assert_eq!(value.host_string(), "�abc");
     }
 
     #[test]

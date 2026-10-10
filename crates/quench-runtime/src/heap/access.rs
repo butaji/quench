@@ -1,65 +1,13 @@
-use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind};
+use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap};
 use crate::bytecode::Atom;
 use crate::value::Value;
 
 impl Heap {
-    pub(crate) fn collection_entry_deleted(&mut self, collection: Value, index: usize, map: bool) {
-        for slot in self.slots.iter_mut() {
-            let Some(Cell::Iterator {
-                source,
-                kind,
-                index: cursor,
-                done,
-                ..
-            }) = slot.cell.as_mut()
-            else {
-                continue;
-            };
-            let tracks_map = matches!(
-                kind,
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
-            );
-            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection
-                && !*done
-                && ((map && tracks_map) || (!map && tracks_set))
-                && *cursor > index
-            {
-                *cursor -= 1;
-            }
-        }
-    }
-
-    pub(crate) fn collection_cleared(&mut self, collection: Value, map: bool) {
-        for slot in self.slots.iter_mut() {
-            let Some(Cell::Iterator {
-                source,
-                kind,
-                index,
-                done,
-                ..
-            }) = slot.cell.as_mut()
-            else {
-                continue;
-            };
-            let tracks_map = matches!(
-                kind,
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
-            );
-            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
-                *index = 0;
-            }
-        }
-    }
-
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
-            Cell::Environment {
-                dynamic_bindings, ..
-            } => match dynamic_bindings.as_ref() {
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings {
                 EnvironmentBindings::Owned(_) => Some(environment),
-                EnvironmentBindings::Shared(owner) => Some(*owner),
+                EnvironmentBindings::Shared(owner) => Some(owner),
             },
             _ => None,
         }
@@ -68,9 +16,7 @@ impl Heap {
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
-            Cell::Environment {
-                dynamic_bindings, ..
-            } => match dynamic_bindings.as_ref() {
+            Cell::Environment { scope, .. } => match &scope.dynamic_bindings {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
@@ -84,21 +30,12 @@ impl Heap {
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
-            Cell::Environment {
-                dynamic_bindings, ..
-            } => match dynamic_bindings.as_mut() {
+            Cell::Environment { scope, .. } => match &mut scope.dynamic_bindings {
                 EnvironmentBindings::Owned(bindings) => Some(bindings),
                 EnvironmentBindings::Shared(_) => None,
             },
             _ => None,
         }
-    }
-
-    pub(crate) fn environment_contains(&self, environment: Value, value: Value) -> bool {
-        let Some(Cell::Environment { slots, .. }) = self.get(environment) else {
-            return false;
-        };
-        (0..slots.len()).any(|slot| self.environment_slot(environment, slot) == Some(value))
     }
 
     pub(crate) fn environment_slot_owner(&self, environment: Value, slot: usize) -> Option<Value> {
@@ -179,7 +116,8 @@ impl Heap {
     }
 
     pub(super) fn remember(&mut self, index: usize) {
-        if !Self::marked(&self.marks, index)
+        if index >= self.slots.len()
+            || !Heap::marked(&self.marks, index)
             || self.remembered_marks[index / 64] & (1 << (index % 64)) != 0
         {
             return;

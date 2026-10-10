@@ -14,16 +14,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "decode", parse)?;
     set(context, module, "stringify", stringify)?;
     set(context, module, "encode", stringify)?;
-    let escape = context.evaluate_script_rooted(
-        "(value) => encodeURIComponent(String(value)).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)",
-        "node:querystring/escape.js",
-    )?;
-    set(context, module, "escape", escape)?;
-    let unescape = context.evaluate_script_rooted(
-        "(value) => { const text = String(value).replace(/\\+/g, ' '); try { return decodeURIComponent(text); } catch { return text; } }",
-        "node:querystring/unescape.js",
-    )?;
-    set(context, module, "unescape", unescape)?;
     Ok(module)
 }
 

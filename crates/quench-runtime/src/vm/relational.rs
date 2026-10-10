@@ -67,9 +67,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([object, key], |vm| {
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = vm.heap.get(object).cloned()
+            if let Some((target, handler)) = vm.proxy_parts(object)
             {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
@@ -207,7 +205,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(value) {
                 return Ok(false);
             }
-            let prototype_atom = vm.intern_atom("prototype");
+            let prototype_atom = vm.prototype_atom();
             let prototype = vm.get_property(p, constructor, prototype_atom)?;
             if !vm.is_object_like(prototype) {
                 return Err(vm.type_error(p, "instanceof prototype is not an object".into()));
@@ -219,14 +217,7 @@ impl<H: Host> Vm<H> {
                         let current = vm
                             .root_value(current_root)
                             .expect("rooted instanceof traversal object");
-                        // Ordinary [[GetPrototypeOf]] is just the prototype
-                        // stored in the object header. Preserve the generic
-                        // path for proxies, whose trap is observable.
-                        let next = vm
-                            .heap
-                            .get(current)
-                            .and_then(Cell::ordinary_prototype)
-                            .map_or_else(|| vm.object_get_prototype_of(p, current), Ok)?;
+                        let next = vm.object_get_prototype_of(p, current)?;
                         vm.heap.update_root(current_root, next);
                         if next.is_null() {
                             return Ok(false);

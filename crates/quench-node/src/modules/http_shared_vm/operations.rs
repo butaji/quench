@@ -362,7 +362,7 @@ pub(crate) fn server_listen(
         Some(root) => context.is_callable_rooted(root)?,
         None => false,
     };
-    let address = listen_address(context, first, first_is_callback, args.get(1).copied())?;
+    let address = listen_address(context, first, first_is_callback)?;
     let host = context.host_mut().shared_state();
     {
         let mut guard = host.borrow_mut();
@@ -379,14 +379,8 @@ pub(crate) fn server_listen(
     }
     let callback = if first_is_callback {
         first
-    } else if let Some(second) = args.get(1).copied() {
-        if context.is_callable_rooted(second)? {
-            Some(second)
-        } else {
-            args.get(2).copied()
-        }
     } else {
-        args.get(2).copied()
+        args.get(1).copied()
     };
     if let Some(callback) = callback {
         if context.is_callable_rooted(callback)? {
@@ -405,7 +399,6 @@ fn listen_address(
     context: &mut Context<'_>,
     first: Option<RootId>,
     first_is_callback: bool,
-    second: Option<RootId>,
 ) -> Result<SocketAddr, RootedError> {
     let Some(root) = first.filter(|_| !first_is_callback) else {
         return resolve_listen_address(DEFAULT_LISTEN_HOST, 0);
@@ -414,10 +407,10 @@ fn listen_address(
         .rooted_value(root)
         .ok_or_else(|| RootedError::host("shared HTTP listen argument is unavailable"))?;
     if let Some(port) = value.as_number() {
-        return resolve_listen_address(&listen_host(context, second)?, numeric_port(port)?);
+        return resolve_listen_address(DEFAULT_LISTEN_HOST, numeric_port(port)?);
     }
     if let Some(port) = context.string_text(root)? {
-        return resolve_listen_address(&listen_host(context, second)?, string_port(&port)?);
+        return resolve_listen_address(DEFAULT_LISTEN_HOST, string_port(&port)?);
     }
     if value.is_null() || value.as_bool().is_some() {
         return Err(invalid_listen_port());
@@ -432,26 +425,6 @@ fn listen_address(
         _ => context.string_text(host)?.ok_or_else(invalid_listen_port)?,
     };
     resolve_listen_address(&host, port)
-}
-
-fn listen_host(context: &mut Context<'_>, value: Option<RootId>) -> Result<String, RootedError> {
-    let Some(value) = value else {
-        return Ok(DEFAULT_LISTEN_HOST.to_owned());
-    };
-    if context.is_callable_rooted(value)? {
-        return Ok(DEFAULT_LISTEN_HOST.to_owned());
-    }
-    match context.rooted_value(value) {
-        Some(value) if value.is_undefined() || value.is_null() => {
-            Ok(DEFAULT_LISTEN_HOST.to_owned())
-        }
-        Some(value) if value.as_bool().is_some() || value.as_number().is_some() => {
-            Err(RootedError::host("invalid HTTP listen host"))
-        }
-        _ => context
-            .string_text(value)?
-            .ok_or_else(|| RootedError::host("invalid HTTP listen host")),
-    }
 }
 
 fn listen_port(context: &mut Context<'_>, root: RootId) -> Result<u16, RootedError> {
@@ -535,28 +508,11 @@ pub(crate) fn server_close(
     let host = context.host_mut().shared_state();
     {
         let mut guard = host.borrow_mut();
-        let mut idle_sockets = Vec::new();
-        let listener = guard.http.servers.get_mut(&id).and_then(|server| {
+        if let Some(server) = guard.http.servers.get_mut(&id) {
             server.closing = true;
-            idle_sockets.extend(server.connections.iter().copied());
-            server.listener.take()
-        });
-        if let Some(listener) = listener {
-            net_shared_vm::close_listener(&mut guard.tcp, listener);
-        }
-        idle_sockets.retain(|socket| {
-            guard
-                .http
-                .responses
-                .values()
-                .filter(|response| response.socket == *socket)
-                .all(|response| response.lifecycle.is_terminal())
-        });
-        for socket in idle_sockets {
-            // A response can be terminal while its bytes are still queued in
-            // the shared transport. Half-close after the queued writes drain
-            // so server.close() cannot discard a just-finished response.
-            net_shared_vm::end(&mut guard.tcp, socket).map_err(RootedError::host)?;
+            if let Some(listener) = server.listener.take() {
+                net_shared_vm::close_listener(&mut guard.tcp, listener);
+            }
         }
     }
     let listening = context.boolean(false);
@@ -964,8 +920,9 @@ pub(crate) fn response_finish(
         let state = context.host_mut().shared_state();
         let mut host = state.borrow_mut();
         let Some(response) = host.http.responses.get_mut(&id) else {
-            // A peer close may retire the host-side response between an
-            // end() call and a later idempotent end() from Node middleware.
+            // A close event can discard transport state before the Writable
+            // final callback runs. Node keeps end() idempotent after close.
+            drop(host);
             return Ok(context.undefined());
         };
         let headers_sent = response.lifecycle == super::state::ResponseLifecycle::HeadersSent;
@@ -1001,9 +958,6 @@ pub(crate) fn response_finish(
     else {
         return Ok(context.undefined());
     };
-    let close_after_response = headers
-        .iter()
-        .any(|(name, value)| name.eq_ignore_ascii_case("connection") && value == "close");
     let bytes = if headers_sent {
         if chunked {
             let mut framed = crate::modules::http_protocol::chunk_frame(&body);
@@ -1038,23 +992,6 @@ pub(crate) fn response_finish(
         &bytes,
     )
     .map_err(RootedError::host)?;
-    if close_after_response {
-        net_shared_vm::end(
-            &mut context.host_mut().shared_state().borrow_mut().tcp,
-            socket,
-        )
-        .map_err(RootedError::host)?;
-    } else if let Some(connection) = context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .http
-        .connections
-        .get_mut(&socket)
-    {
-        connection.received.clear();
-        connection.request_dispatched = false;
-    }
     if let (Some(request), Some(response), Some(server), Some(socket)) = (
         args.get(3).copied(),
         args.get(4).copied(),

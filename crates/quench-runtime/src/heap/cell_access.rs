@@ -1,15 +1,6 @@
 use super::cell::{Cell, Object};
 
 impl Cell {
-    #[inline(always)]
-    pub(crate) fn ordinary_prototype(&self) -> Option<crate::Value> {
-        if matches!(self, Self::Proxy { .. }) {
-            None
-        } else {
-            self.object().map(|object| object.proto)
-        }
-    }
-
     pub(crate) fn typed_array_backing(&self) -> Option<(&Object, crate::Value)> {
         match self {
             Self::TypedArray { object, buffer, .. } => Some((object, *buffer)),
@@ -19,9 +10,10 @@ impl Cell {
 
     pub(crate) fn object(&self) -> Option<&Object> {
         match self {
-            Self::Object(object)
-            | Self::Array { object, .. }
-            | Self::ArrayBuffer { object, .. }
+            // The hot object kinds keep their object inline; the rest box it so the
+            // cell stays small.
+            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::ArrayBuffer { object, .. }
             | Self::TypedArray { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
@@ -31,27 +23,28 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
-            | Self::Iterator { object, .. } => Some(object),
-            Self::Date { object, .. } => Some(object),
-            Self::RegExp { object, .. } => Some(object),
-            Self::Proxy { object, .. } => Some(object),
-            Self::Function { object, .. } => Some(object),
-            Self::TemporalDuration { object, .. } => Some(object),
-            Self::TemporalPlainDate { object, .. } => Some(object),
-            Self::TemporalPlainDateTime { object, .. } => Some(object),
-            Self::TemporalPlainMonthDay { object, .. } => Some(object),
-            Self::TemporalPlainYearMonth { object, .. } => Some(object),
-            Self::TemporalZonedDateTime { object, .. } => Some(object),
-            Self::TemporalInstant { object, .. } => Some(object),
+            | Self::Iterator { object, .. }
+            | Self::Date { object, .. }
+            | Self::RegExp { object, .. }
+            | Self::Proxy { object, .. }
+            | Self::Function { object, .. }
+            | Self::TemporalDuration { object, .. }
+            | Self::TemporalPlainDate { object, .. }
+            | Self::TemporalPlainDateTime { object, .. }
+            | Self::TemporalPlainMonthDay { object, .. }
+            | Self::TemporalPlainYearMonth { object, .. }
+            | Self::TemporalZonedDateTime { object, .. }
+            | Self::TemporalInstant { object, .. } => Some(object),
             _ => None,
         }
     }
 
     pub(crate) fn object_mut(&mut self) -> Option<&mut Object> {
         match self {
-            Self::Object(object)
-            | Self::Array { object, .. }
-            | Self::ArrayBuffer { object, .. }
+            // The hot object kinds keep their object inline; the rest box it so the
+            // cell stays small.
+            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::ArrayBuffer { object, .. }
             | Self::TypedArray { object, .. }
             | Self::DataView { object, .. }
             | Self::Map { object, .. }
@@ -61,18 +54,18 @@ impl Cell {
             | Self::WeakSet { object, .. }
             | Self::WeakRef { object, .. }
             | Self::FinalizationRegistry { object, .. }
-            | Self::Iterator { object, .. } => Some(object),
-            Self::Date { object, .. } => Some(object),
-            Self::RegExp { object, .. } => Some(object),
-            Self::Proxy { object, .. } => Some(object),
-            Self::Function { object, .. } => Some(object),
-            Self::TemporalDuration { object, .. } => Some(object),
-            Self::TemporalPlainDate { object, .. } => Some(object),
-            Self::TemporalPlainDateTime { object, .. } => Some(object),
-            Self::TemporalPlainMonthDay { object, .. } => Some(object),
-            Self::TemporalPlainYearMonth { object, .. } => Some(object),
-            Self::TemporalZonedDateTime { object, .. } => Some(object),
-            Self::TemporalInstant { object, .. } => Some(object),
+            | Self::Iterator { object, .. }
+            | Self::Date { object, .. }
+            | Self::RegExp { object, .. }
+            | Self::Proxy { object, .. }
+            | Self::Function { object, .. }
+            | Self::TemporalDuration { object, .. }
+            | Self::TemporalPlainDate { object, .. }
+            | Self::TemporalPlainDateTime { object, .. }
+            | Self::TemporalPlainMonthDay { object, .. }
+            | Self::TemporalPlainYearMonth { object, .. }
+            | Self::TemporalZonedDateTime { object, .. }
+            | Self::TemporalInstant { object, .. } => Some(object),
             _ => None,
         }
     }

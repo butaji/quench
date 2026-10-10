@@ -51,9 +51,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([target, key], |vm| {
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = vm.heap.get(target).cloned()
+            if let Some((target, handler)) = vm.proxy_parts(target)
             {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
@@ -192,9 +190,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(value).cloned()
+        if let Some((target, handler)) = self.proxy_parts(value)
         {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -252,9 +248,8 @@ impl<H: Host> Vm<H> {
         }
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
-            .heap
-            .get(value)
-            .and_then(Cell::ordinary_prototype)
+            .object_data(value)
+            .map(|object| object.proto)
             .unwrap_or(Value::NULL))
     }
 
@@ -443,9 +438,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
+        if let Some((target, handler)) = self.proxy_parts(source)
         {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -504,9 +497,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(source).cloned()
+        if let Some((target, handler)) = self.proxy_parts(source)
         {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));

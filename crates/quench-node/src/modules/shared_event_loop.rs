@@ -417,25 +417,6 @@ impl SharedEventLoop {
         Some((listener.callback, event_root, true))
     }
 
-    pub fn remove_shared_listener(
-        &mut self,
-        event: &SharedEventKey,
-        id: u64,
-    ) -> Option<(SharedCallback, Option<quench_runtime::RootId>, bool)> {
-        let listeners = self.shared.listeners.get_mut(event)?;
-        let index = listeners.iter().position(|listener| listener.id == id)?;
-        let listener = listeners.remove(index);
-        if !listeners.is_empty() {
-            return Some((listener.callback, None, false));
-        }
-        let (event, _) = self.shared.listeners.remove_entry(event)?;
-        let event_root = match event {
-            SharedEventKey::Symbol { root, .. } => Some(root),
-            SharedEventKey::String(_) => None,
-        };
-        Some((listener.callback, event_root, true))
-    }
-
     pub fn shared_listener_roots(
         &self,
         event: &SharedEventKey,
