@@ -303,3 +303,15 @@ i32_comparison_jumps! {
     GreaterEqualSigned => WasmJumpI32GreaterEqualSigned, WasmJumpI32GreaterEqualSignedImmediate, LessSigned;
     GreaterEqualUnsigned => WasmJumpI32GreaterEqualUnsigned, WasmJumpI32GreaterEqualUnsignedImmediate, LessUnsigned;
 }
+
+/// A bit-field extraction: `(value >>> shift) & mask`, the shared semantics of
+/// the fused `WasmI32ShiftRightUnsignedAndImmediate`.
+#[inline(always)]
+pub(crate) fn shift_right_unsigned_and(value: i32, shift: i32, mask: i32) -> i32 {
+    let shifted = I32BinaryOperator::ShiftRightUnsigned
+        .evaluate(value, shift)
+        .expect("shifts do not trap");
+    I32BinaryOperator::And
+        .evaluate(shifted, mask)
+        .expect("and does not trap")
+}

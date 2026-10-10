@@ -33,6 +33,22 @@ impl ProfileKind {
 #[repr(transparent)]
 pub struct Value(u64);
 
+/// The integer tag as a value. Interpreter code that keeps it in a machine
+/// register (passing it along like any other argument) encodes an integer
+/// with one bitwise or instead of first materializing the tag constant.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub(crate) struct IntegerEncoding(u64);
+
+impl IntegerEncoding {
+    pub(crate) const TAG: Self = Self(TAG_INT);
+
+    #[inline(always)]
+    pub(crate) fn encode(self, value: i32) -> Value {
+        Value(self.0 | u64::from(value as u32))
+    }
+}
+
 impl Value {
     pub const UNDEFINED: Self = Self(TAG_UNDEFINED);
     pub const NULL: Self = Self(TAG_NULL);
@@ -51,7 +67,7 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn integer(value: i32) -> Self {
-        Self(TAG_INT | u64::from(value as u32))
+        IntegerEncoding::TAG.encode(value)
     }
 
     #[inline(always)]

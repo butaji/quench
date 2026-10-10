@@ -696,9 +696,9 @@ impl Engine {
                 Ok((locals, operators))
             })
             .collect::<Result<Vec<_>, Diagnostic>>()?;
-        let leaves = inline::leaves(&bodies, &signature_pool);
-        for (index, (locals, operators)) in bodies.iter().enumerate() {
-            let mut locals = locals.clone();
+        let bodies = inline::inline_leaf_calls(bodies, &signature_pool)
+            .ok_or_else(|| Diagnostic::unsupported(name, "too many Wasm locals"))?;
+        for (index, (locals, operators)) in bodies.into_iter().enumerate() {
             let index = u32::try_from(index)
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
             let signature = signature_pool.defined_signature(index).unwrap().clone();
@@ -707,16 +707,6 @@ impl Engine {
             let results = u16::try_from(signature.results.len())
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm function results"))?;
             let error = |message: &str| Diagnostic::unsupported(name, message);
-            let operators = inline::inline_leaf_calls(
-                index as usize,
-                usize::from(params),
-                &mut locals,
-                operators,
-                &bodies,
-                &leaves,
-                &signature_pool,
-            )
-            .ok_or_else(|| error("too many Wasm locals"))?;
             let local_count = usize::from(params)
                 .checked_add(locals.len())
                 .and_then(|count| u16::try_from(count).ok())
@@ -743,6 +733,7 @@ impl Engine {
                 reserved += local_count;
             }
             let mut lowering = Lowering {
+                fusion_floor: 0,
                 name,
                 locals: local_count,
                 temporary_base: if local_base.is_some() { 0 } else { local_count },
@@ -1302,6 +1293,9 @@ mod tests {
 }
 
 struct Lowering<'a> {
+    /// Instructions from here on follow the last label, so a later
+    /// instruction may fuse into them without a jump landing between.
+    fusion_floor: usize,
     signatures: &'a mut WasmSignatures,
     globals: &'a [WasmGlobal],
     memories: &'a [WasmMemory],
@@ -1638,6 +1632,37 @@ impl Lowering<'_> {
 
     /// An i32 operator in its first-class form; a constant right operand
     /// becomes the immediate.
+    /// The last emitted instruction, when no label lies at or after it and
+    /// the next instruction may therefore replace it.
+    pub(super) fn fusable_last(&self) -> Option<(usize, crate::bytecode::WideInstruction)> {
+        let pc = self.code.len().checked_sub(1)?;
+        (pc >= self.fusion_floor).then(|| (pc, self.instruction(pc)))
+    }
+
+    /// Whether `register` holds a Wasm local rather than an operand-stack value.
+    fn is_local_register(&self, register: Register) -> bool {
+        self.local_base
+            .is_some_and(|base| (base..base + self.locals).contains(&register))
+    }
+
+    /// The shift of `(x >>> k) & m` when it was emitted last and its result
+    /// is the stack value the mask consumes: its source and amount.
+    fn take_bit_field_shift(&mut self, shifted: Register) -> Option<(Register, u16)> {
+        let (_, shift) = self.fusable_last()?;
+        if shift.op() != I32BinaryOperator::ShiftRightUnsigned.immediate_op()
+            || shift.a() != shifted
+            || self.is_local_register(shifted)
+        {
+            return None;
+        }
+        // Wasm takes shift amounts modulo the width; others keep two operators.
+        let amount = u16::try_from(shift.imm())
+            .ok()
+            .filter(|amount| u32::from(*amount) < i32::BITS)?;
+        self.code.pop();
+        Some((shift.b(), amount))
+    }
+
     fn i32_binary(&mut self, operator: I32BinaryOperator) -> Result<(), Diagnostic> {
         let (op, right, immediate) = match self.top_i32_constant() {
             Some(value) => {
@@ -1649,7 +1674,19 @@ impl Lowering<'_> {
         };
         let left = self.pop()?;
         let result = self.push()?;
-        self.emit(op, result, left, right, immediate)?;
+        let bit_field = (op == I32BinaryOperator::And.immediate_op())
+            .then(|| self.take_bit_field_shift(left))
+            .flatten();
+        match bit_field {
+            Some((source, amount)) => self.emit(
+                Op::WasmI32ShiftRightUnsignedAndImmediate,
+                result,
+                source,
+                amount,
+                immediate,
+            )?,
+            None => self.emit(op, result, left, right, immediate)?,
+        }
         self.produced(result);
         Ok(())
     }
@@ -1827,6 +1864,8 @@ impl Lowering<'_> {
             self.materialize_aliases()?;
         }
         if self.control_operator(&operator)? {
+            // Control operators bind labels at the current position.
+            self.fusion_floor = self.code.len();
             return Ok(());
         }
         if self.element_operator(&operator)? {
