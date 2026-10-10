@@ -76,6 +76,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "setUncaughtExceptionCaptureCallback", set_capture)?;
     let has_capture = context.host_function(crate::host::shared_vm::operation("processHasUncaughtExceptionCaptureCallback"))?;
     install(context, process, "hasUncaughtExceptionCaptureCallback", has_capture)?;
+    let active_handles = context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
+    install(context, process, "_getActiveHandles", active_handles)?;
+    let active_network_resources = context.host_function(crate::host::shared_vm::operation("processGetActiveNetworkResources"))?;
+    install(context, process, "__quenchGetActiveNetworkResources", active_network_resources)?;
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
         "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
@@ -1310,6 +1314,44 @@ pub(crate) fn has_uncaught_exception_capture_callback(
     Ok(context.boolean(has_callback))
 }
 
+pub(crate) fn get_active_handles(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    let handles = state
+        .net_sockets
+        .values()
+        .map(|socket| socket.root)
+        .chain(state.net_servers.values().map(|server| server.root))
+        .collect::<Vec<_>>();
+    context.array_rooted(&handles)
+}
+
+pub(crate) fn get_active_network_resources(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let state = shared.borrow();
+    let active_sockets = state
+        .net_sockets
+        .values()
+        .filter(|socket| !socket.connection_event_pending)
+        .count();
+    let mut resources = Vec::with_capacity(active_sockets + state.net_servers.len());
+    for _ in 0..active_sockets {
+        resources.push(context.string_rooted("TCPSocketWrap"));
+    }
+    for _ in 0..state.net_servers.len() {
+        resources.push(context.string_rooted("TCPServerWrap"));
+    }
+    context.array_rooted(&resources)
+}
+
 fn uncaught_capture_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     value: Option<RootId>,
@@ -1962,7 +2004,20 @@ fn drain_shared_jobs(
             let Some(callback) = callback else {
                 break;
             };
+            let possible_connection = callback
+                .args
+                .get(1)
+                .and_then(|root| runtime.rooted_value(*root));
             invoke_async_callback(runtime, program, callback)?;
+            if let Some(connection) = possible_connection {
+                let mut host = shared_state.borrow_mut();
+                if let Some(socket) = host.net_sockets.values_mut().find(|socket| {
+                    socket.connection_event_pending
+                        && runtime.rooted_value(socket.root) == Some(connection)
+                }) {
+                    socket.connection_event_pending = false;
+                }
+            }
         }
         run_host_jobs_with_uncaught(runtime, program)?;
         if shared_state.borrow().scheduler.has_shared_next_ticks() {
