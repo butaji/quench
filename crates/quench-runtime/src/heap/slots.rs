@@ -28,7 +28,6 @@ impl SlotArena {
         (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
     }
 
-    #[cfg(feature = "profile-memory")]
     pub(super) fn get(&self, index: usize) -> Option<&Slot> {
         (index < self.len).then(|| &self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
     }

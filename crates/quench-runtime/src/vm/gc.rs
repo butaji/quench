@@ -139,7 +139,7 @@ impl<H: Host> Vm<H> {
     /// to validate root ownership and weak/finalization ordering without
     /// reaching into heap internals.
     pub(crate) fn collect_now(&mut self, program: &ResidualProgram) {
-        self.collect_slow(program);
+        self.collect_slow(program, true);
     }
 
     #[inline(always)]
@@ -147,12 +147,13 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
-        self.collect_slow(program);
+        let full = self.heap.should_full_collect();
+        self.collect_slow(program, full);
     }
 
     #[cold]
     #[inline(never)]
-    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram) {
+    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -199,6 +200,15 @@ impl<H: Host> Vm<H> {
         {
             owned_roots.entry(owner).or_default().push(edge);
         }
+        let external_roots = if full {
+            Vec::new()
+        } else {
+            owned_roots
+                .iter()
+                .filter(|(owner, _)| self.heap.is_old(**owner))
+                .flat_map(|(_, edges)| edges.iter().copied())
+                .collect::<Vec<_>>()
+        };
         let roots = self
             .programs
             .roots()
@@ -515,7 +525,8 @@ impl<H: Host> Vm<H> {
                                 .then_some(*value)
                         },
                     ))
-            }));
+            }))
+            .chain(external_roots);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
@@ -525,11 +536,16 @@ impl<H: Host> Vm<H> {
         let mut scanned_root_shapes = None::<Vec<u64>>;
         let mut live_shapes = Vec::new();
         let shapes = &mut self.shapes;
-        let finalization_jobs =
-            self.heap
-                .collect_with_object_roots(roots, |owner, shape, roots| {
+        let finalization_jobs = self.heap.collect_with_object_roots(
+            roots,
+            |trace_kind, owner, shape, roots| {
+                if trace_kind == GcTraceKind::Collection {
                     live_shapes.push(shape);
-                    if shapes[shape as usize].may_have_gc_roots {
+                }
+                if shapes[shape as usize].may_have_gc_roots {
+                    if trace_kind == GcTraceKind::VerifyFull {
+                        append_shape_roots(shapes, shape, roots);
+                    } else {
                         let shape_index = shape as usize;
                         let visited = scanned_root_shapes.get_or_insert_with(|| {
                             vec![0; shape_count.div_ceil(u64::BITS as usize)]
@@ -541,16 +557,19 @@ impl<H: Host> Vm<H> {
                             append_shape_roots(shapes, shape, roots);
                         }
                     }
-                    if !owned_roots.is_empty()
-                        && let Some(edges) = owned_roots.get(&owner)
-                    {
-                        roots.extend(edges.iter().copied());
-                    }
-                });
+                }
+                if !owned_roots.is_empty()
+                    && let Some(edges) = owned_roots.get(&owner)
+                {
+                    roots.extend(edges.iter().copied());
+                }
+            },
+            full,
+        );
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        if self.should_compact_live_shapes(&live_shapes) {
+        if full && self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
@@ -569,7 +588,9 @@ impl<H: Host> Vm<H> {
             self.resume_continuation(*id);
         }
         self.prune_function_values();
-        self.heap.compact_property_arena();
+        if full {
+            self.heap.compact_property_arena();
+        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()

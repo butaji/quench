@@ -15,9 +15,16 @@ impl Heap {
             else {
                 continue;
             };
-            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_map = matches!(
+                kind,
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
+            );
             let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && *cursor > index {
+            if *source == collection
+                && !*done
+                && ((map && tracks_map) || (!map && tracks_set))
+                && *cursor > index
+            {
                 *cursor -= 1;
             }
         }
@@ -35,7 +42,10 @@ impl Heap {
             else {
                 continue;
             };
-            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_map = matches!(
+                kind,
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
+            );
             let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
             if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
                 *index = 0;
@@ -163,7 +173,18 @@ impl Heap {
         if index >= self.slots.len() {
             return None;
         }
+        self.remember(index);
         // SAFETY: the explicit length check proves the slab index is in range.
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
+    }
+
+    pub(super) fn remember(&mut self, index: usize) {
+        if !Self::marked(&self.marks, index)
+            || self.remembered_marks[index / 64] & (1 << (index % 64)) != 0
+        {
+            return;
+        }
+        self.remembered_marks[index / 64] |= 1 << (index % 64);
+        self.remembered.push(index as u32);
     }
 }

@@ -1,0 +1,231 @@
+{
+  "schema": 1,
+  "task": "94",
+  "experiment": "Splay sticky-mark minor collector and major-growth threshold screen",
+  "decision": "not a Splay win; the uncapped 3/2 full-growth interval inflated RSS, and capped 1/1-major candidates were slower while remaining far above the Bun RSS bar",
+  "source": {
+    "base_revision": "fc933993defd0eaf3ba9f41d19d9a16a0f4dfdd5",
+    "candidate_revision": "fc933993defd0eaf3ba9f41d19d9a16a0f4dfdd5",
+    "candidate_source_dirty": true,
+    "production_binary_sha256": "9cded169b962ca5dc20a2a07ecc43a02712e92183d2d7403f03cbcd6c9f34c44",
+    "pinned_full_gc_binary_sha256": "95320d0460c2fe55392eda71c0b6d22fdc1681019a714b3a7297911aede6c318",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)"
+  },
+  "host": {
+    "platform": "Linux x86_64, kernel 6.18.44",
+    "logical_cpus": 4,
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "input": {
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+    "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+  },
+  "major_growth_trigger": {
+    "candidate_factor": "3/2 of the last major live-cell count in allocations",
+    "large_heap_headroom_factor": "1/1",
+    "policy_note": "Large-heap headroom remains unchanged; Task 92 assigns its policy to the trunk."
+  },
+  "fixed_work_pairs": {
+    "rounds": 11,
+    "valid_rounds": 11,
+    "output_equal": true,
+    "clean_cycle_rounds": 0,
+    "clean_cycle_note": "Linux cycle/instruction counters were unavailable, so wall time is diagnostic and does not establish a Score change.",
+    "median_baseline_marginal_wall_ns": 1969309116,
+    "median_candidate_marginal_wall_ns": 1912124104,
+    "median_paired_wall_delta_ns": -154120663,
+    "median_paired_wall_delta_percent": -7.8261285517758195,
+    "paired_median_bootstrap_95_percentile_ns": [
+      -254342110,
+      155638904
+    ],
+    "median_max_rss_bytes": {
+      "pinned_full_gc_baseline": 275050496,
+      "candidate": 380084224
+    },
+    "candidate_setup_only_median_max_rss_bytes": 189788160,
+    "report_sha256": "f09430b98eeb91c563c64e07bbaa17d3e6cc79576fedfa4d74260753131276c2"
+  },
+  "stock_harness": {
+    "rounds": 11,
+    "valid_rounds": 11,
+    "output_equal": true,
+    "qualification_ready": false,
+    "candidate_median_score": 1184,
+    "reference_median_scores": {
+      "node_26_10_0_jitless": 5186,
+      "quickjs_2026_06_04": 2952,
+      "bun_1_4_2_no_jit": 3729
+    },
+    "candidate_median_max_rss_bytes": 379490304,
+    "reference_median_max_rss_bytes": {
+      "bun_1_4_2_no_jit": 60137472,
+      "quickjs_2026_06_04": 149635072,
+      "node_26_10_0_jitless": 402526208
+    },
+    "candidate_score_fraction_of_best_reference": 0.2283077516382561,
+    "candidate_rss_multiple_of_lowest_reference": 6.310279,
+    "comparison_note": "Reference-engine scores moved substantially between unpaired stock sessions; no change effect is inferred from this stock result.",
+    "report_sha256": "aee08b7746865745794230b4a81d374357ba8cfdd6904c9d8db02673a8294365"
+  },
+  "growth_trigger_screens": [
+    {
+      "factor": "1/1",
+      "rounds": 3,
+      "valid_rounds": 3,
+      "output_equal": true,
+      "baseline_median_max_rss_bytes": 274944000,
+      "candidate_median_max_rss_bytes": 280440832,
+      "candidate_setup_only_median_max_rss_bytes": 189800448,
+      "report_sha256": "948e619d2ec16023fa6eb885505ebb8ecdc95e577a4ee77f2aa1a8b44cb66011"
+    },
+    {
+      "factor": "3/2",
+      "rounds": 3,
+      "valid_rounds": 3,
+      "output_equal": true,
+      "baseline_median_max_rss_bytes": 274980864,
+      "candidate_median_max_rss_bytes": 380309504,
+      "candidate_setup_only_median_max_rss_bytes": 189788160,
+      "report_sha256": "0afae23198b3d1432cb582677c36260ec0d73f43df0ea692c37b44e51423329f"
+    },
+    {
+      "factor": "2/1",
+      "rounds": 3,
+      "valid_rounds": 3,
+      "output_equal": true,
+      "baseline_median_max_rss_bytes": 275116032,
+      "candidate_median_max_rss_bytes": 412811264,
+      "candidate_setup_only_median_max_rss_bytes": 190185472,
+      "report_sha256": "c4f211f3509d7421e3fb3c897d3f7aa06af6938cd1226068e735d12251a4488d"
+    }
+  ],
+  "correctness": {
+    "cargo_check_runtime": "passed with warnings denied by crate policy",
+    "growth_factor_unit_test": "passed",
+    "runtime_library_suite": {
+      "passed": 545,
+      "failed": 3,
+      "unrelated_failures": [
+        "compile::rewrite::tests::recipe_schema_generates_ordered_pattern_rows: expected 25, found 28",
+        "vm::wtf16::tests::host_text_is_lazy_and_does_not_affect_string_identity: test reads removed JsString.host field and its updated inner.host expectation is false",
+        "vm::wtf16::tests::lossless_host_view_check_does_not_materialize_the_view: test reads removed JsString.host field and its updated inner.host expectation is false"
+      ],
+      "temporary_test_compile_workaround_reverted": true
+    },
+    "test262": {
+      "stage_47_finalization_registry": "47/47 passed",
+      "stage_79_weak_map": "141/141 passed",
+      "stage_80_weak_ref": "29/29 passed",
+      "stage_81_weak_set": "85/85 passed"
+    },
+    "wasm_directives": "67124/67124 passed",
+    "threshold_capped_candidate": {
+      "cargo_check_runtime": "passed with warnings denied",
+      "focused_remaining_growth_threshold_test": "passed with 3/4 minor headroom",
+      "test262_stage_47_finalization_registry": "47/47 passed with 3/4 minor headroom",
+      "test262_stages_79_81_weak_map_ref_set": "255/255 passed with 3/4 minor headroom"
+    }
+  },
+  "conclusion": "A 1.5x major interval has an inconclusive paired wall-time signal and adds about 105 MB median work-process RSS over the pinned full-collection binary. A 1.0x interval returns RSS close to baseline but removes the intended large-heap minor interval. The Splay setup-only candidate remains about 189.8 MB versus Bun no-JIT at about 60.1 MB; the live-tree compact-record work owned by Task 61 is needed before this lane can evaluate a low-RSS generational policy.",
+  "reproduction": {
+    "fixed_work_pair": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_5-pairs-11.json",
+    "stock": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --quench target/production/quench-node --qjs target/stageb-tools/qjs/quickjs-2026-06-04/qjs --bun target/stageb-tools/bun/bun-linux-x64/bun --node target/stageb-tools/node/node-v26.10.0-linux-x64/bin/node --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_5-stock-11.json",
+    "production_build": "source /workspace/quench-build-env.sh && cargo build --locked --offline --profile production -p quench-node --bin quench-node -p quench-bench --bin quench-bench",
+    "fixed_work_pair_headroom_1_2": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-half --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_5-pairs-11.json",
+    "stock_headroom_1_2": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --quench target/production/quench-node-gc-half --qjs target/stageb-tools/qjs/quickjs-2026-06-04/qjs --bun target/stageb-tools/bun/bun-linux-x64/bun --node target/stageb-tools/node/node-v26.10.0-linux-x64/bin/node --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_5-stock-11.json",
+    "fixed_work_pair_headroom_3_4": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-threequarters --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_75-pairs-11.json"
+  },
+  "threshold_capped_screens": {
+    "policy": {
+      "full_collection_growth_factor": "1/1 of the last full live-cell count",
+      "minor_collection_threshold": "capped by remaining allocations before the next full collection",
+      "candidate_source_revision": "fc933993defd0eaf3ba9f41d19d9a16a0f4dfdd5",
+      "source_dirty": true,
+      "rustc": "1.99.0 (b940084d7 2026-09-28)",
+      "runner_sha256": "924e62eee00ea5964d140f1cb04a6d1e125a2dfec08271cb0f28d4b933f79deb",
+      "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    },
+    "minor_headroom_1_2": {
+      "candidate_binary_sha256": "13aead12680164f90b4fd550274454b73097b87ffa37fa47c1892ed769d767eb",
+      "fixed_work": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "clean_rounds": 0,
+        "baseline_median_marginal_ns_per_run": 7046406,
+        "candidate_median_marginal_ns_per_run": 8385829,
+        "paired_median_delta_ns_per_run": 516015,
+        "paired_median_delta_percent": 7.323097790626652,
+        "paired_median_bootstrap_95_percentile_ns_per_run": [
+          -1979687,
+          4772010
+        ],
+        "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+        "median_work_max_rss_bytes": {
+          "baseline": 275046400,
+          "candidate": 272437248
+        },
+        "median_setup_only_max_rss_bytes": {
+          "baseline": 188760064,
+          "candidate": 189440000
+        },
+        "report_path": "target/collector-splay-growth-1_0-headroom-0_5-pairs-11.json",
+        "report_sha256": "75ea9c8a525877ddd28af61cffb0dfc0cb35d664142445b13eff9dafab51bf56"
+      },
+      "stock_harness": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "median_score": {
+          "quench": 976,
+          "node_26_10_0_jitless": 4444,
+          "quickjs_2026_06_04": 2632,
+          "bun_1_4_2_no_jit": 2749
+        },
+        "median_max_rss_bytes": {
+          "quench": 272306176,
+          "node_26_10_0_jitless": 403193856,
+          "quickjs_2026_06_04": 149622784,
+          "bun_1_4_2_no_jit": 60366848
+        },
+        "quench_score_fraction_of_best_reference": 0.21962286228622863,
+        "quench_rss_multiple_of_lowest_reference": 4.511959,
+        "report_path": "target/collector-splay-growth-1_0-headroom-0_5-stock-11.json",
+        "report_sha256": "0ccf0da80da0ea40b317c9f3ce80b75cdf48d2e9f00105a4ee97ced9f374ec9b"
+      }
+    },
+    "minor_headroom_3_4": {
+      "candidate_binary_sha256": "7594aebf25279544323c3e13a1f491ddd4260a77f1bc5f35e365ec302e0629f1",
+      "fixed_work": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "clean_rounds": 0,
+        "baseline_median_marginal_ns_per_run": 7995008,
+        "candidate_median_marginal_ns_per_run": 10103661,
+        "paired_median_delta_ns_per_run": 854805,
+        "paired_median_delta_percent": 10.691731423164944,
+        "paired_median_bootstrap_95_percentile_ns_per_run": [
+          -1261474,
+          3712946
+        ],
+        "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+        "median_work_max_rss_bytes": {
+          "baseline": 275017728,
+          "candidate": 272416768
+        },
+        "median_setup_only_max_rss_bytes": {
+          "baseline": 188731392,
+          "candidate": 189829120
+        },
+        "report_path": "target/collector-splay-growth-1_0-headroom-0_75-pairs-11.json",
+        "report_sha256": "a90430981a6e5f806100acf8a40f0b31f300c034e8f3cc86afdc541109e3cc07"
+      }
+    },
+    "conclusion": "Both capped 1/1-major candidates keep work RSS near the pinned full-GC baseline, but paired wall intervals include a tie and their medians are slower; the 1/2 stock score and RSS both miss the Splay bars. The setup tree remains roughly 189 MB versus Bun no-JIT around 60 MB."
+  }
+}
