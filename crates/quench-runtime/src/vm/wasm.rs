@@ -1005,6 +1005,64 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// An i32 operator on a validated i32 register and an i32 right operand.
+    #[inline(always)]
+    pub(super) fn wasm_i32_binary(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        operator: crate::wasm::integer::I32BinaryOperator,
+        right: i32,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_b()).wasm_bits32() as i32;
+        let value = operator
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?;
+        self.write(f, i.result_register(), Value::integer(value));
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_i32_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        comparison: crate::wasm::integer::I32BinaryOperator,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
+        let right = self.read(f, i.register_b()).wasm_bits32() as i32;
+        let taken = comparison
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?
+            != 0;
+        self.wasm_jump(p, f, i, pc, taken);
+        Ok(())
+    }
+
+    /// Take a Wasm conditional jump. Backward edges are collection safepoints,
+    /// like the unconditional `Jump` that closes every loop iteration.
+    #[inline(always)]
+    pub(super) fn wasm_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        taken: bool,
+    ) {
+        if taken {
+            let target = i.jump_target() as usize;
+            let backward = target < *pc;
+            *pc = target;
+            if backward {
+                self.frames[f].pc = target;
+                self.maybe_collect(p);
+            }
+        }
+    }
+
     /// Memory32 effective address of a direct access: the i32 operand plus
     /// the static offset, computed without overflow in the 64-bit domain.
     #[inline(always)]

@@ -59,6 +59,12 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
+    /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
+    #[inline(always)]
+    pub(crate) const fn wasm_bits32(self) -> u32 {
+        self.0 as u32
+    }
+
     #[inline(always)]
     pub(crate) fn int_pair(left: Self, right: Self) -> Option<(i32, i32)> {
         let tags = (left.0 ^ TAG_INT) | (right.0 ^ TAG_INT);

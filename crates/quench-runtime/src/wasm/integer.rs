@@ -16,10 +16,14 @@ macro_rules! binary_family {
             }
 
             pub(crate) fn apply(self, $($argument: $signed),+) -> Result<WasmValue, WasmTrap> {
+                self.result($($argument),+).map(|value| value.into_wasm(WasmValue::$variant))
+            }
+
+            #[inline(always)]
+            fn result(self, $($argument: $signed),+) -> Result<NumericResult<$signed>, WasmTrap> {
                 type $signed_alias = $signed;
                 type $unsigned_alias = $unsigned;
-                let result: Result<NumericResult<$signed>, WasmTrap> = match self { $(Self::$name => $body,)+ };
-                result.map(|value| value.into_wasm(WasmValue::$variant))
+                match self { $(Self::$name => $body,)+ }
             }
         }
     };
@@ -204,4 +208,86 @@ impl super::Lowering<'_> {
         self.push()?;
         Ok(true)
     }
+}
+
+impl I32BinaryOperator {
+    /// The `apply` result as a raw i32 payload: comparisons yield 0 or 1.
+    #[inline(always)]
+    pub(crate) fn evaluate(self, left: i32, right: i32) -> Result<i32, WasmTrap> {
+        self.result(left, right).map(|value| match value {
+            NumericResult::Value(value) => value,
+            NumericResult::Comparison(holds) => i32::from(holds),
+        })
+    }
+}
+
+// First-class i32 opcodes name their operator so dispatch decodes no selector.
+// `I32BinaryOperator::evaluate` remains the single semantic authority.
+macro_rules! i32_direct_operators {
+    ($($name:ident => $register:ident, $immediate:ident;)+) => {
+        impl I32BinaryOperator {
+            pub(crate) const fn register_op(self) -> crate::bytecode::Op {
+                match self { $(Self::$name => crate::bytecode::Op::$register,)+ }
+            }
+            pub(crate) const fn immediate_op(self) -> crate::bytecode::Op {
+                match self { $(Self::$name => crate::bytecode::Op::$immediate,)+ }
+            }
+            pub(crate) const fn from_register_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$register => Some(Self::$name),)+ _ => None }
+            }
+        }
+    };
+}
+i32_direct_operators! {
+    Add => WasmI32Add, WasmI32AddImmediate;
+    Subtract => WasmI32Subtract, WasmI32SubtractImmediate;
+    Multiply => WasmI32Multiply, WasmI32MultiplyImmediate;
+    DivideSigned => WasmI32DivideSigned, WasmI32DivideSignedImmediate;
+    DivideUnsigned => WasmI32DivideUnsigned, WasmI32DivideUnsignedImmediate;
+    RemainderSigned => WasmI32RemainderSigned, WasmI32RemainderSignedImmediate;
+    RemainderUnsigned => WasmI32RemainderUnsigned, WasmI32RemainderUnsignedImmediate;
+    And => WasmI32And, WasmI32AndImmediate;
+    Or => WasmI32Or, WasmI32OrImmediate;
+    Xor => WasmI32Xor, WasmI32XorImmediate;
+    ShiftLeft => WasmI32ShiftLeft, WasmI32ShiftLeftImmediate;
+    ShiftRightSigned => WasmI32ShiftRightSigned, WasmI32ShiftRightSignedImmediate;
+    ShiftRightUnsigned => WasmI32ShiftRightUnsigned, WasmI32ShiftRightUnsignedImmediate;
+    RotateLeft => WasmI32RotateLeft, WasmI32RotateLeftImmediate;
+    RotateRight => WasmI32RotateRight, WasmI32RotateRightImmediate;
+    Equal => WasmI32Equal, WasmI32EqualImmediate;
+    NotEqual => WasmI32NotEqual, WasmI32NotEqualImmediate;
+    LessSigned => WasmI32LessSigned, WasmI32LessSignedImmediate;
+    LessUnsigned => WasmI32LessUnsigned, WasmI32LessUnsignedImmediate;
+    GreaterSigned => WasmI32GreaterSigned, WasmI32GreaterSignedImmediate;
+    GreaterUnsigned => WasmI32GreaterUnsigned, WasmI32GreaterUnsignedImmediate;
+    LessEqualSigned => WasmI32LessEqualSigned, WasmI32LessEqualSignedImmediate;
+    LessEqualUnsigned => WasmI32LessEqualUnsigned, WasmI32LessEqualUnsignedImmediate;
+    GreaterEqualSigned => WasmI32GreaterEqualSigned, WasmI32GreaterEqualSignedImmediate;
+    GreaterEqualUnsigned => WasmI32GreaterEqualUnsigned, WasmI32GreaterEqualUnsignedImmediate;
+}
+
+// A comparison and the conditional jump taken when it holds, with its negation.
+macro_rules! i32_comparison_jumps {
+    ($($name:ident => $jump:ident, $negation:ident;)+) => {
+        impl I32BinaryOperator {
+            pub(crate) const fn jump_op(self) -> Option<crate::bytecode::Op> {
+                match self { $(Self::$name => Some(crate::bytecode::Op::$jump),)+ _ => None }
+            }
+            pub(crate) const fn negated_comparison(self) -> Option<Self> {
+                match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
+            }
+        }
+    };
+}
+i32_comparison_jumps! {
+    Equal => WasmJumpI32Equal, NotEqual;
+    NotEqual => WasmJumpI32NotEqual, Equal;
+    LessSigned => WasmJumpI32LessSigned, GreaterEqualSigned;
+    LessUnsigned => WasmJumpI32LessUnsigned, GreaterEqualUnsigned;
+    GreaterSigned => WasmJumpI32GreaterSigned, LessEqualSigned;
+    GreaterUnsigned => WasmJumpI32GreaterUnsigned, LessEqualUnsigned;
+    LessEqualSigned => WasmJumpI32LessEqualSigned, GreaterSigned;
+    LessEqualUnsigned => WasmJumpI32LessEqualUnsigned, GreaterUnsigned;
+    GreaterEqualSigned => WasmJumpI32GreaterEqualSigned, LessSigned;
+    GreaterEqualUnsigned => WasmJumpI32GreaterEqualUnsigned, LessUnsigned;
 }
