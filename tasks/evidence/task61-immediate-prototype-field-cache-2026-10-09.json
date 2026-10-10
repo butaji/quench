@@ -1,0 +1,181 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Immediate-prototype data field cache",
+  "decision": "retain as a measured candidate: eleven paired CJS microbench runs show large instruction reductions for inherited method reads, and eleven DeltaBlue pairs show a large fixture improvement; Splay is statistically inconclusive, and Task 61 qualification remains open",
+  "source": {
+    "base_revision": "89aab1793c33b8492d253d9e8e95e461f97aed25",
+    "candidate_source_dirty_during_checks": true,
+    "candidate_diff_sha256": "8a3aa67c149910612583aac31a64bbe77763d9c6761c291e3b02a8bea68ce40c",
+    "candidate_binary_sha256": "78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa",
+    "baseline_binary_sha256": "210fad51c44319062187858678d98115fd3dfe969019326d096ff5c646b228b5",
+    "files": {
+      "crates/quench-runtime/src/vm.rs": "aae173f5ee05502382b616fd98492bfb57b925f3cf6aaae7551ef85e30b194ce",
+      "crates/quench-runtime/src/vm/field_cache.rs": "d25a5c1361e52b4d3284ef852b517a242a799c03e8d9d4ed5368394b13cfa38e",
+      "crates/quench-runtime/src/vm/object.rs": "91911df80a675c02689cded75f509552bbae280eeabf20f67d9775f302f44a79",
+      "crates/quench-runtime/src/vm/object_tests.rs": "b0b1448bb62afd6f5a7e4fcdd14b1da31438e164a26f80f860660724abad973f",
+      "crates/quench-runtime/src/vm/tests.rs": "6cba50b9aa9532ad6e749f6f1f6e008bef0fb9311aa57045eb3a2ea63a95d515"
+    },
+    "candidate_binary_path": "target/iteration/inherited-field-cache-final-20261009/build/production/quench-node-78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa",
+    "baseline_binary_path": "target/iteration/getfield-final-20261008/build/production/quench-node",
+    "candidate_scope": "Field-cache entries now distinguish receiver shape and immediate-holder shape, with a slot for eligible data properties found on the receiver's immediate prototype. Hits validate the current holder cell and shape and load the live value. Own fields retain their existing cache; accessors, proxies, namespaces, dictionary shapes, special keys and deeper prototype properties keep the generic path. The cache stores no object handles and adds no global shape index."
+  },
+  "host": {
+    "platform": "macOS 26.5 (25F71)",
+    "kernel": "Darwin 25.5.0",
+    "architecture": "arm64 Apple M4 (Mac16,10)",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "1.99.0",
+    "node": "v26.10.0"
+  },
+  "correctness": {
+    "focused_runtime_tests": {
+      "features": ["profile-memory", "profile-aggregate,profile-memory"],
+      "executions_passed": 14,
+      "executions_failed": 0,
+      "filters": [
+        "inherited_field_cache_reads_live_object_prototype_data",
+        "inherited_builtin_fields_cache_array_and_object_prototypes",
+        "inherited_field_cache_preserves_proxy_prototype_traps",
+        "custom_prototype_fallback",
+        "field_cache_fallback"
+      ],
+      "logs": "target/iteration/inherited-field-cache-validation-20261009/final-feature-rerun/"
+    },
+    "test262": {
+      "runner_sha256": "23bca8e46c30f32a2a582c5a8ae1cdca0e6a339d8fd2400e6ae21c02cd26d93d",
+      "stage31_array": {"passed": 3081, "total": 3081},
+      "stage60_object": {"passed": 3411, "total": 3411},
+      "stage62_proxy": {"passed": 311, "total": 311},
+      "reports": "target/iteration/inherited-field-cache-validation-20261009/final-source-rerun/"
+    },
+    "node_oracle": {
+      "matched": true,
+      "stdout_sha256": "aaf0c498c0b81f5c37a545cffbe92f89113aa44c2d580dd3478663b32a8be26a",
+      "cases": [
+        "live inherited data replacement",
+        "accessor receiver identity",
+        "delete and re-add",
+        "own receiver shadowing",
+        "Proxy prototype live trap"
+      ],
+      "report_directory": "target/iteration/inherited-field-cache-validation-20261009/"
+    }
+  },
+  "measurement": {
+    "host_measurement_backend": "/usr/bin/time -l (instructions retired, elapsed time and maximum RSS)",
+    "binary_hashes": {
+      "baseline": "210fad51c44319062187858678d98115fd3dfe969019326d096ff5c646d4b228b5",
+      "candidate": "78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa"
+    },
+    "microbench": {
+      "kind": "11 alternating production binary pairs per workload; same-binary no-op control subtracted from retired instructions and elapsed time",
+      "loop_iterations": 1000000,
+      "script_hashes": {
+        "a.push read": "40f934f1e4f36b4c6a4eae39f6b3304e81df43b8a47089a9b9829805141544e3",
+        "o.hasOwnProperty read": "9d60f2ddc25b35e68a1fff50b1bc54ac8812b3f18861f15a4952ef8bd11ef59a",
+        "own o.x control": "dd04eca75d342bd35d3e77dfc7960dbb13a13a101f955b0c284b043f56b38c3d",
+        "no-op control": "2b9c2e508a86acc6414c2819a9eabbdbbbec72f2e62f3aa9e6b3e31d9e50d7d6"
+      },
+      "results": [
+        {
+          "workload": "a.push read",
+          "baseline_median_corrected_instructions": 6370300801,
+          "candidate_median_corrected_instructions": 549719759,
+          "instruction_change_percent": -91.4,
+          "baseline_median_corrected_seconds": 0.543,
+          "candidate_median_corrected_seconds": 0.016,
+          "candidate_lower_instruction_pairs": 11,
+          "pairs": 11,
+          "baseline_median_rss_bytes": 19891456,
+          "candidate_median_rss_bytes": 19873792
+        },
+        {
+          "workload": "o.hasOwnProperty read",
+          "baseline_median_corrected_instructions": 2675349824,
+          "candidate_median_corrected_instructions": 446282819,
+          "instruction_change_percent": -83.3,
+          "baseline_median_corrected_seconds": 0.119,
+          "candidate_median_corrected_seconds": 0.012,
+          "candidate_lower_instruction_pairs": 11,
+          "pairs": 11,
+          "baseline_median_rss_bytes": 19955712,
+          "candidate_median_rss_bytes": 19955712
+        },
+        {
+          "workload": "own o.x control",
+          "baseline_median_corrected_instructions": 336081955,
+          "candidate_median_corrected_instructions": 302128598,
+          "instruction_change_percent": -10.1,
+          "baseline_median_corrected_seconds": 0.009,
+          "candidate_median_corrected_seconds": 0.008,
+          "candidate_lower_instruction_pairs": 11,
+          "pairs": 11,
+          "baseline_median_rss_bytes": 20021248,
+          "candidate_median_rss_bytes": 19939328
+        }
+      ],
+      "raw_report": "target/iteration/inherited-field-cache-validation-20261009/repeated-pairs/raw-report.json",
+      "raw_report_sha256": "8e4949688a8f5b4d112698e7649ccb0e2058d07a48900f4fe4a0514e5a8e2fad",
+      "summary": "target/iteration/inherited-field-cache-validation-20261009/repeated-pairs/summary.md"
+    },
+    "fixture_pairs": [
+      {
+        "fixture": "deltablue",
+        "pairs": 11,
+        "baseline_median_score": 185,
+        "candidate_median_score": 216,
+        "paired_score_change_percent": 16.8,
+        "paired_instruction_change_percent": -31.8,
+        "paired_instruction_change_range_percent": [-33.4, -4.1],
+        "paired_elapsed_change_percent": -33.3,
+        "paired_elapsed_change_range_percent": [-34.1, -0.4],
+        "baseline_median_rss_bytes": 23052288,
+        "candidate_median_rss_bytes": 23150592,
+        "paired_rss_delta_mib": {"median": 0.11, "range": [-0.11, 1.62]},
+        "normalized_stdout_equal_pairs": 11,
+        "script_sha256": "31e288e9d4a1062de51872d1e41b2ac80b9872b806a7c213549bf12b885f6899"
+      },
+      {
+        "fixture": "splay",
+        "pairs": 11,
+        "baseline_median_score": 2483,
+        "candidate_median_score": 2467,
+        "paired_score_change_percent": -4.3,
+        "paired_score_change_range_percent": [-41.0, 21.2],
+        "paired_instruction_change_percent": -2.6,
+        "paired_instruction_change_range_percent": [-32.7, 5.9],
+        "paired_elapsed_change_percent": -0.7,
+        "paired_elapsed_change_range_percent": [-3.2, 10.4],
+        "baseline_median_rss_mib": 302.05,
+        "candidate_median_rss_mib": 302.11,
+        "paired_rss_delta_mib": {"median": 0.02, "range": [-14.48, 11.84]},
+        "normalized_stdout_equal_pairs": 11,
+        "script_sha256": "24368b31662a96dff52209d6d21a90a5973e61601dd171580d08d8d973dd2c75"
+      }
+    ],
+    "fixture_pair_report": "target/iteration/inherited-field-cache-validation-20261009/repeated-pairs/raw-report.json",
+    "all_eight_diagnostic": {
+      "kind": "single-round direct Quench-only diagnostic, not qualification",
+      "baseline_source_binary_sha256": "210fad51c44319062187858678d98115fd3dfe969019326d096ff5c646d4b228b5",
+      "candidate_source_binary_sha256": "78324401e3bf6712f1ca3d7cc71a1a5a9abfb33bd3c57a907e3b2a11bc440faa",
+      "fixture_results": [
+        {"fixture": "richards", "baseline_score": 301, "candidate_score": 431, "instructions_change_percent": 1.7, "rss_change_mib": -0.05},
+        {"fixture": "deltablue", "baseline_score": 180, "candidate_score": 207, "instructions_change_percent": -30.4, "rss_change_mib": -0.03},
+        {"fixture": "crypto", "baseline_score": 409, "candidate_score": 413, "instructions_change_percent": -1.6, "rss_change_mib": -0.09},
+        {"fixture": "raytrace", "baseline_score": 236, "candidate_score": 323, "instructions_change_percent": -9.8, "rss_change_mib": 0.70},
+        {"fixture": "earley-boyer", "baseline_score": 383, "candidate_score": 415, "instructions_change_percent": -1.2, "rss_change_mib": -3.33},
+        {"fixture": "regexp", "baseline_score": 55.2, "candidate_score": 55.6, "instructions_change_percent": -0.7, "rss_change_mib": 2.10},
+        {"fixture": "splay", "baseline_score": 2426, "candidate_score": 2816, "instructions_change_percent": 0.6, "rss_change_mib": 35.4},
+        {"fixture": "navier-stokes", "baseline_score": 197, "candidate_score": 197, "instructions_change_percent": 0.04, "rss_change_mib": -0.14}
+      ],
+      "all_processes_exited_zero": true,
+      "stdout_note": "The V8-v7 runner emits timing-derived fixture scores and Score lines. These were excluded from normalized comparisons; this diagnostic is not a semantic correctness oracle.",
+      "report": "target/iteration/inherited-field-cache-validation-20261009/final-source-rerun/diagnostic-screen/report.json",
+      "report_sha256": "d8cf133fa40b54e0e99d697acb53d292ad6dab4dffa46a131ed5b4bd41b7bcb3"
+    },
+    "qualification": "Not a Task 61 or four-engine qualification. M4 only; Linux and all-eight paired/reference-engine qualification remain open."
+  }
+}

@@ -2401,7 +2401,7 @@ impl<H: Host> Vm<H> {
         };
         if let Some(target) = self.object_data_mut(target) {
             target.proto = source.proto;
-            target.properties = source.properties;
+            target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }
@@ -2632,7 +2632,7 @@ impl<H: Host> Vm<H> {
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into_boxed_slice().into(),
             dynamic_bindings: Vec::new().into(),
-            with_objects: Vec::new(),
+            with_objects: Box::default(),
         });
         self.programs
             .set_module_environment(ProgramId::MAIN, environment);

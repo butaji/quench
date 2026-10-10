@@ -9,7 +9,7 @@
     "reference_repository": "../v2",
     "reference_commit": "e511d1f7e401ecff8cfc4f7cccb6292e6426be44"
   },
-  "next_task": "62",
+  "next_task": "61",
   "completion_policy": "retain_done",
   "lanes": {
     "critical_path": [
@@ -545,14 +545,14 @@
       "id": "61",
       "file": "61.md",
       "title": "Lead no-JIT engines on all eight V8-v7 fixtures",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": ["86", "62"]
     },
     {
       "id": "62",
       "file": "62.md",
       "title": "Add no-JIT reference engines to the V8-v7 runner",
-      "status": "in_progress",
+      "status": "done",
       "depends_on": ["86", "01"]
     },
     {
@@ -657,7 +657,7 @@
       "id": "78",
       "file": "78.md",
       "title": "Measure dispatch alternatives against the central match",
-      "status": "pending",
+      "status": "in_progress",
       "depends_on": ["86", "62"]
     },
     {

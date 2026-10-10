@@ -96,6 +96,45 @@ fn packed_domain_overflow_uses_the_wide_side_table() {
 }
 
 #[test]
+fn regexp_literals_lower_to_validated_site_metadata() {
+    let program = Engine::specialize(
+        "function make() { return function inner() { return /a/g; }; } make()();",
+        "regexp-site.js",
+    )
+    .unwrap();
+    assert_eq!(program.regexp_literal_sites.len(), 1);
+    let site = &program.regexp_literal_sites[0];
+    assert!(matches!(
+        program.constants.get(site.pattern_constant as usize),
+        Some(Constant::String(pattern)) if pattern == "a"
+    ));
+    assert!(matches!(
+        program.constants.get(site.flags_constant as usize),
+        Some(Constant::String(flags)) if flags == "g"
+    ));
+    assert!(program.functions.iter().any(|function| {
+        function
+            .code
+            .iter()
+            .any(|instruction| instruction.op() == Op::CreateRegExpLiteral)
+    }));
+    assert!(
+        program
+            .functions
+            .iter()
+            .flat_map(|function| &function.code)
+            .all(|instruction| instruction.op() != Op::Construct)
+    );
+    program.validate().unwrap();
+
+    let path = std::env::temp_dir().join(format!("quench-regexp-site-{}", std::process::id()));
+    program.write_binary(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    assert_eq!(decoded.regexp_literal_sites, program.regexp_literal_sites);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn constant_computed_property_uses_field_cache_site() {
     let program = Engine::specialize(
         "var object = { answer: 42 }; print(object['answer']);",

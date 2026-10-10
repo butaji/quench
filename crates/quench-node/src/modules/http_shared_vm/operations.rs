@@ -966,6 +966,7 @@ pub(crate) fn response_finish(
         let Some(response) = host.http.responses.get_mut(&id) else {
             // A peer close may retire the host-side response between an
             // end() call and a later idempotent end() from Node middleware.
+            drop(host);
             return Ok(context.undefined());
         };
         let headers_sent = response.lifecycle == super::state::ResponseLifecycle::HeadersSent;

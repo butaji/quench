@@ -1,3 +1,9 @@
 [build]
 # Enforce clippy rules from .clippy.toml — never allow warnings.
 rustflags = ["-D", "warnings"]
+
+# Target rustflags replace build.rustflags. Keep the warning policy active on
+# the M4 qualification target. The host-specific deployment argument remains
+# supplied by its target configuration.
+[target.aarch64-apple-darwin]
+rustflags = ["-D", "warnings"]

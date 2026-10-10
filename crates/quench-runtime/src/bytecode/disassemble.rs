@@ -223,6 +223,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::AtomIndex
         | ImmediateRole::LocalSlot
         | ImmediateRole::TemplateSiteIndex
+        | ImmediateRole::RegExpLiteralSiteIndex
         | ImmediateRole::MethodSiteIndex
         | ImmediateRole::ObjectSiteIndex
         | ImmediateRole::SuperinstructionIndex => write_index_immediate(output, instruction),
@@ -282,6 +283,13 @@ fn write_index_immediate(output: &mut String, instruction: WideInstruction) -> f
                 output,
                 " template-site={}",
                 instruction.template_site_index()
+            )
+        }
+        ImmediateRole::RegExpLiteralSiteIndex => {
+            write!(
+                output,
+                " regexp-literal-site={}",
+                instruction.regexp_literal_site_index()
             )
         }
         ImmediateRole::MethodSiteIndex => {

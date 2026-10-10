@@ -3,6 +3,7 @@ use super::{
     FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
     Register, ResidualProgram,
 };
+use rustc_hash::FxHashSet;
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -51,6 +52,34 @@ fn atom_in_bounds(atom: u32, atoms: usize) -> bool {
     (atom as usize) < atoms
 }
 
+fn eval_binding_is_valid(
+    binding: &super::EvalBinding,
+    function: &super::Function,
+    functions: &[super::Function],
+    atoms: usize,
+) -> bool {
+    let target = match binding.location {
+        super::EvalBindingLocation::Local(_) => Some(function),
+        super::EvalBindingLocation::Capture { depth, .. } => {
+            let mut parent = function.parent;
+            for _ in 0..depth {
+                parent = parent
+                    .and_then(|id| functions.get(id as usize))
+                    .and_then(|function| function.parent);
+            }
+            parent.and_then(|id| functions.get(id as usize))
+        }
+    };
+    let slot = match binding.location {
+        super::EvalBindingLocation::Local(slot)
+        | super::EvalBindingLocation::Capture { slot, .. } => slot,
+    };
+    atom_in_bounds(binding.atom, atoms)
+        && target.is_some_and(|target| {
+            slot < target.locals && usize::from(binding.with_depth) <= function.code.len()
+        })
+}
+
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
@@ -73,6 +102,7 @@ struct ValidationBounds {
     cache_sites: u16,
     method_sites: usize,
     object_sites: usize,
+    regexp_literal_sites: usize,
     superinstructions: usize,
     code_len: u32,
 }
@@ -82,7 +112,11 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
         let value = instruction.field_value(field);
         match instruction.op().field_layout(field) {
             FieldLayout::ResultRegister => {
-                register_in_bounds(instruction.result_register(), bounds.registers, 0)
+                if let Some(local) = instruction.numeric_local_target() {
+                    local < bounds.locals
+                } else {
+                    register_in_bounds(instruction.result_register(), bounds.registers, 0)
+                }
             }
             FieldLayout::Register | FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
                 register_in_bounds(value, bounds.registers, 0)
@@ -248,6 +282,9 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::ObjectSiteIndex => {
             (instruction.object_site_index() as usize) < bounds.object_sites
         }
+        super::ImmediateRole::RegExpLiteralSiteIndex => {
+            instruction.regexp_literal_site_index() < bounds.regexp_literal_sites
+        }
         super::ImmediateRole::SuperinstructionIndex => {
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
@@ -259,6 +296,30 @@ fn immediate_domains_in_bounds(
         | super::ImmediateRole::TemplateSiteIndex
         | super::ImmediateRole::Unused
         | super::ImmediateRole::WideInstructionIndex => true,
+    }
+}
+
+fn object_site_instruction_valid(
+    instruction: super::WideInstruction,
+    object_sites: &[super::ObjectSite],
+    registers: u16,
+) -> bool {
+    match instruction.op() {
+        super::Op::MakeObject2 => object_sites
+            .get(instruction.object_site_index())
+            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
+        super::Op::MakeObjectLiteral => {
+            let Some(site) = object_sites.get(instruction.object_site_index()) else {
+                return false;
+            };
+            let window = instruction.register_window();
+            let mut atoms = FxHashSet::default();
+            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+                && site.atoms.len() == usize::from(window.count)
+                && site.atoms.iter().all(|atom| atoms.insert(*atom))
+                && register_window_in_bounds(window.base, u32::from(window.count), registers)
+        }
+        _ => true,
     }
 }
 
@@ -309,6 +370,7 @@ impl ResidualProgram {
         if self.register_roots.len() > u32::MAX as usize {
             return Err("register root table is too large".into());
         }
+        let selective_capture_scope_unsafe = selective_capture_scope_unsafe(&self.functions);
         for (index, function) in self.functions.iter().enumerate() {
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
@@ -357,6 +419,57 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has an invalid parent"));
             }
+            if let Some(captured) = &function.selective_capture_slots
+                && (index == 0
+                    || function.parent.is_none()
+                    || captured.iter().any(|slot| *slot >= function.locals)
+                    || captured.windows(2).any(|pair| pair[0] >= pair[1]))
+            {
+                return Err(format!(
+                    "function {index} has an invalid selective capture layout"
+                ));
+            }
+            if function.selective_capture_slots.is_some()
+                && (selective_capture_scope_unsafe[index]
+                    || !selective_capture_layout_is_eligible(function, index, &self.atoms))
+            {
+                return Err(format!(
+                    "function {index} has an ineligible selective capture layout"
+                ));
+            }
+            let mut tdz_slots = vec![false; usize::from(function.locals)];
+            for instruction in &function.code {
+                if instruction.op() == super::Op::InitializeTdz
+                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                {
+                    *slot = true;
+                }
+            }
+            for instruction in &function.wide {
+                if instruction.op() == super::Op::InitializeTdz
+                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+                {
+                    *slot = true;
+                }
+            }
+            let plain_local_context_safe = function.plain_local_context_is_safe();
+            let plain_local_slots: Vec<_> = (0..usize::from(function.locals))
+                .map(|slot| {
+                    function
+                        .local_atoms
+                        .get(slot)
+                        .and_then(|atom| usize::try_from(*atom).ok())
+                        .filter(|atom| *atom < self.atoms.len())
+                        .is_some_and(|atom| {
+                            plain_local_context_safe
+                                && function.plain_local_slot_is_safe(
+                                    slot,
+                                    &self.atoms[atom],
+                                    tdz_slots[slot],
+                                )
+                        })
+                })
+                .collect();
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
                     .functions
@@ -384,49 +497,8 @@ impl ResidualProgram {
                     "function {index} has duplicate or unsorted name bindings"
                 ));
             }
-            if function
-                .binding_sites
-                .windows(2)
-                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
-                || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0
-                        || site.resume_pc as usize > function.code.len()
-                        || site
-                            .bindings
-                            .windows(2)
-                            .any(|pair| pair[0].atom >= pair[1].atom)
-                })
-            {
-                return Err(format!("function {index} has invalid binding sites"));
-            }
-            for binding in function.name_bindings.iter().chain(
-                function
-                    .binding_sites
-                    .iter()
-                    .flat_map(|site| site.bindings.iter()),
-            ) {
-                let target = match binding.location {
-                    super::EvalBindingLocation::Local(_) => Some(function),
-                    super::EvalBindingLocation::Capture { depth, .. } => {
-                        let mut parent = function.parent;
-                        for _ in 0..depth {
-                            parent = parent
-                                .and_then(|id| self.functions.get(id as usize))
-                                .and_then(|function| function.parent);
-                        }
-                        parent.and_then(|id| self.functions.get(id as usize))
-                    }
-                };
-                let slot = match binding.location {
-                    super::EvalBindingLocation::Local(slot)
-                    | super::EvalBindingLocation::Capture { slot, .. } => slot,
-                };
-                if !atom_in_bounds(binding.atom, self.atoms.len())
-                    || target.is_none_or(|function| {
-                        slot >= function.locals
-                            || usize::from(binding.with_depth) > function.code.len()
-                    })
-                {
+            for binding in &function.name_bindings {
+                if !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len()) {
                     return Err(format!("function {index} has an invalid name binding"));
                 }
             }
@@ -441,17 +513,30 @@ impl ResidualProgram {
             {
                 return Err(format!("function {index} has invalid source positions"));
             }
-            if function.binding_sites.windows(2).any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
+            if function
+                .binding_sites
+                .windows(2)
+                .any(|pair| pair[0].resume_pc >= pair[1].resume_pc)
                 || function.binding_sites.iter().any(|site| {
-                    site.resume_pc == 0 || site.resume_pc > code_len
-                        || site.bindings.windows(2).any(|pair| pair[0].atom >= pair[1].atom)
+                    site.resume_pc == 0
+                        || site.resume_pc > code_len
+                        || site
+                            .bindings
+                            .windows(2)
+                            .any(|pair| pair[0].atom >= pair[1].atom)
                         || site.bindings.iter().any(|binding| {
-                            !atom_in_bounds(binding.atom, self.atoms.len())
-                                || matches!(binding.location, super::EvalBindingLocation::Local(slot) if slot >= function.locals)
+                            !eval_binding_is_valid(
+                                binding,
+                                function,
+                                &self.functions,
+                                self.atoms.len(),
+                            )
                         })
                 })
             {
-                return Err(format!("function {index} has invalid binding-site metadata"));
+                return Err(format!(
+                    "function {index} has invalid binding-site metadata"
+                ));
             }
 
             if function.environment_clones.iter().any(|slots| {
@@ -473,6 +558,7 @@ impl ResidualProgram {
                 cache_sites: self.cache_sites,
                 method_sites: self.method_sites.len(),
                 object_sites: self.object_sites.len(),
+                regexp_literal_sites: self.regexp_literal_sites.len(),
                 superinstructions: self.superinstructions.len(),
                 code_len,
             };
@@ -521,6 +607,76 @@ impl ResidualProgram {
                 if instruction.op().is_wide_marker() {
                     return Err(format!("function {index} contains nested wide instruction"));
                 }
+                if matches!(
+                    instruction.op(),
+                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
+                ) && !plain_local_slots
+                    .get(instruction.local_slot())
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return Err(format!(
+                        "function {index} has an unproven plain-local operation"
+                    ));
+                }
+                if let Some(captured) = &function.selective_capture_slots {
+                    let local_slot = matches!(
+                        instruction.op(),
+                        super::Op::LoadLocal
+                            | super::Op::StoreLocal
+                            | super::Op::LoadLocalPlain
+                            | super::Op::StoreLocalPlain
+                            | super::Op::LoadEnvLocal
+                            | super::Op::StoreEnvLocal
+                    )
+                    .then(|| instruction.local_slot());
+                    let slot_is_captured = local_slot.is_some_and(|slot| {
+                        u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+                    });
+                    let environment_op = matches!(
+                        instruction.op(),
+                        super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
+                    );
+                    if environment_op && !slot_is_captured {
+                        return Err(format!(
+                            "function {index} has an environment-local operation for an uncaptured slot"
+                        ));
+                    }
+                    if instruction
+                        .numeric_local_target()
+                        .is_some_and(|target| captured.binary_search(&target).is_ok())
+                        || function.dispatch == super::DispatchClass::Numeric
+                            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
+                                || instruction.op() == super::Op::LoadLocal
+                                    && instruction.numeric_local_store_target().is_some()
+                                    && slot_is_captured)
+                        || function.dispatch == super::DispatchClass::Numeric
+                            && instruction.op() == super::Op::GetIndex
+                            && [instruction.operand_b(), instruction.operand_c()]
+                                .into_iter()
+                                .any(|operand| {
+                                    operand.kind() == Some(OperandKind::Local)
+                                        && captured.binary_search(&operand.payload()).is_ok()
+                                })
+                    {
+                        return Err(format!(
+                            "function {index} has a numeric local fast path for an environment-owned slot"
+                        ));
+                    }
+                }
+                if instruction.op() == super::Op::Binary
+                    && instruction.numeric_local_target().is_some_and(|slot| {
+                        function.dispatch != super::DispatchClass::Numeric
+                            && !plain_local_slots
+                                .get(usize::from(slot))
+                                .copied()
+                                .unwrap_or(false)
+                    })
+                {
+                    return Err(format!(
+                        "function {index} has an unproven plain-local binary target"
+                    ));
+                }
                 if !instruction.result_flags_valid() {
                     return Err(format!("function {index} result flags are invalid"));
                 }
@@ -533,6 +689,11 @@ impl ResidualProgram {
                 if !field_domains_in_bounds(instruction, bounds)
                     || !immediate_domains_in_bounds(instruction, bounds)
                     || !packed_layout_domains_in_bounds(instruction, bounds)
+                    || !object_site_instruction_valid(
+                        instruction,
+                        &self.object_sites,
+                        function.registers,
+                    )
                 {
                     return Err(format!(
                         "function {index} {:?} has an out-of-domain operand",
@@ -579,6 +740,7 @@ impl ResidualProgram {
                 }
             }
         }
+        self.validate_selective_capture_owners()?;
         for site in &self.method_sites {
             if !atom_in_bounds(site.atom, self.atoms.len())
                 || !cache_in_bounds(site.cache, self.cache_sites)
@@ -618,6 +780,17 @@ impl ResidualProgram {
                 return Err("invalid object site".into());
             }
         }
+        for site in &self.regexp_literal_sites {
+            if !matches!(
+                self.constants.get(site.pattern_constant as usize),
+                Some(super::Constant::String(_))
+            ) || !matches!(
+                self.constants.get(site.flags_constant as usize),
+                Some(super::Constant::String(_))
+            ) {
+                return Err("invalid RegExp literal site".into());
+            }
+        }
         if self
             .method_arguments
             .iter()
@@ -627,6 +800,152 @@ impl ResidualProgram {
         }
         Ok(())
     }
+
+    fn validate_selective_capture_owners(&self) -> Result<(), String> {
+        // JavaScript captures are addressed through the function-parent chain.
+        // Wasm uses the same opcodes for slots in its separate instance
+        // environment, whose layout is validated by the Wasm module loader.
+        if self.kind == super::ProgramKind::Wasm {
+            return Ok(());
+        }
+        for (function_id, function) in self.functions.iter().enumerate() {
+            for instruction in function
+                .code
+                .iter()
+                .filter_map(|packed| instruction_at(function, *packed))
+                .chain(function.wide.iter().copied())
+            {
+                if !matches!(
+                    instruction.op(),
+                    super::Op::LoadCapture | super::Op::StoreCapture
+                ) {
+                    continue;
+                }
+                let mut owner = function_id;
+                let depth = usize::from(instruction.capture_depth()) + 1;
+                for _ in 0..depth {
+                    let Some(parent) = self.functions[owner].parent else {
+                        return Err(format!(
+                            "function {function_id} captures outside its ancestor chain"
+                        ));
+                    };
+                    owner = parent as usize;
+                }
+                if usize::from(instruction.capture_slot())
+                    >= usize::from(self.functions[owner].locals)
+                {
+                    return Err(format!(
+                        "function {function_id} captures an out-of-range slot in function {owner}"
+                    ));
+                }
+                if let Some(captured) = &self.functions[owner].selective_capture_slots
+                    && captured.binary_search(&instruction.capture_slot()).is_err()
+                {
+                    return Err(format!(
+                        "function {function_id} captures a slot omitted by function {owner}'s selective layout"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
+    let mut inherited_dynamic_scope = vec![false; functions.len()];
+    for (id, function) in functions.iter().enumerate() {
+        if let Some(parent) = function.parent.map(|parent| parent as usize) {
+            inherited_dynamic_scope[id] =
+                inherited_dynamic_scope[parent] || !functions[parent].binding_sites.is_empty();
+        }
+    }
+    let mut unsafe_layout = vec![false; functions.len()];
+    for (id, function) in functions.iter().enumerate() {
+        if !has_dynamic_scope_access(function) && !inherited_dynamic_scope[id] {
+            continue;
+        }
+        let mut current = Some(id);
+        while let Some(owner) = current {
+            unsafe_layout[owner] = true;
+            current = functions[owner].parent.map(|parent| parent as usize);
+        }
+    }
+    unsafe_layout
+}
+
+fn has_dynamic_scope_access(function: &super::Function) -> bool {
+    function.inherited_with_scope
+        || !function.binding_sites.is_empty()
+        || function
+            .code
+            .iter()
+            .filter_map(|packed| instruction_at(function, *packed))
+            .chain(function.wide.iter().copied())
+            .any(|instruction| {
+                matches!(
+                    instruction.op(),
+                    super::Op::ResolveName | super::Op::CallDirectEvalArray
+                ) || (instruction.op() == super::Op::Call
+                    && (super::ImmediateLayout::direct_eval(instruction.imm())
+                        || super::ImmediateLayout::parameter_eval(instruction.imm())))
+            })
+}
+
+fn selective_capture_layout_is_eligible(
+    function: &super::Function,
+    index: usize,
+    atoms: &super::AtomTable,
+) -> bool {
+    let has_closure = function
+        .code
+        .iter()
+        .filter_map(|packed| instruction_at(function, *packed))
+        .chain(function.wide.iter().copied())
+        .any(|instruction| instruction.op() == super::Op::MakeClosure);
+    let local_atoms_are_static = function.local_atoms.len() == usize::from(function.locals)
+        && function.local_atoms.iter().all(|atom| {
+            usize::try_from(*atom)
+                .ok()
+                .filter(|atom| *atom < atoms.len())
+                .is_some_and(|atom| !atoms[atom].starts_with('\0'))
+        });
+    let has_unsupported_local_lifecycle = function
+        .code
+        .iter()
+        .filter_map(|packed| instruction_at(function, *packed))
+        .chain(function.wide.iter().copied())
+        .any(|instruction| {
+            matches!(
+                instruction.op(),
+                super::Op::InitializeTdz | super::Op::CloneEnv
+            )
+        });
+    let captured = function
+        .selective_capture_slots
+        .as_deref()
+        .unwrap_or_default();
+    let mapped_parameter_is_captured =
+        function.arguments_are_mapped() && captured.iter().any(|slot| *slot < function.params);
+    let mapped_arguments_are_captured = !mapped_parameter_is_captured
+        || function
+            .arguments_slot
+            .is_some_and(|slot| captured.binary_search(&slot).is_ok());
+
+    index != 0
+        && function.parent.is_some()
+        && has_closure
+        && !function.is_async
+        && !function.is_generator
+        && !function.is_class_constructor
+        && !function.derived_constructor
+        && !function.class_field_initializer
+        && function.simple_parameters
+        && function.self_binding_slot.is_none()
+        && function.environment_clones.is_empty()
+        && function.lexical_atoms.is_empty()
+        && local_atoms_are_static
+        && !has_unsupported_local_lifecycle
+        && mapped_arguments_are_captured
 }
 
 #[cfg(test)]
@@ -747,6 +1066,8 @@ mod tests {
             locals: 0,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
@@ -782,6 +1103,7 @@ mod tests {
             method_arguments: vec![],
             field_sites: vec![],
             object_sites: vec![],
+            regexp_literal_sites: vec![],
             superinstructions: vec![],
             register_roots: roots,
         }

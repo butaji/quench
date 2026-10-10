@@ -1,0 +1,127 @@
+{
+  "method": "100000 paired bootstrap resamples of the difference of medians; each resample uses the same pair indices for baseline and candidate; percentile 95% interval; no exclusions",
+  "seed": 61102045,
+  "pairs": 44,
+  "fixture": {
+    "path": "tasks/evidence/task61-caller-access-metadata-richards-2026-10-08.js",
+    "sha256": "c6e5fd39715ae35ebb5bca9474b69a6eeb180da5ac2fc1455ed4d7ff4a29b60c"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "/tmp/quench-call-args-2026-10-08/quench",
+      "sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07"
+    },
+    "candidate": {
+      "path": "/tmp/quench-call-args-2026-10-08/candidate",
+      "sha256": "48b04834459e74147d2a25bc07b1081afba6a3cfe218527df3978643bf2e3670"
+    }
+  },
+  "completion": {
+    "zero_nonzero_exit_or_timeout_pairs": 0,
+    "normalized_completion_signature_equal_pairs": 44,
+    "exact_stdout_equal_pairs": 8,
+    "note": "V8-v7 benchmark output embeds measured scores, so exact stdout equality is not expected; completion signatures retained result names/order and successful score emission."
+  },
+  "metrics": {
+    "score_points": {
+      "baseline_median": 209.0,
+      "candidate_median": 210.0,
+      "candidate_minus_baseline_median_difference": 1.0,
+      "paired_bootstrap_95_interval_difference": [
+        0.0,
+        1.5
+      ],
+      "candidate_better_pairs": 28,
+      "candidate_minus_baseline_median_percent": 0.4784688995215225,
+      "paired_bootstrap_95_interval_percent": [
+        0.0,
+        0.7177033492822966
+      ]
+    },
+    "max_rss_bytes": {
+      "baseline_median": 15089664.0,
+      "candidate_median": 14991360.0,
+      "candidate_minus_baseline_median_difference": -98304.0,
+      "paired_bootstrap_95_interval_difference": [
+        -163840.0,
+        -8192.0
+      ],
+      "candidate_better_pairs": 29,
+      "candidate_minus_baseline_median_percent": -0.6514657980456029,
+      "paired_bootstrap_95_interval_percent": [
+        -1.0857763300760044,
+        -0.05428881650380022
+      ]
+    },
+    "instructions_retired": {
+      "baseline_median": 47851458532.0,
+      "candidate_median": 47564264423.5,
+      "candidate_minus_baseline_median_difference": -287194108.5,
+      "paired_bootstrap_95_interval_difference": [
+        -287721015.0,
+        -286331862.0
+      ],
+      "candidate_better_pairs": 30,
+      "candidate_minus_baseline_median_percent": -0.600178379741434,
+      "paired_bootstrap_95_interval_percent": [
+        -0.6012795091869364,
+        -0.598376456610031
+      ]
+    }
+  },
+  "sensitivity": {
+    "median_of_per_pair_percent_deltas": {
+      "score": {
+        "baseline_median": 209.0,
+        "candidate_median": 210.0,
+        "paired_median_delta": 0.4773296878559985,
+        "paired_median_delta_95_interval": [
+          0.2358490566037763,
+          0.4784688995215225
+        ],
+        "candidate_better_pairs": 28
+      },
+      "max_rss_percent": {
+        "baseline_median": 15089664.0,
+        "candidate_median": 14991360.0,
+        "paired_median_delta": -0.6528835690968404,
+        "paired_median_delta_95_interval": [
+          -1.0303111578516433,
+          -0.32573289902280145
+        ],
+        "candidate_better_pairs": 29
+      },
+      "max_rss_bytes": {
+        "baseline_median": 15089664.0,
+        "candidate_median": 14991360.0,
+        "paired_median_delta": -98304.0,
+        "paired_median_delta_95_interval": [
+          -155648.0,
+          -49152.0
+        ],
+        "candidate_better_pairs": 29
+      },
+      "instructions_percent": {
+        "baseline_median": 47851458532.0,
+        "candidate_median": 47564264423.5,
+        "paired_median_delta": -0.5993430755061868,
+        "paired_median_delta_95_interval": [
+          -0.6015483758241236,
+          -0.5940588317551176
+        ],
+        "candidate_better_pairs": 30
+      },
+      "instructions": {
+        "baseline_median": 47851458532.0,
+        "candidate_median": 47564264423.5,
+        "paired_median_delta": -286793297.0,
+        "paired_median_delta_95_interval": [
+          -288152388.0,
+          -284264087.0
+        ],
+        "candidate_better_pairs": 30
+      }
+    },
+    "note": "The alternate median-of-pair-deltas estimand gives a strictly positive score interval; the primary decision uses the repository-standard paired difference-of-medians interval, whose score interval touches a tie."
+  }
+}

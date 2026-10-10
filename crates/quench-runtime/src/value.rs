@@ -10,6 +10,25 @@ const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 
+#[cfg(feature = "profile-aggregate")]
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(crate) enum ProfileKind {
+    Undefined,
+    Null,
+    Boolean,
+    Integer,
+    Double,
+    Heap,
+}
+
+#[cfg(feature = "profile-aggregate")]
+impl ProfileKind {
+    pub(crate) const COUNT: usize = Self::Heap as usize + 1;
+    pub(crate) const NAMES: [&'static str; Self::COUNT] =
+        ["undefined", "null", "boolean", "integer", "double", "heap"];
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Value(u64);
@@ -91,19 +110,19 @@ impl Value {
     }
 
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) fn profile_kind(self) -> usize {
+    pub(crate) fn profile_kind(self) -> ProfileKind {
         if self.is_undefined() {
-            0
+            ProfileKind::Undefined
         } else if self.is_null() {
-            1
+            ProfileKind::Null
         } else if self.as_bool().is_some() {
-            2
+            ProfileKind::Boolean
         } else if self.as_int().is_some() {
-            3
+            ProfileKind::Integer
         } else if self.as_number().is_some() {
-            4
+            ProfileKind::Double
         } else {
-            5
+            ProfileKind::Heap
         }
     }
 }

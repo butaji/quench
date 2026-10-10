@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        self.profile.function(id as usize);
+        self.profile.function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
             p.functions[id as usize].parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
@@ -123,7 +123,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, context, args);
+        self.initialize_frame_invocation(&mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -158,7 +158,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        frame.with_objects = self.captured_with_objects(parent);
+        frame.with_objects = self.captured_with_objects_for_function(parent, function, p.kind);
         let function_object = context.callee();
         let realm = function_object
             .map(|function| self.function_realm(p, function))

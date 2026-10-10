@@ -1,0 +1,111 @@
+{
+  "title": "Skip empty lexical-with capture walks during call activation",
+  "status": "retained focused optimization; not Task 61 qualification",
+  "source_revision": "c1462bb9d015fa182a283cc9b1f3a150719b1c78",
+  "source_tree_was_dirty": true,
+  "source_delta_sha256": "0f5959bb25559c833f5392e63c375f52062eeb47320e4b2b7fc3f2ce480ba5da",
+  "implementation": {
+    "authoritative_fact": "Function.inherited_with_scope from lowering; ProgramKind::Eval keeps the conservative dynamic fallback",
+    "fast_path": "Return an empty with-object list without walking the environment chain when inherited_with_scope is false and the active residual program is not Eval",
+    "uses": [
+      "ordinary call activation",
+      "tail-call replacement activation",
+      "generator activation"
+    ],
+    "unchanged": "Closure creation still computes its captured with-object suffix using the existing path"
+  },
+  "measurement": {
+    "host": "Apple M4, macOS 26.5, Darwin 25.5.0, arm64",
+    "build_command": "CARGO_INCREMENTAL=0 cargo build --locked --profile production -p quench-runtime --bin quench",
+    "paired_method": "11 alternating baseline/candidate pairs per fixture, 2,000,000 loop iterations, /usr/bin/time -l instructions retired, maximum RSS and elapsed time; stdout checked identical",
+    "baseline_binary_sha256": "5e359d09bf1ec9304a3f8a3bc9e83be24c1d9ff7c88fc0bd408f57a9b6db6390",
+    "candidate_binary_sha256": "4181ed8bd9fa6830418d98b5bce591a8ca691e0d8ded327b6f9761d0834a4806",
+    "paired_csv": "task61-call-with-scope-paired-2026-10-08.csv",
+    "paired_csv_sha256": "48e413f7e96d53159abbe34a712e36e39f36e4165e3b5406c11ac4595f681873",
+    "runner_sha256": "8b7b8c49f177e3a9567506061698f223e08a8e6a49c90d15984820ea7aa0a175",
+    "analysis_sha256": "d4948053129bcfdf973db6469fe0f5c047554740fac16a7936a44c1228802ece",
+    "summary": "task61-call-with-scope-paired-summary-2026-10-08.json",
+    "summary_sha256": "1839ea94dce5c42b480c09ec648407a7da040dce4da4054cf5ef774e0ccd32cd",
+    "results": {
+      "plain-call": {
+        "fixture_sha256": "e2f0801b9b6bd12dc9a21ca631291f2ecc7e67cfe58de79d70ee48acea6ca9fc",
+        "median_retired_instructions_baseline": 6881286180,
+        "median_retired_instructions_candidate": 6735248620,
+        "median_delta_percent": -2.1187853116493933,
+        "paired_bootstrap_95_percent_interval": [-2.126042859767786, -2.1154539969534],
+        "candidate_lower_pairs": 11,
+        "median_rss_delta_percent": 0.0,
+        "rss_95_percent_interval_percent": [-0.2564102564102564, 0.7741935483870968]
+      },
+      "captured-call": {
+        "fixture_sha256": "379b20d25d569a292d6207954e4c84adb31ca123868aff3a9c64eb6385301bdf",
+        "median_retired_instructions_baseline": 7887333201,
+        "median_retired_instructions_candidate": 7699333703,
+        "median_delta_percent": -2.382487809392598,
+        "paired_bootstrap_95_percent_interval": [-2.3847441619192775, -2.379034629765071],
+        "candidate_lower_pairs": 11,
+        "median_rss_delta_percent": 0.5108556832694764,
+        "rss_95_percent_interval_percent": [-0.2554278416347382, 1.03359173126615]
+      },
+      "local-control": {
+        "fixture_sha256": "71460ea65ee22aa28018240c784fbbdaceebbafb810f96feac4ba9a3ceabaea6",
+        "median_retired_instructions_baseline": 2082449828,
+        "median_retired_instructions_candidate": 2082555858,
+        "median_delta_percent": 0.008128800431791814,
+        "paired_bootstrap_95_percent_interval": [-0.0011400125474371754, 0.011662633682335319],
+        "candidate_lower_pairs": 3,
+        "median_rss_delta_percent": 0.38461538461538464,
+        "rss_95_percent_interval_percent": [0.0, 0.5154639175257731]
+      }
+    },
+    "binary_size": {
+      "measured_pair": "size -m",
+      "text_segment_bytes_baseline": 6914048,
+      "text_segment_bytes_candidate": 6914048,
+      "text_section_bytes_baseline": 4994560,
+      "text_section_bytes_candidate": 4994944,
+      "text_section_delta_bytes": 384
+    }
+  },
+  "test262": {
+    "commands": "TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 TEST262_REPORT=<report>.json target/iteration/run-stages --from <stage> --to <stage> --filter <with|eval> --root tests/test262",
+    "selections": {
+      "stage_8_with": "6/6",
+      "stage_11_with": "2/2",
+      "stage_8_eval": "347/347",
+      "stage_11_eval": "2/2"
+    },
+    "comparison": "All four before/after report pairs were byte-identical; compare-runs --reports exited 0 with regressions=0 for each. Stage 11 with/eval selections overlap and are not additive.",
+    "reports": {
+      "stage_8_with": "task61-call-with-scope-test-reports/stage08-with.json",
+      "stage_11_with": "task61-call-with-scope-test-reports/stage11-with.json",
+      "stage_8_eval": "task61-call-with-scope-test-reports/stage08-eval.json",
+      "stage_11_eval": "task61-call-with-scope-test-reports/stage11-eval.json"
+    },
+    "report_sha256": {
+      "stage_8_with": "a892cd90547b2329c0975ff4ec4db3b19295de31041889bd30c90e38f328380d",
+      "stage_11_with": "4871bb809104ce234df22779cdfb05e0dfd51a160c8f59476d72a5becf9293bf",
+      "stage_8_eval": "8c5ac9c1fdf5e1ae6bb083fe80a831e4df96cd86a2946800b0a464c6f45b7c63",
+      "stage_11_eval": "4871bb809104ce234df22779cdfb05e0dfd51a160c8f59476d72a5becf9293bf"
+    }
+  },
+  "node_oracle": {
+    "node_version": "v26.10.0",
+    "cases": [
+      "function declaration and function expression created in with and called after leaving",
+      "direct-eval closure created inside with",
+      "nested with shadowing and outer lookup",
+      "generator created inside with and resumed after leaving",
+      "closure reads a with binding before throwing"
+    ],
+    "result": "Node and Quench exited 0 with empty stderr and byte-identical stdout",
+    "stdout_sha256": "d6c3b4e7d9815c0a773ed70a67a128fa8fe41e37e58ef2d8b5a2b9eb4d990fee",
+    "quench_binary_sha256": "79d90ef3cc4587bd70b84b51276e7f682ea5ed7903050695ccc268aaa016bc07",
+    "artifacts": "task61-call-with-scope-node-oracle-2026-10-08/"
+  },
+  "qualification_limits": [
+    "The instruction reduction is measured on focused call loops, not V8-v7 fixture Scores.",
+    "The RSS confidence intervals include a tie.",
+    "No full Task 61 comparison or Linux qualification is claimed."
+  ]
+}

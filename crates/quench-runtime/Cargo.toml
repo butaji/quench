@@ -32,6 +32,7 @@ oxc_semantic = { workspace = true }
 oxc_span = { workspace = true }
 oxc_syntax = { workspace = true }
 rustc-hash = "2.1"
+smallvec = "1.15.2"
 num-bigint = "0.4"
 quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }

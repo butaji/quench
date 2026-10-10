@@ -1,0 +1,9 @@
+quench-bench/js-engine-benchmark/v8-v7/crypto.js: fixed work valid (11/11 rounds, 4 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/deltablue.js: fixed work valid (11/11 rounds, 40 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js: fixed work valid (11/11 rounds, 3 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js: fixed work valid (11/11 rounds, 5 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/raytrace.js: fixed work valid (11/11 rounds, 10 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/regexp.js: fixed work valid (11/11 rounds, 1 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/richards.js: fixed work valid (11/11 rounds, 100 iterations per benchmark)
+quench-bench/js-engine-benchmark/v8-v7/splay.js: fixed work valid (11/11 rounds, 300 iterations per benchmark)
+wrote target/candidate-a/inline-two-all-eight-11.json

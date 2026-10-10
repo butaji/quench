@@ -1,0 +1,42 @@
+{
+  "schema": "quench.task61.heap-allocation-reuse-correctness.v1",
+  "date": "2026-10-09",
+  "candidate_binary_sha256": "681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc",
+  "checks": [
+    {
+      "name": "heap sparse side-table slot reuse unit test",
+      "result": "passed",
+      "passed": 1,
+      "failed": 0,
+      "command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/candidate-b cargo test --profile iteration -p quench-runtime --lib sparse_array_metadata_is_removed_before_a_slot_is_reused"
+    },
+    {
+      "name": "Test262 Array Stage 31",
+      "result": "passed",
+      "passed": 3081,
+      "failed": 0,
+      "report": "target/candidate-b/test262-array-stage31-sparse-reuse.json"
+    },
+    {
+      "name": "full Wasm suite",
+      "result": "passed",
+      "passed": 67124,
+      "failed": 0,
+      "report": "target/candidate-b/wasm-full-sparse-reuse.json"
+    },
+    {
+      "name": "sparse-array GC/reuse Node oracle",
+      "result": "passed",
+      "quench_exit_code": 0,
+      "node_exit_code": 0,
+      "commands": [
+        "TEST262_TEST_TIMEOUT_MS=30000 TEST262_DIR=tests/test262 CARGO_TARGET_DIR=target/candidate-b cargo run --profile iteration -p quench-test262 --bin run-test -- /tmp/quench-sparse-reuse-oracle.js",
+        "node --expose-gc --require /tmp/quench-sparse-reuse-node-prelude.cjs /tmp/quench-sparse-reuse-oracle.js"
+      ],
+      "retained_inputs": {
+        "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/node-oracle-probe.js": "7f7b07c5b1c323ee228ac759ca56fa89df06eb9b91c119f2c8e33f8762d94299",
+        "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/node-oracle-node-prelude.cjs": "a4777493ab1e74540fcd81177f3845a4a341a3bd090d1f76b644c72f507c9917"
+      }
+    }
+  ]
+}

@@ -1,0 +1,327 @@
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index 5ec2019fb..28e51f71e 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -19,7 +19,7 @@ use crate::value_vec::ValueVec;
+ use activation::CallContext;
+ use atomics::Test262AgentState;
+ use rustc_hash::{FxHashMap, FxHashSet};
+-use std::cell::OnceCell;
++use std::cell::{Cell as StdCell, OnceCell};
+ use std::hash::{Hash, Hasher};
+ use std::rc::Rc;
+
+@@ -33,6 +33,24 @@ struct RuntimeAtoms {
+     lexical_this: Atom,
+     new_target: Atom,
+ }
++
++#[derive(Clone, Copy)]
++struct StackLimit {
++    origin: usize,
++    transition_depth: usize,
++    frame_depth_at_entry: usize,
++}
++
++struct StackLimitRestore {
++    value: Rc<StdCell<Option<StackLimit>>>,
++    previous: Option<StackLimit>,
++}
++
++impl Drop for StackLimitRestore {
++    fn drop(&mut self) {
++        self.value.set(self.previous);
++    }
++}
+ pub(crate) mod activation;
+ mod activation_lifecycle;
+ mod agent;
+@@ -461,7 +479,6 @@ pub(super) enum StepResult {
+     TailCall,
+     PushFrame {
+         destination: Register,
+-        stack_guard: crate::stack::StackGuard,
+     },
+     Return(Value),
+     Await {
+@@ -495,13 +512,12 @@ pub(super) enum FrameOutcome {
+ }
+ enum UserFrameStart {
+     Outcome(FrameOutcome),
+-    Pushed(crate::stack::StackGuard),
++    Pushed,
+ }
+ struct PendingGeneralCall {
+     caller: usize,
+     call_pc: u32,
+     destination: Register,
+-    stack_guard: crate::stack::StackGuard,
+ }
+ #[cfg(feature = "profile-aggregate")]
+ #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+@@ -608,6 +624,7 @@ pub(crate) struct Vm<H> {
+     natives: Vec<(Native, Value)>,
+     frames: Vec<Frame>,
+     frame_pool: Vec<Frame>,
++    stack_limit: Rc<StdCell<Option<StackLimit>>>,
+     active_call_roots: Vec<Value>,
+     with_stack: Vec<Value>,
+     suspended: Vec<SuspendedEntry>,
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index f8ef1073c..62e405330 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1590,10 +1590,9 @@ impl<H: Host> Vm<H> {
+                     );
+                     self.direct_eval = previous_direct_eval;
+                     self.parameter_eval = previous_parameter_eval;
+-                    let stack_guard = result?;
++                    result?;
+                     return Ok(StepResult::PushFrame {
+                         destination: i.result_register(),
+-                        stack_guard,
+                     });
+                 }
+                 if p.kind == crate::bytecode::ProgramKind::Wasm
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 34c07e445..bb0fabd64 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -38,6 +38,53 @@ impl GeneralCodeCursor {
+ }
+
+ impl<H: Host> Vm<H> {
++    fn install_stack_limit(
++        &self,
++        entry_frame: usize,
++        stack_guard: &crate::stack::StackGuard,
++    ) -> StackLimitRestore {
++        let previous = self.stack_limit.get();
++        let inherited_frames = previous
++            .map(|limit| {
++                let frames_since_outer_entry =
++                    self.frames.len().saturating_sub(limit.frame_depth_at_entry);
++                let entry_frame_has_its_own_stack_guard = entry_frame >= limit.frame_depth_at_entry
++                    && entry_frame == self.frames.len().saturating_sub(1);
++                frames_since_outer_entry
++                    .saturating_sub(usize::from(entry_frame_has_its_own_stack_guard))
++            })
++            .unwrap_or(0);
++        self.stack_limit.set(Some(StackLimit {
++            origin: stack_guard.origin(),
++            transition_depth: stack_guard
++                .transition_depth()
++                .saturating_add(inherited_frames),
++            frame_depth_at_entry: self.frames.len(),
++        }));
++        StackLimitRestore {
++            value: Rc::clone(&self.stack_limit),
++            previous,
++        }
++    }
++
++    fn check_guest_frame_stack(&mut self) -> Result<(), JsError> {
++        let stack_pointer = crate::stack::current_stack_pointer();
++        let limit = self.stack_limit.get().unwrap_or(StackLimit {
++            origin: stack_pointer,
++            transition_depth: 0,
++            frame_depth_at_entry: 0,
++        });
++        let frame_transitions = self.frames.len().saturating_sub(limit.frame_depth_at_entry);
++        let transition_depth = limit.transition_depth.saturating_add(frame_transitions);
++        if stack_pointer.abs_diff(limit.origin) > crate::stack::STACK_BUDGET_BYTES
++            || transition_depth > crate::stack::MAX_RECURSIVE_TRANSITIONS
++        {
++            Err(self.stack_exhaustion_error())
++        } else {
++            Ok(())
++        }
++    }
++
+     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
+         if strict {
+             Ok(this)
+@@ -106,7 +153,7 @@ impl<H: Host> Vm<H> {
+     ) -> Result<FrameOutcome, JsError> {
+         match self.call_user_frame_mode(p, id, parent, this, args, context, false, false)? {
+             UserFrameStart::Outcome(outcome) => Ok(outcome),
+-            UserFrameStart::Pushed(_) => {
++            UserFrameStart::Pushed => {
+                 unreachable!("ordinary call unexpectedly stayed in dispatch")
+             }
+         }
+@@ -131,7 +178,7 @@ impl<H: Host> Vm<H> {
+             false,
+         )? {
+             UserFrameStart::Outcome(outcome) => Ok(outcome),
+-            UserFrameStart::Pushed(_) => {
++            UserFrameStart::Pushed => {
+                 unreachable!("constructor unexpectedly stayed in dispatch")
+             }
+         }
+@@ -145,9 +192,9 @@ impl<H: Host> Vm<H> {
+         this: Value,
+         args: &[Value],
+         context: CallContext,
+-    ) -> Result<crate::stack::StackGuard, JsError> {
++    ) -> Result<(), JsError> {
+         match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
+-            UserFrameStart::Pushed(guard) => Ok(guard),
++            UserFrameStart::Pushed => Ok(()),
+             UserFrameStart::Outcome(_) => {
+                 unreachable!("pushed user call unexpectedly ran to completion")
+             }
+@@ -290,20 +337,17 @@ impl<H: Host> Vm<H> {
+                 .set_module_environment(self.frames[frame_index].program, environment);
+         }
+         if push_to_dispatch {
+-            let stack_guard = match self.enter_stack() {
+-                Ok(guard) => guard,
+-                Err(error) => {
+-                    let outcome = Err(error);
+-                    let mut frame = self.frames.pop().unwrap();
+-                    self.deactivate_frame(&mut frame, &outcome);
+-                    self.persist_global_lexical_bindings(p, &frame);
+-                    return match outcome {
+-                        Err(error) => Err(error),
+-                        Ok(_) => unreachable!(),
+-                    };
+-                }
+-            };
+-            return Ok(UserFrameStart::Pushed(stack_guard));
++            if let Err(error) = self.check_guest_frame_stack() {
++                let outcome = Err(error);
++                let mut frame = self.frames.pop().unwrap();
++                self.deactivate_frame(&mut frame, &outcome);
++                self.persist_global_lexical_bindings(p, &frame);
++                return match outcome {
++                    Err(error) => Err(error),
++                    Ok(_) => unreachable!(),
++                };
++            }
++            return Ok(UserFrameStart::Pushed);
+         }
+         // Numeric dispatch changes the body loop only. Frame activation and cleanup
+         // remain shared; unsupported tail-call and suspension completions use general.
+@@ -811,12 +855,14 @@ impl<H: Host> Vm<H> {
+             let mut current_program: Option<Rc<ResidualProgram>> = None;
+             let mut frame = frame;
+             let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+-            let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
++            let stack_guard = if p.kind == crate::bytecode::ProgramKind::Wasm {
+                 crate::stack::StackGuard::enter()
+                     .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+             } else {
+                 self.enter_stack()?
+             };
++            let _stack_limit_restore = self.install_stack_limit(frame, &stack_guard);
++            let _stack = stack_guard;
+             let initial_function = self.frames[frame].function as usize;
+             let mut executing_program = self.frames[frame].program;
+             let mut cursor =
+@@ -870,22 +916,17 @@ impl<H: Host> Vm<H> {
+                                 p,
+                                 self.frames[frame].function,
+                             );
+-                            drop(pending.stack_guard);
+                         } else {
+                             self.frames[frame].pc = pc;
+                             return Ok(FrameOutcome::Complete(value));
+                         }
+                     }
+                     Ok(StepResult::Continue) => {}
+-                    Ok(StepResult::PushFrame {
+-                        destination,
+-                        stack_guard,
+-                    }) => {
++                    Ok(StepResult::PushFrame { destination }) => {
+                         pending_calls.push(PendingGeneralCall {
+                             caller: frame,
+                             call_pc: instruction_pc as u32,
+                             destination,
+-                            stack_guard,
+                         });
+                         frame += 1;
+                         pc = self.frames[frame].pc;
+@@ -968,7 +1009,6 @@ impl<H: Host> Vm<H> {
+                                             self.frames[frame].function,
+                                         );
+                                         throwing_pc = pending.call_pc;
+-                                        drop(pending.stack_guard);
+                                         error = match result {
+                                             Err(error) => error,
+                                             Ok(_) => unreachable!(),
+diff --git a/crates/quench-runtime/src/vm/vm_init.rs b/crates/quench-runtime/src/vm/vm_init.rs
+index 190d6c15f..be700e58e 100644
+--- a/crates/quench-runtime/src/vm/vm_init.rs
++++ b/crates/quench-runtime/src/vm/vm_init.rs
+@@ -64,6 +64,7 @@ impl<H: Host> Vm<H> {
+             natives: vec![],
+             frames: vec![],
+             frame_pool: vec![],
++            stack_limit: Rc::new(StdCell::new(None)),
+             active_call_roots: vec![],
+             with_stack: vec![],
+             suspended: vec![],
+diff --git a/crates/quench-stack/src/lib.rs b/crates/quench-stack/src/lib.rs
+index 6d4b48516..118c98ca0 100644
+--- a/crates/quench-stack/src/lib.rs
++++ b/crates/quench-stack/src/lib.rs
+@@ -11,7 +11,7 @@ pub const WORKER_STACK_SIZE: usize = STACK_BUDGET_BYTES + STACK_HEADROOM_BYTES;
+ // Some parsers and traversals grow structured work without retaining Rust
+ // frames. This derived transition ceiling bounds those paths as well.
+ const STACK_TRANSITION_RESERVE_BYTES: usize = 64 * 1024;
+-const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
++pub const MAX_RECURSIVE_TRANSITIONS: usize = STACK_BUDGET_BYTES / STACK_TRANSITION_RESERVE_BYTES;
+
+ /// Maximum live guest function activations, including suspended callers.
+ pub const MAX_GUEST_CALL_DEPTH: usize = 8_192;
+@@ -25,7 +25,11 @@ thread_local! {
+
+ /// A transition is released on every return path, including Rust unwinding.
+ /// Thread affinity keeps the measurement correct across reentrant runtime owners.
+-pub struct StackGuard(PhantomData<Rc<()>>);
++pub struct StackGuard {
++    origin: usize,
++    transition_depth: usize,
++    _thread_affinity: PhantomData<Rc<()>>,
++}
+ pub struct GuestCallGuard(PhantomData<Rc<()>>);
+
+ impl StackGuard {
+@@ -43,9 +47,25 @@ impl StackGuard {
+                 return Err(());
+             }
+             depth.set(current + 1);
+-            Ok(Self(PhantomData))
++            Ok(Self {
++                origin,
++                transition_depth: current + 1,
++                _thread_affinity: PhantomData,
++            })
+         })
+     }
++
++    /// Thread-wide origin captured by this active stack transition.
++    #[inline]
++    pub fn origin(&self) -> usize {
++        self.origin
++    }
++
++    /// Thread-wide transition depth after acquiring this guard.
++    #[inline]
++    pub fn transition_depth(&self) -> usize {
++        self.transition_depth
++    }
+ }
+
+ impl Drop for StackGuard {
+@@ -80,7 +100,7 @@ impl Drop for GuestCallGuard {
+ }
+
+ #[inline(never)]
+-fn current_stack_pointer() -> usize {
++pub fn current_stack_pointer() -> usize {
+     let marker = 0_u8;
+     std::hint::black_box(&marker as *const u8 as usize)
+ }

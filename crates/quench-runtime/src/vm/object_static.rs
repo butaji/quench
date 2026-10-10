@@ -780,6 +780,12 @@ pub(super) fn array_index(name: &str) -> Option<u32> {
     if name.is_empty() || name != "0" && name.starts_with('0') {
         return None;
     }
-    let index = name.parse::<u32>().ok()?;
-    (index.to_string() == name && index < u32::MAX).then_some(index)
+    let mut index = 0_u32;
+    for byte in name.bytes() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index.checked_mul(10)?.checked_add(u32::from(byte - b'0'))?;
+    }
+    (index < u32::MAX).then_some(index)
 }

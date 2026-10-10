@@ -1,0 +1,375 @@
+{
+  "engine": "quench",
+  "failed": 0,
+  "families": {},
+  "outcomes": [
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/alphabet.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/ignores-receiver.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/illegal-characters.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/last-chunk-handling.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/last-chunk-invalid.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/option-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/results.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/string-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromBase64/whitespace.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/ignores-receiver.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/illegal-characters.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/odd-length-input.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/results.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/fromHex/string-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/alphabet.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/detached-buffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/illegal-characters.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/last-chunk-handling.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/option-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/results.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/string-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/subarray.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/target-size.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/throws-when-target-is-backed-by-immutable-arraybuffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage-empty.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/whitespace.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromBase64/writes-up-to-error.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/detached-buffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/illegal-characters.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/results.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/string-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/subarray.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/target-size.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/throws-when-string-length-is-odd.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/throws-when-target-is-backed-by-immutable-arraybuffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/setFromHex/writes-up-to-error.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/alphabet.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/detached-buffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/omit-padding.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/option-coercion.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/receiver-not-uint8array.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toBase64/results.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/descriptor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/detached-buffer.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/length.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/name.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/nonconstructor.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/receiver-not-uint8array.js",
+      "stage": "78"
+    },
+    {
+      "outcome": "pass",
+      "path": "built-ins/Uint8Array/prototype/toHex/results.js",
+      "stage": "78"
+    }
+  ],
+  "passed": 70,
+  "provenance": {
+    "binary": "/Users/admin/Code/GitHub/quench-v2/target/iteration/cell-object-fast-path-2026-10-09/candidate-target/iteration/run-stages",
+    "host": "macos-aarch64",
+    "jobs": 8,
+    "source_dirty": true,
+    "source_revision": "855a083a4e398743b359a8ac1efeecee4eea60d4",
+    "timeout_ms": 900000
+  },
+  "schema": 1,
+  "stages": {
+    "78": {
+      "failed": 0,
+      "passed": 70,
+      "total": 70
+    }
+  },
+  "total": 70
+}

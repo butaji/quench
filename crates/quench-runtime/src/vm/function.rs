@@ -6,9 +6,17 @@ impl<H: Host> Vm<H> {
         function: Value,
         source: &str,
     ) -> Result<(), JsError> {
-        let source_atom = self.intern_atom("\0quench:function-source");
         let source_value = self.heap.alloc(Cell::String(source.into()));
-        self.set_property(function, source_atom, source_value)
+        self.set_function_source_value(function, source_value)
+    }
+
+    pub(super) fn set_function_source_value(
+        &mut self,
+        function: Value,
+        source: Value,
+    ) -> Result<(), JsError> {
+        let source_atom = self.intern_atom("\0quench:function-source");
+        self.set_property(function, source_atom, source)
     }
 
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
@@ -18,7 +26,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
                 program.functions.get(*id as usize).is_some_and(|function| {
-                    function.strict || !function.constructible || function.is_class_constructor
+                    function.has_restricted_legacy_caller_access()
                 })
             }),
             Some(Cell::Function {

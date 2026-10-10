@@ -102,6 +102,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_console_global");
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
     // global key so ESM does not acquire a user-visible global `require`.

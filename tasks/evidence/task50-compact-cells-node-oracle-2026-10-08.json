@@ -1,0 +1,21 @@
+{
+  "source_sha256": "c309b74bb40008d308ce862c94260113b1081243b2292dd64fb3654a787a7666",
+  "node_version": "v24.19.0",
+  "outputs_equal": true,
+  "runs": {
+    "node": {
+      "status": 0,
+      "stdout": "[\"a(b)?\",\"g\",[\"a\",null],2]\n[\"x+\",\"iy\",true,2]\n[[0,2],[0,1]]\n\"\\\\u{1F600}\"\n[7,9,\"undefined\"]\n15\n[10,15]\n",
+      "stderr": "",
+      "stdout_sha256": "181f48954b3bb49eb5c5dd717427fe2f6d037ec8c48c0fcd55cfbef9d79d6766",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "candidate": {
+      "status": 0,
+      "stdout": "[\"a(b)?\",\"g\",[\"a\",null],2]\n[\"x+\",\"iy\",true,2]\n[[0,2],[0,1]]\n\"\\\\u{1F600}\"\n[7,9,\"undefined\"]\n15\n[10,15]\n",
+      "stderr": "",
+      "stdout_sha256": "181f48954b3bb49eb5c5dd717427fe2f6d037ec8c48c0fcd55cfbef9d79d6766",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

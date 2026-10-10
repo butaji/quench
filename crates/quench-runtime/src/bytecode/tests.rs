@@ -125,6 +125,8 @@ fn decoder_rejects_out_of_range_local_load() {
             locals: 1,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
@@ -147,6 +149,7 @@ fn decoder_rejects_out_of_range_local_load() {
         method_arguments: vec![],
         field_sites: vec![],
         object_sites: vec![],
+        regexp_literal_sites: vec![],
         superinstructions: vec![],
         register_roots: vec![],
     };
@@ -194,6 +197,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             locals: 0,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
@@ -216,6 +221,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         method_arguments: vec![],
         field_sites: vec![],
         object_sites: vec![],
+        regexp_literal_sites: vec![],
         superinstructions: vec![],
         register_roots: vec![],
     };

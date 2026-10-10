@@ -15,6 +15,7 @@ mod annex_b_targets;
 mod arrow;
 mod ast;
 mod binding_time;
+mod capture_layout;
 #[cfg(feature = "profile-memory")]
 mod capture_profile;
 mod class;
@@ -1613,6 +1614,7 @@ struct Compiler<'a> {
     method_sites: Vec<MethodSiteSpec>,
     field_sites: Vec<FieldSite>,
     object_sites: Vec<ObjectSite>,
+    regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
     superinstructions: Vec<Superinstruction>,
 }
 
@@ -1827,6 +1829,7 @@ impl<'a> Compiler<'a> {
             method_sites: vec![],
             field_sites: vec![],
             object_sites: vec![],
+            regexp_literal_sites: vec![],
             superinstructions: vec![],
         }
     }
@@ -2124,6 +2127,7 @@ impl<'a> Compiler<'a> {
             return Err(self.errors);
         }
         let mut functions: Vec<_> = self.functions.into_iter().map(Option::unwrap).collect();
+        capture_layout::apply(&mut functions, &self.atoms);
         if self.mode == SpecializationMode::Enabled {
             Self::apply_rewrites(
                 &mut functions,
@@ -2150,6 +2154,20 @@ impl<'a> Compiler<'a> {
                     &self.superinstructions,
                 );
                 numeric::apply(function, live.as_deref());
+            }
+            Self::specialize_plain_local_operations(function, &self.atoms);
+            if function
+                .code
+                .iter()
+                .any(|instruction| instruction.op() == Op::StoreLocalPlain)
+            {
+                let live = liveness::analyze(
+                    function,
+                    &self.method_sites,
+                    &self.field_sites,
+                    &self.superinstructions,
+                );
+                numeric::apply_plain_local_stores(function, live.as_deref());
             }
         }
         let register_roots = liveness::derive(
@@ -2200,6 +2218,7 @@ impl<'a> Compiler<'a> {
             method_arguments,
             field_sites: self.field_sites,
             object_sites: self.object_sites,
+            regexp_literal_sites: self.regexp_literal_sites,
             superinstructions: self.superinstructions,
             register_roots,
         };
@@ -2298,6 +2317,16 @@ impl<'a> Compiler<'a> {
         let index = self.constants.len() as u32;
         self.constants.push(value);
         self.constant_index.insert(key, index);
+        index
+    }
+
+    fn regexp_literal_site(&mut self, pattern_constant: u32, flags_constant: u32) -> u32 {
+        let index = self.regexp_literal_sites.len() as u32;
+        self.regexp_literal_sites
+            .push(crate::bytecode::RegExpLiteralSite {
+                pattern_constant,
+                flags_constant,
+            });
         index
     }
 
@@ -2612,24 +2641,6 @@ impl<'a> Compiler<'a> {
                         && instruction.local_slot() == usize::from(*slot)
                 })
         });
-        if captures_locals {
-            for instruction in &mut function.code {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-            for instruction in &mut function.wide {
-                let op = match instruction.op() {
-                    Op::LoadLocal => Op::LoadEnvLocal,
-                    Op::StoreLocal => Op::StoreEnvLocal,
-                    other => other,
-                };
-                instruction.set_op(op);
-            }
-        }
         let simple_parameters = !options.rest_override
             && options.defaults.is_none_or(|formal| {
                 formal.rest.is_none()
@@ -2678,6 +2689,8 @@ impl<'a> Compiler<'a> {
             locals: function.locals.len() as u16,
             local_atoms: function.locals.clone(),
             environment_atoms,
+            selective_capture_slots: None,
+            inherited_with_scope: options.with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),
             global_var_atoms: Vec::new(),
@@ -2732,6 +2745,68 @@ impl<'a> Compiler<'a> {
             DispatchClass::Numeric
         } else {
             DispatchClass::General
+        }
+    }
+
+    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &[Rc<str>]) {
+        if !function.plain_local_context_is_safe() {
+            return;
+        }
+
+        let mut tdz_slots = vec![false; usize::from(function.locals)];
+        for instruction in &function.code {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for instruction in &function.wide {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+
+        let plain_slots: Vec<_> = (0..usize::from(function.locals))
+            .map(|slot| {
+                let Some(atom) = function.local_atoms.get(slot) else {
+                    return false;
+                };
+                atoms.get(*atom as usize).is_some_and(|name| {
+                    function.plain_local_slot_is_safe(slot, name, tdz_slots[slot])
+                })
+            })
+            .collect();
+
+        for instruction in &mut function.code {
+            match instruction.op() {
+                Op::LoadLocal | Op::StoreLocal
+                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                {
+                    instruction.set_op(if instruction.op() == Op::LoadLocal {
+                        Op::LoadLocalPlain
+                    } else {
+                        Op::StoreLocalPlain
+                    });
+                }
+                _ => {}
+            }
+        }
+        for instruction in &mut function.wide {
+            match instruction.op() {
+                Op::LoadLocal | Op::StoreLocal
+                    if plain_slots.get(instruction.local_slot()) == Some(&true) =>
+                {
+                    instruction.set_op(if instruction.op() == Op::LoadLocal {
+                        Op::LoadLocalPlain
+                    } else {
+                        Op::StoreLocalPlain
+                    });
+                }
+                _ => {}
+            }
         }
     }
 }

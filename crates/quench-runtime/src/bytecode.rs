@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
@@ -16,6 +18,7 @@ pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
+pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
 pub(crate) const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub(crate) const NO_REGISTER_ROOT_MAP: u32 = u32::MAX;
 pub(crate) const NO_OPTIONAL_REGISTER: Register = 0;
@@ -205,6 +208,7 @@ pub(crate) enum ImmediateRole {
     WasmF64BinaryOperator,
     WasmF64UnaryOperator,
     TemplateSiteIndex,
+    RegExpLiteralSiteIndex,
     JumpTarget,
     MethodSiteIndex,
     ObjectSiteIndex,
@@ -525,9 +529,11 @@ opcodes!(
     MakeConstArray => CALL_EFFECT; layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, ElementCount, Unused),
     MakeObject => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Unused, Unused),
     MakeObject2 => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, Register, Register),
+    MakeObjectLiteral => CALL_EFFECT; layout Scalar; meaning ObjectSiteIndex, @ Returnable, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     SuperConstArrayObject2 => CALL_EFFECT; layout Scalar; meaning SuperinstructionIndex, @ Returnable, @ fields(ResultRegister, Unused, Unused),
     GetIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     GetAsyncIterator => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+    CreateRegExpLiteral => CALL_EFFECT; layout Scalar; meaning RegExpLiteralSiteIndex, @ Register, @ fields(ResultRegister, Unused, Unused),
     IteratorClose => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     SpreadToArray => CALL_EFFECT; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     RequireObjectCoercible => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Unused, Register, Unused),
@@ -653,6 +659,8 @@ opcodes!(
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
 
 );
 
@@ -755,6 +763,13 @@ pub struct Function {
     pub local_atoms: Vec<Atom>,
     /// Names visible through this function's captured declarative environment.
     pub environment_atoms: Vec<Atom>,
+    /// Source local slots owned by a closure environment when this activation
+    /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
+    /// selective layout, including an empty set for closure-only activations.
+    pub(crate) selective_capture_slots: Option<Vec<u16>>,
+    /// The function was created while an enclosing `with` scope was active,
+    /// so unresolved names in descendants can still observe its outer locals.
+    pub(crate) inherited_with_scope: bool,
     pub lexical_atoms: Vec<Atom>,
     pub global_lexical_atoms: Vec<Atom>,
     pub global_var_atoms: Vec<Atom>,
@@ -782,14 +797,146 @@ pub(crate) struct SourcePosition {
     pub(crate) column: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainLocalContextIneligibility {
+    RootFunction,
+    AsyncFunction,
+    GeneratorFunction,
+    ClassConstructor,
+    ClassFieldInitializer,
+    NonSimpleParameters,
+    LegacyCaptureLayout,
+    DynamicNameResolution,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlainLocalSlotIneligibility {
+    MissingAtom,
+    MappedArgument,
+    Tdz,
+    SelfBinding,
+    Captured,
+    NotEnvironmentVisible,
+    Lexical,
+    HiddenName,
+}
+
 impl Function {
+    pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
+        self.strict || !self.constructible || self.is_class_constructor
+    }
+
     pub(crate) fn arguments_are_mapped(&self) -> bool {
-        !self.strict && self.simple_parameters
+        !self.is_arrow && !self.strict && self.simple_parameters
+    }
+
+    pub(crate) fn plain_local_context_is_safe(&self) -> bool {
+        self.plain_local_context_ineligibility().is_none()
+    }
+
+    pub(crate) fn plain_local_context_ineligibility(
+        &self,
+    ) -> Option<PlainLocalContextIneligibility> {
+        if self.parent.is_none() {
+            return Some(PlainLocalContextIneligibility::RootFunction);
+        }
+        if self.is_async {
+            return Some(PlainLocalContextIneligibility::AsyncFunction);
+        }
+        if self.is_generator {
+            return Some(PlainLocalContextIneligibility::GeneratorFunction);
+        }
+        if self.is_class_constructor {
+            return Some(PlainLocalContextIneligibility::ClassConstructor);
+        }
+        if self.class_field_initializer {
+            return Some(PlainLocalContextIneligibility::ClassFieldInitializer);
+        }
+        if !self.simple_parameters {
+            return Some(PlainLocalContextIneligibility::NonSimpleParameters);
+        }
+        let selective = self.selective_capture_slots.is_some();
+        let has_legacy_environment_access = self.code.iter().any(|instruction| {
+            instruction.op() == Op::MakeClosure && !selective
+                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+        }) || self.wide.iter().any(|instruction| {
+            instruction.op() == Op::MakeClosure && !selective
+                || matches!(instruction.op(), Op::LoadEnvLocal | Op::StoreEnvLocal) && !selective
+        });
+        if has_legacy_environment_access {
+            return Some(PlainLocalContextIneligibility::LegacyCaptureLayout);
+        }
+        let has_dynamic_name_resolution = self.code.iter().any(|instruction| {
+            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
+                || instruction.op() == Op::Call && instruction.direct_eval()
+        }) || self.wide.iter().any(|instruction| {
+            matches!(instruction.op(), Op::CallDirectEvalArray | Op::ResolveName)
+                || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
+        });
+        has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
+    }
+
+    pub(crate) fn plain_local_slot_is_safe(
+        &self,
+        slot: usize,
+        atom_name: &str,
+        has_tdz: bool,
+    ) -> bool {
+        self.plain_local_slot_ineligibility(slot, atom_name, has_tdz)
+            .is_none()
+    }
+
+    pub(crate) fn plain_local_slot_ineligibility(
+        &self,
+        slot: usize,
+        atom_name: &str,
+        has_tdz: bool,
+    ) -> Option<PlainLocalSlotIneligibility> {
+        let Some(&atom) = self.local_atoms.get(slot) else {
+            return Some(PlainLocalSlotIneligibility::MissingAtom);
+        };
+        if has_tdz {
+            return Some(PlainLocalSlotIneligibility::Tdz);
+        }
+        if self.is_self_binding_slot(slot) {
+            return Some(PlainLocalSlotIneligibility::SelfBinding);
+        }
+        if self
+            .selective_capture_slots
+            .as_ref()
+            .is_some_and(|captured| {
+                u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+            })
+        {
+            return Some(PlainLocalSlotIneligibility::Captured);
+        }
+        if slot < usize::from(self.params)
+            && self.arguments_slot.is_some()
+            && self.arguments_are_mapped()
+        {
+            return Some(PlainLocalSlotIneligibility::MappedArgument);
+        }
+        if !self.environment_atoms.contains(&atom) {
+            return Some(PlainLocalSlotIneligibility::NotEnvironmentVisible);
+        }
+        if self.lexical_atoms.contains(&atom) {
+            return Some(PlainLocalSlotIneligibility::Lexical);
+        }
+        if atom_name.starts_with('\0') {
+            return Some(PlainLocalSlotIneligibility::HiddenName);
+        }
+        None
     }
 
     pub(crate) fn is_self_binding_slot(&self, slot: usize) -> bool {
         self.self_binding_slot
             .is_some_and(|self_slot| usize::from(self_slot) == slot)
+    }
+
+    pub(crate) fn local_slot_uses_environment(&self, slot: usize) -> bool {
+        self.selective_capture_slots.as_ref().is_none_or(|captured| {
+            u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+        })
     }
 }
 
@@ -884,9 +1031,15 @@ pub(crate) struct MethodSite {
     pub receiver_path: Option<(Atom, u16)>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ObjectSite {
-    pub atoms: [Atom; 2],
+    pub atoms: SmallVec<[Atom; INLINE_OBJECT_SITE_ATOMS]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RegExpLiteralSite {
+    pub pattern_constant: u32,
+    pub flags_constant: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1188,6 +1341,7 @@ pub struct ResidualProgram {
     pub(crate) method_arguments: Vec<Register>,
     pub(crate) field_sites: Vec<FieldSite>,
     pub(crate) object_sites: Vec<ObjectSite>,
+    pub(crate) regexp_literal_sites: Vec<RegExpLiteralSite>,
     pub(crate) superinstructions: Vec<Superinstruction>,
     pub(crate) register_roots: Vec<u64>,
 }
@@ -1196,14 +1350,22 @@ pub struct ResidualProgram {
 #[inline(never)]
 fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) -> bool {
     code.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
+        !matches!(
+            instruction.op(),
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
+        )
+            || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
-        instruction.op() != Op::LoadLocal || instruction.local_slot() < usize::from(locals)
+        !matches!(
+            instruction.op(),
+            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
+        )
+            || instruction.local_slot() < usize::from(locals)
     })
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 74;
+    pub const FORMAT_VERSION: u8 = 80;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

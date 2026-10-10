@@ -1,0 +1,500 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "provenance": {
+    "source_revision": "f9d15f399e1c8af225d316f22f6f0c77e79b24b7",
+    "source_dirty": true,
+    "binary": "/workspace/quench/target/production/run-stages",
+    "host": "linux-x86_64",
+    "timeout_ms": 300000,
+    "jobs": 4
+  },
+  "total": 95,
+  "passed": 95,
+  "failed": 0,
+  "stages": {
+    "31": {
+      "passed": 95,
+      "total": 95,
+      "failed": 0
+    }
+  },
+  "families": {},
+  "outcomes": [
+    {
+      "path": "built-ins/Array/fromAsync/async-iterable-async-mapped-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/async-iterable-input-does-not-await-input.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/async-iterable-input-iteration-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/async-iterable-input.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-array-add-to-empty.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-array-add-to-singleton.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-array-add.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-array-mutate.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-array-remove.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-arraybuffer.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-arraylike-holes.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-arraylike-length-accessor-throws.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-arraylike-promise.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-arraylike-too-long.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-asynciterator-exists.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-asynciterator-not-callable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-asynciterator-null.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-asynciterator-sync.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-asynciterator-throws.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-bigint.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-boolean.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-function.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-iterator-exists.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-iterator-not-callable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-iterator-null.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-iterator-promise.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-iterator-throws.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-null-undefined.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-number.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-object-not-arraylike.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-operations.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-string.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-symbol.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/asyncitems-uses-intrinsic-iterator-symbols.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/builtin.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/length.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-arraylike.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-iterable-async.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-iterable-sync.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-throws-close-async-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-throws-close-sync-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-async-throws.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-not-callable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-result-awaited-once-per-iteration.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-arraylike.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-iterable-async.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-iterable-sync.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-throws-close-async-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-throws-close-sync-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/mapfn-sync-throws.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/name.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-does-not-use-array-prototype.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-element-access-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-with-thenable-async-mapped-awaits-callback-result-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-with-thenable-async-mapped-callback-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-with-thenable-element-rejects.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-with-thenable-sync-mapped-callback-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input-with-thenable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-input.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-sync-mapped-callback-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-with-non-promise-thenable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-with-thenable-async-mapped-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-with-thenable-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-with-thenable-sync-mapped-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/non-iterable-with-thenable-then-method-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/not-a-constructor.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/prop-desc.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/returned-promise-resolves-to-array.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/returns-promise.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-input-with-non-promise-thenable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-input-with-thenable.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-input.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-iteration-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-rejecting-thenable-closes.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-rejecting-thenable-rejects.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-async-mapped-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-async-mapped-callback-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-sync-mapped-awaits-once.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-sync-mapped-callback-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/sync-iterable-with-thenable-then-method-err.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-operations.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-bad-length-setter.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-readonly-elements.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-readonly-length.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-unsettable-element-closes-async-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-unsettable-element-closes-sync-iterator.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor-with-unsettable-element.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-constructor.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/this-non-constructor.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/thisarg-object.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/thisarg-omitted-sloppy.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/thisarg-omitted-strict.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/thisarg-primitive-sloppy.js",
+      "stage": "31",
+      "outcome": "pass"
+    },
+    {
+      "path": "built-ins/Array/fromAsync/thisarg-primitive-strict.js",
+      "stage": "31",
+      "outcome": "pass"
+    }
+  ]
+}

@@ -8,6 +8,10 @@ autobins = false
 name = "quench-node"
 path = "src/bin/quench-node.rs"
 
+[features]
+default = []
+profile-memory = ["quench-runtime/profile-memory"]
+
 [dependencies]
 quench-js-check = { path = "../quench-js-check" }
 quench-runtime = { path = "../quench-runtime" }

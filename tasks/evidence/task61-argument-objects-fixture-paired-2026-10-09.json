@@ -1,0 +1,1133 @@
+{
+  "task": 61,
+  "experiment": "arguments-object template V8-v7 fixture check",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "processor": "arm",
+    "python": "3.9.6"
+  },
+  "rounds_per_fixture": 11,
+  "binary_sha256": {
+    "baseline": "790acdad8d00bdf4fc6f1db03450914dead2a43119eba3ac99e9ba246c517a4a",
+    "candidate": "b2602ed749e836b199a42f3477f0725e01a0dd9e6162f12d79bdca0a663547c2"
+  },
+  "runner_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "inputs": {
+    "raytrace.js": {
+      "source_path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "source_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "materialized_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "materialized_path": "target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+    },
+    "earley-boyer.js": {
+      "source_path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "source_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "materialized_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "materialized_path": "target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+    }
+  },
+  "records": [
+    {
+      "fixture": "raytrace.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 693.0,
+          "instructions_retired": 123918511230,
+          "cycles_elapsed": 21882407667,
+          "maximum_rss_bytes": 21118976,
+          "elapsed_seconds": 5.35,
+          "wall_seconds": 5.356050208,
+          "stdout": "__quenchBenchResult: RayTrace: 693\n----\nScore: 693\n",
+          "stderr": "        5.35 real         5.32 user         0.01 sys\n            21118976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1469  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   7  voluntary context switches\n                 500  involuntary context switches\n        123918511230  instructions retired\n         21882407667  cycles elapsed\n            11354520  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 412.0,
+          "instructions_retired": 141112079471,
+          "cycles_elapsed": 30577234374,
+          "maximum_rss_bytes": 25608192,
+          "elapsed_seconds": 7.62,
+          "wall_seconds": 7.624859999999999,
+          "stdout": "__quenchBenchResult: RayTrace: 412\n----\nScore: 412\n",
+          "stderr": "        7.62 real         7.60 user         0.01 sys\n            25608192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1750  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 705  involuntary context switches\n        141112079471  instructions retired\n         30577234374  cycles elapsed\n            15974856  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 402.0,
+          "instructions_retired": 141106289386,
+          "cycles_elapsed": 30572830106,
+          "maximum_rss_bytes": 26263552,
+          "elapsed_seconds": 7.75,
+          "wall_seconds": 7.753193333999999,
+          "stdout": "__quenchBenchResult: RayTrace: 402\n----\nScore: 402\n",
+          "stderr": "        7.75 real         7.73 user         0.01 sys\n            26263552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1784  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 714  involuntary context switches\n        141106289386  instructions retired\n         30572830106  cycles elapsed\n            16613832  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 659.0,
+          "instructions_retired": 114054723890,
+          "cycles_elapsed": 20633368055,
+          "maximum_rss_bytes": 21053440,
+          "elapsed_seconds": 5.22,
+          "wall_seconds": 5.2228882080000005,
+          "stdout": "__quenchBenchResult: RayTrace: 659\n----\nScore: 659\n",
+          "stderr": "        5.22 real         5.18 user         0.01 sys\n            21053440  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1466  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3192  involuntary context switches\n        114054723890  instructions retired\n         20633368055  cycles elapsed\n            11321776  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 693.0,
+          "instructions_retired": 123894098956,
+          "cycles_elapsed": 21626440155,
+          "maximum_rss_bytes": 20971520,
+          "elapsed_seconds": 5.36,
+          "wall_seconds": 5.369395749999999,
+          "stdout": "__quenchBenchResult: RayTrace: 693\n----\nScore: 693\n",
+          "stderr": "        5.36 real         5.35 user         0.01 sys\n            20971520  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1460  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 500  involuntary context switches\n        123894098956  instructions retired\n         21626440155  cycles elapsed\n            11207064  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 435.0,
+          "instructions_retired": 141123723229,
+          "cycles_elapsed": 29184352584,
+          "maximum_rss_bytes": 25591808,
+          "elapsed_seconds": 7.16,
+          "wall_seconds": 7.165580291999998,
+          "stdout": "__quenchBenchResult: RayTrace: 435\n----\nScore: 435\n",
+          "stderr": "        7.16 real         7.13 user         0.02 sys\n            25591808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1743  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 547  involuntary context switches\n        141123723229  instructions retired\n         29184352584  cycles elapsed\n            15942088  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 405.0,
+          "instructions_retired": 137810156915,
+          "cycles_elapsed": 29867582121,
+          "maximum_rss_bytes": 26460160,
+          "elapsed_seconds": 7.47,
+          "wall_seconds": 7.472658750000001,
+          "stdout": "__quenchBenchResult: RayTrace: 405\n----\nScore: 405\n",
+          "stderr": "        7.47 real         7.40 user         0.02 sys\n            26460160  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1797  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                4985  involuntary context switches\n        137810156915  instructions retired\n         29867582121  cycles elapsed\n            16826824  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 489.0,
+          "instructions_retired": 104335201797,
+          "cycles_elapsed": 20976723508,
+          "maximum_rss_bytes": 21037056,
+          "elapsed_seconds": 6.74,
+          "wall_seconds": 6.743569915999998,
+          "stdout": "__quenchBenchResult: RayTrace: 489\n----\nScore: 489\n",
+          "stderr": "        6.74 real         5.57 user         0.07 sys\n            21037056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1465  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n               19834  involuntary context switches\n        104335201797  instructions retired\n         20976723508  cycles elapsed\n            11288984  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 669.0,
+          "instructions_retired": 116542751999,
+          "cycles_elapsed": 20712266870,
+          "maximum_rss_bytes": 21069824,
+          "elapsed_seconds": 5.23,
+          "wall_seconds": 5.240145208999998,
+          "stdout": "__quenchBenchResult: RayTrace: 669\n----\nScore: 669\n",
+          "stderr": "        5.23 real         5.21 user         0.01 sys\n            21069824  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1467  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 525  involuntary context switches\n        116542751999  instructions retired\n         20712266870  cycles elapsed\n            11338160  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 394.0,
+          "instructions_retired": 141119545549,
+          "cycles_elapsed": 31033667136,
+          "maximum_rss_bytes": 26525696,
+          "elapsed_seconds": 7.91,
+          "wall_seconds": 7.919922042000003,
+          "stdout": "__quenchBenchResult: RayTrace: 394\n----\nScore: 394\n",
+          "stderr": "        7.91 real         7.89 user         0.01 sys\n            26525696  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1800  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1100  involuntary context switches\n        141119545549  instructions retired\n         31033667136  cycles elapsed\n            16875976  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 421.0,
+          "instructions_retired": 141120834576,
+          "cycles_elapsed": 29858161128,
+          "maximum_rss_bytes": 24231936,
+          "elapsed_seconds": 7.45,
+          "wall_seconds": 7.456077666999988,
+          "stdout": "__quenchBenchResult: RayTrace: 421\n----\nScore: 421\n",
+          "stderr": "        7.45 real         7.43 user         0.01 sys\n            24231936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1661  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 354  involuntary context switches\n        141120834576  instructions retired\n         29858161128  cycles elapsed\n            14582192  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 686.0,
+          "instructions_retired": 123899711984,
+          "cycles_elapsed": 21705911037,
+          "maximum_rss_bytes": 20938752,
+          "elapsed_seconds": 5.41,
+          "wall_seconds": 5.418271833999995,
+          "stdout": "__quenchBenchResult: RayTrace: 686\n----\nScore: 686\n",
+          "stderr": "        5.41 real         5.39 user         0.01 sys\n            20938752  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1458  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 220  involuntary context switches\n        123899711984  instructions retired\n         21705911037  cycles elapsed\n            11157888  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 684.0,
+          "instructions_retired": 123904826993,
+          "cycles_elapsed": 21748346632,
+          "maximum_rss_bytes": 20971520,
+          "elapsed_seconds": 5.42,
+          "wall_seconds": 5.426044582999992,
+          "stdout": "__quenchBenchResult: RayTrace: 684\n----\nScore: 684\n",
+          "stderr": "        5.42 real         5.40 user         0.01 sys\n            20971520  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1461  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 243  involuntary context switches\n        123904826993  instructions retired\n         21748346632  cycles elapsed\n            11223448  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 429.0,
+          "instructions_retired": 141106980755,
+          "cycles_elapsed": 29405903099,
+          "maximum_rss_bytes": 24215552,
+          "elapsed_seconds": 7.26,
+          "wall_seconds": 7.271876290999998,
+          "stdout": "__quenchBenchResult: RayTrace: 429\n----\nScore: 429\n",
+          "stderr": "        7.26 real         7.24 user         0.01 sys\n            24215552  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1659  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 370  involuntary context switches\n        141106980755  instructions retired\n         29405903099  cycles elapsed\n            14549424  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 433.0,
+          "instructions_retired": 141125676157,
+          "cycles_elapsed": 29075780858,
+          "maximum_rss_bytes": 24117248,
+          "elapsed_seconds": 7.19,
+          "wall_seconds": 7.193744833000011,
+          "stdout": "__quenchBenchResult: RayTrace: 433\n----\nScore: 433\n",
+          "stderr": "        7.19 real         7.16 user         0.02 sys\n            24117248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1653  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 570  involuntary context switches\n        141125676157  instructions retired\n         29075780858  cycles elapsed\n            14434712  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 690.0,
+          "instructions_retired": 123901971501,
+          "cycles_elapsed": 21625026710,
+          "maximum_rss_bytes": 21086208,
+          "elapsed_seconds": 5.38,
+          "wall_seconds": 5.387760333000003,
+          "stdout": "__quenchBenchResult: RayTrace: 690\n----\nScore: 690\n",
+          "stderr": "        5.38 real         5.37 user         0.01 sys\n            21086208  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1468  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 255  involuntary context switches\n        123901971501  instructions retired\n         21625026710  cycles elapsed\n            11338136  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 684.0,
+          "instructions_retired": 123902696835,
+          "cycles_elapsed": 21845350087,
+          "maximum_rss_bytes": 20955136,
+          "elapsed_seconds": 5.43,
+          "wall_seconds": 5.434218666999996,
+          "stdout": "__quenchBenchResult: RayTrace: 684\n----\nScore: 684\n",
+          "stderr": "        5.43 real         5.41 user         0.01 sys\n            20955136  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1460  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 225  involuntary context switches\n        123902696835  instructions retired\n         21845350087  cycles elapsed\n            11207064  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 437.0,
+          "instructions_retired": 141123272432,
+          "cycles_elapsed": 28938443216,
+          "maximum_rss_bytes": 24264704,
+          "elapsed_seconds": 7.13,
+          "wall_seconds": 7.139783042000005,
+          "stdout": "__quenchBenchResult: RayTrace: 437\n----\nScore: 437\n",
+          "stderr": "        7.13 real         7.11 user         0.01 sys\n            24264704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1661  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 329  involuntary context switches\n        141123272432  instructions retired\n         28938443216  cycles elapsed\n            14598600  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 431.0,
+          "instructions_retired": 141124801662,
+          "cycles_elapsed": 29350279546,
+          "maximum_rss_bytes": 25460736,
+          "elapsed_seconds": 7.23,
+          "wall_seconds": 7.237675874999994,
+          "stdout": "__quenchBenchResult: RayTrace: 431\n----\nScore: 431\n",
+          "stderr": "        7.23 real         7.21 user         0.01 sys\n            25460736  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1734  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 637  involuntary context switches\n        141124801662  instructions retired\n         29350279546  cycles elapsed\n            15778224  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 676.0,
+          "instructions_retired": 123935138935,
+          "cycles_elapsed": 21839870246,
+          "maximum_rss_bytes": 21118976,
+          "elapsed_seconds": 5.48,
+          "wall_seconds": 5.483854624999992,
+          "stdout": "__quenchBenchResult: RayTrace: 676\n----\nScore: 676\n",
+          "stderr": "        5.48 real         5.45 user         0.01 sys\n            21118976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1470  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 404  involuntary context switches\n        123935138935  instructions retired\n         21839870246  cycles elapsed\n            11387312  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "raytrace.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "raytrace.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 683.0,
+          "instructions_retired": 121481052397,
+          "cycles_elapsed": 21391809376,
+          "maximum_rss_bytes": 21037056,
+          "elapsed_seconds": 5.35,
+          "wall_seconds": 5.3586402089999865,
+          "stdout": "__quenchBenchResult: RayTrace: 683\n----\nScore: 683\n",
+          "stderr": "        5.35 real         5.33 user         0.01 sys\n            21037056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1464  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 259  involuntary context switches\n        121481052397  instructions retired\n         21391809376  cycles elapsed\n            11272600  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "raytrace.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-raytrace.js"
+          ],
+          "exit_code": 0,
+          "score": 432.0,
+          "instructions_retired": 141113874128,
+          "cycles_elapsed": 29332601034,
+          "maximum_rss_bytes": 24264704,
+          "elapsed_seconds": 7.22,
+          "wall_seconds": 7.2301762499999995,
+          "stdout": "__quenchBenchResult: RayTrace: 432\n----\nScore: 432\n",
+          "stderr": "        7.22 real         7.20 user         0.01 sys\n            24264704  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1662  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 303  involuntary context switches\n        141113874128  instructions retired\n         29332601034  cycles elapsed\n            14598576  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 618.0,
+          "instructions_retired": 362379234194,
+          "cycles_elapsed": 57259326804,
+          "maximum_rss_bytes": 65732608,
+          "elapsed_seconds": 14.28,
+          "wall_seconds": 14.283442291,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 618\n----\nScore: 618\n",
+          "stderr": "       14.28 real        14.23 user         0.04 sys\n            65732608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4232  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 869  involuntary context switches\n        362379234194  instructions retired\n         57259326804  cycles elapsed\n            55968200  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 533.0,
+          "instructions_retired": 354955047444,
+          "cycles_elapsed": 57330434592,
+          "maximum_rss_bytes": 68829184,
+          "elapsed_seconds": 14.29,
+          "wall_seconds": 14.30118916699999,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 533\n----\nScore: 533\n",
+          "stderr": "       14.29 real        14.24 user         0.04 sys\n            68829184  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4436  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 752  involuntary context switches\n        354955047444  instructions retired\n         57330434592  cycles elapsed\n            59113904  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 529.0,
+          "instructions_retired": 354942707778,
+          "cycles_elapsed": 57499047459,
+          "maximum_rss_bytes": 68976640,
+          "elapsed_seconds": 14.37,
+          "wall_seconds": 14.379101416999987,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 529\n----\nScore: 529\n",
+          "stderr": "       14.37 real        14.32 user         0.04 sys\n            68976640  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4445  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1002  involuntary context switches\n        354942707778  instructions retired\n         57499047459  cycles elapsed\n            59261360  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 618.0,
+          "instructions_retired": 362401506368,
+          "cycles_elapsed": 57519715309,
+          "maximum_rss_bytes": 66240512,
+          "elapsed_seconds": 14.38,
+          "wall_seconds": 14.386420375,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 618\n----\nScore: 618\n",
+          "stderr": "       14.38 real        14.33 user         0.04 sys\n            66240512  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4263  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 692  involuntary context switches\n        362401506368  instructions retired\n         57519715309  cycles elapsed\n            56492512  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 613.0,
+          "instructions_retired": 362402887499,
+          "cycles_elapsed": 57605711606,
+          "maximum_rss_bytes": 65683456,
+          "elapsed_seconds": 14.44,
+          "wall_seconds": 14.45084962499999,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 613\n----\nScore: 613\n",
+          "stderr": "       14.44 real        14.38 user         0.04 sys\n            65683456  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4229  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1075  involuntary context switches\n        362402887499  instructions retired\n         57605711606  cycles elapsed\n            55919048  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 533.0,
+          "instructions_retired": 354958708844,
+          "cycles_elapsed": 57351628019,
+          "maximum_rss_bytes": 68796416,
+          "elapsed_seconds": 14.34,
+          "wall_seconds": 14.346807041999995,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 533\n----\nScore: 533\n",
+          "stderr": "       14.34 real        14.29 user         0.04 sys\n            68796416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4434  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 760  involuntary context switches\n        354958708844  instructions retired\n         57351628019  cycles elapsed\n            59113952  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 533.0,
+          "instructions_retired": 354952221520,
+          "cycles_elapsed": 57364374167,
+          "maximum_rss_bytes": 69058560,
+          "elapsed_seconds": 14.3,
+          "wall_seconds": 14.302726750000005,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 533\n----\nScore: 533\n",
+          "stderr": "       14.30 real        14.25 user         0.04 sys\n            69058560  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4451  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 870  involuntary context switches\n        354952221520  instructions retired\n         57364374167  cycles elapsed\n            59392480  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 620.0,
+          "instructions_retired": 362385826742,
+          "cycles_elapsed": 57217492459,
+          "maximum_rss_bytes": 65814528,
+          "elapsed_seconds": 14.28,
+          "wall_seconds": 14.287431292000008,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 620\n----\nScore: 620\n",
+          "stderr": "       14.28 real        14.23 user         0.04 sys\n            65814528  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4237  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 678  involuntary context switches\n        362385826742  instructions retired\n         57217492459  cycles elapsed\n            56050120  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 620.0,
+          "instructions_retired": 362377967724,
+          "cycles_elapsed": 57220218522,
+          "maximum_rss_bytes": 65601536,
+          "elapsed_seconds": 14.26,
+          "wall_seconds": 14.26345679100001,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 620\n----\nScore: 620\n",
+          "stderr": "       14.26 real        14.21 user         0.03 sys\n            65601536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4224  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 617  involuntary context switches\n        362377967724  instructions retired\n         57220218522  cycles elapsed\n            55837128  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 528.0,
+          "instructions_retired": 354960458415,
+          "cycles_elapsed": 57572723641,
+          "maximum_rss_bytes": 68747264,
+          "elapsed_seconds": 14.37,
+          "wall_seconds": 14.378637416999993,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 528\n----\nScore: 528\n",
+          "stderr": "       14.37 real        14.33 user         0.02 sys\n            68747264  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4419  page reclaims\n                  40  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  17  voluntary context switches\n                 957  involuntary context switches\n        354960458415  instructions retired\n         57572723641  cycles elapsed\n            59130312  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 531.0,
+          "instructions_retired": 354958710698,
+          "cycles_elapsed": 57569846722,
+          "maximum_rss_bytes": 68911104,
+          "elapsed_seconds": 14.33,
+          "wall_seconds": 14.339021875000014,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 531\n----\nScore: 531\n",
+          "stderr": "       14.33 real        14.29 user         0.03 sys\n            68911104  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4439  page reclaims\n                  17  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 674  involuntary context switches\n        354958710698  instructions retired\n         57569846722  cycles elapsed\n            59228616  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 622.0,
+          "instructions_retired": 362371612128,
+          "cycles_elapsed": 57141029253,
+          "maximum_rss_bytes": 65519616,
+          "elapsed_seconds": 14.23,
+          "wall_seconds": 14.233315582999978,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 622\n----\nScore: 622\n",
+          "stderr": "       14.23 real        14.21 user         0.01 sys\n            65519616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4215  page reclaims\n                  18  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 780  involuntary context switches\n        362371612128  instructions retired\n         57141029253  cycles elapsed\n            55771616  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 621.0,
+          "instructions_retired": 362364547243,
+          "cycles_elapsed": 57190216678,
+          "maximum_rss_bytes": 65503232,
+          "elapsed_seconds": 14.25,
+          "wall_seconds": 14.260914791999994,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 621\n----\nScore: 621\n",
+          "stderr": "       14.25 real        14.24 user         0.01 sys\n            65503232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4218  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 635  involuntary context switches\n        362364547243  instructions retired\n         57190216678  cycles elapsed\n            55755232  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 533.0,
+          "instructions_retired": 357581991275,
+          "cycles_elapsed": 58123786915,
+          "maximum_rss_bytes": 68730880,
+          "elapsed_seconds": 14.46,
+          "wall_seconds": 14.468756333999977,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 533\n----\nScore: 533\n",
+          "stderr": "       14.46 real        14.44 user         0.01 sys\n            68730880  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4402  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 940  involuntary context switches\n        357581991275  instructions retired\n         58123786915  cycles elapsed\n            59048392  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 533.0,
+          "instructions_retired": 354950810350,
+          "cycles_elapsed": 57133117717,
+          "maximum_rss_bytes": 71483392,
+          "elapsed_seconds": 14.23,
+          "wall_seconds": 14.237895917000003,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 533\n----\nScore: 533\n",
+          "stderr": "       14.23 real        14.21 user         0.01 sys\n            71483392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4596  page reclaims\n                  17  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 688  involuntary context switches\n        354950810350  instructions retired\n         57133117717  cycles elapsed\n            61817312  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 620.0,
+          "instructions_retired": 362387570130,
+          "cycles_elapsed": 57330513664,
+          "maximum_rss_bytes": 65830912,
+          "elapsed_seconds": 14.29,
+          "wall_seconds": 14.300665667000032,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 620\n----\nScore: 620\n",
+          "stderr": "       14.29 real        14.26 user         0.02 sys\n            65830912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4225  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 861  involuntary context switches\n        362387570130  instructions retired\n         57330513664  cycles elapsed\n            56066504  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 622.0,
+          "instructions_retired": 362767049830,
+          "cycles_elapsed": 57201566806,
+          "maximum_rss_bytes": 65830912,
+          "elapsed_seconds": 14.27,
+          "wall_seconds": 14.273650374999988,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 622\n----\nScore: 622\n",
+          "stderr": "       14.27 real        14.24 user         0.02 sys\n            65830912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4245  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 677  involuntary context switches\n        362767049830  instructions retired\n         57201566806  cycles elapsed\n            56066504  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 529.0,
+          "instructions_retired": 354969887601,
+          "cycles_elapsed": 57627453488,
+          "maximum_rss_bytes": 69042176,
+          "elapsed_seconds": 14.38,
+          "wall_seconds": 14.383348333000015,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 529\n----\nScore: 529\n",
+          "stderr": "       14.38 real        14.33 user         0.03 sys\n            69042176  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4449  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 973  involuntary context switches\n        354969887601  instructions retired\n         57627453488  cycles elapsed\n            59359712  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 514.0,
+          "instructions_retired": 362559129740,
+          "cycles_elapsed": 60818796779,
+          "maximum_rss_bytes": 69451776,
+          "elapsed_seconds": 15.29,
+          "wall_seconds": 15.299548499999958,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 514\n----\nScore: 514\n",
+          "stderr": "       15.29 real        15.26 user         0.02 sys\n            69451776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4474  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 963  involuntary context switches\n        362559129740  instructions retired\n         60818796779  cycles elapsed\n            59752904  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 596.0,
+          "instructions_retired": 357871920008,
+          "cycles_elapsed": 57154028184,
+          "maximum_rss_bytes": 66830336,
+          "elapsed_seconds": 14.37,
+          "wall_seconds": 14.375768458999971,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 596\n----\nScore: 596\n",
+          "stderr": "       14.37 real        14.31 user         0.04 sys\n            66830336  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4265  page reclaims\n                  48  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                1027  involuntary context switches\n        357871920008  instructions retired\n         57154028184  cycles elapsed\n            57049520  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "earley-boyer.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "earley-boyer.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 622.0,
+          "instructions_retired": 362397782155,
+          "cycles_elapsed": 57116691519,
+          "maximum_rss_bytes": 66879488,
+          "elapsed_seconds": 14.25,
+          "wall_seconds": 14.260279540999989,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 622\n----\nScore: 622\n",
+          "stderr": "       14.25 real        14.21 user         0.03 sys\n            66879488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4302  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 598  involuntary context switches\n        362397782155  instructions retired\n         57116691519  cycles elapsed\n            57115080  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "earley-boyer.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-local-bounds-prod/production/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js"
+          ],
+          "exit_code": 0,
+          "score": 531.0,
+          "instructions_retired": 354961808901,
+          "cycles_elapsed": 57502484047,
+          "maximum_rss_bytes": 68927488,
+          "elapsed_seconds": 14.33,
+          "wall_seconds": 14.334989457999995,
+          "stdout": "__quenchBenchResult: EarleyBoyer: 531\n----\nScore: 531\n",
+          "stderr": "       14.33 real        14.28 user         0.03 sys\n            68927488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4430  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 892  involuntary context switches\n        354961808901  instructions retired\n         57502484047  cycles elapsed\n            59245000  peak memory footprint\n"
+        }
+      }
+    }
+  ]
+}

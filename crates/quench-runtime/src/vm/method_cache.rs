@@ -134,6 +134,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn retain_live_method_caches(&mut self) {
+        #[cfg(feature = "profile-aggregate")]
+        let before = self.method_cache_entry_count();
         let heap = &self.heap;
         for entries in &mut self.method_caches {
             let len = entries.len();
@@ -143,6 +145,25 @@ impl<H: Host> Vm<H> {
             set.len = retain_entries(heap, &mut set.entries, usize::from(set.len)) as u8;
         }
         self.megamorphic_methods.retain(|set| set.len != 0);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let after = self.method_cache_entry_count();
+            self.profile.method_cache_clear(0, before - after);
+        }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn method_cache_entry_count(&self) -> usize {
+        self.method_caches
+            .iter()
+            .flat_map(|entries| entries.iter())
+            .filter(|entry| entry.target.is_some())
+            .count()
+            + self
+                .megamorphic_methods
+                .iter()
+                .map(|set| usize::from(set.len))
+                .sum::<usize>()
     }
 
     #[cfg(feature = "profile-aggregate")]
@@ -420,7 +441,7 @@ impl<H: Host> Vm<H> {
         self.profile
             .method_cache_tier(cached_call.map(|(_, _, tier)| tier));
         if let Some((callee, target, _)) = cached_call {
-            return self.call_value_with_target(
+            return self.call_value_with_target_from_frame(
                 p,
                 callee,
                 this,
@@ -451,6 +472,6 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.call_value(p, callee, this, arguments.as_slice())
+        self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
     }
 }

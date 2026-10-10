@@ -17,8 +17,12 @@ struct TripleCompactRule {
 }
 
 const RULES: &[Rule] = &[local_inc_store];
-const COMPACT_RULES: &[CompactRule] = &[CompactRule {
+const NUMERIC_COMPACT_RULES: &[CompactRule] = &[CompactRule {
     pattern: [Op::Binary, Op::StoreLocal],
+    replacement: binary_local_target,
+}];
+const PLAIN_LOCAL_COMPACT_RULES: &[CompactRule] = &[CompactRule {
+    pattern: [Op::Binary, Op::StoreLocalPlain],
     replacement: binary_local_target,
 }];
 const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
@@ -28,7 +32,7 @@ const TRIPLE_COMPACT_RULES: &[TripleCompactRule] = &[TripleCompactRule {
 
 pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
     if let Some(live) = live {
-        compact_binary_stores(function, live);
+        compact_binary_stores(function, live, NUMERIC_COMPACT_RULES, TRIPLE_COMPACT_RULES);
     }
     for pc in 0..function.code.len() {
         if let Some(target) = RULES.iter().find_map(|rule| rule(&function.code[pc..])) {
@@ -44,7 +48,18 @@ pub(super) fn apply(function: &mut Function, live: Option<&[u64]>) {
     }
 }
 
-fn compact_binary_stores(function: &mut Function, live: &[u64]) {
+pub(super) fn apply_plain_local_stores(function: &mut Function, live: Option<&[u64]>) {
+    if let Some(live) = live {
+        compact_binary_stores(function, live, PLAIN_LOCAL_COMPACT_RULES, &[]);
+    }
+}
+
+fn compact_binary_stores(
+    function: &mut Function,
+    live: &[u64],
+    rules: &[CompactRule],
+    triple_rules: &[TripleCompactRule],
+) {
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
@@ -62,7 +77,7 @@ fn compact_binary_stores(function: &mut Function, live: &[u64]) {
             .filter(|_| !protected[pc + 1] && !protected[pc + 2])
             .and_then(|window| {
                 let live_after = live.get(pc + 3).copied().unwrap_or(u64::MAX);
-                TRIPLE_COMPACT_RULES
+                triple_rules
                     .iter()
                     .filter(|rule| rule.pattern == [window[0].op(), window[1].op(), window[2].op()])
                     .find_map(|rule| {
@@ -82,7 +97,7 @@ fn compact_binary_stores(function: &mut Function, live: &[u64]) {
             .and_then(|second| {
                 let first = old[pc];
                 let live_after = live.get(pc + 2).copied().unwrap_or(u64::MAX);
-                COMPACT_RULES
+                rules
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| (rule.replacement)(first, *second, live_after))
@@ -220,6 +235,8 @@ mod tests {
             locals: 4,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
@@ -238,12 +255,22 @@ mod tests {
             register_root_offset: u32::MAX,
         };
         let mut dead = make_function();
-        compact_binary_stores(&mut dead, &[0, 0, 0, 0]);
+        compact_binary_stores(
+            &mut dead,
+            &[0, 0, 0, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(dead.code.len(), 2);
         assert_eq!(dead.code[0].a(), NUMERIC_LOCAL_TARGET | 3);
 
         let mut live = make_function();
-        compact_binary_stores(&mut live, &[0, 0, 1 << 2, 0]);
+        compact_binary_stores(
+            &mut live,
+            &[0, 0, 1 << 2, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(live.code.len(), 3);
     }
 
@@ -281,6 +308,8 @@ mod tests {
             locals: 4,
             local_atoms: vec![],
             environment_atoms: vec![],
+            selective_capture_slots: None,
+            inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
             global_var_atoms: vec![],
@@ -299,13 +328,23 @@ mod tests {
             register_root_offset: u32::MAX,
         };
         let mut dead = make_function();
-        compact_binary_stores(&mut dead, &[0, 0, 0, 1 << 2, 0]);
+        compact_binary_stores(
+            &mut dead,
+            &[0, 0, 0, 1 << 2, 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(dead.code.len(), 2);
         assert_eq!(crate::bytecode::Operand(dead.code[0].b()).tag(), 3);
         assert_eq!(crate::bytecode::Operand(dead.code[0].c()).tag(), 3);
 
         let mut live = make_function();
-        compact_binary_stores(&mut live, &[0, 0, 0, (1 << 0) | (1 << 2), 0]);
+        compact_binary_stores(
+            &mut live,
+            &[0, 0, 0, (1 << 0) | (1 << 2), 0],
+            NUMERIC_COMPACT_RULES,
+            TRIPLE_COMPACT_RULES,
+        );
         assert_eq!(live.code.len(), 4);
     }
 }

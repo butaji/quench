@@ -1,0 +1,283 @@
+{
+  "experiment": "M4 cross-check of v2-cloud call-root and SmallVec merge, after the same-loop trampoline commit",
+  "date": "2026-10-08",
+  "host": {
+    "model": "Mac16,10",
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 (Darwin arm64)",
+    "memory_bytes": 17179869184,
+    "logical_cpus": 10,
+    "rustc": "1.99.0",
+    "llvm": "23.1.2"
+  },
+  "source": {
+    "premerge_commit": "38820a7e97ae183541643df780d625ac99307743",
+    "cloud_tip": "f9d15f399e1c8af225d316f22f6f0c77e79b24b7",
+    "merged_source_contains_validator_wasm_boundary_fix": true
+  },
+  "binaries": {
+    "premerge_quench_node_sha256": "a257396c6028ecc940309dbd01f4e28e3d79f58fccef8ec4c9330759adc937b3",
+    "merged_quench_sha256": "31993acd87a7b21feee91f659839aed9463a043cfa365827a923d0a241a7a32e",
+    "merged_quench_node_sha256": "1a2de83f5f1712a86ab179df0c022664c49ca54300963bcb6fdf45109366657c",
+    "profile": "production"
+  },
+  "cjs_instruction_screens": [
+    {
+      "loop": "cjs-call-loop",
+      "pairs": [
+        {
+          "pair": 1,
+          "premerge_wall_seconds": 1.1903063329999999,
+          "merged_wall_seconds": 1.718173125,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 3579.2001161,
+          "merged_instructions_per_iteration": 3525.4760248
+        },
+        {
+          "pair": 2,
+          "premerge_wall_seconds": 1.2014372089999998,
+          "merged_wall_seconds": 1.207660541,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 3579.1077045,
+          "merged_instructions_per_iteration": 3524.0630318
+        },
+        {
+          "pair": 3,
+          "premerge_wall_seconds": 1.1895965420000003,
+          "merged_wall_seconds": 1.197903417,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 3579.0856387,
+          "merged_instructions_per_iteration": 3524.0591459
+        }
+      ],
+      "median_instruction_delta_percent": -1.537944014112591,
+      "median_premerge_wall_seconds": 1.1903063329999999,
+      "median_merged_wall_seconds": 1.207660541,
+      "median_premerge_instructions_per_iteration": 3579.1077045,
+      "median_merged_instructions_per_iteration": 3524.0630318,
+      "instruction_count_method": "instructions retired divided by 10,000,000 loop iterations"
+    },
+    {
+      "loop": "cjs-method-loop",
+      "pairs": [
+        {
+          "pair": 1,
+          "premerge_wall_seconds": 1.936475999999999,
+          "merged_wall_seconds": 1.9555452500000001,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 5829.2155592,
+          "merged_instructions_per_iteration": 5774.1771124
+        },
+        {
+          "pair": 2,
+          "premerge_wall_seconds": 1.9110517919999985,
+          "merged_wall_seconds": 1.9447949169999994,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 5829.1978532,
+          "merged_instructions_per_iteration": 5774.1245588
+        },
+        {
+          "pair": 3,
+          "premerge_wall_seconds": 1.9369173750000002,
+          "merged_wall_seconds": 1.9498364170000002,
+          "stdout_equal": true,
+          "premerge_instructions_per_iteration": 5829.3998526,
+          "merged_instructions_per_iteration": 5774.2426192
+        }
+      ],
+      "median_instruction_delta_percent": -0.9441827333548369,
+      "median_premerge_wall_seconds": 1.936475999999999,
+      "median_merged_wall_seconds": 1.9498364170000002,
+      "median_premerge_instructions_per_iteration": 5829.2155592,
+      "median_merged_instructions_per_iteration": 5774.1771124,
+      "instruction_count_method": "instructions retired divided by 10,000,000 loop iterations"
+    }
+  ],
+  "richards": {
+    "fixture_sha256": "142e6add14dec6eeec8b3a5378bce149e4d7007d51b82a2b39eeae8714144266",
+    "pairs": [
+      {
+        "pair": 1,
+        "score_premerge": 270.0,
+        "score_merged": 272.0,
+        "max_rss_premerge_bytes": 22249472,
+        "max_rss_merged_bytes": 22233088,
+        "instructions_premerge": 51467300483,
+        "instructions_merged": 50944868411,
+        "wall_premerge_seconds": 2.039241583,
+        "wall_merged_seconds": 2.032873166,
+        "stdout_equal": true
+      },
+      {
+        "pair": 2,
+        "score_premerge": 267.0,
+        "score_merged": 273.0,
+        "max_rss_premerge_bytes": 22298624,
+        "max_rss_merged_bytes": 22216704,
+        "instructions_premerge": 50816559720,
+        "instructions_merged": 51278315057,
+        "wall_premerge_seconds": 2.0377899589999995,
+        "wall_merged_seconds": 2.0379409170000002,
+        "stdout_equal": true
+      },
+      {
+        "pair": 3,
+        "score_premerge": 271.0,
+        "score_merged": 266.0,
+        "max_rss_premerge_bytes": 22183936,
+        "max_rss_merged_bytes": 22331392,
+        "instructions_premerge": 51142274152,
+        "instructions_merged": 49966689610,
+        "wall_premerge_seconds": 2.0288435420000006,
+        "wall_merged_seconds": 2.0378142090000004,
+        "stdout_equal": true
+      },
+      {
+        "pair": 4,
+        "score_premerge": 269.0,
+        "score_merged": 272.0,
+        "max_rss_premerge_bytes": 22364160,
+        "max_rss_merged_bytes": 22282240,
+        "instructions_premerge": 51142424632,
+        "instructions_merged": 50624599881,
+        "wall_premerge_seconds": 2.0391872089999996,
+        "wall_merged_seconds": 2.0219141250000003,
+        "stdout_equal": true
+      },
+      {
+        "pair": 5,
+        "score_premerge": 273.0,
+        "score_merged": 270.0,
+        "max_rss_premerge_bytes": 22118400,
+        "max_rss_merged_bytes": 22265856,
+        "instructions_premerge": 51466004681,
+        "instructions_merged": 50622775003,
+        "wall_premerge_seconds": 2.0359200410000007,
+        "wall_merged_seconds": 2.0393814160000012,
+        "stdout_equal": true
+      },
+      {
+        "pair": 6,
+        "score_premerge": 270.0,
+        "score_merged": 272.0,
+        "max_rss_premerge_bytes": 22282240,
+        "max_rss_merged_bytes": 22331392,
+        "instructions_premerge": 51139459167,
+        "instructions_merged": 50624900056,
+        "wall_premerge_seconds": 2.032976667,
+        "wall_merged_seconds": 2.0216139579999997,
+        "stdout_equal": true
+      },
+      {
+        "pair": 7,
+        "score_premerge": 272.0,
+        "score_merged": 270.0,
+        "max_rss_premerge_bytes": 22265856,
+        "max_rss_merged_bytes": 22183936,
+        "instructions_premerge": 51140747073,
+        "instructions_merged": 50620370522,
+        "wall_premerge_seconds": 2.021757542000003,
+        "wall_merged_seconds": 2.0299487080000027,
+        "stdout_equal": true
+      },
+      {
+        "pair": 8,
+        "score_premerge": 272.0,
+        "score_merged": 270.0,
+        "max_rss_premerge_bytes": 22102016,
+        "max_rss_merged_bytes": 22282240,
+        "instructions_premerge": 51466009107,
+        "instructions_merged": 50621892971,
+        "wall_premerge_seconds": 2.0437025409999983,
+        "wall_merged_seconds": 2.0350294580000003,
+        "stdout_equal": true
+      },
+      {
+        "pair": 9,
+        "score_premerge": 268.0,
+        "score_merged": 270.0,
+        "max_rss_premerge_bytes": 22298624,
+        "max_rss_merged_bytes": 22315008,
+        "instructions_premerge": 51141058497,
+        "instructions_merged": 50622301304,
+        "wall_premerge_seconds": 2.0364737079999955,
+        "wall_merged_seconds": 2.0333082499999975,
+        "stdout_equal": true
+      },
+      {
+        "pair": 10,
+        "score_premerge": 270.0,
+        "score_merged": 272.0,
+        "max_rss_premerge_bytes": 22134784,
+        "max_rss_merged_bytes": 22200320,
+        "instructions_premerge": 51139646134,
+        "instructions_merged": 50942811528,
+        "wall_premerge_seconds": 2.035999291000003,
+        "wall_merged_seconds": 2.0344744169999984,
+        "stdout_equal": true
+      },
+      {
+        "pair": 11,
+        "score_premerge": 269.0,
+        "score_merged": 272.0,
+        "max_rss_premerge_bytes": 22462464,
+        "max_rss_merged_bytes": 22331392,
+        "instructions_premerge": 51142586343,
+        "instructions_merged": 51278703402,
+        "wall_premerge_seconds": 2.0423394159999972,
+        "wall_merged_seconds": 2.0405165840000024,
+        "stdout_equal": true
+      }
+    ],
+    "summary": {
+      "pairs": 11,
+      "median_score_premerge": 270.0,
+      "median_score_merged": 272.0,
+      "median_paired_score_delta": 2.0,
+      "mean_paired_score_delta": 0.7272727272727273,
+      "mean_score_delta_bootstrap_95_ci": [
+        -1.1818181818181819,
+        2.5454545454545454
+      ],
+      "median_max_rss_premerge_bytes": 22265856,
+      "median_max_rss_merged_bytes": 22282240,
+      "median_paired_max_rss_delta_bytes": 16384,
+      "mean_max_rss_delta_bootstrap_95_ci_bytes": [
+        -40215.27272727273,
+        80430.54545454546
+      ],
+      "median_paired_instruction_delta": -518757193,
+      "mean_instruction_delta_bootstrap_95_ci": [
+        -698031481.8181819,
+        -192127984.27272728
+      ],
+      "median_paired_instruction_delta_percent": -1.01222380033672,
+      "median_paired_wall_delta_seconds": -0.0018228319999948894,
+      "all_outputs_equal": true
+    }
+  },
+  "correctness": {
+    "test262": {
+      "passed": 2635,
+      "total": 2635,
+      "stages": "1, 8, 11, 36\u201338, 47\u201350, 61\u201362, 80, 86"
+    },
+    "framework_core": {
+      "passed": 43,
+      "total": 43
+    },
+    "wasm": {
+      "passed": 67124,
+      "total": 67124,
+      "inputs": 288,
+      "failures": 0,
+      "note": "M4 selective-capture owner validation is restricted to JavaScript programs; Wasm instance-environment slots use the Wasm module validator. The same 21,189-failure profile was reproduced on the pre-merge source before applying this fix."
+    }
+  },
+  "decision": "The cloud call-root/SmallVec code lowers retired instructions on both CommonJS call loops and Richards on M4. Richards Score and RSS intervals include a tie; this is not evidence of a M4 Score/RSS win. Keep the platform-neutral implementation, report the Linux gain separately, and do not claim cross-platform qualification.",
+  "commands": {
+    "build": "CARGO_INCREMENTAL=0 cargo build --profile production --locked --offline -p quench-runtime -p quench-node --bins",
+    "cjs": "python3 measure_cjs_loops.py merged_quench_node premerge_quench_node",
+    "richards": "python3 measure_richards_pairs.py merged_quench_node premerge_quench_node; 11 alternating Quench-only pairs; /usr/bin/time -l"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "task": "62",
+  "kind": "Linux x86_64 four-engine no-JIT preflight",
+  "source_revision": "ac8febd3729384a382a7947d4cddb4b8ed167d6a",
+  "source_clean": true,
+  "report_path": "target/production/stageb-linux-10-08-preflight-current.json",
+  "report_sha256": "7bc8c03f7bcb5b0d8241a7e329e4aa476346d711290deb011b22c87a4ac899e0",
+  "runner_sha256": "89067d2fa81e57f11e3bbb568a2920e88e7fa7a062b76ec328eac7e191b1cd90",
+  "host": {
+    "uname": "Linux 8d342269933b 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "1.99.0 (LLVM 23.1.1)",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "metrics": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "sha256": "01e8a4b55912b3acb29222bd5ee090a2ac0b953f7013b1654cd7b3ca8fd89f49",
+      "argv": [],
+      "jit_mode": "interpreter",
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "version": "QuickJS version 2026-06-04",
+      "sha256": "7cd7c72a29d2ccd2c4e7680c92ce91cc03c6477d8432ad8ee6666ba5421e6b19",
+      "argv": [],
+      "jit_mode": "interpreter",
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "version": "1.4.2",
+      "sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "argv": [],
+      "jit_mode": "disabled-and-probed",
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "version": "v24.19.0",
+      "sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "argv": [
+        "--jitless"
+      ],
+      "jit_mode": "disabled-and-probed",
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "result": "all four engine preflight checks succeeded, including Bun useJIT=false option proof and Node --jitless probe",
+  "qualification": "preflight only; Task 62 still requires M4 preflight/clean build and full 11-round all-eight reference-engine campaign"
+}

@@ -8,6 +8,8 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction,
 };
+#[cfg(feature = "profile-memory")]
+use crate::heap::CellKind;
 use crate::heap::{
     CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
     Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
@@ -15,7 +17,6 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use crate::value_vec::ValueVec;
 use activation::CallContext;
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -211,6 +212,7 @@ struct Realm {
 }
 #[derive(Default)]
 struct RealmIntrinsics {
+    arguments_objects: FxHashMap<(Value, bool), ArgumentsObjectTemplate>,
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
@@ -236,6 +238,14 @@ struct RealmIntrinsics {
     intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
 }
+#[derive(Clone, Copy)]
+struct ArgumentsObjectTemplate {
+    anchor: Value,
+    length_slot: usize,
+    callee_slot: usize,
+    iterator_slot: usize,
+}
+const ARGUMENTS_OBJECT_PROPERTY_COUNT: usize = 3;
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: FxHashSet<Atom>,
@@ -245,12 +255,27 @@ struct GlobalLexicalState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct FieldCache {
     receiver: u32,
+    holder: u32,
     slot: u16,
 }
+const NO_FIELD_HOLDER: u32 = u32::MAX;
+const NO_FIELD_RECEIVER: u32 = u32::MAX;
+// DeltaBlue's measured inherited writes reach three prototypes; keep the
+// residual cache bounded while covering that common constructor shape.
+const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
 const EMPTY_CACHE: FieldCache = FieldCache {
-    receiver: u32::MAX,
+    receiver: NO_FIELD_RECEIVER,
+    holder: NO_FIELD_HOLDER,
     slot: 0,
 };
+#[derive(Clone)]
+struct FieldAddCache {
+    atom: Atom,
+    source_shape: u32,
+    target_shape: u32,
+    slot: u16,
+    prototype_shapes: Vec<u32>,
+}
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
@@ -258,7 +283,7 @@ const FIELD_MEGAMORPHIC_LIMIT: usize = 256;
 struct FieldCacheSet {
     len: u8,
     entries: [FieldCache; FIELD_MEGAMORPHIC_INLINE],
-    overflow: Option<Box<FxHashMap<u32, FieldCache>>>,
+    overflow: Option<Box<FxHashMap<u64, FieldCache>>>,
 }
 #[derive(Clone, Copy)]
 struct MethodCache {
@@ -315,6 +340,63 @@ enum ShapeTransition {
         trigger: DictionaryTrigger,
     },
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ShapeTransitionKey {
+    AddString(Atom),
+    Descriptor {
+        slot: u32,
+        attributes: CachedPropertyAttributes,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+struct CachedPropertyAttributes {
+    writable: bool,
+    enumerable: bool,
+    configurable: bool,
+    accessor: bool,
+}
+impl ShapeTransition {
+    fn introduces_gc_roots(self) -> bool {
+        match self {
+            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Descriptor { attributes, .. } => {
+                attributes.getter.is_some() || attributes.setter.is_some()
+            }
+            Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+        }
+    }
+
+    fn cache_key(self) -> Option<ShapeTransitionKey> {
+        match self {
+            Self::Add {
+                key: PropertyKey::String(atom),
+                ..
+            } => Some(ShapeTransitionKey::AddString(atom)),
+            // The transition table outlives individual properties. Never put
+            // accessor values in a key, where they would become strong roots.
+            Self::Descriptor { slot, attributes }
+                if attributes.getter.is_none() && attributes.setter.is_none() =>
+            {
+                Some(ShapeTransitionKey::Descriptor {
+                    slot,
+                    attributes: CachedPropertyAttributes {
+                        writable: attributes.writable,
+                        enumerable: attributes.enumerable,
+                        configurable: attributes.configurable,
+                        accessor: attributes.accessor,
+                    },
+                })
+            }
+            Self::Root
+            | Self::Add { .. }
+            | Self::Delete { .. }
+            | Self::Vacant
+            | Self::Descriptor { .. }
+            | Self::Dictionary { .. } => None,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DictionaryTrigger {
     PropertyCount,
@@ -352,11 +434,12 @@ struct Shape {
     transition: ShapeTransition,
     storage_len: usize,
     dictionary_trigger: Option<DictionaryTrigger>,
+    may_have_gc_roots: bool,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
 }
 impl Shape {
     fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None)
+        Self::child(None, ShapeTransition::Root, 0, None, false)
     }
 
     fn child(
@@ -364,12 +447,14 @@ impl Shape {
         transition: ShapeTransition,
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
+        parent_may_have_gc_roots: bool,
     ) -> Self {
         Self {
             parent,
             transition,
             storage_len,
             dictionary_trigger,
+            may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
         }
     }
@@ -388,6 +473,10 @@ enum CallTarget {
 pub(super) enum StepResult {
     Continue,
     TailCall,
+    PushFrame {
+        destination: Register,
+        stack_guard: crate::stack::StackGuard,
+    },
     Return(Value),
     Await {
         value: Value,
@@ -417,6 +506,16 @@ pub(super) enum FrameOutcome {
         delegated_result: Option<Value>,
         frame: Option<Frame>,
     },
+}
+enum UserFrameStart {
+    Outcome(FrameOutcome),
+    Pushed(crate::stack::StackGuard),
+}
+struct PendingGeneralCall {
+    caller: usize,
+    call_pc: u32,
+    destination: Register,
+    stack_guard: crate::stack::StackGuard,
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -534,7 +633,7 @@ pub(crate) struct Vm<H> {
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
-    transitions: FxHashMap<(u32, property_key::PropertyKey), u32>,
+    transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
@@ -544,6 +643,7 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
+    field_add_caches: FxHashMap<usize, FieldAddCache>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
@@ -843,9 +943,7 @@ impl<H: Host> Vm<H> {
         }
         self.instantiate_global_declarations(program)?;
         #[cfg(feature = "profile-memory")]
-        if std::env::var_os("QUENCH_MEMORY").is_some() {
-            self.report_memory("initialized");
-        }
+        self.report_memory_if_enabled("initialized");
         let root = self.closure(program, 0, Value::NULL)?;
         let this = if program.is_module() {
             Value::UNDEFINED
@@ -868,10 +966,26 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
-        self.profile.report(&self.heap, program);
+        #[cfg(feature = "profile-aggregate")]
+        if self
+            .profile
+            .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
+        {
+            self.profile
+                .report_object_literal_sites(ProgramId::MAIN.raw(), program);
+            #[cfg(feature = "profile-memory")]
+            self.report_memory_if_enabled("complete");
+            return;
+        }
+        self.profile
+            .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_memory_if_enabled(&self, phase: &str) {
         if std::env::var_os("QUENCH_MEMORY").is_some() {
-            self.report_memory("complete");
+            self.report_memory(phase);
         }
     }
     #[cfg(feature = "profile-memory")]
@@ -919,21 +1033,133 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
+        let field_add_cache_bytes = self.field_add_caches.capacity()
+            * size_of::<(usize, FieldAddCache)>()
+            + self
+                .field_add_caches
+                .values()
+                .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
+                .sum::<usize>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
             self.shapes.capacity(),
             self.transitions.len(),
-            self.transitions.capacity() * size_of::<((u32, property_key::PropertyKey), u32)>(),
+            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>(),
             self.field_caches.capacity() * size_of::<FieldCache>()
-                + self.megamorphic_field_indices.capacity() * size_of::<u32>(),
+                + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+                + field_add_cache_bytes,
             self.megamorphic_fields.len(),
             self.method_caches.capacity() * size_of::<[MethodCache; 2]>(),
             self.megamorphic_methods.len(),
         );
         self.heap
             .memory_profile()
-            .report(phase, cell_counts, live_payload_bytes);
+            .report(phase, cell_counts, live_payload_bytes, &self.heap);
+        self.report_memory_snapshot(phase);
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_memory_snapshot(&self, phase: &str) {
+        let heap = self.heap.memory_composition();
+        let shape_table_bytes = self.shapes.capacity() * size_of::<Shape>();
+        let shape_lookup_bytes = self
+            .shapes
+            .iter()
+            .filter_map(|shape| shape.lookup_index.get())
+            .map(|index| index.payload_capacity_bytes())
+            .sum::<usize>();
+        let transition_table_bytes =
+            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>();
+        let descriptor_side_table_bytes = self.descriptors.capacity()
+            * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
+        let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
+            + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+            + self.field_add_caches.capacity() * size_of::<(usize, FieldAddCache)>()
+            + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
+        let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
+            + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
+            + self
+                .atom_collisions
+                .values()
+                .map(|atoms| atoms.capacity() * size_of::<Atom>())
+                .sum::<usize>()
+            + self.dynamic_atoms.capacity() * size_of::<JsString>()
+            + self
+                .dynamic_atoms
+                .iter()
+                .map(JsString::capacity)
+                .sum::<usize>();
+        let frame_bytes = self
+            .frames
+            .iter()
+            .chain(&self.frame_pool)
+            .map(|frame| {
+                frame.locals.capacity() * size_of::<Value>()
+                    + frame.registers.capacity() * size_of::<Value>()
+                    + frame.original_arguments.capacity() * size_of::<Value>()
+            })
+            .sum::<usize>();
+        let property_arena_bytes =
+            heap.property_arena_values_bytes + heap.property_arena_metadata_bytes;
+        let vm_metadata_bytes = shape_table_bytes
+            + shape_lookup_bytes
+            + transition_table_bytes
+            + descriptor_side_table_bytes
+            + cache_side_table_bytes
+            + atom_side_table_bytes
+            + frame_bytes;
+        let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
+            + property_arena_bytes
+            + heap.cell_payload_bytes
+            + heap.boxed_object_header_bytes
+            + heap.sparse_array_sidecar_bytes
+            + vm_metadata_bytes;
+        eprintln!(
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            self.heap.collection_count(),
+            CellKind::NAMES,
+            heap.cell_counts,
+            heap.cell_variant_names,
+            heap.cell_variant_counts,
+            heap.occupied_slots,
+            heap.slot_arena_reserved_bytes,
+            heap.object_headers,
+            heap.embedded_object_headers,
+            heap.boxed_object_headers,
+            heap.boxed_object_header_bytes,
+            heap.object_property_counts_by_width,
+            heap.inline_property_attribution_bytes,
+            heap.object_header_size_bytes,
+            heap.cell_size_bytes,
+            heap.slot_size_bytes,
+            heap.property_arena_values_bytes,
+            heap.property_arena_metadata_bytes,
+            heap.property_arena_used_values,
+            heap.property_arena_capacity_values,
+            heap.live_property_used_values,
+            heap.live_property_capacity_values,
+            heap.live_property_used_values_by_width,
+            heap.live_property_capacity_values_by_width,
+            heap.dense_array_elements_bytes,
+            heap.dense_array_headers_bytes,
+            heap.dense_array_backing_count,
+            heap.sparse_array_sidecar_bytes,
+            heap.string_buffers_bytes,
+            heap.string_buffer_count,
+            heap.other_cell_payload_bytes,
+            heap.cell_payload_bytes,
+            shape_table_bytes,
+            shape_lookup_bytes,
+            transition_table_bytes,
+            descriptor_side_table_bytes,
+            cache_side_table_bytes,
+            atom_side_table_bytes,
+            frame_bytes,
+            heap.profile_instrumentation_bytes,
+            accounted_runtime_bytes,
+            accounted_runtime_bytes + heap.profile_instrumentation_bytes,
+        );
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
@@ -941,6 +1167,7 @@ impl<H: Host> Vm<H> {
     }
     fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
         self.specialized = program.specialized;
+        self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
         self.natives.clear();
         self.frames.clear();
@@ -979,6 +1206,7 @@ impl<H: Host> Vm<H> {
             new_target,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.field_add_caches.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
@@ -1008,9 +1236,18 @@ impl<H: Host> Vm<H> {
         self.realm.globals = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("program_constants");
         self.install_builtins(program)?;
-        self.initialize_host(program)
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("runtime_builtins");
+        self.initialize_host(program)?;
+        #[cfg(feature = "profile-memory")]
+        self.report_memory_if_enabled("host_bootstrap");
+        Ok(())
     }
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
@@ -1115,65 +1352,97 @@ impl<H: Host> Vm<H> {
             std::iter::once(callee)
                 .chain(std::iter::once(this))
                 .chain(args.iter().copied()),
-            |vm| {
-                if matches!(vm.heap.get(callee), Some(Cell::Proxy { .. })) {
-                    return vm.proxy_call(p, callee, this, args);
-                }
-                let target = match target {
-                    Some(target) => target,
-                    None => vm
-                        .call_target(callee)
-                        .map_err(|error| vm.type_error(p, error.to_string()))?,
-                };
-                match target {
-                    CallTarget::Native(native) => {
-                        vm.profile.call_target(0, args.len());
-                        vm.call_native_guarded(p, native, this, args, callee)
-                    }
-                    CallTarget::User(program_id, id, env)
-                    | CallTarget::NumericUser(program_id, id, env) => {
-                        let target_kind = if matches!(target, CallTarget::User(..)) {
-                            1
-                        } else {
-                            2
-                        };
-                        vm.profile.call_target(target_kind, args.len());
-                        let program = vm.programs.get(program_id).ok_or_else(|| {
-                            vm.type_error(p, "function belongs to an unavailable program".into())
-                        })?;
-                        let active_program = std::mem::replace(&mut vm.active_program, program_id);
-                        let realm = match vm.heap.get(callee) {
-                            Some(Cell::Function { realm, .. }) => *realm,
-                            _ => vm.realm.globals,
-                        };
-                        let current_global = std::mem::replace(&mut vm.realm.globals, realm);
-                        let result = if program
-                            .functions
-                            .get(id as usize)
-                            .is_some_and(|function| function.is_class_constructor)
-                            && vm.construct_target.is_none()
-                        {
-                            Err(vm.type_error(
-                                p,
-                                "class constructor cannot be called without new".into(),
-                            ))
-                        } else {
-                            vm.call_user_maybe_async(
-                                &program,
-                                id,
-                                env,
-                                this,
-                                args,
-                                CallContext::user_function(id, callee),
-                            )
-                        };
-                        vm.active_program = active_program;
-                        vm.realm.globals = current_global;
-                        result
-                    }
-                }
-            },
+            |vm| vm.call_value_with_target_inner(p, callee, this, args, target),
         )
+    }
+
+    fn call_value_from_frame(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        self.call_value_with_target_inner(p, callee, this, args, None)
+    }
+
+    fn call_value_with_target_from_frame(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+        target: Option<CallTarget>,
+    ) -> Result<Value, JsError> {
+        // The receiver and arguments remain in the paused caller frame, whose
+        // root map is published at this call instruction. A method getter can
+        // produce a callee that is not present in that frame, so root it here.
+        self.with_call_roots([callee], |vm| {
+            vm.call_value_with_target_inner(p, callee, this, args, target)
+        })
+    }
+
+    fn call_value_with_target_inner(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        this: Value,
+        args: &[Value],
+        target: Option<CallTarget>,
+    ) -> Result<Value, JsError> {
+        if matches!(self.heap.get(callee), Some(Cell::Proxy { .. })) {
+            return self.proxy_call(p, callee, this, args);
+        }
+        let target = match target {
+            Some(target) => target,
+            None => self
+                .call_target(callee)
+                .map_err(|error| self.type_error(p, error.to_string()))?,
+        };
+        match target {
+            CallTarget::Native(native) => {
+                self.profile.call_target(0, args.len());
+                self.call_native_guarded(p, native, this, args, callee)
+            }
+            CallTarget::User(program_id, id, env)
+            | CallTarget::NumericUser(program_id, id, env) => {
+                let target_kind = if matches!(target, CallTarget::User(..)) {
+                    1
+                } else {
+                    2
+                };
+                self.profile.call_target(target_kind, args.len());
+                let program = self.programs.get(program_id).ok_or_else(|| {
+                    self.type_error(p, "function belongs to an unavailable program".into())
+                })?;
+                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let realm = match self.heap.get(callee) {
+                    Some(Cell::Function { realm, .. }) => *realm,
+                    _ => self.realm.globals,
+                };
+                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let result = if program
+                    .functions
+                    .get(id as usize)
+                    .is_some_and(|function| function.is_class_constructor)
+                    && self.construct_target.is_none()
+                {
+                    Err(self.type_error(p, "class constructor cannot be called without new".into()))
+                } else {
+                    self.call_user_maybe_async(
+                        &program,
+                        id,
+                        env,
+                        this,
+                        args,
+                        CallContext::user_function(id, callee),
+                    )
+                };
+                self.active_program = active_program;
+                self.realm.globals = current_global;
+                result
+            }
+        }
     }
 
     fn with_call_roots<R>(

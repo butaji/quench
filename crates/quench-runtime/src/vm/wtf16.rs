@@ -19,7 +19,7 @@ struct JsStringInner {
     data: JsStringData,
     length: usize,
     flat: OnceCell<Rc<[u16]>>,
-    host: OnceCell<String>,
+    host: OnceCell<Rc<str>>,
 }
 
 impl JsStringInner {
@@ -29,7 +29,7 @@ impl JsStringInner {
         let _ = flat.set(units.clone());
         let host_cell = OnceCell::new();
         if let Some(host) = host {
-            let _ = host_cell.set(host);
+            let _ = host_cell.set(Rc::from(host));
         }
         Self {
             data: JsStringData::Flat(units),
@@ -146,9 +146,8 @@ impl JsStringBuilder {
 impl JsString {
     pub(crate) fn from_units(units: &[u16]) -> Self {
         let units = Rc::from(units);
-        let host = String::from_utf16_lossy(&units);
         Self {
-            inner: Rc::new(JsStringInner::flat(units, Some(host))),
+            inner: Rc::new(JsStringInner::flat(units, None)),
         }
     }
 
@@ -156,7 +155,7 @@ impl JsString {
         Self {
             inner: Rc::new(JsStringInner::flat(
                 Rc::from(text.encode_utf16().collect::<Vec<_>>()),
-                Some(text.to_owned()),
+                None,
             )),
         }
     }
@@ -204,7 +203,8 @@ impl JsString {
     pub(crate) fn host_string(&self) -> &str {
         self.inner
             .host
-            .get_or_init(|| String::from_utf16_lossy(self.units()))
+            .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(self.units())))
+            .as_ref()
     }
 
     #[cfg(feature = "profile-aggregate")]
@@ -213,12 +213,30 @@ impl JsString {
     }
 
     pub(crate) fn has_lossless_host_string(&self) -> bool {
-        self.host_string().encode_utf16().eq(self.units().iter().copied())
+        char::decode_utf16(self.units().iter().copied()).all(|decoded| decoded.is_ok())
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
-        self.units().len() * std::mem::size_of::<u16>() + self.host_string().capacity()
+        self.units().len() * std::mem::size_of::<u16>()
+            + self.inner.host.get().map_or(0, |host| host.len())
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
+        const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
+        let units = self.shared_units();
+        let unit_storage = (
+            Rc::as_ptr(&units) as *const u16 as usize,
+            RC_HEADER_BYTES + units.len() * std::mem::size_of::<u16>(),
+        );
+        let host_storage = self.inner.host.get().map(|host| {
+            (
+                Rc::as_ptr(host) as *const u8 as usize,
+                RC_HEADER_BYTES + host.len(),
+            )
+        });
+        (unit_storage, host_storage)
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
@@ -415,5 +433,21 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);
+    }
+
+    #[test]
+    fn host_text_is_lazy_and_utf16_remains_authoritative() {
+        let paired = JsString::from_units(&[0xD83E, 0xDD80]);
+        let lone = JsString::from_units(&[0xD800]);
+
+        assert!(paired.inner.host.get().is_none());
+        assert!(lone.inner.host.get().is_none());
+        assert!(paired.has_lossless_host_string());
+        assert!(!lone.has_lossless_host_string());
+        assert!(paired.inner.host.get().is_none());
+        assert!(lone.inner.host.get().is_none());
+        assert_eq!(lone.host_string(), "�");
+        assert_eq!(lone.units(), &[0xD800]);
+        assert!(lone.inner.host.get().is_some());
     }
 }
