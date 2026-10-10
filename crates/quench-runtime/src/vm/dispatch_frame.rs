@@ -870,8 +870,6 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(cursor.program, self.frames[frame].program);
                 debug_assert_eq!(cursor.function, self.frames[frame].function);
                 let instruction_pc = pc;
-                // GC inside a getter or native operation needs this instruction's root map.
-                self.frames[frame].pc = instruction_pc;
                 let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
@@ -883,6 +881,32 @@ impl<H: Host> Vm<H> {
                 );
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);
+                // Register/local moves cannot allocate, collect or throw, so they need neither the
+                // published root-map PC nor the general step result.
+                match ins.op() {
+                    Op::LoadLocalPlain => {
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
+                        continue;
+                    }
+                    Op::Move => {
+                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                        continue;
+                    }
+                    _ => {}
+                }
+                // GC inside a getter or native operation needs this instruction's root map.
+                self.frames[frame].pc = instruction_pc;
                 match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
                         if let Some(pending) = pending_calls.pop() {
