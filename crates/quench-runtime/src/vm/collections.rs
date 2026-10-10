@@ -791,6 +791,7 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
+                        self.heap.collection_entry_deleted(this, index, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -798,6 +799,7 @@ impl<H: Host> Vm<H> {
                         Ok(Value::TRUE)
                     }
                     Native::MapClear => {
+                        self.heap.collection_cleared(this, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -948,6 +950,7 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
+                self.heap.collection_entry_deleted(this, index, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -964,6 +967,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.clear called on incompatible receiver".into(),
                     ));
                 }
+                self.heap.collection_cleared(this, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,

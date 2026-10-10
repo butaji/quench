@@ -1,8 +1,48 @@
-use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap};
+use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind};
 use crate::bytecode::Atom;
 use crate::value::Value;
 
 impl Heap {
+    pub(crate) fn collection_entry_deleted(&mut self, collection: Value, index: usize, map: bool) {
+        for slot in self.slots.iter_mut() {
+            let Some(Cell::Iterator {
+                source,
+                kind,
+                index: cursor,
+                done,
+                ..
+            }) = slot.cell.as_mut()
+            else {
+                continue;
+            };
+            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
+            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && *cursor > index {
+                *cursor -= 1;
+            }
+        }
+    }
+
+    pub(crate) fn collection_cleared(&mut self, collection: Value, map: bool) {
+        for slot in self.slots.iter_mut() {
+            let Some(Cell::Iterator {
+                source,
+                kind,
+                index,
+                done,
+                ..
+            }) = slot.cell.as_mut()
+            else {
+                continue;
+            };
+            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
+            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
+                *index = 0;
+            }
+        }
+    }
+
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
             Cell::Environment {
