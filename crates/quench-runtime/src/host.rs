@@ -123,6 +123,13 @@ pub trait Host {
         Ok(None)
     }
 
+    /// Host-defined value for `import.meta.url`. Embeddings that use file paths
+    /// for source names can expose the corresponding URL without changing the
+    /// source identity used by module resolution.
+    fn import_meta_url(&mut self, source_name: &str) -> String {
+        source_name.to_owned()
+    }
+
     /// Whether this host-resolved unit has a host-defined Module Source Object.
     /// JavaScript text and ordinary synthetic imports have no source representation.
     fn has_module_source(&self, _module: &ModuleSource) -> bool {
