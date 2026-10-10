@@ -61,6 +61,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         ("seteuid", "processSeteuid"),
         ("setgid", "processSetgid"),
         ("setegid", "processSetegid"),
+        ("setgroups", "processSetgroups"),
+        ("initgroups", "processInitgroups"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
@@ -669,6 +671,289 @@ pub(crate) fn setegid(
     set_credential(context, args.first().copied(), CredentialKind::Egid)
 }
 
+pub(crate) fn setgroups(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(groups) = args.first().copied() else {
+        return Err(groups_type_error(context, None)?);
+    };
+    if !is_array(context, groups)? {
+        return Err(groups_type_error(context, Some(groups))?);
+    }
+    let length_key = context.string_rooted("length");
+    let length = context.get_property_rooted(groups, length_key)?;
+    let length = context
+        .rooted_value(length)
+        .and_then(Value::as_number)
+        .unwrap_or_default() as usize;
+    let mut group_ids = Vec::with_capacity(length);
+    for index in 0..length {
+        let key = context.string_rooted(&index.to_string());
+        let value = context.get_property_rooted(groups, key)?;
+        group_ids.push(parse_group_id(context, value, Some(index))?);
+    }
+    apply_groups(context, &group_ids)
+}
+
+pub(crate) fn initgroups(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(user) = args.first().copied() else {
+        return Err(user_argument_type_error(context, None)?);
+    };
+    let user_value = context
+        .rooted_value(user)
+        .ok_or_else(|| RootedError::host("invalid process initgroups user root"))?;
+    if user_value.as_number().is_none() && context.string_text(user)?.is_none() {
+        return Err(user_argument_type_error(context, Some(user))?);
+    }
+    let Some(extra_group) = args.get(1).copied() else {
+        return Err(extra_group_type_error(context, None)?);
+    };
+    let group_id = parse_group_id(context, extra_group, None)?;
+    let user_name = credential_user_name(context, user)?;
+    let result = initgroups_syscall(&user_name, group_id);
+    if result == 0 {
+        return Ok(context.undefined());
+    }
+    Err(throw_os_process_error(context, "initgroups")?)
+}
+
+fn is_array(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<bool, RootedError> {
+    let global = context.global_root()?;
+    let array_key = context.string_rooted("Array");
+    let array = context.get_property_rooted(global, array_key)?;
+    let is_array_key = context.string_rooted("isArray");
+    let is_array = context.get_property_rooted(array, is_array_key)?;
+    let result = context.call_rooted(is_array, array, &[value])?;
+    Ok(context
+        .rooted_value(result)
+        .and_then(Value::as_bool)
+        .unwrap_or(false))
+}
+
+fn parse_group_id(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    index: Option<usize>,
+) -> Result<u32, RootedError> {
+    let rooted = context
+        .rooted_value(value)
+        .ok_or_else(|| RootedError::host("invalid process group argument"))?;
+    let label = index.map_or_else(|| "extraGroup".to_owned(), |i| format!("groups[{i}]"));
+    if let Some(number) = rooted.as_number() {
+        if !number.is_finite() || number.fract() != 0.0 || number < 0.0 || number > u32::MAX as f64
+        {
+            let error = context.range_error_rooted(&format!(
+                "The value of \"{label}\" is out of range. It must be >= 0 and <= {}. Received {number}",
+                u32::MAX
+            ))?;
+            return Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"));
+        }
+        return Ok(number as u32);
+    }
+    if let Some(name) = context.string_text(value)? {
+        return match credential_id_by_name(&name, CredentialKind::Gid) {
+            Some(id) => Ok(id),
+            None => Err(unknown_credential(context, "Group", &name)?),
+        };
+    }
+    Err(group_argument_type_error(context, value, index)?)
+}
+
+fn credential_user_name(
+    context: &mut NativeContext<'_, NodeHost>,
+    user: RootId,
+) -> Result<std::ffi::CString, RootedError> {
+    let rooted = context
+        .rooted_value(user)
+        .ok_or_else(|| RootedError::host("invalid process initgroups user root"))?;
+    let name = if let Some(name) = context.string_text(user)? {
+        let c_name = std::ffi::CString::new(name.as_str()).ok();
+        let exists = c_name.as_ref().is_some_and(credential_name_exists);
+        if exists {
+            c_name
+        } else {
+            return Err(unknown_credential(context, "User", &name)?);
+        }
+    } else if let Some(number) = rooted.as_number() {
+        if !number.is_finite() || number.fract() != 0.0 || number < 0.0 || number > u32::MAX as f64
+        {
+            let error = context.range_error_rooted(&format!(
+                "The value of \"user\" is out of range. It must be >= 0 and <= {}. Received {number}",
+                u32::MAX
+            ))?;
+            return Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"));
+        }
+        let Some(name) = credential_name_by_uid(number as u32) else {
+            return Err(unknown_credential(context, "User", &number.to_string())?);
+        };
+        Some(name)
+    } else {
+        return Err(credential_type_error(context, Some(user))?);
+    };
+    name.ok_or_else(|| RootedError::host("invalid process initgroups user name"))
+}
+
+fn apply_groups(
+    context: &mut NativeContext<'_, NodeHost>,
+    groups: &[u32],
+) -> Result<RootId, RootedError> {
+    let result = setgroups_syscall(groups);
+    if result == 0 {
+        return Ok(context.undefined());
+    }
+    Err(throw_os_process_error(context, "setgroups")?)
+}
+
+#[cfg(unix)]
+fn initgroups_syscall(user: &std::ffi::CString, group: u32) -> i32 {
+    unsafe { libc::initgroups(user.as_ptr(), group as libc::gid_t) }
+}
+
+#[cfg(not(unix))]
+fn initgroups_syscall(_: &std::ffi::CString, _: u32) -> i32 {
+    libc::ENOSYS
+}
+
+#[cfg(unix)]
+fn setgroups_syscall(groups: &[u32]) -> i32 {
+    let groups = groups
+        .iter()
+        .copied()
+        .map(|group| group as libc::gid_t)
+        .collect::<Vec<_>>();
+    unsafe { libc::setgroups(groups.len(), groups.as_ptr()) }
+}
+
+#[cfg(not(unix))]
+fn setgroups_syscall(_: &[u32]) -> i32 {
+    libc::ENOSYS
+}
+
+#[cfg(unix)]
+fn credential_name_exists(name: &std::ffi::CString) -> bool {
+    unsafe { !libc::getpwnam(name.as_ptr()).is_null() }
+}
+
+#[cfg(not(unix))]
+fn credential_name_exists(_: &std::ffi::CString) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn credential_name_by_uid(uid: u32) -> Option<std::ffi::CString> {
+    let entry = unsafe { libc::getpwuid(uid as libc::uid_t) };
+    (!entry.is_null()).then(|| unsafe { std::ffi::CStr::from_ptr((*entry).pw_name) }.to_owned())
+}
+
+#[cfg(not(unix))]
+fn credential_name_by_uid(_: u32) -> Option<std::ffi::CString> {
+    None
+}
+
+fn throw_os_process_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    syscall: &str,
+) -> Result<RootedError, RootedError> {
+    let errno = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::EINVAL);
+    let code = errno_name(errno);
+    let message = unsafe {
+        std::ffi::CStr::from_ptr(libc::strerror(errno))
+            .to_string_lossy()
+            .into_owned()
+    };
+    let error = context.error_rooted(&format!("{code}, {message}"))?;
+    set_text(context, error, "code", code)?;
+    set_text(context, error, "syscall", syscall)?;
+    Ok(context.throw(error))
+}
+
+fn groups_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Result<RootedError, RootedError> {
+    let received = value.map_or_else(
+        || Ok("undefined".to_owned()),
+        |value| received_type(context, value),
+    )?;
+    throw_process_error(
+        context,
+        &format!("The \"groups\" argument must be an instance of Array. Received {received}"),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
+fn user_argument_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Result<RootedError, RootedError> {
+    let received = value.map_or_else(
+        || Ok("undefined".to_owned()),
+        |value| received_type(context, value),
+    )?;
+    throw_process_error(
+        context,
+        &format!("The \"user\" argument must be one of type number or string. Received {received}"),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
+fn extra_group_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Result<RootedError, RootedError> {
+    let received = value.map_or_else(
+        || Ok("undefined".to_owned()),
+        |value| received_type(context, value),
+    )?;
+    throw_process_error(
+        context,
+        &format!("The \"extraGroup\" argument must be one of type number or string. Received {received}"),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
+fn group_argument_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    index: Option<usize>,
+) -> Result<RootedError, RootedError> {
+    let received = received_type(context, value)?;
+    let label = index.map_or_else(|| "extraGroup".to_owned(), |i| format!("groups[{i}]"));
+    throw_process_error(
+        context,
+        &format!("The \"{label}\" argument must be one of type number or string. Received {received}"),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
+fn unknown_credential(
+    context: &mut NativeContext<'_, NodeHost>,
+    kind: &str,
+    name: &str,
+) -> Result<RootedError, RootedError> {
+    throw_process_error(
+        context,
+        &format!("{kind} identifier does not exist: {name}"),
+        "ERR_UNKNOWN_CREDENTIAL",
+        false,
+    )
+}
+
 fn set_credential(
     context: &mut NativeContext<'_, NodeHost>,
     value: Option<RootId>,
@@ -828,6 +1113,7 @@ fn errno_name(errno: i32) -> &'static str {
         libc::EPERM => "EPERM",
         libc::EACCES => "EACCES",
         libc::EINVAL => "EINVAL",
+        libc::ENOSYS => "ENOSYS",
         _ => "UNKNOWN",
     }
 }
@@ -2514,22 +2800,30 @@ fn invalid_callback(
 
 fn received_type(
     context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
+    root: RootId,
 ) -> Result<String, RootedError> {
     let value = context
-        .rooted_value(value)
+        .rooted_value(root)
         .ok_or_else(|| RootedError::host("invalid process callback root"))?;
-    Ok(if value.is_undefined() {
-        "undefined".to_owned()
-    } else if value.is_null() {
-        "null".to_owned()
-    } else if let Some(boolean) = value.as_bool() {
-        format!("type boolean ({boolean})")
-    } else if let Some(number) = value.as_number() {
-        format!("type number ({number})")
-    } else {
-        "an instance of Object".to_owned()
-    })
+    if value.is_undefined() {
+        return Ok("undefined".to_owned());
+    }
+    if value.is_null() {
+        return Ok("null".to_owned());
+    }
+    if let Some(boolean) = value.as_bool() {
+        return Ok(format!("type boolean ({boolean})"));
+    }
+    if let Some(number) = value.as_number() {
+        return Ok(format!("type number ({number})"));
+    }
+    if context.is_callable_rooted(root)? {
+        return Ok("function ".to_owned());
+    }
+    if is_array(context, root)? {
+        return Ok("an instance of Array".to_owned());
+    }
+    Ok("an instance of Object".to_owned())
 }
 
 #[cfg(test)]
