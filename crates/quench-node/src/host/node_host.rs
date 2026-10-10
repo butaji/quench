@@ -58,6 +58,7 @@ pub(crate) struct NetSocket {
     pub(crate) root: quench_runtime::RootId,
     pub(crate) encoding: Option<String>,
     pub(crate) parent_server: Option<u64>,
+    pub(crate) connection_event_pending: bool,
 }
 
 pub(crate) struct NetServer {

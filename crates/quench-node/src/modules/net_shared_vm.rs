@@ -878,6 +878,7 @@ pub(crate) fn connect_operation(
             root: retained,
             encoding: None,
             parent_server: None,
+            connection_event_pending: false,
         },
     );
     Ok(socket)
