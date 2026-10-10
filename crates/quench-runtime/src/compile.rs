@@ -2789,11 +2789,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &[Rc<str>]) {
-        let mut plain_slots =
+        let plain_slots =
             function.plain_local_slots(|atom| atoms.get(atom as usize).map(|name| &**name));
-        for (slot, plain) in plain_slots.iter_mut().enumerate() {
-            *plain &= function.promoted_register(slot as u16).is_none();
-        }
 
         for instruction in &mut function.code {
             match instruction.op() {
