@@ -55,6 +55,16 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    #[cfg(unix)]
+    for (name, operation) in [
+        ("setuid", "processSetuid"),
+        ("seteuid", "processSeteuid"),
+        ("setgid", "processSetgid"),
+        ("setegid", "processSetegid"),
+    ] {
+        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        install(context, process, name, function)?;
+    }
     let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
     install(context, process, "_kill", kill)?;
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
@@ -617,6 +627,209 @@ pub(crate) fn getegid(
     #[cfg(not(unix))]
     let id = 0u32;
     Ok(context.number(id as f64))
+}
+
+#[derive(Clone, Copy)]
+enum CredentialKind {
+    Uid,
+    Euid,
+    Gid,
+    Egid,
+}
+
+pub(crate) fn setuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    set_credential(context, args.first().copied(), CredentialKind::Uid)
+}
+
+pub(crate) fn seteuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    set_credential(context, args.first().copied(), CredentialKind::Euid)
+}
+
+pub(crate) fn setgid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    set_credential(context, args.first().copied(), CredentialKind::Gid)
+}
+
+pub(crate) fn setegid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    set_credential(context, args.first().copied(), CredentialKind::Egid)
+}
+
+fn set_credential(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+    kind: CredentialKind,
+) -> Result<RootId, RootedError> {
+    let Some(value) = value else {
+        return Err(credential_type_error(context, None)?);
+    };
+    let id = parse_credential_id(context, value, kind)?;
+    apply_credential(context, id, kind)
+}
+
+fn parse_credential_id(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    kind: CredentialKind,
+) -> Result<u32, RootedError> {
+    let rooted = context
+        .rooted_value(value)
+        .ok_or_else(|| RootedError::host("invalid process credential argument"))?;
+    if let Some(number) = rooted.as_number() {
+        if !number.is_finite() || number.fract() != 0.0 || number < 0.0 || number > u32::MAX as f64
+        {
+            let error = context.range_error_rooted(&format!(
+                "The value of \"id\" is out of range. It must be >= 0 and <= {}. Received {number}",
+                u32::MAX
+            ))?;
+            return Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"));
+        }
+        return Ok(number as u32);
+    } else if let Some(name) = context.string_text(value)? {
+        let Some(id) = credential_id_by_name(&name, kind) else {
+            let noun = match kind {
+                CredentialKind::Uid | CredentialKind::Euid => "User",
+                CredentialKind::Gid | CredentialKind::Egid => "Group",
+            };
+            return Err(throw_process_error(
+                context,
+                &format!("{noun} identifier does not exist: {name}"),
+                "ERR_UNKNOWN_CREDENTIAL",
+                false,
+            )?);
+        };
+        return Ok(id);
+    } else {
+        return Err(credential_type_error(context, Some(value))?);
+    }
+}
+
+fn apply_credential(
+    context: &mut NativeContext<'_, NodeHost>,
+    id: u32,
+    kind: CredentialKind,
+) -> Result<RootId, RootedError> {
+    let errno = credential_syscall(id, kind);
+    if errno == 0 {
+        return Ok(context.undefined());
+    }
+    let code = errno_name(errno);
+    let message = unsafe {
+        std::ffi::CStr::from_ptr(libc::strerror(errno))
+            .to_string_lossy()
+            .into_owned()
+    };
+    Err(throw_process_error(
+        context,
+        &format!("{code}, {message}"),
+        code,
+        false,
+    )?)
+}
+
+fn credential_syscall(id: u32, kind: CredentialKind) -> i32 {
+    #[cfg(unix)]
+    {
+        let result = unsafe {
+            match kind {
+                CredentialKind::Uid => libc::setuid(id),
+                CredentialKind::Euid => libc::seteuid(id),
+                CredentialKind::Gid => libc::setgid(id),
+                CredentialKind::Egid => libc::setegid(id),
+            }
+        };
+        if result == 0 {
+            0
+        } else {
+            std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EINVAL)
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (id, kind);
+        libc::ENOSYS
+    }
+}
+
+fn credential_id_by_name(name: &str, kind: CredentialKind) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        let name = std::ffi::CString::new(name).ok()?;
+        return unsafe {
+            match kind {
+                CredentialKind::Uid | CredentialKind::Euid => {
+                    libc::getpwnam(name.as_ptr()).as_ref().map(|entry| entry.pw_uid)
+                }
+                CredentialKind::Gid | CredentialKind::Egid => {
+                    libc::getgrnam(name.as_ptr()).as_ref().map(|entry| entry.gr_gid)
+                }
+            }
+        };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (name, kind);
+        None
+    }
+}
+
+fn credential_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Result<RootedError, RootedError> {
+    let received = match value {
+        None => "undefined".to_owned(),
+        Some(value) => received_type(context, value)?,
+    };
+    throw_process_error(
+        context,
+        &format!(
+            "The \"id\" argument must be one of type number or string. Received {received}"
+        ),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
+fn throw_process_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    message: &str,
+    code: &str,
+    type_error: bool,
+) -> Result<RootedError, RootedError> {
+    let error = if type_error {
+        context.type_error_rooted(message)?
+    } else {
+        context.error_rooted(message)?
+    };
+    let code = context.string_rooted(code);
+    install(context, error, "code", code)?;
+    Ok(context.throw(error))
+}
+
+fn errno_name(errno: i32) -> &'static str {
+    match errno {
+        libc::EPERM => "EPERM",
+        libc::EACCES => "EACCES",
+        libc::EINVAL => "EINVAL",
+        _ => "UNKNOWN",
+    }
 }
 
 pub(crate) fn hrtime_now(
