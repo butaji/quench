@@ -1347,15 +1347,19 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(env)
         {
-            let (with_objects, root_eval_scope) = (&scope.with_objects, &scope.root_eval_scope);
-            let dynamic_bindings = self.heap.environment_bindings(env)?;
-            let lexical_this_wrapper = !*root_eval_scope
-                && *function == u32::MAX
-                && slots.is_empty()
-                && (dynamic_bindings.is_empty()
-                    || (dynamic_bindings.len() == 1
-                        && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this));
-            if with_objects.is_empty() && !lexical_this_wrapper {
+            // Only a slotless, function-less, non-eval layer can be a lexical-this wrapper, so
+            // its dynamic bindings are inspected only after those field checks pass.
+            let lexical_this_wrapper = || {
+                !scope.root_eval_scope
+                    && *function == u32::MAX
+                    && slots.is_empty()
+                    && self.heap.environment_bindings(env).is_some_and(|bindings| {
+                        bindings.is_empty()
+                            || (bindings.len() == 1
+                                && bindings[0].0 == self.runtime_atoms.lexical_this)
+                    })
+            };
+            if scope.with_objects.is_empty() && !lexical_this_wrapper() {
                 break;
             }
             env = *parent;
@@ -1382,6 +1386,10 @@ impl<H: Host> Vm<H> {
         env: Value,
         slot: u16,
     ) -> Result<Value, JsError> {
+        // Only root environments are remembered, so a non-root slot misses on its key.
+        if let Some(value) = self.cached_global_var(env, slot) {
+            return Ok(value);
+        }
         // Global var, global lexical and module-import projections exist only for a program's
         // root function, so any other initialized environment slot is the binding itself.
         if let Some(Cell::Environment { function, .. }) = self.heap.get(env)
@@ -1389,9 +1397,6 @@ impl<H: Host> Vm<H> {
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
             && !value.is_deleted()
         {
-            return Ok(value);
-        }
-        if let Some(value) = self.cached_global_var(env, slot) {
             return Ok(value);
         }
         let environment_slot = slot;
