@@ -4,7 +4,7 @@
   "module_progress": [
     {
       "module": "process",
-      "source_revision": "7a92578d16463374304ddb723d6d3794dc7aa450",
+      "source_revision": "d3a14a37cb7054fa508934140a935c73ab84cd05",
       "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
       "node_version": "v24.19.0",
       "rustc_version": "1.99.0",
