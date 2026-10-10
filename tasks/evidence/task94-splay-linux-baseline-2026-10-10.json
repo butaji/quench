@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "task": "94",
+  "experiment": "Splay Linux stock baseline and GC profile at large-heap headroom 1.0",
+  "decision": "baseline only; Splay is not won on Linux",
+  "source": {
+    "revision": "dd94f42f0408ebb40663308f5cabe6b6ca1c8e90",
+    "stock_report_source_clean": true,
+    "stock_report_sha256": "1e8086ed53543433b331f7f64bc266041771010bee7bfb69d8a16deac43b12c1",
+    "profile_report_sha256": "933bb3fd03b527ab2986db0a6c15676046bd68850ec9f65d00c16c826d0fb85a",
+    "production_binary_sha256": "3f287358b54b56ef4ce3b439172ad114a4f09ed052fb6e3a1f9c069ff3fd3b53",
+    "profile_binary_sha256": "5525c4518519554f4363e18f806fac39f958d824313c4db278478da0cb382ffe",
+    "profile_feature": "quench-runtime/profile-aggregate",
+    "profile_binary_note": "Built with a temporary local fix for the unrelated vm/wtf16.rs profile-capacity compile error; that fix was reverted and is not part of the candidate."
+  },
+  "host": {
+    "platform": "Linux x86_64, kernel 6.18.44",
+    "logical_cpus": 4,
+    "cpu_quota": "400000 100000",
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "process_metrics_backend": "wait4 ru_maxrss"
+  },
+  "toolchain": {
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "quench_bench_sha256": "924e62eee00ea5964d140f1cb04a6d1e125a2dfec08271cb0f28d4b933f79deb",
+    "quickjs_version": "2026-06-04",
+    "quickjs_sha256": "c798e32aac14495856a4709be67a11b0562a6e2d07fa89ad4f28efe46c7c7955",
+    "bun_version": "1.4.2",
+    "bun_no_jit_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+    "node_version": "v26.10.0 --jitless",
+    "node_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+    "node_dist_tarball_sha256": "ca70e9e349de048b9522abb3adc05b3bd6f43c5ffd3ec57916c7da292f59f022"
+  },
+  "input": {
+    "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "fixture": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+    "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+  },
+  "stock_harness": {
+    "rounds": 11,
+    "valid_rounds": 11,
+    "output_equal": true,
+    "qualification_ready": false,
+    "score_median": {
+      "quench": 1234,
+      "quickjs": 2730,
+      "bun_no_jit": 3509,
+      "node_jitless": 4621
+    },
+    "max_rss_median_bytes": {
+      "quench": 274669568,
+      "quickjs": 149618688,
+      "bun_no_jit": 60133376,
+      "node_jitless": 403705856
+    },
+    "quench_score_fraction_of_best_reference": 0.26704176585154726,
+    "quench_rss_multiple_of_lowest_reference": 4.56767250187317,
+    "lowest_rss_bar_engine": "Bun 1.4.2 with JIT disabled",
+    "score_bar_engine": "Node v26.10.0 --jitless"
+  },
+  "gc_profile": {
+    "mode": "one-round fixed-work pair; 300 Splay run() calls",
+    "valid_rounds": 1,
+    "output_equal": true,
+    "instrumented_process_wall_ns": 8184227616,
+    "production_pair_wall_ns": 5606899367,
+    "collections": 25,
+    "mark_nanos": 454873877,
+    "sweep_nanos": 130326415,
+    "mark_clear_nanos": 36308,
+    "gc_share_of_instrumented_wall_percent": 7.150785968560726,
+    "allocations_between_collections_total": 3056362,
+    "allocations_between_collections_min": 2528,
+    "allocations_between_collections_max": 790186,
+    "survivors_total": 3985160,
+    "survivors_min": 3665,
+    "survivors_max": 790098,
+    "sweep_slots": 6252998,
+    "note": "Diagnostic counters only. The build carries profile-aggregate instrumentation and must not be used for Score or RSS comparison. Linux cycle/instruction counters were unavailable to the fixed-work harness."
+  },
+  "reproduction": {
+    "stock": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --quench target/production/quench-node --qjs target/stageb-tools/qjs/quickjs-2026-06-04/qjs --bun target/stageb-tools/bun/bun-linux-x64/bun --node target/stageb-tools/node/node-v26.10.0-linux-x64/bin/node --runs 11 --timeout-ms 300000 --out target/collector-splay-stageb-baseline-node26.json",
+    "profile": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/production/quench-node --quench-peer target/profile-aggregate/production/quench-node --runs 1 --timeout-ms 300000 --out target/collector-splay-profile-one.json"
+  }
+}

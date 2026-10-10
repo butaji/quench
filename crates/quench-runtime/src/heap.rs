@@ -106,6 +106,13 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
+    pub mark_clear_nanos: u64,
+    pub allocations_between_collections_total: u64,
+    pub allocations_between_collections_min: u64,
+    pub allocations_between_collections_max: u64,
+    pub survivors_total: u64,
+    pub survivors_min: u64,
+    pub survivors_max: u64,
     pub marked_kinds: [u64; CellKind::COUNT],
 }
 #[cfg(feature = "profile-aggregate")]
@@ -123,6 +130,13 @@ impl Default for GcProfile {
             sweep_slots: 0,
             mark_nanos: 0,
             sweep_nanos: 0,
+            mark_clear_nanos: 0,
+            allocations_between_collections_total: 0,
+            allocations_between_collections_min: 0,
+            allocations_between_collections_max: 0,
+            survivors_total: 0,
+            survivors_min: 0,
+            survivors_max: 0,
             marked_kinds: [0; CellKind::COUNT],
         }
     }
@@ -458,6 +472,8 @@ impl Heap {
     ) -> Vec<(Value, Value)> {
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
+        let allocations_between_collections = self.allocations as u64;
+        #[cfg(feature = "profile-aggregate")]
         let mark_started = std::time::Instant::now();
         let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
         #[cfg(feature = "profile-aggregate")]
@@ -512,7 +528,35 @@ impl Heap {
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
+        #[cfg(feature = "profile-aggregate")]
+        let mark_clear_started = std::time::Instant::now();
         self.marks.fill(0);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.gc_profile.mark_clear_nanos += mark_clear_started.elapsed().as_nanos() as u64;
+            self.gc_profile.allocations_between_collections_total +=
+                allocations_between_collections;
+            self.gc_profile.survivors_total += live as u64;
+            if self.collections == 1 {
+                self.gc_profile.allocations_between_collections_min =
+                    allocations_between_collections;
+                self.gc_profile.allocations_between_collections_max =
+                    allocations_between_collections;
+                self.gc_profile.survivors_min = live as u64;
+                self.gc_profile.survivors_max = live as u64;
+            } else {
+                self.gc_profile.allocations_between_collections_min = self
+                    .gc_profile
+                    .allocations_between_collections_min
+                    .min(allocations_between_collections);
+                self.gc_profile.allocations_between_collections_max = self
+                    .gc_profile
+                    .allocations_between_collections_max
+                    .max(allocations_between_collections);
+                self.gc_profile.survivors_min = self.gc_profile.survivors_min.min(live as u64);
+                self.gc_profile.survivors_max = self.gc_profile.survivors_max.max(live as u64);
+            }
+        }
         self.allocations = 0;
         // `threshold` counts allocations after collection. The selected growth
         // factor is added to the live set to describe the occupied high-water.
