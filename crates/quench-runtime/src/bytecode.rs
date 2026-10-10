@@ -116,6 +116,8 @@ pub(crate) enum FieldLayout {
     Operand,
     NumericIndexOperand,
     BinaryOperator,
+    /// A 16-bit two's-complement operand carried in the instruction.
+    SignedConstant,
 }
 
 impl FieldLayout {
@@ -650,6 +652,16 @@ opcodes!(
     WasmJumpI32LessEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32GreaterEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32GreaterEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32EqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32NotEqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -1452,7 +1464,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 80;
+    pub const FORMAT_VERSION: u8 = 81;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

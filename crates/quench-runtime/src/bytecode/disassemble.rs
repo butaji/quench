@@ -88,6 +88,7 @@ fn write_field(
         | FieldLayout::OptionalRegister
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
+        | FieldLayout::SignedConstant
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),
@@ -142,6 +143,14 @@ fn write_scalar_field(
         }
         (InstructionField::B, FieldLayout::FunctionIndex) => {
             write!(output, " b=function:{}", instruction.known_function_index())
+        }
+        (field, FieldLayout::SignedConstant) => {
+            write!(
+                output,
+                " {}={}",
+                field_name(field),
+                instruction.field_value(field) as i16
+            )
         }
         (InstructionField::B, FieldLayout::ElementCount) => {
             write!(output, " elements={}", instruction.element_count())

@@ -838,212 +838,222 @@ impl<H: Host> Vm<H> {
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        let entry_program = p;
         let frame_program = self.frames[frame].program;
         let allow_inline_calls = stop_pc.is_none() && initial_error.is_none();
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
-        let outcome = (|| {
-            let mut current_program: Option<Rc<ResidualProgram>> = None;
-            let mut frame = frame;
-            let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
-            let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
-                crate::stack::StackGuard::enter()
-                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
-            } else {
-                self.enter_stack()?
-            };
-            let initial_function = self.frames[frame].function as usize;
-            let mut executing_program = self.frames[frame].program;
-            let mut cursor =
-                GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
-            let mut pc = self.frames[frame].pc;
-            if let Some(error) = initial_error {
-                pc = self.exception_handler_target(
-                    p,
-                    frame,
-                    initial_function,
-                    pc.saturating_sub(1) as u32,
-                    error,
-                )?;
+        // Wasm bodies run the loop instance that includes the fast lane;
+        // JavaScript runs the instance without it.
+        let outcome = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            self.run_general_loop::<true>(p, frame, stop_pc, initial_error, allow_inline_calls)
+        } else {
+            self.run_general_loop::<false>(p, frame, stop_pc, initial_error, allow_inline_calls)
+        };
+        self.active_program = previous_program;
+        self.realm.globals = previous_global;
+        outcome
+    }
+
+    #[inline(always)]
+    fn run_general_loop<const LANE: bool>(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        stop_pc: Option<usize>,
+        initial_error: Option<JsError>,
+        allow_inline_calls: bool,
+    ) -> Result<FrameOutcome, JsError> {
+        let entry_program = p;
+        let mut current_program: Option<Rc<ResidualProgram>> = None;
+        let mut frame = frame;
+        let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            crate::stack::StackGuard::enter()
+                .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+        } else {
+            self.enter_stack()?
+        };
+        let initial_function = self.frames[frame].function as usize;
+        let mut executing_program = self.frames[frame].program;
+        let mut cursor =
+            GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
+        let mut pc = self.frames[frame].pc;
+        if let Some(error) = initial_error {
+            pc = self.exception_handler_target(
+                p,
+                frame,
+                initial_function,
+                pc.saturating_sub(1) as u32,
+                error,
+            )?;
+        }
+        // Parameter-initialization stops and instruction profiling observe
+        // every PC, so they run the general path only. JavaScript bodies are
+        // dominated by non-lane opcodes, where a lane probe per instruction
+        // measured slower on V8-v7 Richards; Wasm bodies enter the lane.
+        let fast_lane = LANE
+            && stop_pc.is_none()
+            && !cfg!(any(
+                feature = "profile-aggregate",
+                feature = "profile-memory"
+            ));
+        loop {
+            let p = current_program.as_deref().unwrap_or(p);
+            if fast_lane {
+                self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, &mut pc);
             }
-            // Parameter-initialization stops and instruction profiling observe
-            // every PC, so they run the general path only. JavaScript bodies are
-            // dominated by non-lane opcodes, where a lane probe per instruction
-            // measured slower on V8-v7 Richards; Wasm bodies enter the lane.
-            let fast_lane = stop_pc.is_none()
-                && p.kind == crate::bytecode::ProgramKind::Wasm
-                && !cfg!(any(
-                    feature = "profile-aggregate",
-                    feature = "profile-memory"
-                ));
-            loop {
-                let p = current_program.as_deref().unwrap_or(p);
-                if fast_lane {
-                    self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, &mut pc);
-                }
-                if stop_pc == Some(pc) {
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::ParameterInitializationComplete);
-                }
-                debug_assert_eq!(cursor.program, self.frames[frame].program);
-                debug_assert_eq!(cursor.function, self.frames[frame].function);
-                let instruction_pc = pc;
-                #[cfg(feature = "profile-memory")]
-                self.heap.set_memory_allocation_site(
-                    cursor.program.raw(),
-                    cursor.function,
-                    instruction_pc,
-                );
-                // GC inside a getter or native operation needs this instruction's root map.
-                self.frames[frame].pc = instruction_pc;
-                let ins = cursor.instruction(pc);
-                pc += 1;
-                #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .opcode(ins.op() as usize, frame, cursor.function, instruction_pc);
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.object_literal_instruction(
-                    cursor.program.raw(),
-                    cursor.function,
-                    instruction_pc,
-                    ins.op(),
-                );
-                #[cfg(not(feature = "profile-aggregate"))]
-                self.profile.opcode(ins.op() as usize);
-                match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
-                    Ok(StepResult::Return(value)) => {
-                        if let Some(pending) = pending_calls.pop() {
-                            debug_assert_eq!(frame, pending.caller + 1);
-                            let result = Ok(FrameOutcome::Complete(value));
-                            let mut completed_frame = self.frames.pop().unwrap();
-                            self.deactivate_frame(&mut completed_frame, &result);
-                            self.persist_global_lexical_bindings(p, &completed_frame);
-                            self.frame_pool.push(Self::recycle_frame(completed_frame));
-                            frame = pending.caller;
-                            self.write(frame, pending.destination, value);
-                            pc = self.frames[frame].pc;
-                            cursor = GeneralCodeCursor::new(
-                                executing_program,
-                                p,
-                                self.frames[frame].function,
-                            );
-                            drop(pending.stack_guard);
-                        } else {
-                            self.frames[frame].pc = pc;
-                            return Ok(FrameOutcome::Complete(value));
-                        }
-                    }
-                    Ok(StepResult::Continue) => {}
-                    Ok(StepResult::PushFrame {
-                        destination,
-                        stack_guard,
-                    }) => {
-                        pending_calls.push(PendingGeneralCall {
-                            caller: frame,
-                            call_pc: instruction_pc as u32,
-                            destination,
-                            stack_guard,
-                        });
-                        frame += 1;
-                        pc = self.frames[frame].pc;
-                        let callee_program = self.frames[frame].program;
-                        debug_assert_eq!(callee_program, executing_program);
-                        cursor =
-                            GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
-                    }
-                    Ok(StepResult::TailCall) => {
-                        let replacement_program = self.frames[frame].program;
-                        if replacement_program != executing_program {
-                            self.active_program = replacement_program;
-                            current_program =
-                                Some(self.programs.get(replacement_program).ok_or_else(|| {
-                                    JsError::validation("missing tail-call program".into())
-                                })?);
-                        }
-                        executing_program = replacement_program;
+            if stop_pc == Some(pc) {
+                self.frames[frame].pc = pc;
+                return Ok(FrameOutcome::ParameterInitializationComplete);
+            }
+            debug_assert_eq!(cursor.program, self.frames[frame].program);
+            debug_assert_eq!(cursor.function, self.frames[frame].function);
+            let instruction_pc = pc;
+            #[cfg(feature = "profile-memory")]
+            self.heap.set_memory_allocation_site(
+                cursor.program.raw(),
+                cursor.function,
+                instruction_pc,
+            );
+            // GC inside a getter or native operation needs this instruction's root map.
+            self.frames[frame].pc = instruction_pc;
+            let ins = cursor.instruction(pc);
+            pc += 1;
+            #[cfg(feature = "profile-aggregate")]
+            self.profile
+                .opcode(ins.op() as usize, frame, cursor.function, instruction_pc);
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.object_literal_instruction(
+                cursor.program.raw(),
+                cursor.function,
+                instruction_pc,
+                ins.op(),
+            );
+            #[cfg(not(feature = "profile-aggregate"))]
+            self.profile.opcode(ins.op() as usize);
+            match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
+                Ok(StepResult::Return(value)) => {
+                    if let Some(pending) = pending_calls.pop() {
+                        debug_assert_eq!(frame, pending.caller + 1);
+                        let result = Ok(FrameOutcome::Complete(value));
+                        let mut completed_frame = self.frames.pop().unwrap();
+                        self.deactivate_frame(&mut completed_frame, &result);
+                        self.persist_global_lexical_bindings(p, &completed_frame);
+                        self.frame_pool.push(Self::recycle_frame(completed_frame));
+                        frame = pending.caller;
+                        self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
                         cursor = GeneralCodeCursor::new(
-                            replacement_program,
-                            current_program.as_deref().unwrap_or(entry_program),
+                            executing_program,
+                            p,
                             self.frames[frame].function,
                         );
-                        // The replacement frame publishes all callee roots before this back edge.
-                        self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
-                    }
-                    Ok(StepResult::Await { value, destination }) => {
-                        debug_assert!(pending_calls.is_empty());
+                        drop(pending.stack_guard);
+                    } else {
                         self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Await {
-                            value,
-                            destination,
-                            frame: None,
-                        });
+                        return Ok(FrameOutcome::Complete(value));
                     }
-                    Ok(StepResult::Yield {
+                }
+                Ok(StepResult::Continue) => {}
+                Ok(StepResult::PushFrame {
+                    destination,
+                    stack_guard,
+                }) => {
+                    pending_calls.push(PendingGeneralCall {
+                        caller: frame,
+                        call_pc: instruction_pc as u32,
+                        destination,
+                        stack_guard,
+                    });
+                    frame += 1;
+                    pc = self.frames[frame].pc;
+                    let callee_program = self.frames[frame].program;
+                    debug_assert_eq!(callee_program, executing_program);
+                    cursor = GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
+                }
+                Ok(StepResult::TailCall) => {
+                    let replacement_program = self.frames[frame].program;
+                    if replacement_program != executing_program {
+                        self.active_program = replacement_program;
+                        current_program =
+                            Some(self.programs.get(replacement_program).ok_or_else(|| {
+                                JsError::validation("missing tail-call program".into())
+                            })?);
+                    }
+                    executing_program = replacement_program;
+                    pc = self.frames[frame].pc;
+                    cursor = GeneralCodeCursor::new(
+                        replacement_program,
+                        current_program.as_deref().unwrap_or(entry_program),
+                        self.frames[frame].function,
+                    );
+                    // The replacement frame publishes all callee roots before this back edge.
+                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                }
+                Ok(StepResult::Await { value, destination }) => {
+                    debug_assert!(pending_calls.is_empty());
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Await {
+                        value,
+                        destination,
+                        frame: None,
+                    });
+                }
+                Ok(StepResult::Yield {
+                    value,
+                    destination,
+                    delegated_result,
+                }) => {
+                    debug_assert!(pending_calls.is_empty());
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Yield {
                         value,
                         destination,
                         delegated_result,
-                    }) => {
-                        debug_assert!(pending_calls.is_empty());
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Yield {
-                            value,
-                            destination,
-                            delegated_result,
-                            frame: None,
-                        });
-                    }
-                    Err(error) => {
-                        let mut throwing_pc = instruction_pc as u32;
-                        let mut error = error;
-                        loop {
-                            let function = self.frames[frame].function as usize;
-                            match self.exception_handler_target(
-                                p,
-                                frame,
-                                function,
-                                throwing_pc,
-                                error,
-                            ) {
-                                Ok(target) => {
-                                    pc = target;
-                                    break;
-                                }
-                                Err(unhandled) => {
-                                    self.frames[frame].pc = pc;
-                                    if let Some(pending) = pending_calls.pop() {
-                                        debug_assert_eq!(frame, pending.caller + 1);
-                                        let result = Err(unhandled);
-                                        let mut failed_frame = self.frames.pop().unwrap();
-                                        self.deactivate_frame(&mut failed_frame, &result);
-                                        self.persist_global_lexical_bindings(p, &failed_frame);
-                                        frame = pending.caller;
-                                        pc = self.frames[frame].pc;
-                                        cursor = GeneralCodeCursor::new(
-                                            executing_program,
-                                            p,
-                                            self.frames[frame].function,
-                                        );
-                                        throwing_pc = pending.call_pc;
-                                        drop(pending.stack_guard);
-                                        error = match result {
-                                            Err(error) => error,
-                                            Ok(_) => unreachable!(),
-                                        };
-                                    } else {
-                                        return Err(unhandled);
-                                    }
+                        frame: None,
+                    });
+                }
+                Err(error) => {
+                    let mut throwing_pc = instruction_pc as u32;
+                    let mut error = error;
+                    loop {
+                        let function = self.frames[frame].function as usize;
+                        match self.exception_handler_target(p, frame, function, throwing_pc, error)
+                        {
+                            Ok(target) => {
+                                pc = target;
+                                break;
+                            }
+                            Err(unhandled) => {
+                                self.frames[frame].pc = pc;
+                                if let Some(pending) = pending_calls.pop() {
+                                    debug_assert_eq!(frame, pending.caller + 1);
+                                    let result = Err(unhandled);
+                                    let mut failed_frame = self.frames.pop().unwrap();
+                                    self.deactivate_frame(&mut failed_frame, &result);
+                                    self.persist_global_lexical_bindings(p, &failed_frame);
+                                    frame = pending.caller;
+                                    pc = self.frames[frame].pc;
+                                    cursor = GeneralCodeCursor::new(
+                                        executing_program,
+                                        p,
+                                        self.frames[frame].function,
+                                    );
+                                    throwing_pc = pending.call_pc;
+                                    drop(pending.stack_guard);
+                                    error = match result {
+                                        Err(error) => error,
+                                        Ok(_) => unreachable!(),
+                                    };
+                                } else {
+                                    return Err(unhandled);
                                 }
                             }
                         }
                     }
                 }
             }
-        })();
-        self.active_program = previous_program;
-        self.realm.globals = previous_global;
-        outcome
+        }
     }
 
     fn exception_handler_target(
