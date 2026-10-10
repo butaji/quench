@@ -1386,6 +1386,15 @@ impl<H: Host> Vm<H> {
         env: Value,
         slot: u16,
     ) -> Result<Value, JsError> {
+        // Global var, global lexical and module-import projections exist only for a program's
+        // root function, so any other initialized environment slot is the binding itself.
+        if let Some(Cell::Environment { function, .. }) = self.heap.get(env)
+            && *function != super::ROOT_FUNCTION_ID
+            && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
+            && !value.is_deleted()
+        {
+            return Ok(value);
+        }
         let Cell::Environment {
             function, program, ..
         } = self
