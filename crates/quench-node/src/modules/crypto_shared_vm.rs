@@ -293,6 +293,43 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNativ
     }
   }
 
+  let hmacConstructorWarningEmitted = false;
+  function HmacConstructor(algorithm, key) {
+    if (!new.target && !hmacConstructorWarningEmitted) {
+      hmacConstructorWarningEmitted = true;
+      process.emitWarning("crypto.Hmac constructor is deprecated.", {
+        type: "DeprecationWarning",
+        code: "DEP0181",
+      });
+    }
+    return new Hmac(algorithm, key);
+  }
+  HmacConstructor.prototype = Hmac.prototype;
+
+  let setEngineWarningEmitted = false;
+  function setEngine(id, flags) {
+    if (typeof id !== "string") {
+      const error = new TypeError('The "id" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (flags !== undefined && typeof flags !== "number") {
+      const error = new TypeError('The "flags" argument must be of type number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!setEngineWarningEmitted) {
+      setEngineWarningEmitted = true;
+      process.emitWarning("OpenSSL engine-based APIs are deprecated.", {
+        type: "DeprecationWarning",
+        code: "DEP0183",
+      });
+    }
+    const error = new Error("Engine-based crypto is not supported");
+    error.code = "ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED";
+    throw error;
+  }
+
   class Sign {
     constructor(algorithm) {
       if (typeof algorithm !== "string") {
@@ -1078,8 +1115,10 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNativ
   const api = {
     Hash: HashConstructor,
     createHash: (algorithm, options) => new Hash(algorithm, options),
+    Hmac: HmacConstructor,
     hash: hashOnce,
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
+    setEngine,
     createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
     createCipheriv,
