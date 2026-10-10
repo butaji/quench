@@ -1,11 +1,12 @@
 //! One deadline and result protocol for isolated Node fixture processes.
 use std::{
+    collections::hash_map::DefaultHasher,
     fs,
+    hash::{Hash, Hasher},
     path::Path,
     process::{Command, ExitCode, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
-use wait_timeout::ChildExt;
 
 use crate::NodeOutcome;
 
@@ -51,8 +52,16 @@ impl CaseObservation {
         }
         match (&self.worker, self.exit_code == Some(0)) {
             (Some(NodeOutcome::Pass), true) => RunResult::Pass,
+            (Some(NodeOutcome::GuestExit { code: 0 }), true)
+                if self.stdout.starts_with(b"1..0 # Skipped:") =>
+            {
+                RunResult::Skip
+            }
+            (Some(NodeOutcome::GuestExit { code: 0 }), true) => RunResult::Pass,
+            (Some(NodeOutcome::GuestExit { code }), true) if *code != 0 => RunResult::Fail,
             (Some(NodeOutcome::Skip { .. }), true) => RunResult::Skip,
             (Some(NodeOutcome::Fail { .. }), false) => RunResult::Fail,
+            (Some(NodeOutcome::GuestExit { .. }), false) => RunResult::Fail,
             _ => RunResult::Unclassified,
         }
     }
@@ -150,6 +159,15 @@ fn observe_case_with_environment(
     if skip_flag_check {
         // The official Node test runner sets this after applying fixture Env.
         command.env("NODE_SKIP_FLAG_CHECK", "true");
+        // Node's common/tmpdir.js otherwise defaults every isolated fixture to
+        // the same `.tmp.0` path. Parallel workers then delete and recreate one
+        // another's files, making the recursive inventory nondeterministic.
+        let mut hasher = DefaultHasher::new();
+        fixture.hash(&mut hasher);
+        command.env(
+            "TEST_SERIAL_ID",
+            format!("{}-{:x}", std::process::id(), hasher.finish()),
+        );
     }
     observe_process_in(command, timeout, &directory, Some(&result))
 }
@@ -193,7 +211,17 @@ fn observe_process_in(
     let mut child = command
         .spawn()
         .map_err(|error| format!("spawn observed process: {error}"))?;
-    let waited = child.wait_timeout(timeout);
+    let deadline = Instant::now() + timeout;
+    let waited = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(Some(status)),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) => break Ok(None),
+            Err(error) => break Err(error),
+        }
+    };
     let timed_out = matches!(waited, Ok(None));
     let status = match waited {
         Ok(Some(status)) => status,

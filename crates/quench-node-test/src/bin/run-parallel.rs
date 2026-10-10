@@ -15,6 +15,9 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use quench_node_test::case_process::{
     observe_parallel_case, worker_entry, RunResult, DEFAULT_CASE_TIMEOUT_SECS,
@@ -66,11 +69,22 @@ fn main() -> ExitCode {
             .and_then(|i| args.get(i + 1))
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
+        let jobs = args
+            .iter()
+            .position(|a| a == "--jobs")
+            .and_then(|i| args.get(i + 1))
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|jobs| *jobs > 0)
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(usize::from)
+                    .unwrap_or(1)
+            });
         let results = args
             .iter()
             .position(|a| a == "--results")
             .and_then(|i| args.get(i + 1));
-        return run_all(filter, timeout, results);
+        return run_all(filter, timeout, jobs, results);
     }
     let profile = args
         .iter()
@@ -80,7 +94,13 @@ fn main() -> ExitCode {
         eprintln!("error: --profile requires a profile name");
         return ExitCode::from(2);
     }
-    run_manifest(profile.map(String::as_str))
+    let timeout = args
+        .iter()
+        .position(|arg| arg == "--timeout-secs")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_CASE_TIMEOUT_SECS);
+    run_manifest(profile.map(String::as_str), timeout)
 }
 
 fn print_help() {
@@ -92,10 +112,12 @@ fn print_help() {
     println!("  run-parallel --one PATH               run one fixture");
     println!("  run-parallel --all [options]         run the recursive fixture inventory");
     println!("  run-parallel --triage [options]        print passing triage fixtures");
+    println!("  --timeout-secs N                     isolate fixtures for N seconds (default 30)");
     println!();
     println!("options for --all:");
     println!("  --filter NAME       restrict fixtures by filename");
     println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
+    println!("  --jobs N            run up to N isolated fixtures concurrently (default: available CPUs)");
     println!("  --results PATH      write machine-readable results and inventory hash");
 }
 
@@ -134,8 +156,8 @@ fn run_one(path: PathBuf) -> ExitCode {
     }
 }
 
-fn run_manifest(profile: Option<&str>) -> ExitCode {
-    quench_node_test::parallel_profile::run(profile, None, DEFAULT_CASE_TIMEOUT_SECS)
+fn run_manifest(profile: Option<&str>, timeout_secs: u64) -> ExitCode {
+    quench_node_test::parallel_profile::run(profile, None, timeout_secs)
 }
 
 fn triage(filter: Option<&String>, timeout_secs: u64) -> ExitCode {
@@ -187,7 +209,12 @@ fn triage_one(exe: &std::path::Path, path: &std::path::Path, timeout_secs: u64) 
     }
 }
 
-fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&String>) -> ExitCode {
+fn run_all(
+    filter: Option<&String>,
+    timeout_secs: u64,
+    jobs: usize,
+    results_path: Option<&String>,
+) -> ExitCode {
     let root = PathBuf::from(PARALLEL_DIR);
     let mut entries = match quench_node_test::stages::discover_fixtures(&root) {
         Ok(entries) => entries,
@@ -207,11 +234,37 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
             })
     });
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
+    let next_entry = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel();
+    let mut observations = (0..entries.len()).map(|_| None).collect::<Vec<_>>();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs.min(entries.len()).max(1) {
+            let sender = sender.clone();
+            let entries = &entries;
+            let exe = &exe;
+            let next_entry = &next_entry;
+            scope.spawn(move || loop {
+                let index = next_entry.fetch_add(1, Ordering::Relaxed);
+                let Some(path) = entries.get(index) else {
+                    break;
+                };
+                let observation =
+                    observe_parallel_case(exe, path, Duration::from_secs(timeout_secs));
+                if sender.send((index, observation)).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(sender);
+        for (index, observation) in receiver {
+            observations[index] = Some(observation);
+        }
+    });
     let mut counts = [0usize; RunResult::COUNT];
     let mut results = Vec::with_capacity(entries.len());
-    for path in &entries {
-        let observation =
-            observe_parallel_case(&exe, path, std::time::Duration::from_secs(timeout_secs));
+    for (path, observation) in entries.iter().zip(observations) {
+        let observation = observation
+            .unwrap_or_else(|| Err("fixture worker did not return a result".into()));
         let result = observation
             .as_ref()
             .map(|record| record.outcome())
@@ -227,12 +280,12 @@ fn run_all(filter: Option<&String>, timeout_secs: u64, results_path: Option<&Str
         entries.len()
     );
     if let Some(path) = results_path {
-        if let Err(error) = write_results(path, &results, inventory_hash, timeout_secs) {
+        if let Err(error) = write_results(path, &results, inventory_hash, timeout_secs, jobs) {
             eprintln!("error: cannot write {path}: {error}");
             return ExitCode::from(2);
         }
     }
-    gate_exit(passed, entries.len())
+    gate_exit(passed + skipped, entries.len())
 }
 
 fn gate_exit(passed: usize, total: usize) -> ExitCode {
@@ -251,6 +304,7 @@ fn write_results(
     )],
     inventory_hash: u64,
     timeout_secs: u64,
+    jobs: usize,
 ) -> std::io::Result<()> {
     let records: Vec<_> = results
         .iter()
@@ -263,7 +317,7 @@ fn write_results(
         })
         .collect();
     let report = serde_json::json!({
-        "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,
+        "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,"jobs":jobs,
         "node_version":command_output("node", &["--version"]),
         "runtime_commit":command_output("git", &["rev-parse", "HEAD"]),
         "tests_node_commit":command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]),

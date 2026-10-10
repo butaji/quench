@@ -11,6 +11,9 @@ pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 pub struct NodeHost {
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
+    pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
+    pub(crate) net_pending_ends: Vec<u64>,
+    pub(crate) net_pending_destroys: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -26,6 +29,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
+    /// Node's internal primordial snapshot used when loading `lib/internal/*`.
+    pub(crate) primordials_module: Option<quench_runtime::RootId>,
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
@@ -36,6 +41,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) assert_module: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
     pub(crate) url_constructor: Option<quench_runtime::RootId>,
+    pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
@@ -43,6 +49,23 @@ pub(crate) struct SharedNodeState {
     pub(crate) diagnostics: crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState,
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
+    pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
+    pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
+    pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
+}
+
+pub(crate) struct NetSocket {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) encoding: Option<String>,
+    pub(crate) parent_server: Option<u64>,
+}
+
+pub(crate) struct NetServer {
+    pub(crate) root: quench_runtime::RootId,
+    pub(crate) listener: u64,
+    pub(crate) connections: std::collections::HashSet<u64>,
+    pub(crate) closing: bool,
+    pub(crate) listening_pending: bool,
 }
 
 impl SharedNodeState {
@@ -61,6 +84,7 @@ impl SharedNodeState {
             fs,
             cwd,
             module_cache: std::collections::HashMap::new(),
+            primordials_module: None,
             process_argv,
             process_control,
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
@@ -71,6 +95,7 @@ impl SharedNodeState {
             assert_module: None,
             path_module: None,
             url_constructor: None,
+            url_search_params_constructor: None,
             timer_handle_api: None,
             exec_argv: Vec::new(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
@@ -78,6 +103,9 @@ impl SharedNodeState {
                 crate::modules::diagnostics_channel_shared_vm::SharedDiagnosticsState::default(),
             http: crate::modules::http_shared_vm::State::new(),
             tcp: crate::modules::net_shared_vm::Transport::new(),
+            net_sockets: std::collections::HashMap::new(),
+            net_servers: std::collections::HashMap::new(),
+            net_socket_constructor: None,
         }
     }
 }
@@ -106,6 +134,9 @@ impl NodeHost {
                 async_identity,
             ))),
             commonjs_entry: None,
+            net_pending_writes: Vec::new(),
+            net_pending_ends: Vec::new(),
+            net_pending_destroys: Vec::new(),
         }
     }
 

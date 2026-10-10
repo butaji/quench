@@ -17,6 +17,19 @@ pub(crate) fn is_posix_separator(c: char) -> bool {
     c == '/'
 }
 
+pub(crate) fn is_absolute(path: &str, windows: bool) -> bool {
+    let bytes = path.as_bytes();
+    if windows {
+        bytes.first().is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+            || (bytes.len() >= 3
+                && bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && matches!(bytes[2], b'/' | b'\\'))
+    } else {
+        bytes.first() == Some(&b'/')
+    }
+}
+
 pub(crate) fn is_device_root(c: char) -> bool {
     c.is_ascii_alphabetic()
 }
