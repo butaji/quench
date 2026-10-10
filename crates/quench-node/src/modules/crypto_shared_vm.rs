@@ -576,6 +576,13 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
           throw error;
         }
         if (this._cipherDecrypt && finalBlock) {
+          if (input.length === 0) {
+            const error = new Error("error:1C80006B:Provider routines::wrong final block length");
+            error.library = "Provider routines";
+            error.reason = "wrong final block length";
+            error.code = "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH";
+            throw error;
+          }
           const error = new Error("error:1C800064:Provider routines::bad decrypt");
           error.library = "Provider routines";
           error.reason = "bad decrypt";
@@ -1432,6 +1439,123 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     }
     setImmediate(() => { try { callback(null, generatePrimeValue(size, options === undefined ? {} : options)); } catch (error) { callback(error); } });
   };
+  const modp2 = BigInt("0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381FFFFFFFFFFFFFFFF");
+  const dhBytesToInt = (value, encoding) => BigInt(`0x${(typeof value === "string" ? Buffer.from(value, encoding || "utf8") : cryptoBytes(value)).toString("hex") || "0"}`);
+  const dhIntToBuffer = (value, length) => {
+    let hex = value.toString(16); if (hex.length & 1) hex = `0${hex}`;
+    const raw = Buffer.from(hex, "hex");
+    if (length === undefined) return raw;
+    const out = Buffer.alloc(length); raw.copy(out, Math.max(0, length - raw.length)); return out;
+  };
+  const dhModPow = (base, exponent, modulus) => {
+    let result = 1n; base %= modulus;
+    while (exponent > 0n) { if (exponent & 1n) result = result * base % modulus; exponent >>= 1n; base = base * base % modulus; }
+    return result;
+  };
+  const dhEncoding = (bytes, encoding) => encoding === undefined || encoding === "buffer" ? bytes : bytes.toString(encoding);
+  class DiffieHellmanImpl {
+    constructor(sizeOrKey, keyEncoding, generator, generatorEncoding) {
+      let prime;
+      if (typeof sizeOrKey === "number") {
+        if (!Number.isInteger(sizeOrKey) || sizeOrKey <= 0) throw new Error("Initialization failed");
+        prime = sizeOrKey <= 1024 ? modp2 : generatePrimeValue(sizeOrKey, { safe: true, bigint: true });
+        if (keyEncoding !== undefined) generator = typeof keyEncoding === "number" ? BigInt(keyEncoding) : dhBytesToInt(keyEncoding);
+      } else {
+        if (typeof keyEncoding === "string" && !["utf8", "utf-8", "hex", "base64", "base64url", "latin1", "binary", "ascii", "ucs2", "ucs-2", "utf16le", "utf-16le", "buffer"].includes(keyEncoding.toLowerCase())) {
+          generatorEncoding = generator;
+          generator = keyEncoding;
+          keyEncoding = undefined;
+        }
+        if (keyEncoding !== undefined && typeof keyEncoding !== "string") {
+          generator = keyEncoding;
+          keyEncoding = undefined;
+        }
+        const enc = typeof keyEncoding === "string" ? keyEncoding : "utf8";
+        prime = dhBytesToInt(sizeOrKey, enc);
+        if (typeof generator !== "number") generator = generator === undefined ? 2n : dhBytesToInt(generator, generatorEncoding);
+      }
+      this._p = prime;
+      this._g = BigInt(generator || 2);
+      this._private = undefined;
+      this._public = undefined;
+      this.verifyError = 0;
+    }
+    generateKeys(encoding) {
+      if (this._private === undefined) {
+        const bits = this._p.toString(2).length;
+        this._private = dhBytesToInt(randomBuffer(Math.ceil(bits / 8))) % (this._p - 3n) + 2n;
+      }
+      if (this._public === undefined) this._public = dhModPow(this._g, this._private, this._p);
+      return dhEncoding(dhIntToBuffer(this._public), encoding);
+    }
+    computeSecret(other, inputEncoding, outputEncoding) {
+      const value = dhBytesToInt(other, inputEncoding);
+      if (value <= 1n || value >= this._p - 1n) {
+        const error = new Error("Supplied key is too small"); error.code = "ERR_CRYPTO_INVALID_KEYTYPE"; throw error;
+      }
+      if (this._private === undefined) throw new Error("Private key is not set");
+      const secret = dhModPow(value, this._private, this._p);
+      const bytes = dhIntToBuffer(secret);
+      return dhEncoding(bytes, outputEncoding);
+    }
+    getPrime(encoding) { return dhEncoding(dhIntToBuffer(this._p), encoding); }
+    getGenerator(encoding) { return dhEncoding(dhIntToBuffer(this._g), encoding); }
+    getPublicKey(encoding) {
+      if (this._public === undefined) { const error = new Error("No public key - did you forget to generate one?"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      return dhEncoding(dhIntToBuffer(this._public), encoding);
+    }
+    getPrivateKey(encoding) {
+      if (this._private === undefined) { const error = new Error("No private key - did you forget to generate one?"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      return dhEncoding(dhIntToBuffer(this._private), encoding);
+    }
+    setPublicKey(key, encoding) { this._public = dhBytesToInt(key, encoding); return dhEncoding(dhIntToBuffer(this._public), encoding); }
+    setPrivateKey(key, encoding) { this._private = dhBytesToInt(key, encoding); return dhEncoding(dhIntToBuffer(this._private), encoding); }
+  }
+  function DiffieHellman(sizeOrKey, keyEncoding, generator, generatorEncoding) {
+    return new DiffieHellmanImpl(sizeOrKey, keyEncoding, generator, generatorEncoding);
+  }
+  DiffieHellman.prototype = DiffieHellmanImpl.prototype;
+  DiffieHellman.prototype.constructor = DiffieHellman;
+  const createDiffieHellman = (sizeOrKey, keyEncoding, generator, generatorEncoding) =>
+    new DiffieHellman(sizeOrKey, keyEncoding, generator, generatorEncoding);
+  const getDiffieHellman = (name) => {
+    if (typeof name !== "string") { const error = new TypeError('The "name" argument must be of type string'); error.code = "ERR_INVALID_ARG_TYPE"; throw error; }
+    if (!/^modp([1-5]|14)$/i.test(name)) { const error = new TypeError(`Invalid DH group: ${name}`); error.code = "ERR_CRYPTO_INVALID_KEYTYPE"; throw error; }
+    return new DiffieHellmanGroup(name);
+  };
+  function DiffieHellmanGroup(name) {
+    const group = new DiffieHellman(dhIntToBuffer(modp2), "buffer", 2);
+    Object.setPrototypeOf(group, DiffieHellmanGroup.prototype);
+    return group;
+  }
+  DiffieHellmanGroup.prototype = Object.create(DiffieHellman.prototype);
+  Object.defineProperties(DiffieHellmanGroup.prototype, {
+    constructor: { value: DiffieHellmanGroup, writable: true, configurable: true },
+    setPrivateKey: { value: undefined, writable: true, configurable: true },
+    setPublicKey: { value: undefined, writable: true, configurable: true },
+  });
+  const createDiffieHellmanGroup = (name) => new DiffieHellmanGroup(name);
+  const generateKeyPairSync = (type, options) => {
+    if (typeof type !== "string") {
+      const error = new TypeError(`The "type" argument must be of type string. ${receivedArgument(type)}`);
+      error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError(`The "options" argument must be of type object. ${receivedArgument(options)}`);
+      error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    const error = new Error(`Key generation for ${type} keys is not supported`);
+    error.code = "ERR_CRYPTO_OPERATION_FAILED";
+    throw error;
+  };
+  const generateKeyPair = (type, options, callback) => {
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    try { generateKeyPairSync(type, options); }
+    catch (error) { process.nextTick(bindAsyncCallback(callback), error); }
+  };
   const webCrypto = globalThis.crypto || {};
   if (!globalThis.crypto) {
     Object.defineProperty(globalThis, "crypto", {
@@ -1488,6 +1612,13 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
+    DiffieHellman,
+    DiffieHellmanGroup,
+    createDiffieHellman,
+    createDiffieHellmanGroup,
+    getDiffieHellman,
+    generateKeyPair,
+    generateKeyPairSync,
     checkPrime,
     checkPrimeSync,
     generatePrime,
