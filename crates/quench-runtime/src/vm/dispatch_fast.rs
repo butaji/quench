@@ -556,7 +556,7 @@ lane_handler! {
             return exit(ip);
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view);
+            return lane_jump(cx, r, ip, BACKWARD, view, || {});
         }
         next!(cx, r, following(ip), view)
     }
@@ -564,7 +564,10 @@ lane_handler! {
 
 /// A taken jump. Safepoint jumps (every `Jump`, and backward conditionals,
 /// whose direction the view fixes per record) leave the lane when a
-/// collection is due; forward conditionals dispatch directly.
+/// collection is due; forward conditionals dispatch directly. Leaving hands
+/// the whole instruction to the general path, so `commit`, the
+/// instruction's own effect before its jump, applies only when the lane
+/// takes the jump itself.
 #[inline(always)]
 fn lane_jump<H: Host>(
     cx: *mut LaneContext<H>,
@@ -572,6 +575,7 @@ fn lane_jump<H: Host>(
     ip: Ip,
     safepoint: bool,
     view: Carried,
+    commit: impl FnOnce(),
 ) -> Ip {
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
@@ -585,15 +589,17 @@ fn lane_jump<H: Host>(
                 return exit(ip);
             }
             SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(vm)));
+            commit();
             return target;
         }
     }
+    commit();
     next!(cx, r, target, view)
 }
 
 lane_handler! {
     fn lane_jump_always<>(cx, r, ip, i, view) {
-        lane_jump(cx, r, ip, true, view)
+        lane_jump(cx, r, ip, true, view, || {})
     }
 }
 
@@ -601,7 +607,7 @@ lane_handler! {
     fn lane_jump_false<>(cx, r, ip, i, view) {
         let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
         if !truthy {
-            return lane_jump(cx, r, ip, true, view);
+            return lane_jump(cx, r, ip, true, view, || {});
         }
         next!(cx, r, following(ip), view)
     }
@@ -614,7 +620,7 @@ lane_handler! {
         let case = r.get(i.a).wasm_bits32().min(i.imm());
         // SAFETY: validation places `imm + 1` entries after the table.
         let entry = unsafe { ip.add(1 + case as usize) };
-        lane_jump(cx, r, entry, true, view)
+        lane_jump(cx, r, entry, true, view, || {})
     }
 }
 
@@ -634,8 +640,9 @@ lane_handler! {
     fn lane_add_jump_nonzero<BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let sum = read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(i32::from(i.c as i16));
         if sum != 0 {
-            r.set(i.a, view.integers.encode(sum));
-            return lane_jump(cx, r, ip, BACKWARD, view);
+            return lane_jump(cx, r, ip, BACKWARD, view, || {
+                r.set(i.a, view.integers.encode(sum));
+            });
         }
         // Falling through, the step is an accumulator producer.
         produce!(cx, r, ip, i.a, view.integers.encode(sum), view)
@@ -646,7 +653,7 @@ lane_handler! {
     /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`.
     fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         if (read_i32::<ACC, ACC_A>(r, i.a, view) == 0) == WHEN_ZERO {
-            return lane_jump(cx, r, ip, BACKWARD, view);
+            return lane_jump(cx, r, ip, BACKWARD, view, || {});
         }
         next!(cx, r, following(ip), view)
     }
@@ -673,7 +680,7 @@ lane_handler! {
             return exit(ip);
         };
         if taken != 0 {
-            return lane_jump(cx, r, ip, BACKWARD, view);
+            return lane_jump(cx, r, ip, BACKWARD, view, || {});
         }
         next!(cx, r, following(ip), view)
     }
