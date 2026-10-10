@@ -722,6 +722,7 @@ impl Engine {
                 local_base,
                 aliases: Vec::new(),
                 producer: None,
+                previous: None,
                 code: Vec::new(),
                 wide: Vec::new(),
                 constants,
@@ -1308,10 +1309,13 @@ struct Lowering<'a> {
     memory_registers: Vec<Option<Register>>,
     // First register of the Wasm locals when they live in frame registers.
     local_base: Option<Register>,
-    // Operand-stack positions that still alias a local register, by position.
-    aliases: Vec<Option<Register>>,
-    // The previous operator's instruction, when it wrote the operand-stack top.
+    // Operand-stack positions whose value is still a local register or a
+    // constant, by position; materialized only when a reader needs the slot.
+    aliases: Vec<Option<Alias>>,
+    // The instruction this operator emitted for the operand-stack top.
     producer: Option<(usize, Register)>,
+    // `producer` as left by the previous operator.
+    previous: Option<(usize, Register)>,
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
     constants: Vec<Constant>,
@@ -1319,6 +1323,13 @@ struct Lowering<'a> {
     registers: u16,
     controls: Vec<Control>,
     path: Reachability,
+}
+
+/// An operand-stack value not yet copied into its position's register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Alias {
+    Local(Register),
+    I32(i32),
 }
 
 /// Locals live in frame registers while the whole register file stays small.
@@ -1389,12 +1400,30 @@ impl Lowering<'_> {
     /// Pop the operand register an operator reads: a local register while the
     /// position still aliases that local, otherwise the position's own register.
     fn pop(&mut self) -> Result<Register, Diagnostic> {
-        let register = self.pop_position()?;
-        Ok(self
-            .aliases
-            .get_mut(usize::from(register))
+        let position = self.pop_position()?;
+        match self.take_alias(position) {
+            Some(Alias::Local(local)) => Ok(local),
+            Some(Alias::I32(value)) => {
+                self.load_i32(position, value)?;
+                Ok(position)
+            }
+            None => Ok(position),
+        }
+    }
+
+    fn take_alias(&mut self, position: Register) -> Option<Alias> {
+        self.aliases
+            .get_mut(usize::from(position))
             .and_then(Option::take)
-            .unwrap_or(register))
+    }
+
+    /// The constant on the operand-stack top, while it is still unmaterialized.
+    fn top_i32_constant(&self) -> Option<i32> {
+        let top = usize::from(self.depth.checked_sub(1)?);
+        match self.aliases.get(top) {
+            Some(Some(Alias::I32(value))) if self.depth > self.control_base() => Some(*value),
+            _ => None,
+        }
     }
 
     fn pop_position(&mut self) -> Result<Register, Diagnostic> {
@@ -1416,8 +1445,12 @@ impl Lowering<'_> {
     fn materialize_aliases(&mut self) -> Result<(), Diagnostic> {
         self.aliases.truncate(usize::from(self.depth));
         for position in 0..self.aliases.len() {
-            if let Some(local) = self.aliases[position].take() {
-                self.emit(Op::Move, position as Register, local, 0, 0)?;
+            match self.aliases[position].take() {
+                Some(Alias::Local(local)) => {
+                    self.emit(Op::Move, position as Register, local, 0, 0)?
+                }
+                Some(Alias::I32(value)) => self.load_i32(position as Register, value)?,
+                None => {}
             }
         }
         Ok(())
@@ -1449,7 +1482,7 @@ impl Lowering<'_> {
     /// Materialize positions that alias `local` before the local is overwritten.
     fn materialize_local_aliases(&mut self, local: Register) -> Result<(), Diagnostic> {
         for position in 0..usize::from(self.depth).min(self.aliases.len()) {
-            if self.aliases[position] == Some(local) {
+            if self.aliases[position] == Some(Alias::Local(local)) {
                 self.aliases[position] = None;
                 self.emit(Op::Move, position as Register, local, 0, 0)?;
             }
@@ -1457,12 +1490,12 @@ impl Lowering<'_> {
         Ok(())
     }
 
-    fn push_alias(&mut self, local: Register) -> Result<(), Diagnostic> {
+    fn push_alias(&mut self, alias: Alias) -> Result<(), Diagnostic> {
         let position = usize::from(self.push()?);
         if self.aliases.len() <= position {
             self.aliases.resize(position + 1, None);
         }
-        self.aliases[position] = Some(local);
+        self.aliases[position] = Some(alias);
         Ok(())
     }
 
@@ -1471,29 +1504,41 @@ impl Lowering<'_> {
         self.producer = Some((self.code.len() - 1, result));
     }
 
+    /// The previous operator's last instruction, when it alone wrote `value`
+    /// and nothing has been emitted since: it may be rewritten in place.
+    pub(super) fn previous_producer(&self, value: Register) -> Option<usize> {
+        self.previous
+            .filter(|(pc, result)| *result == value && pc + 1 == self.code.len())
+            .map(|(pc, _)| pc)
+    }
+
+    pub(super) fn instruction(&self, pc: usize) -> WideInstruction {
+        if self.code[pc].is_wide() {
+            self.wide[self.code[pc].wide_index()]
+        } else {
+            self.code[pc].as_wide()
+        }
+    }
+
     /// Write `value` into `local`: redirect its producer when it was the
     /// immediately preceding instruction, otherwise copy it.
-    fn store_register_local(
-        &mut self,
-        producer: Option<(usize, Register)>,
-        local: Register,
-        value: Register,
-    ) -> Result<(), Diagnostic> {
+    fn store_register_local(&mut self, local: Register) -> Result<(), Diagnostic> {
+        if let Some(value) = self.top_i32_constant() {
+            let position = self.pop_position()?;
+            self.take_alias(position);
+            self.materialize_local_aliases(local)?;
+            return self.load_i32(local, value);
+        }
+        let value = self.pop()?;
         let emitted = self.code.len();
         self.materialize_local_aliases(local)?;
         if value == local {
             return Ok(());
         }
         if self.code.len() == emitted
-            && let Some((pc, result)) = producer
-            && result == value
-            && pc + 1 == self.code.len()
+            && let Some(pc) = self.previous_producer(value)
         {
-            let mut instruction = if self.code[pc].is_wide() {
-                self.wide[self.code[pc].wide_index()]
-            } else {
-                self.code[pc].as_wide()
-            };
+            let mut instruction = self.instruction(pc);
             instruction.set_result_register(local);
             self.code.pop();
             return self.emit(
@@ -1505,6 +1550,24 @@ impl Lowering<'_> {
             );
         }
         self.emit(Op::Move, local, value, 0, 0)
+    }
+
+    /// An i32 operator in its first-class form; a constant right operand
+    /// becomes the immediate.
+    fn i32_binary(&mut self, operator: I32BinaryOperator) -> Result<(), Diagnostic> {
+        let (op, right, immediate) = match self.top_i32_constant() {
+            Some(value) => {
+                let position = self.pop_position()?;
+                self.take_alias(position);
+                (operator.immediate_op(), 0, value as u32)
+            }
+            None => (operator.register_op(), self.pop()?, 0),
+        };
+        let left = self.pop()?;
+        let result = self.push()?;
+        self.emit(op, result, left, right, immediate)?;
+        self.produced(result);
+        Ok(())
     }
 
     fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
@@ -1616,7 +1679,7 @@ impl Lowering<'_> {
     }
 
     fn operator(&mut self, operator: Operator<'_>) -> Result<(), Diagnostic> {
-        let producer = self.producer.take();
+        self.previous = self.producer.take();
         if !self.reads_aliases(&operator) {
             self.materialize_aliases()?;
         }
@@ -1649,6 +1712,10 @@ impl Lowering<'_> {
             if self.path == Reachability::Dead {
                 return Ok(());
             }
+            if op == Op::WasmI32Binary {
+                let operator = I32BinaryOperator::from_tag(selector).expect("i32 binary selector");
+                return self.i32_binary(operator);
+            }
             let right = if op
                 .field_layout(crate::bytecode::InstructionField::C)
                 .is_register_field()
@@ -1664,8 +1731,13 @@ impl Lowering<'_> {
             return Ok(());
         }
         match operator {
-            Operator::I32Const { .. }
-            | Operator::I64Const { .. }
+            Operator::I32Const { value } => {
+                if self.path == Reachability::Live {
+                    self.push_alias(Alias::I32(value))?;
+                }
+                Ok(())
+            }
+            Operator::I64Const { .. }
             | Operator::F32Const { .. }
             | Operator::F64Const { .. }
             | Operator::V128Const { .. } => {
@@ -1674,7 +1746,6 @@ impl Lowering<'_> {
                 }
                 let result = self.push()?;
                 let value = match operator {
-                    Operator::I32Const { value } => WasmValue::I32(value),
                     Operator::I64Const { value } => WasmValue::I64(value),
                     Operator::F32Const { value } => WasmValue::F32(value.bits()),
                     Operator::F64Const { value } => WasmValue::F64(value.bits()),
@@ -1735,11 +1806,10 @@ impl Lowering<'_> {
                 if let Some(base) = self.local_base {
                     let local = base + local_index as Register;
                     if !matches!(operator, Operator::LocalGet { .. }) {
-                        let value = self.pop()?;
-                        self.store_register_local(producer, local, value)?;
+                        self.store_register_local(local)?;
                     }
                     if !matches!(operator, Operator::LocalSet { .. }) {
-                        self.push_alias(local)?;
+                        self.push_alias(Alias::Local(local))?;
                     }
                     return Ok(());
                 }

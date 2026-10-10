@@ -243,6 +243,7 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmMemoryLoadOperator
         | ImmediateRole::WasmMemoryStoreOperator
         | ImmediateRole::WasmMemoryOffset
+        | ImmediateRole::WasmI32Immediate
         | ImmediateRole::WasmAtomicOperator
         | ImmediateRole::WasmI32BinaryOperator
         | ImmediateRole::WasmStructFieldIndex
