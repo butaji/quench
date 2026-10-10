@@ -1076,6 +1076,9 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn captured_with_objects(&self, mut env: Value) -> Vec<Value> {
+        if !self.with_scope_entered {
+            return Vec::new();
+        }
         let mut layers = Vec::new();
         while let Some(Cell::Environment {
             parent,

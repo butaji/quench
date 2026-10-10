@@ -612,6 +612,10 @@ pub(crate) struct Vm<H> {
     frame_pool: Vec<Box<Frame>>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
+    /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
+    /// the only source of with objects, so until it runs no environment
+    /// carries any.
+    with_scope_entered: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
