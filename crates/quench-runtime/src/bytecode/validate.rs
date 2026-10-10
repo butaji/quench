@@ -632,6 +632,16 @@ impl ResidualProgram {
                         "function {index} copies from an unproven plain-local slot"
                     ));
                 }
+                if instruction.op() == super::Op::SetThisFieldStrictLocal
+                    && !plain_local_slots
+                        .get(instruction.local_slot_a())
+                        .copied()
+                        .unwrap_or(false)
+                {
+                    return Err(format!(
+                        "function {index} sets a field from an unproven plain-local slot"
+                    ));
+                }
                 if let Some(captured) = &function.selective_capture_slots {
                     let local_slot = matches!(
                         instruction.op(),
@@ -639,10 +649,17 @@ impl ResidualProgram {
                             | super::Op::StoreLocal
                             | super::Op::LoadLocalPlain
                             | super::Op::StoreLocalPlain
+                            | super::Op::SetThisFieldStrictLocal
                             | super::Op::LoadEnvLocal
                             | super::Op::StoreEnvLocal
                     )
-                    .then(|| instruction.local_slot());
+                    .then(|| {
+                        if instruction.op() == super::Op::SetThisFieldStrictLocal {
+                            instruction.local_slot_a()
+                        } else {
+                            instruction.local_slot()
+                        }
+                    });
                     let slot_is_captured = local_slot.is_some_and(|slot| {
                         u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
                     });
