@@ -762,7 +762,13 @@ impl Lowering<'_> {
                 let bundle = self.push()?;
                 self.emit(Op::MakeArray, bundle, 0, 0, u32::from(control.results))?;
                 for offset in 0..control.results {
-                    self.emit(Op::DefineArrayElement, offset, bundle, 0, u32::from(offset))?;
+                    self.emit(
+                        Op::DefineArrayElement,
+                        control.base + offset,
+                        bundle,
+                        0,
+                        u32::from(offset),
+                    )?;
                 }
                 bundle
             } else {

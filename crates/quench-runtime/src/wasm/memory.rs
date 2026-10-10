@@ -413,6 +413,7 @@ impl super::Lowering<'_> {
                 let address = self.pop()?;
                 let result = self.push()?;
                 self.emit(op, result, memory, address, offset)?;
+                self.produced(result);
             }
             return Ok(true);
         }
