@@ -1,0 +1,157 @@
+{
+  "experiment": "Non-constructible closure creation: skip inherited-with traversal when metadata proves no with scope, and avoid constructing an inaccessible instance-prototype object.",
+  "diagnostic_only": true,
+  "source_revision": "e840fe4606717266188d10e0d336ccbcc17943f2",
+  "source_diff_sha256": "342c9e74c9ba1b6c45660c347331669a8d05f7c1ef4d06a9909c649d897fe0a1",
+  "host": {
+    "platform": "macOS-26.5-arm64",
+    "machine": "arm64"
+  },
+  "input": {
+    "path": "tasks/evidence/task61-closure-arrow-10m-2026-10-09.cjs",
+    "sha256": "aecaf05c07688b2024c62ec8bb0848f1e74886744cf5f4e9840feb1bcef637de",
+    "iterations": 10000000,
+    "shape": "CJS IIFE, repeatedly creates and discards an arrow closure"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "target/iteration/task61-regexp-literal-site-cache-20261009/production/quench-node",
+      "sha256": "1d0a3e373978de5e8740f39d3e66d0c0900b2a89dc248cc7cbb3f230adaa09e8"
+    },
+    "candidate": {
+      "path": "target/iteration/task61-closure-candidate-20261009/production/quench-node",
+      "sha256": "d2429f973f90b5f95996bc964a7572b170268c6d16a2b3697a66d42f8adf17fc"
+    },
+    "candidate_build": "CARGO_TARGET_DIR=target/iteration/task61-closure-candidate-20261009 CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+  },
+  "measurement": {
+    "method": "11 alternating Quench-only pairs; /usr/bin/time -l; retired instructions, wall time and max RSS",
+    "command": "python3.14 target/iteration/task61-closure-candidate-20261009/run_arrow_pairs.py",
+    "runner_copy": "tasks/evidence/task61-closure-arrow-pairs-2026-10-09.py",
+    "raw_pairs": "tasks/evidence/task61-closure-arrow-pairs-2026-10-09.csv",
+    "raw_pairs_sha256": "3e75567957cf2cf0e1e6f822357235c42d9cb9b0a98b2473362e9b51e30bd9a9",
+    "instructions_retired": {
+      "baseline_median": 307149105392.0,
+      "candidate_median": 256963965616.0,
+      "paired_median_change_percent": -16.332229262255563,
+      "candidate_better_pairs": 11,
+      "ties": 0,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -16.377303208534798,
+        -16.317577006462415,
+        -16.323819456348303,
+        -16.362087411239848,
+        -16.32963222759915,
+        -16.293481035964515,
+        -16.346684279046016,
+        -16.392152536684794,
+        -16.213859731115615,
+        -16.362181284661194,
+        -16.332229262255563
+      ]
+    },
+    "elapsed_seconds": {
+      "baseline_median": 12.69,
+      "candidate_median": 10.56,
+      "paired_median_change_percent": -16.916996047430835,
+      "candidate_better_pairs": 11,
+      "ties": 0,
+      "pairs": 11,
+      "paired_changes_percent": [
+        -16.640502354788076,
+        -16.61442006269592,
+        -16.006339144215527,
+        -16.91581431943352,
+        -16.916996047430835,
+        -16.653512233622727,
+        -17.061611374407583,
+        -17.12707182320442,
+        -17.398119122257057,
+        -17.41528762805358,
+        -17.04634721131186
+      ]
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 22691840.0,
+      "candidate_median": 22593536.0,
+      "paired_median_change_percent": -0.21707670043415342,
+      "candidate_better_pairs": 7,
+      "ties": 1,
+      "pairs": 11,
+      "paired_changes_percent": [
+        2.3224043715846996,
+        -12.063492063492063,
+        0.43415340086830684,
+        -0.4332129963898917,
+        -5.761316872427984,
+        -0.0724112961622013,
+        0.0,
+        0.9523809523809524,
+        -8.09555408095554,
+        -0.9365994236311239,
+        -0.21707670043415342
+      ]
+    },
+    "score_measured": false,
+    "plain_function_controls_single_run_instructions_per_iteration": {
+      "empty_function_baseline": 31857,
+      "empty_function_candidate": 31875,
+      "capturing_function_baseline": 31917,
+      "capturing_function_candidate": 31942,
+      "local_store_baseline": 1031,
+      "local_store_candidate": 1032,
+      "note": "These single-run controls are direction checks only; no improvement is claimed for plain function closure creation."
+    }
+  },
+  "correctness": {
+    "runtime_lib_tests": {
+      "passed": 530,
+      "failed": 0,
+      "command": "CARGO_INCREMENTAL=0 cargo test --locked --offline -p quench-runtime --lib -- --quiet"
+    },
+    "test262": {
+      "selection": [
+        1,
+        3,
+        8,
+        11,
+        23,
+        36,
+        37,
+        38,
+        48,
+        49,
+        50,
+        93,
+        94
+      ],
+      "passed": 2750,
+      "failed": 2,
+      "total": 2752,
+      "known_baseline_failures": [
+        {
+          "stage": 48,
+          "path": "built-ins/Function/call-bind-this-realm-value.js",
+          "baseline_and_candidate": "Both fresh runners exit 1 with byte-identical failure: foreign-realm String wrapper constructor mismatch."
+        },
+        {
+          "stage": 94,
+          "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+          "baseline": "Recorded pre-existing in earlier Stage A reports."
+        }
+      ],
+      "reports": "target/iteration/task61-closure-candidate-20261009/test262/"
+    },
+    "node_oracle": "Node v26.10.0 probes for with and nested-with capture, eval capture, method-arrow receiver, function-kind prototype presence, class prototype descriptor, function own-key order and foreign-realm intrinsic behavior passed.",
+    "baseline_comparison": {
+      "path": "target/iteration/task61-closure-candidate-20261009/closure-function-realm-baseline-comparison.json",
+      "sha256": "8712f1a186eec19ebf1936a9088c44d4ddac85d14af1a420665cad7b046f35d8"
+    },
+    "provenance": {
+      "path": "target/iteration/task61-closure-candidate-20261009/closure-correctness-provenance.json",
+      "sha256": "7eab226067b1a4ef2c2dad6be058ca7b7ea7184c7dc640213c0e28e155cce1e8"
+    }
+  },
+  "conclusion": "Retain the measured arrow-closure path reduction as a narrow mechanism result. It does not establish a V8-v7 fixture Score gain; the plain-function closure controls were flat."
+}

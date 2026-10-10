@@ -1,0 +1,121 @@
+diff --git a/crates/quench-stack/src/lib.rs b/crates/quench-stack/src/lib.rs
+index 6d4b48516..97fe09116 100644
+--- a/crates/quench-stack/src/lib.rs
++++ b/crates/quench-stack/src/lib.rs
+@@ -18,11 +18,23 @@ pub const MAX_GUEST_CALL_DEPTH: usize = 8_192;
+ pub const STACK_EXHAUSTED_MESSAGE: &str = "Maximum call stack size exceeded";
+ 
+ thread_local! {
+-    static ACTIVE_TRANSITIONS: Cell<usize> = const { Cell::new(0) };
+-    static STACK_ORIGIN: Cell<usize> = const { Cell::new(0) };
++    static STACK_STATE: Cell<StackState> = const { Cell::new(StackState::EMPTY) };
+     static ACTIVE_GUEST_CALLS: Cell<usize> = const { Cell::new(0) };
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++struct StackState {
++    transition_depth: usize,
++    origin: usize,
++}
++
++impl StackState {
++    const EMPTY: Self = Self {
++        transition_depth: 0,
++        origin: 0,
++    };
++}
++
+ /// A transition is released on every return path, including Rust unwinding.
+ /// Thread affinity keeps the measurement correct across reentrant runtime owners.
+ pub struct StackGuard(PhantomData<Rc<()>>);
+@@ -32,17 +44,18 @@ impl StackGuard {
+     #[inline(never)]
+     pub fn enter() -> Result<Self, ()> {
+         let current_stack_pointer = current_stack_pointer();
+-        ACTIVE_TRANSITIONS.with(|depth| {
+-            let current = depth.get();
+-            if current == 0 {
+-                STACK_ORIGIN.with(|origin| origin.set(current_stack_pointer));
++        STACK_STATE.with(|state| {
++            let mut current = state.get();
++            let depth = current.transition_depth;
++            if depth == 0 {
++                current.origin = current_stack_pointer;
+             }
+-            let origin = STACK_ORIGIN.with(Cell::get);
+-            let distance = current_stack_pointer.abs_diff(origin);
+-            if current == MAX_RECURSIVE_TRANSITIONS || distance > STACK_BUDGET_BYTES {
++            let distance = current_stack_pointer.abs_diff(current.origin);
++            if depth == MAX_RECURSIVE_TRANSITIONS || distance > STACK_BUDGET_BYTES {
+                 return Err(());
+             }
+-            depth.set(current + 1);
++            current.transition_depth = depth + 1;
++            state.set(current);
+             Ok(Self(PhantomData))
+         })
+     }
+@@ -50,12 +63,14 @@ impl StackGuard {
+ 
+ impl Drop for StackGuard {
+     fn drop(&mut self) {
+-        ACTIVE_TRANSITIONS.with(|depth| {
+-            let remaining = depth.get() - 1;
+-            depth.set(remaining);
++        STACK_STATE.with(|state| {
++            let mut current = state.get();
++            let remaining = current.transition_depth - 1;
++            current.transition_depth = remaining;
+             if remaining == 0 {
+-                STACK_ORIGIN.with(|origin| origin.set(0));
++                current.origin = 0;
+             }
++            state.set(current);
+         });
+     }
+ }
+@@ -112,10 +127,34 @@ mod tests {
+             panic!("host callback unwinds");
+         });
+         assert!(result.is_err());
+-        assert_eq!(ACTIVE_TRANSITIONS.with(Cell::get), 0);
++        assert_eq!(STACK_STATE.with(Cell::get), StackState::EMPTY);
+         assert!(StackGuard::enter().is_ok());
+     }
+ 
++    #[test]
++    fn nested_transitions_share_origin_until_the_outer_guard_drops() {
++        let outer = StackGuard::enter().unwrap();
++        let origin = STACK_STATE.with(|state| state.get().origin);
++        let inner = StackGuard::enter().unwrap();
++        assert_eq!(
++            STACK_STATE.with(Cell::get),
++            StackState {
++                transition_depth: 2,
++                origin,
++            }
++        );
++        drop(inner);
++        assert_eq!(
++            STACK_STATE.with(Cell::get),
++            StackState {
++                transition_depth: 1,
++                origin,
++            }
++        );
++        drop(outer);
++        assert_eq!(STACK_STATE.with(Cell::get), StackState::EMPTY);
++    }
++
+     #[test]
+     fn guest_call_depth_recovers_after_exhaustion() {
+         let guards = (0..MAX_GUEST_CALL_DEPTH)
+@@ -145,7 +184,7 @@ mod tests {
+             .stack_size(WORKER_STACK_SIZE)
+             .spawn(|| {
+                 assert!(descend(usize::MAX).is_err());
+-                assert_eq!(ACTIVE_TRANSITIONS.with(Cell::get), 0);
++                assert_eq!(STACK_STATE.with(Cell::get), StackState::EMPTY);
+                 assert!(StackGuard::enter().is_ok());
+             })
+             .unwrap()

@@ -1,0 +1,1208 @@
+{
+  "schema": "quench.task61.object-literal-site-census.v1",
+  "date": "2026-10-09",
+  "purpose": "Executed static object-literal sites by literal key count, separating benchmark setup from one benchmark.run() call per benchmark; profiling only, not timing.",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64"
+  },
+  "binary_path": "target/candidate-a/iteration/quench-node",
+  "binary_sha256": "042e54c915133399799219b3c6656b6e5c8d15882845eb198b61d649f74fc34f",
+  "profile_feature": "quench-runtime/profile-aggregate",
+  "profile_environment": {
+    "QUENCH_OPCODE_CENSUS": "1"
+  },
+  "fixtures": {
+    "crypto": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/crypto.js",
+      "input_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/crypto.js",
+          "input_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "7bbea5f5fe0a744d9e06960a973e297a44e593de4f2387bb1d28e71cf9671369",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 17443,
+          "global_dispatch_site_total": 17443,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 149,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/crypto.js",
+          "input_sha256": "0ab6a65bef1350ac52050dd7642921c6466e20c96aa61df17c84cd18b1f5ee75",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "aa87d5512b7fd1315e5c193208c9da3dd2bedb75a1ac8a40148274df9665ed74",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 42471891,
+          "global_dispatch_site_total": 42471891,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 149,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 149,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "deltablue": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/deltablue.js",
+      "input_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/deltablue.js",
+          "input_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "61dc158a0f6d46d880e960c1ecd819783a535dcc7109275b50fb67947d976d90",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 6876,
+          "global_dispatch_site_total": 6876,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 33,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/deltablue.js",
+          "input_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "4645d5a7c27c66e18fae067d738ab3dfd579a702f56c692696bac333b7da5fce",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 1019603,
+          "global_dispatch_site_total": 1019603,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 33,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 33,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "earley-boyer": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/earley-boyer.js",
+      "input_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/earley-boyer.js",
+          "input_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "bcaf5735f93c8b63fd2c7c4358e58135497626627d603925f82d187a8daa755a",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 38337,
+          "global_dispatch_site_total": 38337,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 22,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 1,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 0,
+              "pc": 906,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 1,
+              "key_count": 43,
+              "executions": 1,
+              "setup_executions": 1
+            },
+            {
+              "function": 315,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 1,
+              "site_count": 1
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/earley-boyer.js",
+          "input_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "88af3f3568a5e6b72bce90b0d11cf903ce9c9c50ef3db4c248c41a7f554f97ed",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 21634208,
+          "global_dispatch_site_total": 21634208,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 22,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 1,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 0,
+              "pc": 906,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 1,
+              "key_count": 43,
+              "executions": 1,
+              "setup_and_run_executions": 1
+            },
+            {
+              "function": 315,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 1,
+              "site_count": 1
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 0,
+          "pc": 906,
+          "dispatch_op": "MakeObjectLiteral",
+          "site_op": "MakeObjectLiteral",
+          "site": 1,
+          "key_count": 43,
+          "executions": 1,
+          "setup_executions": 1,
+          "benchmark_run_executions": 0
+        },
+        {
+          "function": 315,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "43": {
+          "executions": 1,
+          "static_sites": 1,
+          "executed_sites": 1
+        },
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "43": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        },
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "navier-stokes": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/navier-stokes.js",
+      "input_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/navier-stokes.js",
+          "input_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "8f3fd593cb54cf5fc34fa3aa55bd73c1d5e10ece989f67a660a878189d0cdacf",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 1036882,
+          "global_dispatch_site_total": 1036882,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 51,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/navier-stokes.js",
+          "input_sha256": "290b7ad4204d4e9a6bb6ef6ff261e7c3a13f507de81381bca171e83256986dbe",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "d4f859799494a3167e0e4e9f47b79282d877fb8ee7dcbbff63135710c14ed387",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 38060908,
+          "global_dispatch_site_total": 38060908,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 51,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 51,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "raytrace": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/raytrace.js",
+      "input_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/raytrace.js",
+          "input_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "a97e59eb1d35463a023869e609e83c05eaa0551be31fc118587b5a0ed0b5e3d5",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 7229,
+          "global_dispatch_site_total": 7229,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 6,
+              "pc": 332,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 0,
+              "key_count": 9,
+              "executions": 0,
+              "setup_executions": 0
+            },
+            {
+              "function": 18,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 1,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            },
+            {
+              "function": 77,
+              "pc": 13,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 2,
+              "key_count": 9,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/raytrace.js",
+          "input_sha256": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "28f999f9220904de7a8142124d6f1c5add856907cc67a1e5ad5d5cafd8e94322",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 4953393,
+          "global_dispatch_site_total": 4953393,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 23,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 2,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 6,
+              "pc": 332,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 0,
+              "key_count": 9,
+              "executions": 1,
+              "setup_and_run_executions": 1
+            },
+            {
+              "function": 18,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 1,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            },
+            {
+              "function": 77,
+              "pc": 13,
+              "dispatch_op": "MakeObjectLiteral",
+              "site_op": "MakeObjectLiteral",
+              "site": 2,
+              "key_count": 9,
+              "executions": 1,
+              "setup_and_run_executions": 1
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 2,
+              "site_count": 2
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 6,
+          "pc": 332,
+          "dispatch_op": "MakeObjectLiteral",
+          "site_op": "MakeObjectLiteral",
+          "site": 0,
+          "key_count": 9,
+          "executions": 1,
+          "setup_executions": 0,
+          "benchmark_run_executions": 1
+        },
+        {
+          "function": 18,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 1,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        },
+        {
+          "function": 77,
+          "pc": 13,
+          "dispatch_op": "MakeObjectLiteral",
+          "site_op": "MakeObjectLiteral",
+          "site": 2,
+          "key_count": 9,
+          "executions": 1,
+          "setup_executions": 0,
+          "benchmark_run_executions": 1
+        }
+      ],
+      "setup_key_count_totals": {
+        "9": {
+          "executions": 0,
+          "static_sites": 2,
+          "executed_sites": 0
+        },
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "9": {
+          "executions": 2,
+          "static_sites": 2,
+          "executed_sites": 2
+        },
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "regexp": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/regexp.js",
+      "input_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/regexp.js",
+          "input_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "ebfea56c8f7403f459fcfab063865358c0aeef09c0ef7140b1df367ba8de56c4",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 3749068,
+          "global_dispatch_site_total": 3749068,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 35,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/regexp.js",
+          "input_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "1651134c78833bee23215572c3536ee64b3bc6ac38bf80ee7b94d03c27c6cdb8",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 5099597,
+          "global_dispatch_site_total": 5099597,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 35,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 35,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "richards": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/richards.js",
+      "input_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/richards.js",
+          "input_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "dc2eaffa77a1ab6ca34951f7a916d151ef4d034214afa854f4744ab2c32e8c76",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 6535,
+          "global_dispatch_site_total": 6535,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 25,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/richards.js",
+          "input_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "b8c93347bb222a6225e7ea888bca02e3578c947fde1b5b37d30257017dad349c",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 614207,
+          "global_dispatch_site_total": 614207,
+          "global_object_opcode_counts": {
+            "MakeObject2": 10,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 0
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 0,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 0
+          },
+          "sites": [
+            {
+              "function": 25,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 0,
+              "site_count": 0
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 25,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 0,
+          "static_sites": 1,
+          "executed_sites": 0
+        }
+      }
+    },
+    "splay": {
+      "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/splay.js",
+      "input_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+      "phases": {
+        "setup": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/splay.js",
+          "input_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": false,
+          "executed_input_sha256": "fd0fd74ea75e0a549c5aaf74e60c55e9b33180576a80e5bde730b71f93d25488",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 14747520,
+          "global_dispatch_site_total": 14747520,
+          "global_object_opcode_counts": {
+            "MakeObject2": 248010,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 256000
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 248000,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 256000
+          },
+          "sites": [
+            {
+              "function": 6,
+              "pc": 6,
+              "dispatch_op": "SuperConstArrayObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 256000,
+              "setup_executions": 256000
+            },
+            {
+              "function": 6,
+              "pc": 24,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 1,
+              "key_count": 2,
+              "executions": 248000,
+              "setup_executions": 248000
+            },
+            {
+              "function": 24,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 2,
+              "key_count": 2,
+              "executions": 0,
+              "setup_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 248000,
+              "site_count": 248000
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 256000,
+              "site_count": 256000
+            }
+          }
+        },
+        "setup_and_run": {
+          "input_path": "target/iteration/v8-v7-opcode-census-2026-10-08/splay.js",
+          "input_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+          "runner_mode": "one setup per benchmark, with one run call when enabled",
+          "ran_benchmarks": true,
+          "executed_input_sha256": "f68b276114948ac6068060f94f1a4ee3dae8a344820e6f7a1b691b55d8fc530f",
+          "exit_code": 0,
+          "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "global_dispatch_total": 14938968,
+          "global_dispatch_site_total": 14938968,
+          "global_object_opcode_counts": {
+            "MakeObject2": 250490,
+            "MakeObjectLiteral": 21,
+            "SuperConstArrayObject2": 258560
+          },
+          "object_dispatch_counts": {
+            "MakeObject2": 250480,
+            "MakeObjectLiteral": 0,
+            "SuperConstArrayObject2": 258560
+          },
+          "sites": [
+            {
+              "function": 6,
+              "pc": 6,
+              "dispatch_op": "SuperConstArrayObject2",
+              "site_op": "MakeObject2",
+              "site": 0,
+              "key_count": 2,
+              "executions": 258560,
+              "setup_and_run_executions": 258560
+            },
+            {
+              "function": 6,
+              "pc": 24,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 1,
+              "key_count": 2,
+              "executions": 250480,
+              "setup_and_run_executions": 250480
+            },
+            {
+              "function": 24,
+              "pc": 14,
+              "dispatch_op": "MakeObject2",
+              "site_op": "MakeObject2",
+              "site": 2,
+              "key_count": 2,
+              "executions": 0,
+              "setup_and_run_executions": 0
+            }
+          ],
+          "site_opcode_reconciliation": {
+            "MakeObject2": {
+              "opcode_count": 250480,
+              "site_count": 250480
+            },
+            "MakeObjectLiteral": {
+              "opcode_count": 0,
+              "site_count": 0
+            },
+            "SuperConstArrayObject2": {
+              "opcode_count": 258560,
+              "site_count": 258560
+            }
+          }
+        }
+      },
+      "sites": [
+        {
+          "function": 6,
+          "pc": 6,
+          "dispatch_op": "SuperConstArrayObject2",
+          "site_op": "MakeObject2",
+          "site": 0,
+          "key_count": 2,
+          "executions": 258560,
+          "setup_executions": 256000,
+          "benchmark_run_executions": 2560
+        },
+        {
+          "function": 6,
+          "pc": 24,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 1,
+          "key_count": 2,
+          "executions": 250480,
+          "setup_executions": 248000,
+          "benchmark_run_executions": 2480
+        },
+        {
+          "function": 24,
+          "pc": 14,
+          "dispatch_op": "MakeObject2",
+          "site_op": "MakeObject2",
+          "site": 2,
+          "key_count": 2,
+          "executions": 0,
+          "setup_executions": 0,
+          "benchmark_run_executions": 0
+        }
+      ],
+      "setup_key_count_totals": {
+        "2": {
+          "executions": 504000,
+          "static_sites": 3,
+          "executed_sites": 2
+        }
+      },
+      "benchmark_run_key_count_totals": {
+        "2": {
+          "executions": 5040,
+          "static_sites": 3,
+          "executed_sites": 2
+        }
+      }
+    }
+  }
+}

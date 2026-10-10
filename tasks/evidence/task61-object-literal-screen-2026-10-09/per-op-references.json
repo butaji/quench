@@ -1,0 +1,1399 @@
+{
+  "schema": "quench.task61.object-literal-reference-screen.v1",
+  "date": "2026-10-09",
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M4"
+  },
+  "profile": "production-thin-lto; codegen-units=1; panic=abort for Quench",
+  "repetitions": 3,
+  "baseline_engine_metadata": "tasks/evidence/task61-per-op-budget-2026-10-09.json",
+  "candidate_sha256": "697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02",
+  "inputs": {
+    "tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs": "dbb00db7a1380de7ce2927cd3d782fe27ac51fc0b84a82ec4aceb12ea38fe0c5",
+    "tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs": "8b1cac5d4cfd6e6ef7dd8dbf532496eef358a08a199c495d1f379ac67605d2dc",
+    "tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs": "06333c891d78ab91b605c1b4207e7c6b2ce2c93d1475f3cbdb4b6b894d0bf138",
+    "tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs": "172ae5cc17033854063e9c08380a978a002c35c5f4c63951f5fd7938e2764428"
+  },
+  "summary_median_per_iteration": {
+    "object-literal-2": {
+      "quench": {
+        "instructions_retired": 4531.56576,
+        "cycles_elapsed": 711.998255
+      },
+      "rqj": {
+        "instructions_retired": 621.341375,
+        "cycles_elapsed": 84.93096
+      },
+      "qjs": {
+        "instructions_retired": 1387.210525,
+        "cycles_elapsed": 193.634675
+      },
+      "node_jitless": {
+        "instructions_retired": 487.26468,
+        "cycles_elapsed": 39.897835
+      },
+      "bun_no_jit": {
+        "instructions_retired": 434.1131,
+        "cycles_elapsed": 64.05179
+      }
+    },
+    "object-literal-nested-array": {
+      "quench": {
+        "instructions_retired": 7222.578225,
+        "cycles_elapsed": 1202.75271
+      },
+      "rqj": {
+        "instructions_retired": 718.54981,
+        "cycles_elapsed": 98.654485
+      },
+      "qjs": {
+        "instructions_retired": 2190.592935,
+        "cycles_elapsed": 319.782465
+      },
+      "node_jitless": {
+        "instructions_retired": 631.586575,
+        "cycles_elapsed": 104.10894
+      },
+      "bun_no_jit": {
+        "instructions_retired": 676.27923,
+        "cycles_elapsed": 107.42695
+      }
+    }
+  },
+  "records": [
+    {
+      "case": "object-literal-2",
+      "engine": "rqj",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 161365464,
+          "cycles_elapsed": 30878269,
+          "maximum_rss_bytes": 1785856
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 454  page reclaims\n                  55  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  58  involuntary context switches\n           161365464  instructions retired\n            30878269  cycles elapsed\n              934200  peak memory footprint\n",
+        "wall_seconds": 0.018761375000000004
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32394254,
+          "cycles_elapsed": 10517521,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n            32394254  instructions retired\n            10517521  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.0049959170000000025
+      },
+      "net_per_iteration": {
+        "instructions_retired": 644.85605,
+        "cycles_elapsed": 101.80374
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "qjs",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 298906729,
+          "cycles_elapsed": 46686695,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 257  page reclaims\n                  35  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  36  involuntary context switches\n           298906729  instructions retired\n            46686695  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.019583084000000008
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17842898,
+          "cycles_elapsed": 5545596,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            17842898  instructions retired\n             5545596  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.0032312089999999988
+      },
+      "net_per_iteration": {
+        "instructions_retired": 1405.319155,
+        "cycles_elapsed": 205.705495
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "node_jitless",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 804499414,
+          "cycles_elapsed": 249668049,
+          "maximum_rss_bytes": 41631744
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.13 real         0.03 user         0.02 sys\n            41631744  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1702  page reclaims\n                1510  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  47  voluntary context switches\n                 566  involuntary context switches\n           804499414  instructions retired\n           249668049  cycles elapsed\n            14141504  peak memory footprint\n",
+        "wall_seconds": 0.13268716600000002
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 591069279,
+          "cycles_elapsed": 158352759,
+          "maximum_rss_bytes": 39026688
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.03 real         0.03 user         0.00 sys\n            39026688  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2971  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n           591069279  instructions retired\n           158352759  cycles elapsed\n            11519632  peak memory footprint\n",
+        "wall_seconds": 0.04089083399999999
+      },
+      "net_per_iteration": {
+        "instructions_retired": 1067.150675,
+        "cycles_elapsed": 456.57645
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "bun_no_jit",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 140706259,
+          "cycles_elapsed": 29848424,
+          "maximum_rss_bytes": 23461888
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            23461888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1553  page reclaims\n                  55  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           140706259  instructions retired\n            29848424  cycles elapsed\n            10732024  peak memory footprint\n",
+        "wall_seconds": 0.010114041000000018
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52705378,
+          "cycles_elapsed": 16016389,
+          "maximum_rss_bytes": 17006592
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17006592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1170  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52705378  instructions retired\n            16016389  cycles elapsed\n             4375056  peak memory footprint\n",
+        "wall_seconds": 0.006015416999999967
+      },
+      "net_per_iteration": {
+        "instructions_retired": 440.004405,
+        "cycles_elapsed": 69.160175
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "quench",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1138583888,
+          "cycles_elapsed": 208798522,
+          "maximum_rss_bytes": 18087936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.05 real         0.04 user         0.00 sys\n            18087936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1288  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                   8  involuntary context switches\n          1138583888  instructions retired\n           208798522  cycles elapsed\n             8733080  peak memory footprint\n",
+        "wall_seconds": 0.053609624999999994
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 221947637,
+          "cycles_elapsed": 60291334,
+          "maximum_rss_bytes": 17940480
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17940480  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   5  involuntary context switches\n           221947637  instructions retired\n            60291334  cycles elapsed\n             8569240  peak memory footprint\n",
+        "wall_seconds": 0.018571875000000015
+      },
+      "net_per_iteration": {
+        "instructions_retired": 4583.181255,
+        "cycles_elapsed": 742.53594
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "qjs",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 294314533,
+          "cycles_elapsed": 44088102,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   5  involuntary context switches\n           294314533  instructions retired\n            44088102  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.013056375000000009
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17845867,
+          "cycles_elapsed": 5361167,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            17845867  instructions retired\n             5361167  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.003296083999999977
+      },
+      "net_per_iteration": {
+        "instructions_retired": 1382.34333,
+        "cycles_elapsed": 193.634675
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "node_jitless",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 689319142,
+          "cycles_elapsed": 167157245,
+          "maximum_rss_bytes": 41680896
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            41680896  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3125  page reclaims\n                  84  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  59  involuntary context switches\n           689319142  instructions retired\n           167157245  cycles elapsed\n            14174272  peak memory footprint\n",
+        "wall_seconds": 0.04355016700000003
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 591866206,
+          "cycles_elapsed": 159177678,
+          "maximum_rss_bytes": 39043072
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.03 real         0.03 user         0.00 sys\n            39043072  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2972  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  36  involuntary context switches\n           591866206  instructions retired\n           159177678  cycles elapsed\n            11552424  peak memory footprint\n",
+        "wall_seconds": 0.04111108400000002
+      },
+      "net_per_iteration": {
+        "instructions_retired": 487.26468,
+        "cycles_elapsed": 39.897835
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "bun_no_jit",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 139525626,
+          "cycles_elapsed": 29000931,
+          "maximum_rss_bytes": 23478272
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            23478272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1565  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n           139525626  instructions retired\n            29000931  cycles elapsed\n            10748408  peak memory footprint\n",
+        "wall_seconds": 0.009588792000000013
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52703006,
+          "cycles_elapsed": 16322145,
+          "maximum_rss_bytes": 17022976
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17022976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1171  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52703006  instructions retired\n            16322145  cycles elapsed\n             4391440  peak memory footprint\n",
+        "wall_seconds": 0.0064553330000000075
+      },
+      "net_per_iteration": {
+        "instructions_retired": 434.1131,
+        "cycles_elapsed": 63.39393
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "quench",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1125829089,
+          "cycles_elapsed": 201818089,
+          "maximum_rss_bytes": 17924096
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.05 real         0.04 user         0.00 sys\n            17924096  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1276  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                   5  involuntary context switches\n          1125829089  instructions retired\n           201818089  cycles elapsed\n             8536472  peak memory footprint\n",
+        "wall_seconds": 0.052928958000000026
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 221018346,
+          "cycles_elapsed": 59706550,
+          "maximum_rss_bytes": 17825792
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17825792  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1270  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   5  involuntary context switches\n           221018346  instructions retired\n            59706550  cycles elapsed\n             8438168  peak memory footprint\n",
+        "wall_seconds": 0.01662891700000002
+      },
+      "net_per_iteration": {
+        "instructions_retired": 4524.053715,
+        "cycles_elapsed": 710.557695
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "rqj",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 156369536,
+          "cycles_elapsed": 27299216,
+          "maximum_rss_bytes": 1785856
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 504  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           156369536  instructions retired\n            27299216  cycles elapsed\n              934200  peak memory footprint\n",
+        "wall_seconds": 0.009388708999999995
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32177474,
+          "cycles_elapsed": 10313024,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32177474  instructions retired\n            10313024  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.004771374999999911
+      },
+      "net_per_iteration": {
+        "instructions_retired": 620.96031,
+        "cycles_elapsed": 84.93096
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "node_jitless",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 690898225,
+          "cycles_elapsed": 169607791,
+          "maximum_rss_bytes": 41631744
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            41631744  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3126  page reclaims\n                  83  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  63  involuntary context switches\n           690898225  instructions retired\n           169607791  cycles elapsed\n            14125120  peak memory footprint\n",
+        "wall_seconds": 0.04528433300000001
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 600063509,
+          "cycles_elapsed": 165705529,
+          "maximum_rss_bytes": 39010304
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            39010304  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2970  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  46  involuntary context switches\n           600063509  instructions retired\n           165705529  cycles elapsed\n            11519656  peak memory footprint\n",
+        "wall_seconds": 0.04310779099999995
+      },
+      "net_per_iteration": {
+        "instructions_retired": 454.17358,
+        "cycles_elapsed": 19.51131
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "bun_no_jit",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 139463111,
+          "cycles_elapsed": 28924835,
+          "maximum_rss_bytes": 23478272
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            23478272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1565  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   8  involuntary context switches\n           139463111  instructions retired\n            28924835  cycles elapsed\n            10764816  peak memory footprint\n",
+        "wall_seconds": 0.009449957999999925
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52713142,
+          "cycles_elapsed": 16114477,
+          "maximum_rss_bytes": 17022976
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17022976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1171  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52713142  instructions retired\n            16114477  cycles elapsed\n             4375032  peak memory footprint\n",
+        "wall_seconds": 0.0062690420000000024
+      },
+      "net_per_iteration": {
+        "instructions_retired": 433.749845,
+        "cycles_elapsed": 64.05179
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "quench",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1127319719,
+          "cycles_elapsed": 202863969,
+          "maximum_rss_bytes": 17956864
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.05 real         0.04 user         0.00 sys\n            17956864  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   8  involuntary context switches\n          1127319719  instructions retired\n           202863969  cycles elapsed\n             8602008  peak memory footprint\n",
+        "wall_seconds": 0.052300582999999956
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 221006567,
+          "cycles_elapsed": 60464318,
+          "maximum_rss_bytes": 17973248
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17973248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   7  involuntary context switches\n           221006567  instructions retired\n            60464318  cycles elapsed\n             8602008  peak memory footprint\n",
+        "wall_seconds": 0.01682604099999996
+      },
+      "net_per_iteration": {
+        "instructions_retired": 4531.56576,
+        "cycles_elapsed": 711.998255
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "rqj",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 156451641,
+          "cycles_elapsed": 26610094,
+          "maximum_rss_bytes": 1785856
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1785856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 504  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           156451641  instructions retired\n            26610094  cycles elapsed\n              934200  peak memory footprint\n",
+        "wall_seconds": 0.009252750000000032
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32183366,
+          "cycles_elapsed": 10431489,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32183366  instructions retired\n            10431489  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.004923082999999995
+      },
+      "net_per_iteration": {
+        "instructions_retired": 621.341375,
+        "cycles_elapsed": 80.893025
+      }
+    },
+    {
+      "case": "object-literal-2",
+      "engine": "qjs",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 295260875,
+          "cycles_elapsed": 43381022,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n           295260875  instructions retired\n            43381022  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.012732375000000018
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-2-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17818770,
+          "cycles_elapsed": 5200775,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            17818770  instructions retired\n             5200775  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.003224624999999981
+      },
+      "net_per_iteration": {
+        "instructions_retired": 1387.210525,
+        "cycles_elapsed": 190.901235
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "rqj",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 176003321,
+          "cycles_elapsed": 29976202,
+          "maximum_rss_bytes": 1769472
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1769472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 504  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n           176003321  instructions retired\n            29976202  cycles elapsed\n              917816  peak memory footprint\n",
+        "wall_seconds": 0.009596667000000059
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32293359,
+          "cycles_elapsed": 10107688,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n            32293359  instructions retired\n            10107688  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.0048674999999999136
+      },
+      "net_per_iteration": {
+        "instructions_retired": 718.54981,
+        "cycles_elapsed": 99.34257
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "qjs",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 455980976,
+          "cycles_elapsed": 69083241,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   4  involuntary context switches\n           455980976  instructions retired\n            69083241  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.019100874999999906
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17862389,
+          "cycles_elapsed": 5375399,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            17862389  instructions retired\n             5375399  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.003132875000000035
+      },
+      "net_per_iteration": {
+        "instructions_retired": 2190.592935,
+        "cycles_elapsed": 318.53921
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "node_jitless",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 716298775,
+          "cycles_elapsed": 175220970,
+          "maximum_rss_bytes": 41648128
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            41648128  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3123  page reclaims\n                  84  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  64  involuntary context switches\n           716298775  instructions retired\n           175220970  cycles elapsed\n            14174296  peak memory footprint\n",
+        "wall_seconds": 0.04538945900000002
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 589538403,
+          "cycles_elapsed": 154399182,
+          "maximum_rss_bytes": 39108608
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.03 real         0.02 user         0.00 sys\n            39108608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2979  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n           589538403  instructions retired\n           154399182  cycles elapsed\n            11601552  peak memory footprint\n",
+        "wall_seconds": 0.03955762500000004
+      },
+      "net_per_iteration": {
+        "instructions_retired": 633.80186,
+        "cycles_elapsed": 104.10894
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "bun_no_jit",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 188172813,
+          "cycles_elapsed": 38238857,
+          "maximum_rss_bytes": 26820608
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            26820608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1769  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 119  involuntary context switches\n           188172813  instructions retired\n            38238857  cycles elapsed\n            13812240  peak memory footprint\n",
+        "wall_seconds": 0.011422833000000021
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52760310,
+          "cycles_elapsed": 16347671,
+          "maximum_rss_bytes": 17022976
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17022976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1171  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52760310  instructions retired\n            16347671  cycles elapsed\n             4391416  peak memory footprint\n",
+        "wall_seconds": 0.006340665999999939
+      },
+      "net_per_iteration": {
+        "instructions_retired": 677.062515,
+        "cycles_elapsed": 109.45593
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "quench",
+      "repetition": 1,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1666325980,
+          "cycles_elapsed": 302605945,
+          "maximum_rss_bytes": 18038784
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.07 real         0.07 user         0.00 sys\n            18038784  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1284  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                  11  involuntary context switches\n          1666325980  instructions retired\n           302605945  cycles elapsed\n             8667520  peak memory footprint\n",
+        "wall_seconds": 0.07808512499999998
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 221984394,
+          "cycles_elapsed": 61685026,
+          "maximum_rss_bytes": 17694720
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17694720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1262  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   8  involuntary context switches\n           221984394  instructions retired\n            61685026  cycles elapsed\n             8307072  peak memory footprint\n",
+        "wall_seconds": 0.017975874999999975
+      },
+      "net_per_iteration": {
+        "instructions_retired": 7221.70793,
+        "cycles_elapsed": 1204.604595
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "qjs",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 454766255,
+          "cycles_elapsed": 69510841,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   4  involuntary context switches\n           454766255  instructions retired\n            69510841  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.01924949999999992
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17896312,
+          "cycles_elapsed": 5554348,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n            17896312  instructions retired\n             5554348  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.00321279200000002
+      },
+      "net_per_iteration": {
+        "instructions_retired": 2184.349715,
+        "cycles_elapsed": 319.782465
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "node_jitless",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 712771507,
+          "cycles_elapsed": 174449475,
+          "maximum_rss_bytes": 41598976
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            41598976  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3119  page reclaims\n                  84  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  63  involuntary context switches\n           712771507  instructions retired\n           174449475  cycles elapsed\n            14075968  peak memory footprint\n",
+        "wall_seconds": 0.044788457999999975
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 592039330,
+          "cycles_elapsed": 155427378,
+          "maximum_rss_bytes": 39108608
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.03 real         0.02 user         0.00 sys\n            39108608  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2976  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  40  involuntary context switches\n           592039330  instructions retired\n           155427378  cycles elapsed\n            11617960  peak memory footprint\n",
+        "wall_seconds": 0.0405317500000002
+      },
+      "net_per_iteration": {
+        "instructions_retired": 603.660885,
+        "cycles_elapsed": 95.110485
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "bun_no_jit",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 187392798,
+          "cycles_elapsed": 37561828,
+          "maximum_rss_bytes": 26787840
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            26787840  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1767  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  82  involuntary context switches\n           187392798  instructions retired\n            37561828  cycles elapsed\n            13795880  peak memory footprint\n",
+        "wall_seconds": 0.011368916999999978
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52809466,
+          "cycles_elapsed": 16088842,
+          "maximum_rss_bytes": 17006592
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17006592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1170  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52809466  instructions retired\n            16088842  cycles elapsed\n             4375032  peak memory footprint\n",
+        "wall_seconds": 0.006246709000000017
+      },
+      "net_per_iteration": {
+        "instructions_retired": 672.91666,
+        "cycles_elapsed": 107.36493
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "quench",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1667252254,
+          "cycles_elapsed": 303207714,
+          "maximum_rss_bytes": 17907712
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.07 real         0.07 user         0.00 sys\n            17907712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1277  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                  17  involuntary context switches\n          1667252254  instructions retired\n           303207714  cycles elapsed\n             8552856  peak memory footprint\n",
+        "wall_seconds": 0.07853054199999998
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 221862012,
+          "cycles_elapsed": 62657172,
+          "maximum_rss_bytes": 17809408
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17809408  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1268  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                   7  involuntary context switches\n           221862012  instructions retired\n            62657172  cycles elapsed\n             8421784  peak memory footprint\n",
+        "wall_seconds": 0.018298332999999944
+      },
+      "net_per_iteration": {
+        "instructions_retired": 7226.95121,
+        "cycles_elapsed": 1202.75271
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "rqj",
+      "repetition": 2,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 175834444,
+          "cycles_elapsed": 30253889,
+          "maximum_rss_bytes": 1769472
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1769472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 503  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           175834444  instructions retired\n            30253889  cycles elapsed\n              917816  peak memory footprint\n",
+        "wall_seconds": 0.0101571250000001
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32151313,
+          "cycles_elapsed": 10522992,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32151313  instructions retired\n            10522992  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.004843458999999939
+      },
+      "net_per_iteration": {
+        "instructions_retired": 718.415655,
+        "cycles_elapsed": 98.654485
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "node_jitless",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 718355913,
+          "cycles_elapsed": 183538732,
+          "maximum_rss_bytes": 41582592
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.04 real         0.03 user         0.00 sys\n            41582592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3119  page reclaims\n                  84  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  74  involuntary context switches\n           718355913  instructions retired\n           183538732  cycles elapsed\n            14075968  peak memory footprint\n",
+        "wall_seconds": 0.04795595900000005
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/node",
+          "--jitless",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 592038598,
+          "cycles_elapsed": 157789612,
+          "maximum_rss_bytes": 39141376
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.03 real         0.02 user         0.00 sys\n            39141376  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2980  page reclaims\n                  79  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  38  involuntary context switches\n           592038598  instructions retired\n           157789612  cycles elapsed\n            11650728  peak memory footprint\n",
+        "wall_seconds": 0.04049899999999984
+      },
+      "net_per_iteration": {
+        "instructions_retired": 631.586575,
+        "cycles_elapsed": 128.7456
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "bun_no_jit",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 187836660,
+          "cycles_elapsed": 38051512,
+          "maximum_rss_bytes": 26869760
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            26869760  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1772  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  94  involuntary context switches\n           187836660  instructions retired\n            38051512  cycles elapsed\n            13861392  peak memory footprint\n",
+        "wall_seconds": 0.011539916000000039
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/bun",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 52580814,
+          "cycles_elapsed": 16566122,
+          "maximum_rss_bytes": 17006592
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n            17006592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1170  page reclaims\n                  44  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   9  involuntary context switches\n            52580814  instructions retired\n            16566122  cycles elapsed\n             4375032  peak memory footprint\n",
+        "wall_seconds": 0.006472250000000068
+      },
+      "net_per_iteration": {
+        "instructions_retired": 676.27923,
+        "cycles_elapsed": 107.42695
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "quench",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 1665483124,
+          "cycles_elapsed": 296637744,
+          "maximum_rss_bytes": 17776640
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.07 real         0.07 user         0.00 sys\n            17776640  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1269  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                   7  involuntary context switches\n          1665483124  instructions retired\n           296637744  cycles elapsed\n             8405376  peak memory footprint\n",
+        "wall_seconds": 0.07592524999999983
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/quench-v2/target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 220967479,
+          "cycles_elapsed": 62205979,
+          "maximum_rss_bytes": 17973248
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n            17973248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1280  page reclaims\n                  13  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                   5  involuntary context switches\n           220967479  instructions retired\n            62205979  cycles elapsed\n             8602008  peak memory footprint\n",
+        "wall_seconds": 0.01797404200000008
+      },
+      "net_per_iteration": {
+        "instructions_retired": 7222.578225,
+        "cycles_elapsed": 1172.158825
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "rqj",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 175899723,
+          "cycles_elapsed": 29694854,
+          "maximum_rss_bytes": 1769472
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1769472  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 503  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n           175899723  instructions retired\n            29694854  cycles elapsed\n              917816  peak memory footprint\n",
+        "wall_seconds": 0.009907875000000121
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/Users/admin/Code/GitHub/v2/target/release/rqj",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 32151136,
+          "cycles_elapsed": 10520948,
+          "maximum_rss_bytes": 1703936
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             1703936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 498  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   1  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  10  involuntary context switches\n            32151136  instructions retired\n            10520948  cycles elapsed\n              885048  peak memory footprint\n",
+        "wall_seconds": 0.004997750000000023
+      },
+      "net_per_iteration": {
+        "instructions_retired": 718.742935,
+        "cycles_elapsed": 95.86953
+      }
+    },
+    {
+      "case": "object-literal-nested-array",
+      "engine": "qjs",
+      "repetition": 3,
+      "iterations": 200000,
+      "active": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-active.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 456752083,
+          "cycles_elapsed": 69886545,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.01 real         0.01 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   3  involuntary context switches\n           456752083  instructions retired\n            69886545  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.019214749999999947
+      },
+      "zero_iteration": {
+        "command": [
+          "/usr/bin/time",
+          "-l",
+          "/opt/homebrew/bin/qjs",
+          "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-object-literal-screen-2026-10-09/object-literal-nested-array-zero.cjs"
+        ],
+        "exit_code": 0,
+        "metrics": {
+          "instructions_retired": 17872121,
+          "cycles_elapsed": 5662160,
+          "maximum_rss_bytes": 2113536
+        },
+        "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stderr": "        0.00 real         0.00 user         0.00 sys\n             2113536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                 290  page reclaims\n                   2  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                   4  involuntary context switches\n            17872121  instructions retired\n             5662160  cycles elapsed\n             1163576  peak memory footprint\n",
+        "wall_seconds": 0.00337383400000002
+      },
+      "net_per_iteration": {
+        "instructions_retired": 2194.39981,
+        "cycles_elapsed": 321.121925
+      }
+    }
+  ]
+}

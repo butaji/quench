@@ -77,8 +77,8 @@ impl ProgramStore {
 
     pub(crate) fn insert_shared(&mut self, program: Rc<ResidualProgram>) -> Option<ProgramId> {
         let id = ProgramId::from_index(self.programs.len())?;
-        let function_sources = vec![None; program.functions.len()];
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
+        let function_sources = vec![None; program.functions.len()];
         self.programs.push(ProgramEntry {
             residual: program,
             wasm_signatures: None,

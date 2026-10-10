@@ -28,13 +28,17 @@ fn detach_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
 impl<H: Host> Vm<H> {
     pub(super) fn primitive_prototype(&self, value: Value) -> Option<Value> {
         let name = match self.heap.get(value) {
-            Some(Cell::String(_)) => "String",
+            Some(Cell::String(_)) => return Some(self.string_proto),
             Some(Cell::Symbol(_)) => "Symbol",
             Some(Cell::BigInt(_)) => "BigInt",
             _ if value.as_bool().is_some() => "Boolean",
             _ if value.as_number().is_some() => "Number",
             _ => return None,
         };
+        self.primitive_prototype_named(name)
+    }
+
+    pub(super) fn primitive_prototype_named(&self, name: &str) -> Option<Value> {
         let constructor = self
             .lookup_atom(name)
             .and_then(|atom| self.own_property(self.realm.globals, atom))?;
@@ -191,6 +195,14 @@ impl<H: Host> Vm<H> {
                 }
             }
             if self.typed_array_set(p, object, index, value)? {
+                return Ok(());
+            }
+            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+                && !self.has_own_array_index(object, index)
+                && self.lookup_array_index_atom(index).is_none()
+                && !self.prototype_chain_has_indexed_set_exotic(object)
+                && self.set_array_element(object, index, value)
+            {
                 return Ok(());
             }
             let replaces = matches!(
@@ -499,6 +511,33 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_indexed_writes_do_not_intern_property_names() {
+        let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        let array = vm.heap.alloc(Cell::Array {
+            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            elements: Rc::new(Vec::new()),
+        });
+        let atom_count = vm.dynamic_atoms.len();
+        vm.heap.retain_allocations_for_test();
+        let cell_count = vm.heap.occupied_cell_count_for_test();
+
+        for index in 0..1024 {
+            vm.set_index(
+                &program,
+                array,
+                Value::integer(index),
+                Value::integer(index),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(vm.dynamic_atoms.len(), atom_count);
+        assert!(vm.lookup_array_index_atom(1023).is_none());
+        assert_eq!(vm.heap.occupied_cell_count_for_test(), cell_count);
+    }
+
+    #[test]
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
@@ -524,6 +563,42 @@ mod tests {
             let expected = vm.intern_atom(&index.to_string());
             assert_eq!(vm.lookup_array_index_atom(index), Some(expected));
         }
+    }
+
+    #[test]
+    fn indexed_write_still_calls_an_inherited_numeric_setter() {
+        let source = r#"
+            var observed = -1;
+            Object.defineProperty(Array.prototype, "5", {
+                configurable: true,
+                set: function(value) { observed = value; }
+            });
+            var array = [];
+            array[5] = 17;
+            if (observed !== 17 || Object.prototype.hasOwnProperty.call(array, "5")) {
+                throw new Error("inherited numeric setter was skipped");
+            }
+        "#;
+        let program = crate::Engine::specialize(source, "array-index-setter.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+    }
+
+    #[test]
+    fn indexed_write_keeps_default_inherited_data_semantics_without_atoms() {
+        let source = r#"
+            var prototype = [41];
+            var array = [];
+            Object.setPrototypeOf(array, prototype);
+            array[0] = 9;
+            if (array[0] !== 9 || prototype[0] !== 41 || !array.hasOwnProperty(0)) {
+                throw new Error("indexed write did not create an own element");
+            }
+        "#;
+        let program = crate::Engine::specialize(source, "array-index-prototype-data.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        assert!(vm.lookup_array_index_atom(0).is_none());
+        vm.execute(&program).unwrap();
     }
 
     #[test]

@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Specialize ordinary parameter locals and retain the parameter increment fast path",
+  "decision": "retain as a measured per-op win; the eight-fixture paired confirmation is still running and is recorded separately",
+  "source": {
+    "base_revision": "8602ac33cd86359ac3658c76d1fb22b894a030fb",
+    "candidate_source_dirty_during_checks": true,
+    "files": {
+      "crates/quench-runtime/src/bytecode.rs": "3e5ffbcc9d555608ca9a060ed06caf72c63fa571160d83d19aee1f9eae327549",
+      "crates/quench-runtime/src/vm/dispatch_numeric.rs": "acf961eeb54a37c161c91a8abf7aadec0c58c0e848794cb1159442f1a73be48b"
+    },
+    "baseline_binary_sha256": "f04a9771cddebf57e0770ca5519f90337d53b1e7483c804010c4291d7cea4ce0",
+    "candidate_binary_sha256": "e6fc8fdd9c81010ffc7786d4b5377a5fd4bffccfc224aa868f5940275eb2908d"
+  },
+  "change": {
+    "binding_time_fact": "Parameter slots use frame locals when they are not captured, TDZ-bearing, self-bound, or aliased by a mapped arguments object.",
+    "representation": "Reuse LoadLocalPlain and StoreLocalPlain for eligible parameter slots; retain generic operations for dynamic or aliased cases. LoadLocalPlain also enters the existing numeric local increment fusion when its metadata proves the target.",
+    "fallback": "Mapped parameters, captured slots, TDZ slots, self bindings, dynamic name resolution and unsupported function contexts keep their existing paths."
+  },
+  "measurement": {
+    "kind": "alternating paired production-binary microbench with retired instructions and maximum RSS",
+    "pairs_per_contrast": 11,
+    "iterations": 10000000,
+    "host": {
+      "platform": "macOS 26.5 arm64",
+      "model": "Mac16,10",
+      "logical_cpus": 10,
+      "memory_bytes": 17179869184,
+      "shell_cpu_time_limit": "unlimited",
+      "shell_address_space_limit": "unlimited"
+    },
+    "results": {
+      "parameter_read": {
+        "baseline_median_instructions": 12188222755,
+        "candidate_median_instructions": 9780679449,
+        "candidate_delta_percent": -19.753,
+        "candidate_lower_pairs": 11,
+        "rss_paired_median_delta_bytes": -131072,
+        "candidate_lower_rss_pairs": 8
+      },
+      "parameter_store": {
+        "baseline_median_instructions": 11977358571,
+        "candidate_median_instructions": 9780748879,
+        "candidate_delta_percent": -18.34,
+        "candidate_lower_pairs": 11,
+        "rss_paired_median_delta_bytes": -114688,
+        "candidate_lower_rss_pairs": 7
+      },
+      "local_read_control": {
+        "baseline_median_instructions": 10948007623,
+        "candidate_median_instructions": 9780735449,
+        "candidate_delta_percent": -10.662,
+        "candidate_lower_pairs": 11,
+        "rss_paired_median_delta_bytes": -98304,
+        "candidate_lower_rss_pairs": 6
+      }
+    },
+    "attribution": "The local-read control measures the shared increment-fusion contribution. Parameter reads add a further 9.09 percentage points of baseline instruction reduction beyond that control.",
+    "raw_pairs": {
+      "parameter_and_control": {
+        "path": "tasks/evidence/task61-parameter-local-pairs-2026-10-08.csv",
+        "sha256": "1bc7e6d984e5cdcd6964e14988567ca3bf85b143cde033013fd1173585bd34ad"
+      },
+      "local_store_and_call_controls": {
+        "path": "tasks/evidence/task61-parameter-local-controls-2026-10-08.csv",
+        "sha256": "688bb97a900410d77a2026fd2a71fda08c7d6197883339b361a4790bc3d3d7da"
+      },
+      "local_read_control": {
+        "path": "tasks/evidence/task61-parameter-local-read-control-2026-10-08.csv",
+        "sha256": "17e2ebdd34326b39a713a64e0d5a83d1947b5cf1563aeffa330a6191428aae39"
+      }
+    }
+  },
+  "dispatch_census": {
+    "scope": "Direct physical opcode totals over the same eight materialized V8-v7 inputs; the attempted reason breakdown was excluded because its function/PC join was not program-qualified.",
+    "generic_loads_before": 515168619,
+    "generic_loads_after": 1529,
+    "generic_stores_before": 192664832,
+    "generic_stores_after": 528,
+    "plain_loads_before": 672552984,
+    "plain_loads_after": 1194904725,
+    "plain_stores_before": 214895499,
+    "plain_stores_after": 383227163,
+    "after_census_metadata": {
+      "path": "target/iteration/local-ineligibility-after-params/run-metadata-and-comparison.json",
+      "sha256": "9ed3fdba580760ad97701fcbc2295032eeef8f8b926a2a38b06d4a2885e5c5dc"
+    }
+  },
+  "correctness": {
+    "production_check": "cargo check --profile production -p quench-runtime passed",
+    "test262": {
+      "passed": 838,
+      "failed": 0,
+      "stages": {
+        "01_arguments_object": {"passed": 263, "total": 263, "report_sha256": "2abdc2ee02fb341a1d19d53cb43ca85b5e1c71c1b8b8d18374ac0a2323d66543"},
+        "08_eval_code": {"passed": 347, "total": 347, "report_sha256": "894a84f3d5a6dceeb98cf68007dca57ce35381dc726dd08d618c7b7338df9e75"},
+        "11_function_code": {"passed": 217, "total": 217, "report_sha256": "f39ca0f1fbb00f56151a4ffec65c0f46969c5f8dfe0f86f057132e7292c9b380"},
+        "23_rest_parameters": {"passed": 11, "total": 11, "report_sha256": "15db63838208b213f401abab895241830456a27a0b5e9d1a266220db75b9b645"}
+      }
+    },
+    "node_oracle": {
+      "engine": "Node.js v26.10.0",
+      "quench_version": "22.0",
+      "result": "CJS parameter and arguments probes matched byte-for-byte, including mapped aliasing, delete unmapping, strict/default/rest cases, direct eval and closures."
+    }
+  },
+  "qualification": {
+    "all_eight_fixture_pairs": "in progress in target/iteration/local-parameter-v8-pairs/; pinned binaries and inputs are hash-checked by the runner",
+    "full_four_engine_milestone": "not run"
+  }
+}

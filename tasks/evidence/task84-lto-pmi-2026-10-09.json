@@ -1,0 +1,704 @@
+{
+  "schema": 1,
+  "task": "84 / 61",
+  "date": "2026-10-09",
+  "experiment": "Xcode CPU Counters weighted PMU location attribution for matched thin/fat production binaries",
+  "host": {
+    "platform": "macOS 26.5 ARM64, Darwin 25.5",
+    "model": "Apple M4 Mac16,10",
+    "xcode": "Xcode 26.6 (17F113)",
+    "xctrace": "16.0 (17F113)"
+  },
+  "method": {
+    "template": "Xcode CPU Counters / CPU Bottlenecks",
+    "selected_counting_mode_only": true,
+    "analysis_mode": "bottleneck",
+    "events": [
+      "discarded_indirect_branch",
+      "l1d_load_miss",
+      "l1d_store_miss",
+      "l1d_tlb_miss"
+    ],
+    "capture_limit_seconds": 3,
+    "tooling": {
+      "mode_editor": {
+        "path": "../v2/scripts/xctrace-cpu-mode.py",
+        "sha256": "d26688c5e996f9aaa788a8af26b2f7bf472cb4dc4671b27b822c7d49d15d1083"
+      },
+      "pmi_exporter": {
+        "path": "../v2/scripts/xctrace-pmi.rb",
+        "sha256": "41aa936361eac9ca8bb0739be29f39e63c2389971eb659ad133ee9a2f27ee4d8"
+      },
+      "pmi_test": {
+        "path": "../v2/scripts/test-xctrace-pmi.rb",
+        "sha256": "b33e5f0617a1907fb0b8e38d76978bb6bf23bfe24d1f8f702a04494671b7b0e2"
+      }
+    },
+    "archived_exports": [
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-local-indirect.xml",
+        "sha256": "33cfb838b8b6f4557a7b802f4c93636e08bda50fb92b49554298e2b854ee68b9",
+        "size_bytes": 4803
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-local-indirect.xml",
+        "sha256": "6b704d8c4e727414b8e0706834410bf10e31b66ea58e50539fa1faf109e0c6a4",
+        "size_bytes": 5038
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-richards-indirect.xml",
+        "sha256": "830aa6d3bcf4e6edc55a52a738a0cdf90d97a388e558dbb076579b290c92f75a",
+        "size_bytes": 148853
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-richards-indirect.xml",
+        "sha256": "fcf1f572ffb77dce3a1ec3bac536f41a76fc28fc029c20daf771189879b5b288",
+        "size_bytes": 116041
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-local-l1d.xml",
+        "sha256": "6c58598c8f73f0ab87132a56abee62db37de153e910245c74774fa97256e9e43",
+        "size_bytes": 40928
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-local-l1d.xml",
+        "sha256": "f3b2bfec2d62f84cf620e939ba5a7abf94cbb81675db5a08245703d17dcad05a",
+        "size_bytes": 40309
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-richards-l1d.xml",
+        "sha256": "d03a9025b9bf172d1506320e2b8a0bd9ac427711580e30c6471afad651046a91",
+        "size_bytes": 166712
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-richards-l1d.xml",
+        "sha256": "390a62cc4f7c21b364e2e3bca4d384adc8a255329bd168380d3a0f36493d1c4a",
+        "size_bytes": 199853
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/indirect.template",
+        "sha256": "b62a0300df8cb6817f4105426aa27078c2aeb6b91d16256b2c665b6d14ef3989",
+        "size_bytes": 509436
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/l1d.template",
+        "sha256": "ffa076ba5c215ba36bb497944c98199ee6c2e316878e54c5dee8f17f699a5973",
+        "size_bytes": 509416
+      }
+    ]
+  },
+  "binaries": {
+    "thin": {
+      "sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+      "path": "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+      "load_address": "0x1020c8000",
+      "preferred_image_base": "0x100000000"
+    },
+    "fat": {
+      "sha256": "d98950e39f4f6372a1f4aba0eca2aedec7e6b641f03879fbec024b5b6d04d36d",
+      "path": "target/pinned/d98950e39f4f6372a1f4aba0eca2aedec7e6b641f03879fbec024b5b6d04d36d/quench-node",
+      "load_address": "0x10443c000",
+      "preferred_image_base": "0x100000000"
+    }
+  },
+  "workloads": {
+    "local_store": {
+      "shape": "CJS file, tight local-store loop",
+      "script_sha256": "266926cf484ada5677f86008b8693a7e86cccc7542fc1981fa36a33b15154022",
+      "path": "tasks/evidence/task84-lto-pmi-2026-10-09/local-store-200m.cjs"
+    },
+    "richards": {
+      "shape": "materialized V8-v7 Richards program",
+      "script_sha256": "95c3b03d4956f50f7b6268cf2e367180b000e3a9d5f2082fe8116aa004824038",
+      "path": "tasks/evidence/task84-lto-pmi-2026-10-09/richards.js"
+    },
+    "raw_workload_files": [
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/local-store-200m.cjs",
+        "sha256": "266926cf484ada5677f86008b8693a7e86cccc7542fc1981fa36a33b15154022",
+        "size_bytes": 178
+      },
+      {
+        "path": "tasks/evidence/task84-lto-pmi-2026-10-09/richards.js",
+        "sha256": "95c3b03d4956f50f7b6268cf2e367180b000e3a9d5f2082fe8116aa004824038",
+        "size_bytes": 25709
+      }
+    ]
+  },
+  "production_binary_instruction_locations": {
+    "thin": [
+      {
+        "sample_address": "0x1022b3e5c",
+        "preferred_address": "0x1001ebe5c",
+        "instruction": "br x9",
+        "symbol_twin_resolution": "run_frame_general_until opcode-dispatch table",
+        "sample_count": 578
+      },
+      {
+        "sample_address": "0x1022badf4",
+        "preferred_address": "0x1001f2df4",
+        "instruction": "br x10",
+        "symbol_twin_resolution": "run_frame_general_until opcode-dispatch table",
+        "sample_count": 106
+      }
+    ],
+    "fat": [
+      {
+        "sample_address": "0x104597dd0",
+        "preferred_address": "0x10015bdd0",
+        "instruction": "br x9",
+        "symbol_twin_resolution": "object_data_mut enum dispatch",
+        "sample_count": 486
+      },
+      {
+        "sample_address": "0x10459e800",
+        "preferred_address": "0x100162800",
+        "instruction": "br x10",
+        "symbol_twin_resolution": "run_frame_general_until opcode-dispatch table",
+        "sample_count": 45
+      }
+    ],
+    "symbol_resolution_caveat": "Addresses were disassembled in the exact stripped measured binaries; symbol names came from same-source, same-LTO symbolized rebuilds whose __text sizes differ from measured binaries by 128 bytes (thin) and 44 bytes (fat), so helper-level names are approximate."
+  },
+  "interpretation": {
+    "finding": "Indirect-control-flow samples land at compiled indirect branch instructions in both LTO variants. Thin Richards samples concentrate at interpreter opcode dispatch; fat samples concentrate mostly at an enum dispatch in object_data_mut, with a smaller interpreter-dispatch cluster.",
+    "cycle_gap_explained": false,
+    "reason": "These are weighted location samples from one bounded capture per build/workload, not complete event totals or normalized rates. Counts cannot establish that fat has a higher indirect-branch misprediction rate.",
+    "l1d": "The local-store load/store sample counts are similar across builds. Richards has more TLB-location samples in the fat capture, but without an event-rate denominator this cannot establish that TLB misses caused the cycle difference. Cache latency remains unresolved.",
+    "decision": "Keep the thin-LTO M4 working policy on the matched cycle and diagnostic Score evidence; this PMU result does not justify a dispatch-layout compiler flag or a new optimization."
+  },
+  "results": {
+    "thin": {
+      "local": {
+        "indirect_branch": {
+          "sample_count": 10,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-local-indirect.xml",
+          "events": [
+            {
+              "event": "discarded_indirect_branch",
+              "sample_count": 7,
+              "top_locations": [
+                {
+                  "address": "0x100477050",
+                  "count": 1
+                },
+                {
+                  "address": "0x1004833b8",
+                  "count": 1
+                },
+                {
+                  "address": "0x100483638",
+                  "count": 1
+                },
+                {
+                  "address": "0x100488278",
+                  "count": 1
+                },
+                {
+                  "address": "0x10049a4d8",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": "discarded_call",
+              "sample_count": 3,
+              "top_locations": [
+                {
+                  "address": "0x1004833b8",
+                  "count": 1
+                },
+                {
+                  "address": "0x100483638",
+                  "count": 1
+                },
+                {
+                  "address": "0x1004b56cc",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        },
+        "l1d": {
+          "sample_count": 126,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-local-l1d.xml",
+          "events": [
+            {
+              "event": "l1d_load_miss",
+              "sample_count": 61,
+              "top_locations": [
+                {
+                  "address": "0x18dcf1e50",
+                  "count": 4
+                },
+                {
+                  "address": "0x18e0d751c",
+                  "count": 4
+                },
+                {
+                  "address": "0x18def005c",
+                  "count": 3
+                },
+                {
+                  "address": "0x100a0dce8",
+                  "count": 2
+                },
+                {
+                  "address": "0x100a106bc",
+                  "count": 2
+                }
+              ]
+            },
+            {
+              "event": "l1d_store_miss",
+              "sample_count": 56,
+              "top_locations": [
+                {
+                  "address": "0x18e0d7414",
+                  "count": 10
+                },
+                {
+                  "address": "0x18e0d73b8",
+                  "count": 6
+                },
+                {
+                  "address": "0x18e0d7120",
+                  "count": 4
+                },
+                {
+                  "address": "0x18def01d0",
+                  "count": 4
+                },
+                {
+                  "address": "0x18e0d7508",
+                  "count": 3
+                }
+              ]
+            },
+            {
+              "event": "l1d_tlb_miss",
+              "sample_count": 9,
+              "top_locations": [
+                {
+                  "address": "0x1009464c4",
+                  "count": 1
+                },
+                {
+                  "address": "0x100a10470",
+                  "count": 1
+                },
+                {
+                  "address": "0x100c40680",
+                  "count": 1
+                },
+                {
+                  "address": "0x18deea178",
+                  "count": 1
+                },
+                {
+                  "address": "0x18e08a0b0",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "richards": {
+        "indirect_branch": {
+          "sample_count": 694,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-richards-indirect.xml",
+          "events": [
+            {
+              "event": "discarded_indirect_branch",
+              "sample_count": 693,
+              "top_locations": [
+                {
+                  "address": "0x1022b3e5c",
+                  "count": 578
+                },
+                {
+                  "address": "0x1022badf4",
+                  "count": 106
+                },
+                {
+                  "address": "0x102537da8",
+                  "count": 2
+                },
+                {
+                  "address": "0x102193cc4",
+                  "count": 1
+                },
+                {
+                  "address": "0x102197e24",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": "discarded_call",
+              "sample_count": 1,
+              "top_locations": [
+                {
+                  "address": "0x102197e24",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        },
+        "l1d": {
+          "sample_count": 638,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/thin-richards-l1d.xml",
+          "events": [
+            {
+              "event": "l1d_tlb_miss",
+              "sample_count": 320,
+              "top_locations": [
+                {
+                  "address": "0x10312450c",
+                  "count": 52
+                },
+                {
+                  "address": "0x18e0d5248",
+                  "count": 46
+                },
+                {
+                  "address": "0x1030f7d6c",
+                  "count": 45
+                },
+                {
+                  "address": "0x10324fb68",
+                  "count": 33
+                },
+                {
+                  "address": "0x10324fbe4",
+                  "count": 29
+                }
+              ]
+            },
+            {
+              "event": "l1d_load_miss",
+              "sample_count": 211,
+              "top_locations": [
+                {
+                  "address": "0x1031edce8",
+                  "count": 19
+                },
+                {
+                  "address": "0x1030f7d6c",
+                  "count": 8
+                },
+                {
+                  "address": "0x1031b325c",
+                  "count": 7
+                },
+                {
+                  "address": "0x1031edcd0",
+                  "count": 7
+                },
+                {
+                  "address": "0x10337f52c",
+                  "count": 6
+                }
+              ]
+            },
+            {
+              "event": "l1d_store_miss",
+              "sample_count": 107,
+              "top_locations": [
+                {
+                  "address": "0x18e0d7414",
+                  "count": 12
+                },
+                {
+                  "address": "0x18e0d73b8",
+                  "count": 9
+                },
+                {
+                  "address": "0x18e0d7508",
+                  "count": 5
+                },
+                {
+                  "address": "0x10315b6a0",
+                  "count": 4
+                },
+                {
+                  "address": "0x18def01d0",
+                  "count": 4
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "fat": {
+      "local": {
+        "indirect_branch": {
+          "sample_count": 9,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-local-indirect.xml",
+          "events": [
+            {
+              "event": "discarded_indirect_branch",
+              "sample_count": 7,
+              "top_locations": [
+                {
+                  "address": "0x1027ef4c4",
+                  "count": 1
+                },
+                {
+                  "address": "0x1027faf3c",
+                  "count": 1
+                },
+                {
+                  "address": "0x10283929c",
+                  "count": 1
+                },
+                {
+                  "address": "0x102840860",
+                  "count": 1
+                },
+                {
+                  "address": "0x102b9e90c",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": "discarded_call",
+              "sample_count": 2,
+              "top_locations": [
+                {
+                  "address": "0x1027eeb50",
+                  "count": 1
+                },
+                {
+                  "address": "0x1027fce30",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        },
+        "l1d": {
+          "sample_count": 124,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-local-l1d.xml",
+          "events": [
+            {
+              "event": "l1d_load_miss",
+              "sample_count": 61,
+              "top_locations": [
+                {
+                  "address": "0x18dcf1e80",
+                  "count": 3
+                },
+                {
+                  "address": "0x18e0d741c",
+                  "count": 3
+                },
+                {
+                  "address": "0x18def005c",
+                  "count": 3
+                },
+                {
+                  "address": "0x10059dee0",
+                  "count": 2
+                },
+                {
+                  "address": "0x100a5ad14",
+                  "count": 2
+                }
+              ]
+            },
+            {
+              "event": "l1d_store_miss",
+              "sample_count": 55,
+              "top_locations": [
+                {
+                  "address": "0x18e0d7414",
+                  "count": 7
+                },
+                {
+                  "address": "0x18e0d73b8",
+                  "count": 6
+                },
+                {
+                  "address": "0x18e0d7120",
+                  "count": 4
+                },
+                {
+                  "address": "0x1008ac9c8",
+                  "count": 3
+                },
+                {
+                  "address": "0x18e0d7508",
+                  "count": 3
+                }
+              ]
+            },
+            {
+              "event": "l1d_tlb_miss",
+              "sample_count": 8,
+              "top_locations": [
+                {
+                  "address": "0x18e0d7414",
+                  "count": 2
+                },
+                {
+                  "address": "0x100810de4",
+                  "count": 1
+                },
+                {
+                  "address": "0x18dcf1e50",
+                  "count": 1
+                },
+                {
+                  "address": "0x18deea144",
+                  "count": 1
+                },
+                {
+                  "address": "0x18df02b14",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "richards": {
+        "indirect_branch": {
+          "sample_count": 541,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-richards-indirect.xml",
+          "events": [
+            {
+              "event": "discarded_indirect_branch",
+              "sample_count": 539,
+              "top_locations": [
+                {
+                  "address": "0x104597dd0",
+                  "count": 486
+                },
+                {
+                  "address": "0x10459e800",
+                  "count": 45
+                },
+                {
+                  "address": "0x1044eab50",
+                  "count": 1
+                },
+                {
+                  "address": "0x104515aa0",
+                  "count": 1
+                },
+                {
+                  "address": "0x10458d3e4",
+                  "count": 1
+                }
+              ]
+            },
+            {
+              "event": "discarded_call",
+              "sample_count": 2,
+              "top_locations": [
+                {
+                  "address": "0x1044f7294",
+                  "count": 1
+                },
+                {
+                  "address": "0x10450b144",
+                  "count": 1
+                }
+              ]
+            }
+          ]
+        },
+        "l1d": {
+          "sample_count": 801,
+          "raw_export": "tasks/evidence/task84-lto-pmi-2026-10-09/fat-richards-l1d.xml",
+          "events": [
+            {
+              "event": "l1d_tlb_miss",
+              "sample_count": 519,
+              "top_locations": [
+                {
+                  "address": "0x18e0d5248",
+                  "count": 159
+                },
+                {
+                  "address": "0x1030689f0",
+                  "count": 147
+                },
+                {
+                  "address": "0x103033cdc",
+                  "count": 83
+                },
+                {
+                  "address": "0x1030f58b0",
+                  "count": 44
+                },
+                {
+                  "address": "0x18e0d522c",
+                  "count": 22
+                }
+              ]
+            },
+            {
+              "event": "l1d_load_miss",
+              "sample_count": 186,
+              "top_locations": [
+                {
+                  "address": "0x10303e06c",
+                  "count": 20
+                },
+                {
+                  "address": "0x10304525c",
+                  "count": 9
+                },
+                {
+                  "address": "0x1030ae7f4",
+                  "count": 6
+                },
+                {
+                  "address": "0x10303c5f0",
+                  "count": 5
+                },
+                {
+                  "address": "0x103033cdc",
+                  "count": 4
+                }
+              ]
+            },
+            {
+              "event": "l1d_store_miss",
+              "sample_count": 96,
+              "top_locations": [
+                {
+                  "address": "0x18e0d73b8",
+                  "count": 11
+                },
+                {
+                  "address": "0x18e0d7414",
+                  "count": 9
+                },
+                {
+                  "address": "0x18e0d5248",
+                  "count": 5
+                },
+                {
+                  "address": "0x103306b40",
+                  "count": 3
+                },
+                {
+                  "address": "0x18def01d0",
+                  "count": 3
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

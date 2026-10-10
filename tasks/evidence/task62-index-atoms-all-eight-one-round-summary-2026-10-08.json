@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "task": "62",
+  "kind": "post-index-atom Stage B one-round four-engine diagnostic",
+  "recorded_at": "2026-10-08",
+  "qualification_ready": false,
+  "scope": "One matched round across all eight pinned V8-v7 fixtures after commit 0c03b9d0f. Diagnostic only; no confidence intervals.",
+  "command": "target/production/quench-bench --all --runs 1 --timeout-ms 300000 --quench target/production/quench-node --qjs /Users/admin/Code/GitHub/quickjs/qjs --bun /opt/homebrew/bin/bun --node /opt/homebrew/bin/node --checkpoint target/production/stageb-pilots/index-atoms-all-eight-2026-10-08.checkpoint.json --out target/production/stageb-pilots/index-atoms-all-eight-2026-10-08.json",
+  "source": {
+    "revision": "0c03b9d0f1090a1681af89de456bb4f6214fdd9f",
+    "dirty": false,
+    "quench_node_sha256": "fcf92c1ae69d112456364eb19a33b5739a1a76fdcfe202df7ae28dade1bed0ac",
+    "runner_sha256": "7530076292020d65cc1cc9c47fbe90534470144588e8ed17ec0107553c8c44fc"
+  },
+  "benchmark_corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "model": "Mac16,10",
+    "architecture": "aarch64-apple-darwin",
+    "operating_system": "Darwin 25.5.0, macOS 26.5",
+    "memory_bytes": 17179869184,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "engines": {
+    "quench": "Quench shared-VM production interpreter",
+    "quickjs": "QuickJS version 2026-06-04",
+    "bun_no_jit": "Bun 1.4.2, JSC useJIT=false probed",
+    "node_jitless": "Node v26.10.0 with --jitless"
+  },
+  "raw_report": {
+    "path": "tasks/evidence/task62-index-atoms-all-eight-one-round-2026-10-08.json",
+    "sha256": "e79142cbce9cb4a012dedd03de69157fc5bd20eb80232ba71a145f242bb78a79",
+    "complete": true,
+    "all_outputs_equal": true
+  },
+  "results": {
+    "crypto.js": {
+      "scores": {"quench": 341.0, "quickjs": 2525.0, "bun_no_jit": 4172.0, "node_jitless": 2551.0},
+      "max_rss_bytes": {"quench": 25575424, "quickjs": 3194880, "bun_no_jit": 36585472, "node_jitless": 44957696},
+      "quench_vs_best_reference_score_ratio": 12.23,
+      "lowest_rss_engine": "quickjs"
+    },
+    "deltablue.js": {
+      "scores": {"quench": 172.0, "quickjs": 1841.0, "bun_no_jit": 2186.0, "node_jitless": 2721.0},
+      "max_rss_bytes": {"quench": 24739840, "quickjs": 3145728, "bun_no_jit": 38125568, "node_jitless": 51085312},
+      "quench_vs_best_reference_score_ratio": 15.82,
+      "lowest_rss_engine": "quickjs"
+    },
+    "earley-boyer.js": {
+      "scores": {"quench": 338.0, "quickjs": 5502.0, "bun_no_jit": 9654.0, "node_jitless": 12311.0},
+      "max_rss_bytes": {"quench": 67469312, "quickjs": 17465344, "bun_no_jit": 37797888, "node_jitless": 112377856},
+      "quench_vs_best_reference_score_ratio": 36.42,
+      "lowest_rss_engine": "quickjs"
+    },
+    "navier-stokes.js": {
+      "scores": {"quench": 181.0, "quickjs": 4768.0, "bun_no_jit": 4730.0, "node_jitless": 3525.0},
+      "max_rss_bytes": {"quench": 30670848, "quickjs": 5636096, "bun_no_jit": 20643840, "node_jitless": 49889280},
+      "quench_vs_best_reference_score_ratio": 26.34,
+      "lowest_rss_engine": "quickjs"
+    },
+    "raytrace.js": {
+      "scores": {"quench": 398.0, "quickjs": 4310.0, "bun_no_jit": 5996.0, "node_jitless": 8255.0},
+      "max_rss_bytes": {"quench": 23543808, "quickjs": 2834432, "bun_no_jit": 36896768, "node_jitless": 52166656},
+      "quench_vs_best_reference_score_ratio": 20.74,
+      "lowest_rss_engine": "quickjs"
+    },
+    "regexp.js": {
+      "scores": {"quench": 54.1, "quickjs": 1045.0, "bun_no_jit": 1685.0, "node_jitless": 5921.0},
+      "max_rss_bytes": {"quench": 65601536, "quickjs": 7946240, "bun_no_jit": 34488320, "node_jitless": 55115776},
+      "quench_vs_best_reference_score_ratio": 109.45,
+      "lowest_rss_engine": "quickjs"
+    },
+    "richards.js": {
+      "scores": {"quench": 276.0, "quickjs": 1968.0, "bun_no_jit": 3057.0, "node_jitless": 2630.0},
+      "max_rss_bytes": {"quench": 21413888, "quickjs": 2736128, "bun_no_jit": 21889024, "node_jitless": 44826624},
+      "quench_vs_best_reference_score_ratio": 11.08,
+      "lowest_rss_engine": "quickjs"
+    },
+    "splay.js": {
+      "scores": {"quench": 2360.0, "quickjs": 9347.0, "bun_no_jit": 9909.0, "node_jitless": 15028.0},
+      "max_rss_bytes": {"quench": 306348032, "quickjs": 151207936, "bun_no_jit": 58327040, "node_jitless": 406142976},
+      "quench_vs_best_reference_score_ratio": 6.37,
+      "lowest_rss_engine": "bun_no_jit"
+    }
+  },
+  "interpretation": "The largest one-sample Score ratios are RegExp, Earley-Boyer, Navier-Stokes and RayTrace. Quench did not have the lowest maximum RSS on any fixture. Use this only to rank follow-up diagnostics; it does not establish a stable ranking or completion of Task 61.",
+  "limitations": [
+    "One sample per engine and fixture; no paired intervals.",
+    "The runner's qualification analyzer intentionally rejects the report because it is one round.",
+    "A clean eleven-round all-eight campaign remains required for qualification."
+  ]
+}

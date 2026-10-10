@@ -259,6 +259,10 @@ impl std::fmt::Debug for Regex {
 }
 
 impl Regex {
+    pub fn capture_count(&self) -> usize {
+        self.capture_names.len()
+    }
+
     pub fn with_flags(source: &str, flags: Flags) -> Result<Self, String> {
         let allocator = oxc::allocator::Allocator::default();
         let flags_text = flag_text(flags);
@@ -325,6 +329,9 @@ impl Regex {
     }
 
     pub fn find_from(&self, text: &str, start: usize) -> Matches {
+        if start > text.len() {
+            return Matches { item: None };
+        }
         if text.is_ascii()
             && (!self.compiled_dot_requires_cr_guard || !text.as_bytes().contains(&b'\r'))
         {
@@ -366,6 +373,9 @@ impl Regex {
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
+        if start > input.len() {
+            return Matches { item: None };
+        }
         if input.iter().all(|unit| *unit <= ASCII_MAX)
             && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
         {
@@ -2379,6 +2389,19 @@ mod tests {
         let regex = Regex::with_flags("(?<=^(\\w+))def", Flags::from("g")).unwrap();
         let input = "abcdefdef".encode_utf16().collect::<Vec<_>>();
         assert!(regex.find_from_utf16(&input, 0).next().is_some());
+    }
+
+    #[test]
+    fn empty_match_search_past_input_end_terminates() {
+        let regex = Regex::with_flags("(?:)", Flags::default()).unwrap();
+        let input = "A😀B".encode_utf16().collect::<Vec<_>>();
+        assert!(
+            regex
+                .find_from_utf16(&input, input.len() + 1)
+                .next()
+                .is_none()
+        );
+        assert!(regex.find_from("A😀B", "A😀B".len() + 1).next().is_none());
     }
     #[test]
     fn lookahead_capture_preserves_extent() {

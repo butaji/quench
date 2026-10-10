@@ -4,6 +4,21 @@ use super::*;
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
+struct FieldCacheHit {
+    value: Value,
+    tier: u8,
+    depth: u16,
+}
+
+enum FieldCacheRead {
+    Proxy,
+    Generic,
+    StringGeneric,
+    Miss(usize),
+    StringMiss { prototype: Value, site: usize },
+    Hit(FieldCacheHit),
+}
+
 fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     let mut entries = Vec::new();
     let mut seen_keys = FxHashSet::default();
@@ -154,11 +169,13 @@ impl<H: Host> Vm<H> {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
+        let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
         self.shapes.push(Shape::child(
             Some(parent),
             transition,
             storage_len,
             dictionary_trigger,
+            parent_may_have_gc_roots,
         ));
         self.heap.register_property_shape(next, storage_len);
         next
@@ -211,14 +228,12 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
-            let storage_len = self.shapes[shape as usize].storage_len;
-            let next_id = self.append_shape(
+            let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
                     attributes,
                 },
-                storage_len,
             );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
@@ -232,14 +247,12 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn remove_property_attributes(&mut self, object: Value, key: PropertyKey) {
         if let Some((shape, slot)) = self.object_property_slot(object, key) {
-            let storage_len = self.shapes[shape as usize].storage_len;
-            let next_id = self.append_shape(
+            let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
                     attributes: DEFAULT_PROPERTY_ATTRIBUTES,
                 },
-                storage_len,
             );
             self.object_data_mut(object)
                 .expect("object survived descriptor transition")
@@ -254,6 +267,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
+        self.field_add_caches.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
     }
@@ -309,25 +323,27 @@ impl FieldCacheSet {
         }
     }
     #[inline(always)]
-    pub(super) fn get(&self, shape: u32) -> Option<FieldCache> {
+    pub(super) fn get(&self, receiver: u32, holder: u32) -> Option<FieldCache> {
+        let key = field_cache_key(receiver, holder);
         if let Some(entries) = &self.overflow {
-            return entries.get(&shape).copied();
+            return entries.get(&key).copied();
         }
         self.entries[..usize::from(self.len)]
             .iter()
-            .find(|entry| entry.receiver == shape)
+            .find(|entry| entry.receiver == receiver && entry.holder == holder)
             .copied()
     }
     fn insert(&mut self, cache: FieldCache) {
+        let key = field_cache_key(cache.receiver, cache.holder);
         if let Some(entries) = &mut self.overflow {
-            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&cache.receiver) {
-                entries.insert(cache.receiver, cache);
+            if entries.len() < FIELD_MEGAMORPHIC_LIMIT || entries.contains_key(&key) {
+                entries.insert(key, cache);
             }
             return;
         }
         if let Some(entry) = self.entries[..usize::from(self.len)]
             .iter_mut()
-            .find(|entry| entry.receiver == cache.receiver)
+            .find(|entry| entry.receiver == cache.receiver && entry.holder == cache.holder)
         {
             *entry = cache;
         } else if usize::from(self.len) < FIELD_MEGAMORPHIC_INLINE {
@@ -335,8 +351,12 @@ impl FieldCacheSet {
             self.len += 1;
         } else {
             let mut entries = FxHashMap::default();
-            entries.extend(self.entries.iter().map(|entry| (entry.receiver, *entry)));
-            entries.insert(cache.receiver, cache);
+            entries.extend(
+                self.entries
+                    .iter()
+                    .map(|entry| (field_cache_key(entry.receiver, entry.holder), *entry)),
+            );
+            entries.insert(key, cache);
             self.overflow = Some(Box::new(entries));
         }
     }
@@ -347,6 +367,11 @@ impl FieldCacheSet {
             .map_or(usize::from(self.len), |entries| entries.len())
     }
 }
+
+#[inline(always)]
+fn field_cache_key(receiver: u32, holder: u32) -> u64 {
+    (u64::from(receiver) << u32::BITS) | u64::from(holder)
+}
 impl<H: Host> Vm<H> {
     pub(super) fn object_pair(
         &mut self,
@@ -355,26 +380,26 @@ impl<H: Host> Vm<H> {
         first: Value,
         second: Value,
     ) -> Value {
-        if !self.specialized || !program.specialized {
-            let [first_atom, second_atom] = program.object_sites[site].atoms;
-            let one = self.transition_shape(0, first_atom);
-            let two = self.transition_shape(one, second_atom);
-            return self
-                .heap
-                .alloc_object_pair(self.object_proto, two, first, second);
-        }
-        let cache_site = self.object_cache_index(site);
-        let shape = if self.object_shapes[cache_site] != u32::MAX {
-            self.object_shapes[cache_site]
-        } else {
-            let atoms = program.object_sites[site].atoms;
-            let one = self.transition_shape(0, atoms[0]);
-            let two = self.transition_shape(one, atoms[1]);
-            self.object_shapes[cache_site] = two;
-            two
-        };
+        let shape = self.object_site_shape(program, site);
         self.heap
             .alloc_object_pair(self.object_proto, shape, first, second)
+    }
+    pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
+        let atoms = &program.object_sites[site].atoms;
+        if !self.specialized || !program.specialized {
+            return atoms
+                .iter()
+                .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        }
+        let cache_site = self.object_cache_index(site);
+        if self.object_shapes[cache_site] != u32::MAX {
+            return self.object_shapes[cache_site];
+        }
+        let shape = atoms
+            .iter()
+            .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        self.object_shapes[cache_site] = shape;
+        shape
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
         if atom == self.length_atom
@@ -431,54 +456,166 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        if self.is_private_name(atom) && matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-            return self.get_private_proxy_field(p, object, atom);
-        }
-        if matches!(self.heap.get(object), Some(Cell::Proxy { .. })) {
-            return self.get_property(p, object, atom);
-        }
-        if !self.specialized || !p.specialized {
-            return self.get_property(p, object, atom);
-        }
-        let site = self.field_cache_index(site);
-        let Some(receiver) = self.shape_property_lookup(object, atom) else {
-            return self.get_property(p, object, atom);
+        let lookup = match self.heap.get(object) {
+            Some(Cell::String(_)) if self.specialized && p.specialized => {
+                if !self.field_cache_atom_eligible(atom) {
+                    FieldCacheRead::StringGeneric
+                } else {
+                    let prototype = self.string_proto;
+                    if let Some(receiver) = self.shape_property_lookup(prototype, atom) {
+                        let site = self.field_cache_index(site);
+                        match self.cached_field_value(site, receiver) {
+                            Some(hit) => FieldCacheRead::Hit(hit),
+                            None => FieldCacheRead::StringMiss { prototype, site },
+                        }
+                    } else {
+                        FieldCacheRead::StringGeneric
+                    }
+                }
+            }
+            Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
+            Some(cell) if self.specialized && p.specialized => {
+                let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
+                    return self.get_property(p, object, atom);
+                };
+                let site = self.field_cache_index(site);
+                match self
+                    .cached_field_value(site, receiver)
+                    .or_else(|| self.cached_holder_field_value(site, receiver, atom))
+                {
+                    Some(hit) => FieldCacheRead::Hit(hit),
+                    None => FieldCacheRead::Miss(site),
+                }
+            }
+            Some(_) | None => FieldCacheRead::Generic,
         };
+        match lookup {
+            FieldCacheRead::Proxy if self.is_private_name(atom) => {
+                self.get_private_proxy_field(p, object, atom)
+            }
+            FieldCacheRead::Proxy | FieldCacheRead::Generic => self.get_property(p, object, atom),
+            FieldCacheRead::StringGeneric => self.get_property(p, object, atom),
+            FieldCacheRead::Miss(site) => {
+                self.profile.field_cache(false);
+                self.get_field_miss(p, object, atom, site)
+            }
+            FieldCacheRead::StringMiss { prototype, site } => {
+                self.profile.field_cache(false);
+                self.get_string_field_miss(p, object, prototype, atom, site)
+            }
+            FieldCacheRead::Hit(hit) => {
+                self.profile
+                    .field_cache_hit(usize::from(hit.tier), hit.depth);
+                Ok(hit.value)
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
         let receiver_shape = receiver.shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
-        if cache.receiver == receiver_shape
-            && self
-                .heap
-                .property_get(receiver, cache.slot as usize)
-                .is_some()
-        {
+        if cache.receiver == receiver_shape && cache.holder == NO_FIELD_HOLDER {
             // SAFETY: receiver shape and slot were recorded together for an
             // own data property on the cache miss path.
             let value = unsafe {
                 self.heap
                     .property_get_unchecked(receiver, cache.slot as usize)
             };
-            self.profile.field_cache_hit(0, 0);
-            return Ok(value);
+            return Some(FieldCacheHit {
+                value,
+                tier: 0,
+                depth: 0,
+            });
         }
-        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape)
-            && self
-                .heap
-                .property_get(receiver, cache.slot as usize)
-                .is_some()
-        {
+        if let Some(cache) = self.megamorphic_field_cache(site, receiver_shape, NO_FIELD_HOLDER) {
             // SAFETY: the table is keyed by the immutable receiver shape.
             let value = unsafe {
                 self.heap
                     .property_get_unchecked(receiver, cache.slot as usize)
             };
-            self.profile.field_cache_hit(2, 0);
+            return Some(FieldCacheHit {
+                value,
+                tier: 2,
+                depth: 0,
+            });
+        }
+        None
+    }
+
+    #[inline(always)]
+    fn cached_holder_field_value(
+        &self,
+        site: usize,
+        receiver: &Object,
+        atom: Atom,
+    ) -> Option<FieldCacheHit> {
+        let holder_value = receiver.proto;
+        let holder_cell = self.heap.get(holder_value)?;
+        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(site) };
+        let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
+        {
+            (cache, 0)
+        } else if let Some(cache) =
+            self.megamorphic_field_cache(site, receiver.shape(), holder.shape())
+        {
+            (cache, 2)
+        } else {
+            return None;
+        };
+        let value = unsafe {
+            // SAFETY: both immutable shapes and the property slot were recorded
+            // together after confirming an immediate-prototype data property.
+            self.heap
+                .property_get_unchecked(holder, cache.slot as usize)
+        };
+        Some(FieldCacheHit {
+            value,
+            tier,
+            depth: 1,
+        })
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_string_field_miss(
+        &mut self,
+        p: &ResidualProgram,
+        primitive: Value,
+        prototype: Value,
+        atom: Atom,
+        site: usize,
+    ) -> Result<Value, JsError> {
+        if self
+            .property_attributes(prototype, PropertyKey::string(atom))
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return self.get_property_with_receiver(p, prototype, atom, primitive);
+        }
+        let Some(receiver) = self.shape_property_lookup(prototype, atom) else {
+            return self.get_property(p, primitive, atom);
+        };
+        if let Some(slot) = self.shape_slot(receiver.shape(), atom)
+            && let Some(value) = self.heap.property_get(receiver, slot)
+        {
+            if slot < FIELD_CACHE_SLOT_CAPACITY {
+                self.record_field_cache(
+                    site,
+                    FieldCache {
+                        receiver: receiver.shape(),
+                        holder: NO_FIELD_HOLDER,
+                        slot: slot as u16,
+                    },
+                );
+            }
             return Ok(value);
         }
-        self.profile.field_cache(false);
-        self.get_field_miss(p, object, atom, site)
+        self.get_property(p, primitive, atom)
     }
+
     #[cold]
     #[inline(never)]
     pub(super) fn get_field_miss(
@@ -505,13 +642,48 @@ impl<H: Host> Vm<H> {
                     site,
                     FieldCache {
                         receiver: receiver.shape(),
+                        holder: NO_FIELD_HOLDER,
                         slot: slot as u16,
                     },
                 );
             }
             return Ok(value);
         }
+        if let Some((holder_shape, slot, value)) = self.immediate_prototype_data_field(object, atom)
+            && slot < FIELD_CACHE_SLOT_CAPACITY
+        {
+            self.record_field_cache(
+                site,
+                FieldCache {
+                    receiver: receiver.shape(),
+                    holder: holder_shape,
+                    slot: slot as u16,
+                },
+            );
+            return Ok(value);
+        }
         self.get_property(p, object, atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn immediate_prototype_data_field(
+        &self,
+        receiver_value: Value,
+        atom: Atom,
+    ) -> Option<(u32, usize, Value)> {
+        let holder_value = self.object_data(receiver_value)?.proto;
+        let holder_cell = self.heap.get(holder_value)?;
+        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        let holder_shape = holder.shape();
+        let slot = self.shape_slot(holder_shape, atom)?;
+        if self
+            .shape_attribute(holder_shape, slot)
+            .is_some_and(|attributes| attributes.accessor)
+        {
+            return None;
+        }
+        Some((holder_shape, slot, self.heap.property_get(holder, slot)?))
     }
     pub(super) fn set_property(
         &mut self,
@@ -944,9 +1116,17 @@ impl<H: Host> Vm<H> {
             && !data.is_arguments_object()
         {
             let site = self.field_cache_index(site);
-            if self.try_cached_field_store(object, atom, data.shape(), value, site) {
+            let shape = data.shape();
+            if self.try_cached_field_store(object, atom, shape, value, site)
+                || (self.field_cache_atom_eligible(atom)
+                    && self.try_cached_field_add(object, atom, shape, value, site))
+            {
                 return Ok(());
             }
+        }
+        let own = self.own_property(object, atom).is_some();
+        if !own && self.prototype_chain_contains_proxy(object) {
+            return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(attributes) = self.property_accessor(object, atom) {
             if let Some(setter) = attributes.setter {
@@ -956,7 +1136,6 @@ impl<H: Host> Vm<H> {
             }
             return Ok(());
         }
-        let own = self.own_property(object, atom).is_some();
         if own
             && self
                 .property_attributes(object, PropertyKey::string(atom))
@@ -1015,6 +1194,12 @@ impl<H: Host> Vm<H> {
             .object_data(object)
             .map(Object::shape)
             .unwrap_or(u32::MAX);
+        let add_prototype_shapes =
+            if existing.is_none() && shape != u32::MAX && self.field_cache_atom_eligible(atom) {
+                self.field_add_prototype_shapes(object, atom)
+            } else {
+                None
+            };
         if shape != u32::MAX && self.try_cached_field_store(object, atom, shape, value, site) {
             return Ok(());
         }
@@ -1026,15 +1211,112 @@ impl<H: Host> Vm<H> {
             .expect("property transition records the new shape slot");
         let data_shape = data.shape();
         if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
+            if existing.is_none()
+                && data_shape != shape
+                && slot == self.shapes[shape as usize].storage_len
+                && !self.shape_is_dictionary(shape)
+                && let Some(prototype_shapes) = add_prototype_shapes
+            {
+                self.field_add_caches.insert(
+                    site,
+                    FieldAddCache {
+                        atom,
+                        source_shape: shape,
+                        target_shape: data_shape,
+                        slot: slot as u16,
+                        prototype_shapes,
+                    },
+                );
+            }
             self.record_field_cache(
                 site,
                 FieldCache {
                     receiver: data_shape,
+                    holder: NO_FIELD_HOLDER,
                     slot: slot as u16,
                 },
             );
         }
         Ok(())
+    }
+
+    fn try_cached_field_add(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        shape: u32,
+        value: Value,
+        site: usize,
+    ) -> bool {
+        let Some(cache) = self.field_add_caches.get(&site) else {
+            return false;
+        };
+        if cache.atom != atom
+            || cache.source_shape != shape
+            || self.shape_is_dictionary(shape)
+            || !self.object_data(object).is_some_and(Object::is_extensible)
+            || !self.field_add_prototype_chain_matches(object, &cache.prototype_shapes)
+        {
+            return false;
+        }
+        let target_shape = cache.target_shape;
+        let slot = cache.slot;
+        self.heap.property_push(object, value);
+        self.object_data_mut(object)
+            .expect("field-add cache requires an ordinary object")
+            .set_shape(target_shape);
+        self.invalidate_method_caches_for_prototype_add(object, atom);
+        self.profile.field_cache_hit(0, 0);
+        debug_assert_eq!(slot as usize, self.shapes[shape as usize].storage_len);
+        true
+    }
+
+    fn field_add_prototype_shapes(&self, object: Value, atom: Atom) -> Option<Vec<u32>> {
+        let mut prototype = self.object_data(object)?.proto;
+        let key = PropertyKey::string(atom);
+        let mut shapes = Vec::new();
+        while !prototype.is_null() {
+            if shapes.len() == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
+                return None;
+            }
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return None;
+            };
+            let shape = data.shape();
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || self.shape_is_dictionary(shape)
+                || self
+                    .property_attributes(prototype, key)
+                    .is_some_and(|attributes| attributes.accessor || !attributes.writable)
+            {
+                return None;
+            }
+            shapes.push(shape);
+            prototype = data.proto;
+        }
+        Some(shapes)
+    }
+
+    fn field_add_prototype_chain_matches(&self, object: Value, expected: &[u32]) -> bool {
+        let Some(mut prototype) = self.object_data(object).map(|data| data.proto) else {
+            return false;
+        };
+        for expected_shape in expected {
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return false;
+            };
+            let shape = data.shape();
+            if shape != *expected_shape
+                || data.is_module_namespace()
+                || data.is_arguments_object()
+                || self.shape_is_dictionary(shape)
+            {
+                return false;
+            }
+            prototype = data.proto;
+        }
+        prototype.is_null()
     }
 
     #[inline(always)]
@@ -1047,9 +1329,9 @@ impl<H: Host> Vm<H> {
         site: usize,
     ) -> bool {
         let cache = self.field_caches[site];
-        let (cache, kind) = if cache.receiver == shape {
+        let (cache, kind) = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
             (cache, 0)
-        } else if let Some(cache) = self.megamorphic_field_cache(site, shape) {
+        } else if let Some(cache) = self.megamorphic_field_cache(site, shape, NO_FIELD_HOLDER) {
             (cache, 2)
         } else {
             return false;
@@ -1136,6 +1418,20 @@ impl<H: Host> Vm<H> {
         false
     }
 
+    pub(super) fn prototype_chain_has_indexed_set_exotic(&self, object: Value) -> bool {
+        let mut current = self.object_data(object).map(|data| data.proto);
+        while let Some(value) = current.filter(|value| !value.is_null()) {
+            if matches!(
+                self.heap.get(value),
+                Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+            ) {
+                return true;
+            }
+            current = self.object_data(value).map(|data| data.proto);
+        }
+        false
+    }
+
     pub(super) fn property_accessor(
         &self,
         mut object: Value,
@@ -1193,7 +1489,9 @@ impl<H: Host> Vm<H> {
             return;
         }
         let entry = &mut self.field_caches[site];
-        if entry.receiver == cache.receiver || entry.receiver == u32::MAX {
+        if (entry.receiver == cache.receiver && entry.holder == cache.holder)
+            || entry.receiver == NO_FIELD_RECEIVER
+        {
             *entry = cache;
             return;
         }
@@ -1206,7 +1504,12 @@ impl<H: Host> Vm<H> {
         }
     }
     #[inline(always)]
-    fn megamorphic_field_cache(&self, site: usize, shape: u32) -> Option<FieldCache> {
+    fn megamorphic_field_cache(
+        &self,
+        site: usize,
+        receiver: u32,
+        holder: u32,
+    ) -> Option<FieldCache> {
         // SAFETY: compiler-produced sites index exactly-sized cache vectors;
         // every non-sentinel index was installed together with its table.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
@@ -1216,29 +1519,48 @@ impl<H: Host> Vm<H> {
         unsafe {
             self.megamorphic_fields
                 .get_unchecked(table_index as usize)
-                .get(shape)
+                .get(receiver, holder)
         }
     }
     pub(super) fn transition_shape(&mut self, shape: u32, atom: Atom) -> u32 {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
-        if matches!(key, PropertyKey::String(_)) {
-            if let Some(next) = self.transitions.get(&(shape, key)).copied() {
-                self.profile.shape_transition(true);
-                return next;
-            }
+        let transition = ShapeTransition::Add {
+            key,
+            slot: u32::try_from(self.shapes[shape as usize].storage_len)
+                .expect("object property index exceeds u32"),
+        };
+        self.append_cached_shape_transition(shape, transition)
+    }
+    fn append_cached_shape_transition(&mut self, shape: u32, transition: ShapeTransition) -> u32 {
+        let key = transition.cache_key();
+        if let Some(key) = key
+            && let Some(next) = self.transitions.get(&(shape, key)).copied()
+        {
+            self.profile.shape_transition(true);
+            return next;
         }
-        self.profile.shape_transition(false);
+        if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
+            self.profile.shape_transition(false);
+        }
         let storage_len = self.shapes[shape as usize].storage_len;
-        let next_storage_len = storage_len
-            .checked_add(1)
-            .filter(|length| u32::try_from(*length).is_ok())
-            .expect("object property storage exhausted");
-        let slot = u32::try_from(storage_len).expect("object property index exceeds u32");
-        let mut next =
-            self.append_shape(shape, ShapeTransition::Add { key, slot }, next_storage_len);
-        if self.shapes[next as usize].dictionary_trigger.is_none()
+        let next_storage_len = match transition {
+            ShapeTransition::Add { .. } => storage_len
+                .checked_add(1)
+                .filter(|length| u32::try_from(*length).is_ok())
+                .expect("object property storage exhausted"),
+            ShapeTransition::Descriptor { .. } => storage_len,
+            ShapeTransition::Root
+            | ShapeTransition::Delete { .. }
+            | ShapeTransition::Vacant
+            | ShapeTransition::Dictionary { .. } => {
+                unreachable!("cached shape transitions are adds or descriptors")
+            }
+        };
+        let mut next = self.append_shape(shape, transition, next_storage_len);
+        if matches!(transition, ShapeTransition::Add { .. })
+            && self.shapes[next as usize].dictionary_trigger.is_none()
             && next_storage_len > FIELD_CACHE_SLOT_CAPACITY
         {
             next = self.append_shape(
@@ -1251,7 +1573,7 @@ impl<H: Host> Vm<H> {
             self.profile
                 .dictionary_transition(DictionaryTrigger::PropertyCount);
         }
-        if matches!(key, PropertyKey::String(_)) {
+        if let Some(key) = key {
             self.transitions.insert((shape, key), next);
         }
         next

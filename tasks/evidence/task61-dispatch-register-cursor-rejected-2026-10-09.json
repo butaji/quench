@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "task": "78",
+  "experiment": "Pass a loop-local register-file base pointer through the central step match",
+  "decision": "reject: retired instructions increased in all 11 pairs on both workloads",
+  "hypothesis": "A register pointer refreshed with the code cursor would let opcode arms bypass repeated frame/register-vector address derivation.",
+  "host": {
+    "cpu": "Apple M4",
+    "os": "macOS 26.5 build 25F71 ARM64",
+    "kernel": "Darwin 25.5.0",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "memory_bytes": 17179869184,
+    "logical_cpus": 10
+  },
+  "source": {
+    "base_revision": "db3aeaab0",
+    "candidate_files": [
+      {
+        "path": "crates/quench-runtime/src/vm/dispatch.rs",
+        "sha256": "732cb4facf9b163fecb7f6bae7d628853c7d8c7b4d7daabaeba8603c6de9f212"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/dispatch_frame.rs",
+        "sha256": "1e2f5deea6f465b9ef7af999d4b1940e9f78269806c6366bf3bf435196098488"
+      },
+      {
+        "path": "crates/quench-runtime/src/vm/dispatch_numeric.rs",
+        "sha256": "003ea59c7c81f707deb7956af80710ae6af7892815d72a1ea4b10a9f6cc99b43"
+      }
+    ],
+    "candidate_source_diff_sha256": "fefedddb92f5cf9083ddd5a1937fab155bd209a551bfc23ddaff6d1f2735bb7a",
+    "baseline_binary_sha256": "9175e3ac9ef03874f5a9d046963645ced1f427a0c8bd21de6b10632090e54783",
+    "candidate_binary_sha256": "f2c38eec99604fd408998375849e5d264a91b3bf5511129d53d8c0ba4cc566c5",
+    "profile": "production"
+  },
+  "measurement": {
+    "pairs": 11,
+    "order": "alternating candidate-first on odd pairs",
+    "command": "python3.14 tasks/evidence/task61-dispatch-executing-program-pairs.py --baseline target/iteration/task61-code-cursor-candidate-20261009/production/quench-node --candidate target/iteration/task61-register-cursor-candidate-20261009/production/quench-node --output tasks/evidence/task61-dispatch-register-cursor-rejected-pairs-2026-10-09.csv",
+    "timer": "/usr/bin/time -l; retired instructions are the primary metric",
+    "raw_csv": {
+      "path": "tasks/evidence/task61-dispatch-register-cursor-rejected-pairs-2026-10-09.csv",
+      "sha256": "db344555a4bd98140c3289ee79d8f04569347af80919a1637d26f89edc527b73"
+    },
+    "instruction_statistics": {
+      "paired_delta_method": "median of per-pair candidate/baseline percentage changes",
+      "bootstrap_replicates": 100000,
+      "bootstrap_seed": 7809,
+      "local_store": {
+        "baseline_median": 9082512329,
+        "candidate_median": 9112321380,
+        "paired_median_delta_percent": 0.3284518669326886,
+        "paired_bootstrap_95_percentile_interval": [0.325014277699176, 0.3349369509888511],
+        "candidate_higher_pairs": 11
+      },
+      "cjs_call": {
+        "baseline_median": 28364761194,
+        "candidate_median": 28754493177,
+        "paired_median_delta_percent": 1.375795590664386,
+        "paired_bootstrap_95_percentile_interval": [1.3725738473072457, 1.3767818846066149],
+        "candidate_higher_pairs": 11
+      }
+    },
+    "text_size": {
+      "baseline_text_segment_bytes": 10403840,
+      "candidate_text_segment_bytes": 10403840,
+      "text_segment_delta_bytes": 0,
+      "baseline_text_section_bytes": 7148112,
+      "candidate_text_section_bytes": 7150992,
+      "text_section_delta_bytes": 2880
+    },
+    "correctness": "Not run; rejected on the primary performance metric before correctness qualification."
+  },
+  "interpretation": "The register-file pointer did not remove enough work to offset the added pointer transport and widespread handler changes. The central read/write helpers already compile efficiently in this match; retain the code cursor alone and investigate generated code before trying another register transport design."
+}

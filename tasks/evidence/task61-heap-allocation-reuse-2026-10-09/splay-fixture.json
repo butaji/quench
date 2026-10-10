@@ -1,0 +1,681 @@
+{
+  "task": 61,
+  "experiment": "sparse side-table allocation cleanup on Splay",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "rounds_per_fixture": 11,
+  "binary_sha256": {
+    "baseline": "697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02",
+    "candidate": "681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc"
+  },
+  "runner_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "inputs": {
+    "splay.js": {
+      "source_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "materialized_sha256": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215",
+      "materialized_path": "tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+    }
+  },
+  "records": [
+    {
+      "fixture": "splay.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 496.0,
+          "instructions_retired": 13089352105,
+          "cycles_elapsed": 3333850128,
+          "maximum_rss_bytes": 215465984,
+          "elapsed_seconds": 4.16,
+          "wall_seconds": 4.168901750000001,
+          "stdout": "__quenchBenchResult: Splay: 496\n----\nScore: 496\n",
+          "stderr": "        4.16 real         1.10 user         0.06 sys\n           215465984  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               15895  page reclaims\n                 357  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                1934  involuntary context switches\n         13089352105  instructions retired\n          3333850128  cycles elapsed\n           209355352  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 643.0,
+          "instructions_retired": 14078994698,
+          "cycles_elapsed": 3598456505,
+          "maximum_rss_bytes": 259751936,
+          "elapsed_seconds": 3.71,
+          "wall_seconds": 3.7238289170000005,
+          "stdout": "__quenchBenchResult: Splay: 643\n----\nScore: 643\n",
+          "stderr": "        3.71 real         1.19 user         0.08 sys\n           259751936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20225  page reclaims\n                 332  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1955  involuntary context switches\n         14078994698  instructions retired\n          3598456505  cycles elapsed\n           257442440  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 460.0,
+          "instructions_retired": 12872313676,
+          "cycles_elapsed": 3377845798,
+          "maximum_rss_bytes": 211451904,
+          "elapsed_seconds": 3.82,
+          "wall_seconds": 3.830199125,
+          "stdout": "__quenchBenchResult: Splay: 460\n----\nScore: 460\n",
+          "stderr": "        3.82 real         1.13 user         0.06 sys\n           211451904  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               15976  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                2274  involuntary context switches\n         12872313676  instructions retired\n          3377845798  cycles elapsed\n           205570648  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 565.0,
+          "instructions_retired": 13507690518,
+          "cycles_elapsed": 3455604313,
+          "maximum_rss_bytes": 223625216,
+          "elapsed_seconds": 4.12,
+          "wall_seconds": 4.128638875,
+          "stdout": "__quenchBenchResult: Splay: 565\n----\nScore: 565\n",
+          "stderr": "        4.12 real         1.16 user         0.06 sys\n           223625216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               16507  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1533  involuntary context switches\n         13507690518  instructions retired\n          3455604313  cycles elapsed\n           217285208  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 485.0,
+          "instructions_retired": 13061555298,
+          "cycles_elapsed": 3321325373,
+          "maximum_rss_bytes": 213073920,
+          "elapsed_seconds": 3.84,
+          "wall_seconds": 3.855398709000001,
+          "stdout": "__quenchBenchResult: Splay: 485\n----\nScore: 485\n",
+          "stderr": "        3.84 real         1.12 user         0.06 sys\n           213073920  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               16012  page reclaims\n                  35  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  11  voluntary context switches\n                1707  involuntary context switches\n         13061555298  instructions retired\n          3321325373  cycles elapsed\n           208667224  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 527.0,
+          "instructions_retired": 13264353936,
+          "cycles_elapsed": 3350737253,
+          "maximum_rss_bytes": 216268800,
+          "elapsed_seconds": 3.96,
+          "wall_seconds": 3.9753721669999997,
+          "stdout": "__quenchBenchResult: Splay: 527\n----\nScore: 527\n",
+          "stderr": "        3.96 real         1.14 user         0.06 sys\n           216268800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               16207  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                1522  involuntary context switches\n         13264353936  instructions retired\n          3350737253  cycles elapsed\n           212501080  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 652.0,
+          "instructions_retired": 14098613862,
+          "cycles_elapsed": 3555155311,
+          "maximum_rss_bytes": 267272192,
+          "elapsed_seconds": 3.94,
+          "wall_seconds": 3.9493884580000014,
+          "stdout": "__quenchBenchResult: Splay: 652\n----\nScore: 652\n",
+          "stderr": "        3.94 real         1.20 user         0.07 sys\n           267272192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               20273  page reclaims\n                  35  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   8  voluntary context switches\n                1746  involuntary context switches\n         14098613862  instructions retired\n          3555155311  cycles elapsed\n           257802888  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 600.0,
+          "instructions_retired": 13732009941,
+          "cycles_elapsed": 3356556792,
+          "maximum_rss_bytes": 255000576,
+          "elapsed_seconds": 3.47,
+          "wall_seconds": 3.480347000000002,
+          "stdout": "__quenchBenchResult: Splay: 600\n----\nScore: 600\n",
+          "stderr": "        3.47 real         1.15 user         0.06 sys\n           255000576  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               19282  page reclaims\n                  29  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                1501  involuntary context switches\n         13732009941  instructions retired\n          3356556792  cycles elapsed\n           251445896  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 544.0,
+          "instructions_retired": 13360701637,
+          "cycles_elapsed": 3481467991,
+          "maximum_rss_bytes": 224854016,
+          "elapsed_seconds": 4.1,
+          "wall_seconds": 4.110039791000002,
+          "stdout": "__quenchBenchResult: Splay: 544\n----\nScore: 544\n",
+          "stderr": "        4.10 real         1.19 user         0.06 sys\n           224854016  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               16122  page reclaims\n                  35  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  10  voluntary context switches\n                1728  involuntary context switches\n         13360701637  instructions retired\n          3481467991  cycles elapsed\n           215204416  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 700.0,
+          "instructions_retired": 14584500632,
+          "cycles_elapsed": 3664540599,
+          "maximum_rss_bytes": 277676032,
+          "elapsed_seconds": 3.27,
+          "wall_seconds": 3.2858556660000033,
+          "stdout": "__quenchBenchResult: Splay: 700\n----\nScore: 700\n",
+          "stderr": "        3.27 real         1.25 user         0.07 sys\n           277676032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21065  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1483  involuntary context switches\n         14584500632  instructions retired\n          3664540599  cycles elapsed\n           268092040  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 613.0,
+          "instructions_retired": 17337236502,
+          "cycles_elapsed": 4317604571,
+          "maximum_rss_bytes": 294371328,
+          "elapsed_seconds": 3.16,
+          "wall_seconds": 3.176023916999995,
+          "stdout": "__quenchBenchResult: Splay: 613\n----\nScore: 613\n",
+          "stderr": "        3.16 real         1.50 user         0.07 sys\n           294371328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22243  page reclaims\n                  35  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   9  voluntary context switches\n                1838  involuntary context switches\n         17337236502  instructions retired\n          4317604571  cycles elapsed\n           284770952  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 748.0,
+          "instructions_retired": 18180722288,
+          "cycles_elapsed": 4383513933,
+          "maximum_rss_bytes": 291864576,
+          "elapsed_seconds": 2.67,
+          "wall_seconds": 2.6846633339999997,
+          "stdout": "__quenchBenchResult: Splay: 748\n----\nScore: 748\n",
+          "stderr": "        2.67 real         1.53 user         0.07 sys\n           291864576  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22103  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1514  involuntary context switches\n         18180722288  instructions retired\n          4383513933  cycles elapsed\n           282247792  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 1126.0,
+          "instructions_retired": 28152116321,
+          "cycles_elapsed": 6615939104,
+          "maximum_rss_bytes": 311590912,
+          "elapsed_seconds": 2.94,
+          "wall_seconds": 2.952627665999998,
+          "stdout": "__quenchBenchResult: Splay: 1126\n----\nScore: 1126\n",
+          "stderr": "        2.94 real         2.35 user         0.07 sys\n           311590912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23321  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1960  involuntary context switches\n         28152116321  instructions retired\n          6615939104  cycles elapsed\n           302006944  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 1872.0,
+          "instructions_retired": 35126048367,
+          "cycles_elapsed": 6953957920,
+          "maximum_rss_bytes": 320438272,
+          "elapsed_seconds": 2.57,
+          "wall_seconds": 2.5794621669999955,
+          "stdout": "__quenchBenchResult: Splay: 1872\n----\nScore: 1872\n",
+          "stderr": "        2.57 real         2.41 user         0.05 sys\n           320438272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               23861  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                1018  involuntary context switches\n         35126048367  instructions retired\n          6953957920  cycles elapsed\n           310870688  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2352.0,
+          "instructions_retired": 41199761556,
+          "cycles_elapsed": 7400514022,
+          "maximum_rss_bytes": 325599232,
+          "elapsed_seconds": 2.35,
+          "wall_seconds": 2.3589082909999988,
+          "stdout": "__quenchBenchResult: Splay: 2352\n----\nScore: 2352\n",
+          "stderr": "        2.35 real         2.31 user         0.03 sys\n           325599232  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24174  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 400  involuntary context switches\n         41199761556  instructions retired\n          7400514022  cycles elapsed\n           316015240  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2313.0,
+          "instructions_retired": 43353263983,
+          "cycles_elapsed": 7744924274,
+          "maximum_rss_bytes": 326254592,
+          "elapsed_seconds": 2.32,
+          "wall_seconds": 2.3276097500000006,
+          "stdout": "__quenchBenchResult: Splay: 2313\n----\nScore: 2313\n",
+          "stderr": "        2.32 real         2.29 user         0.02 sys\n           326254592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24214  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                 437  involuntary context switches\n         43353263983  instructions retired\n          7744924274  cycles elapsed\n           316654216  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2351.0,
+          "instructions_retired": 41887100169,
+          "cycles_elapsed": 7700225969,
+          "maximum_rss_bytes": 328581120,
+          "elapsed_seconds": 2.39,
+          "wall_seconds": 2.3957676249999977,
+          "stdout": "__quenchBenchResult: Splay: 2351\n----\nScore: 2351\n",
+          "stderr": "        2.39 real         2.35 user         0.03 sys\n           328581120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24357  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 604  involuntary context switches\n         41887100169  instructions retired\n          7700225969  cycles elapsed\n           318980744  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2182.0,
+          "instructions_retired": 41596638831,
+          "cycles_elapsed": 7568655164,
+          "maximum_rss_bytes": 328302592,
+          "elapsed_seconds": 2.39,
+          "wall_seconds": 2.402180584,
+          "stdout": "__quenchBenchResult: Splay: 2182\n----\nScore: 2182\n",
+          "stderr": "        2.39 real         2.36 user         0.03 sys\n           328302592  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24340  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 482  involuntary context switches\n         41596638831  instructions retired\n          7568655164  cycles elapsed\n           318735008  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2223.0,
+          "instructions_retired": 40757620580,
+          "cycles_elapsed": 7456289552,
+          "maximum_rss_bytes": 328613888,
+          "elapsed_seconds": 2.33,
+          "wall_seconds": 2.338268333000002,
+          "stdout": "__quenchBenchResult: Splay: 2223\n----\nScore: 2223\n",
+          "stderr": "        2.33 real         2.29 user         0.02 sys\n           328613888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24359  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 540  involuntary context switches\n         40757620580  instructions retired\n          7456289552  cycles elapsed\n           319029896  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2248.0,
+          "instructions_retired": 41738174722,
+          "cycles_elapsed": 7599707772,
+          "maximum_rss_bytes": 326647808,
+          "elapsed_seconds": 2.34,
+          "wall_seconds": 2.3515107079999993,
+          "stdout": "__quenchBenchResult: Splay: 2248\n----\nScore: 2248\n",
+          "stderr": "        2.34 real         2.30 user         0.03 sys\n           326647808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24240  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 755  involuntary context switches\n         41738174722  instructions retired\n          7599707772  cycles elapsed\n           317047432  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "splay.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "splay.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/681d7c371826760f4074615e2a881142fd6c02a543aaab7f2873517467d208fc/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2090.0,
+          "instructions_retired": 40752151733,
+          "cycles_elapsed": 7476229417,
+          "maximum_rss_bytes": 328056832,
+          "elapsed_seconds": 2.38,
+          "wall_seconds": 2.3890967090000004,
+          "stdout": "__quenchBenchResult: Splay: 2090\n----\nScore: 2090\n",
+          "stderr": "        2.38 real         2.34 user         0.03 sys\n           328056832  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24325  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 526  involuntary context switches\n         40752151733  instructions retired\n          7476229417  cycles elapsed\n           318472864  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "splay.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/697a169197b8a6218cfba410bb3fd16a72f3948b846d53c0c3a7d31193be3c02/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-heap-allocation-reuse-2026-10-09/splay-fixture/materialized-splay.js"
+          ],
+          "exit_code": 0,
+          "score": 2899.0,
+          "instructions_retired": 49773090792,
+          "cycles_elapsed": 8660030480,
+          "maximum_rss_bytes": 333627392,
+          "elapsed_seconds": 2.41,
+          "wall_seconds": 2.419236957999999,
+          "stdout": "__quenchBenchResult: Splay: 2899\n----\nScore: 2899\n",
+          "stderr": "        2.41 real         2.37 user         0.03 sys\n           333627392  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               24664  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                 579  involuntary context switches\n         49773090792  instructions retired\n          8660030480  cycles elapsed\n           324076216  peak memory footprint\n"
+        }
+      }
+    }
+  ],
+  "baseline_source_revision": "01884eb123f95c521433da067c79d825902e520c",
+  "candidate_source_revision": "01884eb123f95c521433da067c79d825902e520c + sparse-reuse edit",
+  "summary": {
+    "paired_relative_improvement": {
+      "score": {
+        "median_relative_improvement": -0.07969639468690703,
+        "bootstrap_95_percent_interval": [
+          -0.22861586314152416,
+          0.07745187901008244
+        ],
+        "pair_improvements": [
+          -0.22861586314152416,
+          0.2282608695652173,
+          -0.07969639468690703,
+          -0.07975460122699385,
+          -0.22285714285714286,
+          0.22022838499184338,
+          -0.39850427350427353,
+          -0.01658163265306123,
+          0.07745187901008244,
+          0.01124606387764282,
+          -0.2790617454294584
+        ],
+        "improved_pairs": 4
+      },
+      "instructions_retired": {
+        "median_relative_improvement": 0.015288994773397624,
+        "bootstrap_95_percent_interval": [
+          -0.048651685976752734,
+          0.08391092886065976
+        ],
+        "pair_improvements": [
+          0.07029213478861418,
+          -0.04935995641441204,
+          0.015288994773397624,
+          0.026002834362894856,
+          0.08391092886065976,
+          -0.048651685976752734,
+          0.19854018229251846,
+          -0.05226977889357176,
+          -0.006982807894168941,
+          -0.024058179256940315,
+          0.181241287520162
+        ],
+        "improved_pairs": 6
+      },
+      "cycles_elapsed": {
+        "median_relative_improvement": 0.008777733907266771,
+        "bootstrap_95_percent_interval": [
+          -0.01923452931914782,
+          0.055862121799719056
+        ],
+        "pair_improvements": [
+          0.07353329868857206,
+          -0.023020149423647496,
+          0.008777733907266771,
+          0.055862121799719056,
+          0.04995786048869477,
+          -0.015265261307784606,
+          0.048608119273750194,
+          -0.046538693255110175,
+          -0.01738364374503565,
+          -0.01923452931914782,
+          0.13669710120927892
+        ],
+        "improved_pairs": 6
+      },
+      "elapsed_seconds": {
+        "median_relative_improvement": 0.0,
+        "bootstrap_95_percent_interval": [
+          -0.12129380053908356,
+          0.030303030303030276
+        ],
+        "pair_improvements": [
+          -0.12129380053908356,
+          -0.0785340314136127,
+          0.030303030303030276,
+          0.11928934010152281,
+          -0.25382262996941884,
+          0.15506329113924056,
+          -0.1439688715953309,
+          0.01276595744680864,
+          0.0,
+          -0.0042918454935620964,
+          0.012448132780083054
+        ],
+        "improved_pairs": 5
+      }
+    },
+    "maximum_rss": {
+      "baseline_median_bytes": 294371328,
+      "candidate_median_bytes": 291864576,
+      "median_byte_change": -3194880,
+      "median_relative_change": -0.008515611955251301,
+      "pair_changes": [
+        -44285952,
+        12173312,
+        -3194880,
+        -12271616,
+        -52822016,
+        -2506752,
+        -8847360,
+        655360,
+        278528,
+        -1966080,
+        -5570560
+      ]
+    }
+  }
+}

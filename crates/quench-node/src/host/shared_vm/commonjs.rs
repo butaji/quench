@@ -52,11 +52,17 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
     crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_buffer_global");
     crate::modules::url_shared_vm::install_global(context)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_url_global");
     install_shared_web_globals(context, buffer_module)?;
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_console_global");
     if context.is_module()? {
         return Ok(());
     }
@@ -81,6 +87,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         let dirname = context.string_rooted(&cwd.to_string_lossy());
         set(context, global, "__dirname", dirname)?;
     }
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_commonjs_entry");
     Ok(())
 }
 
@@ -92,11 +100,18 @@ fn install_shared_web_globals(
     let root =
         context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
     context.release_root(root);
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_web_streams_polyfill");
 
     let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
     let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
     context.release_root(root);
-    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_web_apis_polyfill");
+    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_blob_exports");
+    Ok(())
 }
 
 pub(super) fn require(

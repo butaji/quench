@@ -1,0 +1,147 @@
+{
+  "task": 61,
+  "experiment": "Per-program/function-site immutable source string cache",
+  "fixture_confirmation": "EarleyBoyer",
+  "date": "2026-10-09",
+  "diagnostic_only": true,
+  "source_revision": "85ac94453762079ad510432e45e97d37e60d4f3f",
+  "source_diff_sha256": "2098220c345f5a6df8db0827e207c59237389741c60c55263366ae0c59ad4f27",
+  "host": {
+    "platform": "macOS 26.5 / Darwin 25.5 arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184,
+    "resource_limits": "No container memory or CPU quota reported",
+    "measurement_backend": "/usr/bin/time -l"
+  },
+  "fixture": {
+    "path": "target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js",
+    "sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+    "input_shape": "already materialized V8-v7 EarleyBoyer run"
+  },
+  "binaries": {
+    "baseline": {
+      "path": "target/iteration/task61-descriptor-transition-20261009/production/quench-node",
+      "sha256": "eabe4cb354506920ef9ef217bcc935403ec49b2d61748b8ff476b0efde334d28"
+    },
+    "candidate": {
+      "path": "target/iteration/task61-function-source-cache-production-20261009/production/quench-node",
+      "sha256": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+      "build_command": "CARGO_TARGET_DIR=target/iteration/task61-function-source-cache-production-20261009 CARGO_INCREMENTAL=0 CARGO_PROFILE_PRODUCTION_STRIP=symbols cargo build --locked --offline --profile production -p quench-node --bin quench-node"
+    }
+  },
+  "measurement": {
+    "method": "11 alternating production pairs, candidate first on odd pairs; all commands verified binary/input hashes; all runs exited zero",
+    "command": "/usr/bin/time -l <pinned-quench-node> target/iteration/task61-argument-shapes-profile-20261009/materialized-earley-boyer.js",
+    "runner": {
+      "path": "tasks/evidence/task61-function-source-cache-earley-pairs-2026-10-09.py",
+      "sha256": "e8d18c00e9b46073485f2766f008a93a56d33798b017a89a1aaec605696e07bd"
+    },
+    "raw_pairs": {
+      "path": "tasks/evidence/task61-function-source-cache-earley-pairs-2026-10-09.csv",
+      "sha256": "b8cc3808cdd527d1cd597011192ce0153530b36d2459952ff2341c53299cb64c"
+    },
+    "normalized_output": {
+      "all_pairs_match": true,
+      "sha256": "6fcb1d418c3c25c120f3225d0fa46ffa2513ad1ff616d80c1dd05134e971a721",
+      "description": "Benchmark marker retained with numeric score normalized; separator and Score line removed."
+    },
+    "score": {
+      "baseline_median": 634.0,
+      "candidate_median": 764.0,
+      "median_paired_candidate_change_percent": 20.28301886792453,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "baseline_range": [
+        626.0,
+        643.0
+      ],
+      "candidate_range": [
+        757.0,
+        776.0
+      ],
+      "paired_change_percent_range": [
+        18.973561430793158,
+        22.044728434504794
+      ]
+    },
+    "instructions_retired": {
+      "baseline_median": 352956472344.0,
+      "candidate_median": 328110425450.0,
+      "median_paired_candidate_change_percent": -7.032905142666622,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "baseline_range": [
+        352905466587.0,
+        355374279780.0
+      ],
+      "candidate_range": [
+        328087690323.0,
+        328885302649.0
+      ],
+      "paired_change_percent_range": [
+        -7.674031725616966,
+        -6.819869185325393
+      ]
+    },
+    "elapsed_seconds": {
+      "baseline_median": 14.19,
+      "candidate_median": 12.87,
+      "median_paired_candidate_change_percent": -9.37279774489077,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "baseline_range": [
+        14.1,
+        14.34
+      ],
+      "candidate_range": [
+        12.68,
+        12.98
+      ],
+      "paired_change_percent_range": [
+        -10.515172900494003,
+        -8.085106382978715
+      ]
+    },
+    "user_seconds": {
+      "baseline_median": 14.15,
+      "candidate_median": 12.82,
+      "median_paired_candidate_change_percent": -9.611307420494708,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "baseline_range": [
+        14.06,
+        14.29
+      ],
+      "candidate_range": [
+        12.64,
+        12.95
+      ],
+      "paired_change_percent_range": [
+        -10.544939844302903,
+        -8.10810810810811
+      ]
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 56246272.0,
+      "candidate_median": 51625984.0,
+      "median_paired_candidate_change_percent": -8.15613166326828,
+      "candidate_better_pairs": 11,
+      "pairs": 11,
+      "baseline_range": [
+        56016896.0,
+        56803328.0
+      ],
+      "candidate_range": [
+        51249152.0,
+        52690944.0
+      ],
+      "paired_change_percent_range": [
+        -9.177764910248987,
+        -7.2396884914912025
+      ]
+    }
+  },
+  "interpretation": "The function-source cache candidate improved EarleyBoyer in every pair: median score 634 to 764 (+20.28%), retired instructions −7.03%, elapsed time −9.37%, and max RSS −8.16%. This is a focused fixture confirmation, not a full eight-fixture/task qualification.",
+  "correctness_report": "target/iteration/task61-function-source-cache-gate-20261009/correctness-report.json"
+}

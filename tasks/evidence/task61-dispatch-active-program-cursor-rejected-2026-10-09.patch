@@ -1,0 +1,66 @@
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index 34c07e445..17bee9bb4 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -809,6 +809,11 @@ impl<H: Host> Vm<H> {
+         let previous_global = self.realm.globals;
+         let outcome = (|| {
+             let mut current_program: Option<Rc<ResidualProgram>> = None;
++            // `current_program` owns a switched program; otherwise `p` owns
++            // the entry program for the duration of this call. Keep the
++            // selected program address in the dispatch loop so the common
++            // path does not inspect the owner Option on every instruction.
++            let mut active_program = std::ptr::NonNull::from(entry_program);
+             let mut frame = frame;
+             let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+@@ -832,7 +837,12 @@ impl<H: Host> Vm<H> {
+                 )?;
+             }
+             loop {
+-                let p = current_program.as_deref().unwrap_or(p);
++                // SAFETY: the address is either `entry_program`, borrowed for
++                // this call, or points into the Rc currently held by
++                // `current_program`. On a program switch the new Rc is
++                // installed and the cursor refreshed before the previous Rc
++                // is released or the cursor is read again.
++                let p = unsafe { active_program.as_ref() };
+                 if stop_pc == Some(pc) {
+                     self.frames[frame].pc = pc;
+                     return Ok(FrameOutcome::ParameterInitializationComplete);
+@@ -898,20 +908,30 @@ impl<H: Host> Vm<H> {
+                         let replacement_program = self.frames[frame].program;
+                         if replacement_program != executing_program {
+                             self.active_program = replacement_program;
+-                            current_program =
+-                                Some(self.programs.get(replacement_program).ok_or_else(|| {
++                            let replacement_owner =
++                                self.programs.get(replacement_program).ok_or_else(|| {
+                                     JsError::validation("missing tail-call program".into())
+-                                })?);
++                                })?;
++                            let previous_program = current_program.replace(replacement_owner);
++                            active_program = std::ptr::NonNull::from(
++                                current_program
++                                    .as_deref()
++                                    .expect("tail-call owner was just installed"),
++                            );
++                            drop(previous_program);
+                         }
+                         executing_program = replacement_program;
+                         pc = self.frames[frame].pc;
+                         cursor = GeneralCodeCursor::new(
+                             replacement_program,
+-                            current_program.as_deref().unwrap_or(entry_program),
++                            // SAFETY: the active cursor is refreshed alongside
++                            // its owner in the program-switch block above.
++                            unsafe { active_program.as_ref() },
+                             self.frames[frame].function,
+                         );
+                         // The replacement frame publishes all callee roots before this back edge.
+-                        self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
++                        // SAFETY: same owner invariant as the dispatch read above.
++                        self.maybe_collect(unsafe { active_program.as_ref() });
+                     }
+                     Ok(StepResult::Await { value, destination }) => {
+                         debug_assert!(pending_calls.is_empty());

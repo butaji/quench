@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "Amortize shape-table compaction and retain live method caches across ordinary GC",
+  "decision": "Retain as a measured Stage B candidate. The 50% unreachable-shape threshold halves RayTrace shape compactions and improves its Score; Splay retains a 15 MiB RSS reduction. Score and RSS intervals show no statistically clear regression in the measured fixtures. This is not Task 61 qualification.",
+  "source": {
+    "base_revision": "95ea2a0ec9809f546dc6db1fab103567ddce6770",
+    "candidate_source_dirty_during_measurement": true,
+    "candidate_diff_sha256": "4c73a3d3142c5c1e9492c6662f71f9d756ff905ce5121b0080afb4b974b71efd",
+    "files": {
+      "crates/quench-runtime/src/vm/gc.rs": "bfc176a06e8feb6d5fb50816806b5b12a08da7cde545d8de1ea25c4156335219",
+      "crates/quench-runtime/src/vm/method_cache.rs": "ebac028dd1910aebfce90f081abea12ab162a89857e96e259aa330219c842dcf"
+    },
+    "baseline_binary_sha256": "2f46dd365de6cbbf950f040a22fb1efd28666d1f393a96e3817e588037ec3d09",
+    "candidate_binary_sha256": "2baa56186a1e9e81c770666f8e068abb3652036a9104cf7c9b91ecff6f845906",
+    "candidate_profile_memory_binary_sha256": "d155abe63a3d90b14b48e6461d38fe67de956bad5c47f9885cc4993c90601767",
+    "candidate_build_command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-shape-compaction-half cargo build --profile production -p quench-node --bin quench-node",
+    "candidate_profile_memory_build_command": "CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=target/iteration/task61-shape-compaction-half cargo build --profile production -p quench-node --features quench-node/profile-memory --bin quench-node",
+    "implementation": "After mark/sweep, compute live object shape ancestry. Preserve shape IDs and shape-keyed field/add/holder caches unless at least half of the shape table is unreachable. On ordinary collections, prune method-cache entries whose heap handles died; on shape compaction, remap live object shapes and clear shape-keyed caches. Compact the property arena independently at its existing post-GC cleanup point.",
+    "threshold_basis": "A symbolized RayTrace allocation trace showed 40–43% of shapes unreachable at each collection. A 50% cutoff amortizes the repeated rebuild while ensuring accumulated dead shapes eventually trigger compaction."
+  },
+  "host": {
+    "platform": "macOS 26.5 (25F71)",
+    "kernel": "Darwin 25.5.0",
+    "architecture": "arm64",
+    "cpu": "Apple M4",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28) (Homebrew)",
+    "cargo": "1.99.0 (5f94df478 2026-08-27)"
+  },
+  "correctness": {
+    "focused_runtime_tests": {
+      "result": "8 passed, 0 failed across the threshold-boundary rerun and GC/cache/symbol/finalization checks",
+      "tests": [
+        "shape_compaction_waits_until_reclaim_is_material",
+        "method_cache_gc_retains_live_and_rejects_reused_handles",
+        "object_method_home_survives_collection_with_precise_register_roots",
+        "unrepresentable_register_maps_keep_the_conservative_frame_roots",
+        "closure_identity_cache_prunes_collected_cells_and_keeps_rooted_cells",
+        "only_symbol_keys_project_back_to_values",
+        "finalization_registry_drains_collected_targets_after_their_root_is_cleared",
+        "property_copy_roots_release_after_callback_completion"
+      ],
+      "execution": "An initially stale unit assertion for the former 12.5% threshold was updated to the 50% boundary; the corrected threshold test passed. Seven other focused tests had passed before that test-only correction."
+    },
+    "fixture_runs": "All 44 production runs exited 0 and produced finite scores; fixture stdout contains only each run's score. No full eight-fixture or Test262 gate was rerun for this threshold adjustment."
+  },
+  "measurement": {
+    "kind": "11 alternating production binary pairs per fixture; baseline and candidate order alternated each round",
+    "backend": "/usr/bin/time -lp (Score from the benchmark runner, elapsed time, maximum RSS, instructions retired)",
+    "paired_interval": "100,000 paired bootstrap resamples; reported intervals are 95% intervals for the median paired change. Score/instructions/time are paired percent changes; RSS is paired absolute MiB change.",
+    "baseline_binary_sha256": "2f46dd365de6cbbf950f040a22fb1efd28666d1f393a96e3817e588037ec3d09",
+    "candidate_binary_sha256": "2baa56186a1e9e81c770666f8e068abb3652036a9104cf7c9b91ecff6f845906",
+    "fixture_hashes": {
+      "raytrace": "ccd66592e52747004326c0ce469d24e82212c25decfdd534be5fa74dc6edf18b",
+      "splay": "31c30963144a07d45bcbfe9988bec95df39f8447485806e4decc7fa457c86215"
+    },
+    "fixture_materializer": {
+      "path": "target/iteration/task61-shape-compaction-20261009/materialize.cjs",
+      "sha256": "8a04fc57e86a11f3bcc42fb546caf066b89adc923d6a10597b24e87650b5a530"
+    },
+    "pair_runner": {
+      "path": "target/iteration/task61-shape-compaction-20261009/run-fixture-pairs-half-final.zsh",
+      "sha256": "c1b4ec975481e0156e4892df4fb3d93e284114e26cba8e3d4840ec166588185b"
+    },
+    "results": [
+      {
+        "fixture": "raytrace",
+        "baseline_median_score": 402,
+        "candidate_median_score": 425,
+        "paired_score_change_percent": 5.679,
+        "paired_score_95_percent_interval": [4.9505, 6.25],
+        "candidate_higher_score_pairs": 11,
+        "baseline_median_instructions": 147689116897,
+        "candidate_median_instructions": 141555637442,
+        "paired_instruction_change_percent": -4.154,
+        "paired_instruction_95_percent_interval": [-4.1578, -4.1469],
+        "candidate_lower_instruction_pairs": 11,
+        "baseline_median_max_rss_bytes": 23314432,
+        "candidate_median_max_rss_bytes": 24297472,
+        "paired_max_rss_change_mib": 0.9062,
+        "paired_max_rss_95_mib_interval": [-0.2031, 1.0],
+        "candidate_lower_rss_pairs": 4,
+        "paired_elapsed_change_percent": -5.3109,
+        "paired_elapsed_95_percent_interval": [-5.6628, -4.5396]
+      },
+      {
+        "fixture": "splay",
+        "baseline_median_score": 2838,
+        "candidate_median_score": 2839,
+        "paired_score_change_percent": -0.0349,
+        "paired_score_95_percent_interval": [-0.9152, 0.3532],
+        "candidate_higher_score_pairs": 4,
+        "candidate_lower_score_pairs": 6,
+        "tied_score_pairs": 1,
+        "baseline_median_instructions": 53985363666,
+        "candidate_median_instructions": 53739395280,
+        "paired_instruction_change_percent": -0.4488,
+        "paired_instruction_95_percent_interval": [-0.4582, 0.0124],
+        "candidate_lower_instruction_pairs": 8,
+        "baseline_median_max_rss_bytes": 324960256,
+        "candidate_median_max_rss_bytes": 309100544,
+        "paired_max_rss_change_mib": -15.125,
+        "paired_max_rss_95_mib_interval": [-15.2188, -15.0312],
+        "candidate_lower_rss_pairs": 11,
+        "paired_elapsed_change_percent": 0.0,
+        "paired_elapsed_95_percent_interval": [-0.4367, 0.4386]
+      }
+    ],
+    "shape_compaction_profile": {
+      "fixture": "raytrace",
+      "baseline_threshold_compactions": 2051,
+      "candidate_threshold_compactions": 1076,
+      "candidate_final_shapes": 20216,
+      "candidate_shape_capacity": 32768,
+      "candidate_shape_bytes": 2621440,
+      "baseline_threshold_final_shapes": 8922,
+      "baseline_threshold_shape_capacity": 16384,
+      "baseline_threshold_shape_bytes": 1310720,
+      "candidate_profile_log_sha256": "657c655eccf5ac2e2dc2e0564fcd7caa9e3c2f397b54e9a81df95480bcf460d5",
+      "baseline_threshold_profile_log_sha256": "0b43e1350f5d4ab7f6c8240073c2714db4c7c535ff2bdb4b1e7dd030b40fd8fa",
+      "note": "profile-memory attribution only; not used for production Score/RSS results"
+    },
+    "raw_pairs": {
+      "path": "tasks/evidence/task61-shape-compaction-paired-2026-10-09.csv",
+      "sha256": "032edd4e039c9ae355638c9ca8e46cb4fb25c984de2205a912266043ed379819",
+      "rows": 44
+    },
+    "scope_limit": "Two high-signal fixtures only. The all-eight, all-engine Task 61 gate remains open."
+  }
+}

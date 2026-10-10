@@ -1,0 +1,1127 @@
+{
+  "task": 61,
+  "experiment": "VM-cached no-TLS StackGuard fixture gate",
+  "platform": "macOS-26.5-arm64-arm-64bit",
+  "machine": "arm64",
+  "rounds_per_fixture": 11,
+  "binary_sha256": {
+    "baseline": "cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57",
+    "candidate": "90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449"
+  },
+  "runner_sha256": "88e53b2f86527ba45b3926b01c5e6be6e3f15430860bdcc4ca7dd7e9af739c87",
+  "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+  "inputs": {
+    "richards.js": {
+      "source_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "materialized_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+      "materialized_path": "tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+    },
+    "deltablue.js": {
+      "source_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "materialized_sha256": "60bde6bd8a2faa0fc8d2f7309bb9f62234919616186a768ab59ba486955ca97c",
+      "materialized_path": "tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+    }
+  },
+  "records": [
+    {
+      "fixture": "richards.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 480.0,
+          "instructions_retired": 54658000128,
+          "cycles_elapsed": 8351526371,
+          "maximum_rss_bytes": 18907136,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.027638834,
+          "stdout": "__quenchBenchResult: Richards: 480\n----\nScore: 480\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18907136  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1337  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 376  involuntary context switches\n         54658000128  instructions retired\n          8351526371  cycles elapsed\n             9175448  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 480.0,
+          "instructions_retired": 55149084917,
+          "cycles_elapsed": 8325732313,
+          "maximum_rss_bytes": 18825216,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0288605000000004,
+          "stdout": "__quenchBenchResult: Richards: 480\n----\nScore: 480\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18825216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1311  page reclaims\n                  36  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 154  involuntary context switches\n         55149084917  instructions retired\n          8325732313  cycles elapsed\n             9077120  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 475.0,
+          "instructions_retired": 54544791124,
+          "cycles_elapsed": 8296933208,
+          "maximum_rss_bytes": 18759680,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.022484542,
+          "stdout": "__quenchBenchResult: Richards: 475\n----\nScore: 475\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18759680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1329  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 128  involuntary context switches\n         54544791124  instructions retired\n          8296933208  cycles elapsed\n             9011584  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 473.0,
+          "instructions_retired": 54055920784,
+          "cycles_elapsed": 8273541146,
+          "maximum_rss_bytes": 18923520,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.026544084,
+          "stdout": "__quenchBenchResult: Richards: 473\n----\nScore: 473\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18923520  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1338  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 396  involuntary context switches\n         54055920784  instructions retired\n          8273541146  cycles elapsed\n             9175424  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 473.0,
+          "instructions_retired": 53854975885,
+          "cycles_elapsed": 8283789533,
+          "maximum_rss_bytes": 18743296,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0259374579999996,
+          "stdout": "__quenchBenchResult: Richards: 473\n----\nScore: 473\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18743296  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1327  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 149  involuntary context switches\n         53854975885  instructions retired\n          8283789533  cycles elapsed\n             8995200  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 482.0,
+          "instructions_retired": 55146746619,
+          "cycles_elapsed": 8301674349,
+          "maximum_rss_bytes": 18825216,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0288112079999987,
+          "stdout": "__quenchBenchResult: Richards: 482\n----\nScore: 482\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18825216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1333  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 118  involuntary context switches\n         55146746619  instructions retired\n          8301674349  cycles elapsed\n             9093528  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 478.0,
+          "instructions_retired": 54948324011,
+          "cycles_elapsed": 8266929724,
+          "maximum_rss_bytes": 18677760,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.026401,
+          "stdout": "__quenchBenchResult: Richards: 478\n----\nScore: 478\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18677760  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1323  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 146  involuntary context switches\n         54948324011  instructions retired\n          8266929724  cycles elapsed\n             8929688  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 472.0,
+          "instructions_retired": 54054857732,
+          "cycles_elapsed": 8262563021,
+          "maximum_rss_bytes": 18874368,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.022595666999999,
+          "stdout": "__quenchBenchResult: Richards: 472\n----\nScore: 472\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18874368  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1335  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 155  involuntary context switches\n         54054857732  instructions retired\n          8262563021  cycles elapsed\n             9126272  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 469.0,
+          "instructions_retired": 53253928106,
+          "cycles_elapsed": 8269834640,
+          "maximum_rss_bytes": 18726912,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.024044332999999,
+          "stdout": "__quenchBenchResult: Richards: 469\n----\nScore: 469\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1326  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 164  involuntary context switches\n         53253928106  instructions retired\n          8269834640  cycles elapsed\n             8995224  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 476.0,
+          "instructions_retired": 54747376014,
+          "cycles_elapsed": 8245059177,
+          "maximum_rss_bytes": 18808832,
+          "elapsed_seconds": 2.01,
+          "wall_seconds": 2.0207417089999993,
+          "stdout": "__quenchBenchResult: Richards: 476\n----\nScore: 476\n",
+          "stderr": "        2.01 real         2.00 user         0.00 sys\n            18808832  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1331  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 357  involuntary context switches\n         54747376014  instructions retired\n          8245059177  cycles elapsed\n             9060760  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 473.0,
+          "instructions_retired": 54346398195,
+          "cycles_elapsed": 8223797370,
+          "maximum_rss_bytes": 18759680,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0281783749999995,
+          "stdout": "__quenchBenchResult: Richards: 473\n----\nScore: 473\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18759680  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1328  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 155  involuntary context switches\n         54346398195  instructions retired\n          8223797370  cycles elapsed\n             9011608  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 470.0,
+          "instructions_retired": 53853537289,
+          "cycles_elapsed": 8263048371,
+          "maximum_rss_bytes": 18841600,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.02829775,
+          "stdout": "__quenchBenchResult: Richards: 470\n----\nScore: 470\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18841600  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1333  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 165  involuntary context switches\n         53853537289  instructions retired\n          8263048371  cycles elapsed\n             9109912  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 471.0,
+          "instructions_retired": 53260330261,
+          "cycles_elapsed": 8189318336,
+          "maximum_rss_bytes": 18776064,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.025135917,
+          "stdout": "__quenchBenchResult: Richards: 471\n----\nScore: 471\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18776064  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1328  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 627  involuntary context switches\n         53260330261  instructions retired\n          8189318336  cycles elapsed\n             9044376  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 473.0,
+          "instructions_retired": 54345133456,
+          "cycles_elapsed": 8244431142,
+          "maximum_rss_bytes": 18743296,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.03119375,
+          "stdout": "__quenchBenchResult: Richards: 473\n----\nScore: 473\n",
+          "stderr": "        2.02 real         2.02 user         0.00 sys\n            18743296  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1328  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 145  involuntary context switches\n         54345133456  instructions retired\n          8244431142  cycles elapsed\n             8995200  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 477.0,
+          "instructions_retired": 54948257462,
+          "cycles_elapsed": 8254400266,
+          "maximum_rss_bytes": 18841600,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.028680208000001,
+          "stdout": "__quenchBenchResult: Richards: 477\n----\nScore: 477\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18841600  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1333  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 341  involuntary context switches\n         54948257462  instructions retired\n          8254400266  cycles elapsed\n             9077120  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 463.0,
+          "instructions_retired": 53254635495,
+          "cycles_elapsed": 8264711195,
+          "maximum_rss_bytes": 18874368,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.0326840409999996,
+          "stdout": "__quenchBenchResult: Richards: 463\n----\nScore: 463\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            18874368  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1334  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 156  involuntary context switches\n         53254635495  instructions retired\n          8264711195  cycles elapsed\n             9142680  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 464.0,
+          "instructions_retired": 53253818447,
+          "cycles_elapsed": 8242455677,
+          "maximum_rss_bytes": 18694144,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.027138958000002,
+          "stdout": "__quenchBenchResult: Richards: 464\n----\nScore: 464\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1324  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 131  involuntary context switches\n         53253818447  instructions retired\n          8242455677  cycles elapsed\n             8962456  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 445.0,
+          "instructions_retired": 52564705813,
+          "cycles_elapsed": 8071529267,
+          "maximum_rss_bytes": 18694144,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0293394579999955,
+          "stdout": "__quenchBenchResult: Richards: 445\n----\nScore: 445\n",
+          "stderr": "        2.02 real         2.00 user         0.01 sys\n            18694144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1325  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2247  involuntary context switches\n         52564705813  instructions retired\n          8071529267  cycles elapsed\n             8962456  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 476.0,
+          "instructions_retired": 54548854237,
+          "cycles_elapsed": 8206566785,
+          "maximum_rss_bytes": 18726912,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0265540829999935,
+          "stdout": "__quenchBenchResult: Richards: 476\n----\nScore: 476\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18726912  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1327  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 245  involuntary context switches\n         54548854237  instructions retired\n          8206566785  cycles elapsed\n             8978816  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 460.0,
+          "instructions_retired": 51879473344,
+          "cycles_elapsed": 8117091783,
+          "maximum_rss_bytes": 18923520,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0304528329999982,
+          "stdout": "__quenchBenchResult: Richards: 460\n----\nScore: 460\n",
+          "stderr": "        2.02 real         2.00 user         0.01 sys\n            18923520  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1338  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2281  involuntary context switches\n         51879473344  instructions retired\n          8117091783  cycles elapsed\n             9191832  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "richards.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "richards.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 464.0,
+          "instructions_retired": 53254968245,
+          "cycles_elapsed": 8226736097,
+          "maximum_rss_bytes": 18792448,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0298895409999957,
+          "stdout": "__quenchBenchResult: Richards: 464\n----\nScore: 464\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18792448  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1330  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 139  involuntary context switches\n         53254968245  instructions retired\n          8226736097  cycles elapsed\n             9060760  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "richards.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-richards.js"
+          ],
+          "exit_code": 0,
+          "score": 473.0,
+          "instructions_retired": 54343652095,
+          "cycles_elapsed": 8207942108,
+          "maximum_rss_bytes": 18825216,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0238644170000057,
+          "stdout": "__quenchBenchResult: Richards: 473\n----\nScore: 473\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            18825216  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1332  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 131  involuntary context switches\n         54343652095  instructions retired\n          8207942108  cycles elapsed\n             9060736  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 1,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 1,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 230.0,
+          "instructions_retired": 45462289597,
+          "cycles_elapsed": 8273071032,
+          "maximum_rss_bytes": 19431424,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.0324200840000017,
+          "stdout": "__quenchBenchResult: DeltaBlue: 230\n----\nScore: 230\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1368  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 140  involuntary context switches\n         45462289597  instructions retired\n          8273071032  cycles elapsed\n             9650584  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 1,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 230.0,
+          "instructions_retired": 45632694365,
+          "cycles_elapsed": 8323372597,
+          "maximum_rss_bytes": 19382272,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.0468607089999935,
+          "stdout": "__quenchBenchResult: DeltaBlue: 230\n----\nScore: 230\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19382272  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1366  page reclaims\n                  15  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 195  involuntary context switches\n         45632694365  instructions retired\n          8323372597  cycles elapsed\n             9617792  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 2,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 2,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 226.0,
+          "instructions_retired": 45634455742,
+          "cycles_elapsed": 8357749847,
+          "maximum_rss_bytes": 19365888,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.056536333000004,
+          "stdout": "__quenchBenchResult: DeltaBlue: 226\n----\nScore: 226\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19365888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1364  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 383  involuntary context switches\n         45634455742  instructions retired\n          8357749847  cycles elapsed\n             9601432  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 2,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 225.0,
+          "instructions_retired": 45457917591,
+          "cycles_elapsed": 8296977066,
+          "maximum_rss_bytes": 19578880,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.0481884579999985,
+          "stdout": "__quenchBenchResult: DeltaBlue: 225\n----\nScore: 225\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19578880  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1378  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 881  involuntary context switches\n         45457917591  instructions retired\n          8296977066  cycles elapsed\n             9814424  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 3,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 3,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 217.0,
+          "instructions_retired": 42295316855,
+          "cycles_elapsed": 7906516218,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0304573749999975,
+          "stdout": "__quenchBenchResult: DeltaBlue: 217\n----\nScore: 217\n",
+          "stderr": "        2.02 real         1.97 user         0.02 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                6578  involuntary context switches\n         42295316855  instructions retired\n          7906516218  cycles elapsed\n             9879960  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 3,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 227.0,
+          "instructions_retired": 45631091417,
+          "cycles_elapsed": 8339433616,
+          "maximum_rss_bytes": 19365888,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.054649583,
+          "stdout": "__quenchBenchResult: DeltaBlue: 227\n----\nScore: 227\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19365888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1365  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 250  involuntary context switches\n         45631091417  instructions retired\n          8339433616  cycles elapsed\n             9601432  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 4,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 4,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45628097144,
+          "cycles_elapsed": 8320028840,
+          "maximum_rss_bytes": 19496960,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.045105417000002,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19496960  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 165  involuntary context switches\n         45628097144  instructions retired\n          8320028840  cycles elapsed\n             9716096  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 4,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45466162232,
+          "cycles_elapsed": 8279677472,
+          "maximum_rss_bytes": 19595264,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.047495583,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19595264  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1377  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 422  involuntary context switches\n         45466162232  instructions retired\n          8279677472  cycles elapsed\n             9814424  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 5,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 5,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45462895792,
+          "cycles_elapsed": 8273592231,
+          "maximum_rss_bytes": 19513344,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.0423115409999966,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19513344  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 137  involuntary context switches\n         45462895792  instructions retired\n          8273592231  cycles elapsed\n             9748888  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 5,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 232.0,
+          "instructions_retired": 46274793050,
+          "cycles_elapsed": 8343224824,
+          "maximum_rss_bytes": 19775488,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.0557012499999914,
+          "stdout": "__quenchBenchResult: DeltaBlue: 232\n----\nScore: 232\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19775488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1391  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 249  involuntary context switches\n         46274793050  instructions retired\n          8343224824  cycles elapsed\n            10027416  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 6,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 6,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45631715580,
+          "cycles_elapsed": 8230915016,
+          "maximum_rss_bytes": 19611648,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.038962834000003,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            19611648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1380  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 356  involuntary context switches\n         45631715580  instructions retired\n          8230915016  cycles elapsed\n             9847192  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 6,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 229.0,
+          "instructions_retired": 45462271535,
+          "cycles_elapsed": 8236881281,
+          "maximum_rss_bytes": 19546112,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.031470083000002,
+          "stdout": "__quenchBenchResult: DeltaBlue: 229\n----\nScore: 229\n",
+          "stderr": "        2.02 real         2.02 user         0.00 sys\n            19546112  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1376  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 253  involuntary context switches\n         45462271535  instructions retired\n          8236881281  cycles elapsed\n             9781656  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 7,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 7,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 230.0,
+          "instructions_retired": 45461431452,
+          "cycles_elapsed": 8255112782,
+          "maximum_rss_bytes": 19447808,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0311077920000002,
+          "stdout": "__quenchBenchResult: DeltaBlue: 230\n----\nScore: 230\n",
+          "stderr": "        2.02 real         2.02 user         0.00 sys\n            19447808  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1369  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 146  involuntary context switches\n         45461431452  instructions retired\n          8255112782  cycles elapsed\n             9650560  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 7,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45627552819,
+          "cycles_elapsed": 8309122173,
+          "maximum_rss_bytes": 19611648,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.052053041999997,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19611648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1380  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 143  involuntary context switches\n         45627552819  instructions retired\n          8309122173  cycles elapsed\n             9847192  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 8,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 8,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 227.0,
+          "instructions_retired": 45627825129,
+          "cycles_elapsed": 8345735751,
+          "maximum_rss_bytes": 19464192,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.0602305419999993,
+          "stdout": "__quenchBenchResult: DeltaBlue: 227\n----\nScore: 227\n",
+          "stderr": "        2.05 real         2.05 user         0.00 sys\n            19464192  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1371  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 161  involuntary context switches\n         45627825129  instructions retired\n          8345735751  cycles elapsed\n             9699736  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 8,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 230.0,
+          "instructions_retired": 45461801923,
+          "cycles_elapsed": 8234070878,
+          "maximum_rss_bytes": 19496960,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0276953340000006,
+          "stdout": "__quenchBenchResult: DeltaBlue: 230\n----\nScore: 230\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            19496960  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1373  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 165  involuntary context switches\n         45461801923  instructions retired\n          8234070878  cycles elapsed\n             9732504  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 9,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 9,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 232.0,
+          "instructions_retired": 46102821011,
+          "cycles_elapsed": 8353197611,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 2.05,
+          "wall_seconds": 2.052567041000003,
+          "stdout": "__quenchBenchResult: DeltaBlue: 232\n----\nScore: 232\n",
+          "stderr": "        2.05 real         2.04 user         0.00 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 157  involuntary context switches\n         46102821011  instructions retired\n          8353197611  cycles elapsed\n             9879960  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 9,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 229.0,
+          "instructions_retired": 45632669522,
+          "cycles_elapsed": 8320787725,
+          "maximum_rss_bytes": 19431424,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.0498701250000124,
+          "stdout": "__quenchBenchResult: DeltaBlue: 229\n----\nScore: 229\n",
+          "stderr": "        2.04 real         2.03 user         0.00 sys\n            19431424  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1368  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 335  involuntary context switches\n         45632669522  instructions retired\n          8320787725  cycles elapsed\n             9666968  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 10,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "results": {
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 10,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 230.0,
+          "instructions_retired": 45630010533,
+          "cycles_elapsed": 8209006679,
+          "maximum_rss_bytes": 19546112,
+          "elapsed_seconds": 2.02,
+          "wall_seconds": 2.0251552499999974,
+          "stdout": "__quenchBenchResult: DeltaBlue: 230\n----\nScore: 230\n",
+          "stderr": "        2.02 real         2.01 user         0.00 sys\n            19546112  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1376  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 135  involuntary context switches\n         45630010533  instructions retired\n          8209006679  cycles elapsed\n             9781656  peak memory footprint\n"
+        },
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 10,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45462965045,
+          "cycles_elapsed": 8273173455,
+          "maximum_rss_bytes": 19644416,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.0363914160000007,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            19644416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1381  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 155  involuntary context switches\n         45462965045  instructions retired\n          8273173455  cycles elapsed\n             9863576  peak memory footprint\n"
+        }
+      }
+    },
+    {
+      "fixture": "deltablue.js",
+      "pair": 11,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "results": {
+        "candidate": {
+          "fixture": "deltablue.js",
+          "pair": 11,
+          "variant": "candidate",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/90a9e38aaa767256b22f979b50499dc7630463c2bbea3c5a7241641c3240f449/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 229.0,
+          "instructions_retired": 45462379726,
+          "cycles_elapsed": 8262671921,
+          "maximum_rss_bytes": 19660800,
+          "elapsed_seconds": 2.03,
+          "wall_seconds": 2.038506792000007,
+          "stdout": "__quenchBenchResult: DeltaBlue: 229\n----\nScore: 229\n",
+          "stderr": "        2.03 real         2.02 user         0.00 sys\n            19660800  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1383  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 132  involuntary context switches\n         45462379726  instructions retired\n          8262671921  cycles elapsed\n             9896344  peak memory footprint\n"
+        },
+        "baseline": {
+          "fixture": "deltablue.js",
+          "pair": 11,
+          "variant": "baseline",
+          "command": [
+            "/usr/bin/time",
+            "-l",
+            "target/pinned/cf3916764bd3b59ac3dcb91bd9787cb31ec01537245eaa785ae1cd9e7d6d1d57/quench-node",
+            "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-stackguard-no-tls-fixture-pairs-2026-10-09/materialized-deltablue.js"
+          ],
+          "exit_code": 0,
+          "score": 228.0,
+          "instructions_retired": 45631595177,
+          "cycles_elapsed": 8332844017,
+          "maximum_rss_bytes": 19349504,
+          "elapsed_seconds": 2.04,
+          "wall_seconds": 2.050944459000007,
+          "stdout": "__quenchBenchResult: DeltaBlue: 228\n----\nScore: 228\n",
+          "stderr": "        2.04 real         2.04 user         0.00 sys\n            19349504  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1363  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 343  involuntary context switches\n         45631595177  instructions retired\n          8332844017  cycles elapsed\n             9585048  peak memory footprint\n"
+        }
+      }
+    }
+  ]
+}
