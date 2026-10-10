@@ -792,7 +792,7 @@ impl<H: Host> Vm<H> {
     /// Return from a frame the running loop pushed. Such a frame completes
     /// or throws, so it releases its `with` scopes and its slot is reused in
     /// place; a root record still persists its global lexical bindings.
-    fn retire_pending_frame(&mut self, p: &ResidualProgram) {
+    pub(super) fn retire_pending_frame(&mut self, p: &ResidualProgram) {
         if self.eval_script_context
             && self.frames.last().map(|frame| frame.function) == Some(super::ROOT_FUNCTION_ID)
         {
@@ -898,7 +898,20 @@ impl<H: Host> Vm<H> {
         loop {
             let p = current_program.as_deref().unwrap_or(p);
             if fast_lane {
-                pc = self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, pc);
+                pc = self.run_fast_lane(
+                    p,
+                    cursor.program,
+                    cursor.function,
+                    &mut frame,
+                    pc,
+                    &mut pending_calls,
+                    allow_inline_calls,
+                );
+                // Lane calls and returns can leave a different activation,
+                // or a new one in the same frame slot.
+                if self.frames[frame].function != cursor.function {
+                    cursor = GeneralCodeCursor::new(cursor.program, p, self.frames[frame].function);
+                }
             }
             if stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
