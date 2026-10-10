@@ -37,6 +37,9 @@ pub(super) struct LaneInstruction {
     /// The general path executes this instruction; `handler` only reports
     /// that if the lane reaches it.
     exits: bool,
+    /// The general loop enters the lane here: the straight-line lane run
+    /// from this record is long enough to repay the lane's entry cost.
+    enters: bool,
 }
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -1165,6 +1168,14 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
+/// The shortest straight-line lane run the general loop enters. Entering
+/// builds the lane context and memory view, which one or two lane
+/// instructions do not repay: on V8-v7 fixed work, three keeps every
+/// JavaScript benchmark within one percent of the general path or better
+/// (one and two cost DeltaBlue three percent), and leaves Wasm loops,
+/// whose runs are long, unchanged.
+const LANE_ENTRY_MIN_RUN: usize = 3;
+
 fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneView {
     let forward = const { &LaneTable::<H>::FORWARD };
     let backward = const { &LaneTable::<H>::BACKWARD };
@@ -1202,6 +1213,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                 b: instruction.b(),
                 c: instruction.c(),
                 exits: handler.is_none(),
+                enters: false,
             }
         })
         .collect();
@@ -1216,6 +1228,11 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             records[pc].handler = lane_exit::<H> as Handler<H> as *const ();
             records[pc].exits = true;
         }
+    }
+    let mut run = 0usize;
+    for record in records.iter_mut().rev() {
+        run = if record.exits { 0 } else { run + 1 };
+        record.enters = run >= LANE_ENTRY_MIN_RUN;
     }
     LaneView {
         records,
@@ -1243,7 +1260,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn lane_runs(view: *const LaneView, pc: usize) -> bool {
         // SAFETY: a non-null view has a record for every validated PC.
-        !view.is_null() && unsafe { !(*(*view).records().add(pc)).exits }
+        !view.is_null() && unsafe { (*(*view).records().add(pc)).enters }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
