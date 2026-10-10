@@ -1332,6 +1332,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     if (path !== undefined) error.path = path;
     throw error;
   };
+  const normalizePath = (path) => path instanceof URL ? decodeURIComponent(path.pathname) : Buffer.isBuffer(path) ? path.toString() : path;
   const validateOptions = (options) => {
     if (options == null || typeof options !== 'object') {
       const error = new TypeError('The "options" argument must be of type object.');
@@ -1361,7 +1362,17 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     const prefix = `${String(parent).replace(/[\\/]$/, '')}/`;
     return String(child).startsWith(prefix);
   };
+  const resolvedPath = (path) => {
+    try { return realpathSync(path); } catch { return path; }
+  };
+  const isInvalidCopyTarget = (source, destination) => {
+    const resolvedSource = resolvedPath(source);
+    const resolvedDestination = resolvedPath(destination);
+    return samePath(resolvedSource, resolvedDestination) || isWithin(resolvedSource, resolvedDestination);
+  };
   function cpSync(source, destination, options = {}) {
+    source = normalizePath(source);
+    destination = normalizePath(destination);
     validateOptions(options);
     if (typeof options.filter === 'function') {
       const accepted = options.filter(source, destination);
@@ -1372,8 +1383,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       }
       if (accepted === false) return undefined;
     }
-    if (samePath(source, destination)) fail('ERR_FS_CP_EINVAL', `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
-    if (isWithin(source, destination)) fail('ERR_FS_CP_EINVAL', `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
+    if (isInvalidCopyTarget(source, destination)) fail('ERR_FS_CP_EINVAL', `Cannot copy '${source}' to a subdirectory of self '${destination}'`, destination);
     const sourceLstat = lstatSync(source);
     if (sourceLstat.isSymbolicLink() && options.dereference !== true) {
       let dest = destination;
@@ -1399,7 +1409,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     const sourceStats = statSync(source);
     if (sourceStats.isDirectory()) {
       if (exists(destination) && !statSync(destination).isDirectory()) {
-        fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory with directory: ${destination}`);
+        fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory '${destination}' with directory '${source}'`);
       }
       if (options.recursive !== true) {
         fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${source}`);
@@ -1446,10 +1456,12 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       error.code = 'ERR_INVALID_ARG_TYPE';
       throw error;
     }
+    source = normalizePath(source);
+    destination = normalizePath(destination);
     validateOptions(options === undefined ? {} : options);
     const copy = async (src, dest, opts) => {
       validateOptions(opts);
-      if (samePath(src, dest) || isWithin(src, dest)) {
+      if (isInvalidCopyTarget(src, dest)) {
         fail('ERR_FS_CP_EINVAL', `Cannot copy '${src}' to a subdirectory of self '${dest}'`, dest);
       }
       if (typeof opts.filter === 'function' && await opts.filter(src, dest) === false) return;
