@@ -250,9 +250,14 @@ impl quench_runtime::Host for NodeHost {
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
             let exports = builtin_exports.get(builtin_name).map(Vec::as_slice).unwrap_or(&[]);
+            let require_specifier = if specifier == "node:vfs" {
+                "node:vfs"
+            } else {
+                builtin_name
+            };
             let mut source = format!(
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
-                serde_json::to_string(builtin_name).map_err(|error| error.to_string())?
+                serde_json::to_string(require_specifier).map_err(|error| error.to_string())?
             );
             for name in exports {
                 source.push_str("export const ");
