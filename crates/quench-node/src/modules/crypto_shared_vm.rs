@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess) => {
+r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -349,13 +349,21 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNativ
       return this;
     }
 
-    sign(key) {
+    end(data, encoding) {
+      if (data !== undefined) this.update(data, encoding);
+      return this;
+    }
+
+    sign(key, outputEncoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
       state.lifecycle = "finalized";
       const pem = typeof key === "string" ? Buffer.from(key) : inputBuffer(key);
       try {
-        return Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem)));
+        const signature = Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem)));
+        return outputEncoding === undefined || outputEncoding === "buffer"
+          ? signature
+          : signature.toString(outputEncoding);
       } catch (cause) {
         if (String(cause).includes("digest too big for rsa key")) {
           const error = new Error("error:02000070:rsa routines::digest too big for rsa key");
@@ -366,6 +374,44 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNativ
       }
     }
   }
+
+  class Verify {
+    constructor(algorithm) {
+      if (typeof algorithm !== "string") {
+        const error = new TypeError('The "algorithm" argument must be of type string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const name = algorithm.toLowerCase();
+      if (!getHashes().includes(algorithm) && !getHashes().includes(name)) throw unsupportedDigest(algorithm);
+      states.set(this, { name, chunks: [], lifecycle: "open" });
+    }
+    update(data, encoding) {
+      const state = states.get(this);
+      if (state.lifecycle !== "open") throw finalized();
+      state.chunks.push(Array.from(inputBuffer(data, encoding)));
+      return this;
+    }
+    end(data, encoding) {
+      if (data !== undefined) this.update(data, encoding);
+      return this;
+    }
+    verify(key, signature, signatureEncoding) {
+      const state = states.get(this);
+      if (state.lifecycle !== "open") throw finalized();
+      state.lifecycle = "finalized";
+      const pem = typeof key === "string" ? Buffer.from(key) : inputBuffer(key);
+      const signatureBytes = typeof signature === "string"
+        ? Buffer.from(signature, signatureEncoding)
+        : inputBuffer(signature);
+      return verifyDigest(state.name, state.chunks.flat(), Array.from(pem), Array.from(signatureBytes));
+    }
+  }
+
+  function SignConstructor(algorithm) { return new Sign(algorithm); }
+  SignConstructor.prototype = Sign.prototype;
+  function VerifyConstructor(algorithm) { return new Verify(algorithm); }
+  VerifyConstructor.prototype = Verify.prototype;
 
   const hashNames = Object.freeze([
     "RSA-SHA1", "blake2b512", "blake2s256", "md5", "ripemd160",
@@ -1114,8 +1160,12 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNativ
   }
   const api = {
     Hash: HashConstructor,
+    Verify,
+    createVerify: (algorithm) => new Verify(algorithm),
     createHash: (algorithm, options) => new Hash(algorithm, options),
     Hmac: HmacConstructor,
+    Sign: SignConstructor,
+    Verify: VerifyConstructor,
     hash: hashOnce,
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     setEngine,
@@ -1160,6 +1210,7 @@ pub(crate) fn module(
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
     let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
+    let verify = context.host_function(crate::host::shared_vm::operation("cryptoVerify"))?;
     let random_bytes = context
         .host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
@@ -1176,6 +1227,7 @@ pub(crate) fn module(
             hash,
             hmac,
             sign,
+            verify,
             buffer,
             random_bytes,
             pbkdf2,
@@ -1421,6 +1473,39 @@ pub(crate) fn hmac(
         .map_err(|_| RootedError::host("crypto HMAC failed"))?;
     let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     context.array_rooted(&values)
+}
+
+pub(crate) fn verify(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let algorithm = args.first().copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto verification algorithm is not a string"))?;
+    let input = byte_array(context, *args.get(1).ok_or_else(|| RootedError::host("crypto verification input is missing"))?)?;
+    let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("crypto public key is missing"))?)?;
+    let signature = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("crypto signature is missing"))?)?;
+    let key = match openssl::pkey::PKey::public_key_from_pem(&key_bytes) {
+        Ok(key) => key,
+        Err(_) => {
+            let private = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+                .map_err(|error| RootedError::host(error.to_string()))?;
+            let public = private.public_key_to_pem()
+                .map_err(|error| RootedError::host(error.to_string()))?;
+            openssl::pkey::PKey::public_key_from_pem(&public)
+                .map_err(|error| RootedError::host(error.to_string()))?
+        }
+    };
+    let digest = openssl::hash::MessageDigest::from_name(&algorithm)
+        .ok_or_else(|| RootedError::host("Digest method not supported"))?;
+    let mut verifier = openssl::sign::Verifier::new(digest, &key)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    verifier.update(&input)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let result = verifier.verify(&signature)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    Ok(context.boolean(result))
 }
 
 pub(crate) fn sign(
