@@ -10,7 +10,7 @@ pub(crate) enum ProcessFact {
     Boolean(bool),
     Number(f64),
     String(&'static str),
-    EmptyArray,
+    StringArray(&'static [&'static str]),
 }
 
 pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] {
@@ -18,7 +18,10 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
         ("napi_build_version", ProcessFact::String("9")),
-        ("node_builtin_shareable_builtins", ProcessFact::EmptyArray),
+        (
+            "node_builtin_shareable_builtins",
+            ProcessFact::StringArray(&["deps/undici/undici.js"]),
+        ),
         ("node_use_lief", ProcessFact::Boolean(false)),
         ("node_use_amaro", ProcessFact::Boolean(false)),
         ("node_use_ffi", ProcessFact::Boolean(false)),
@@ -68,6 +71,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("simdjson", "1.0.0"),
         ("simdutf", "5.2.4"),
         ("tz", "2024a"),
+        ("undici", "8.10.0"),
         ("unicode", "15.1"),
         ("uv", "1.48.0"),
         ("uvwasi", "1.0.0"),

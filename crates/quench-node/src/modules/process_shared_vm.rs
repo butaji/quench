@@ -277,7 +277,13 @@ fn fact_value(
         ProcessFact::Boolean(value) => Ok(context.boolean(value)),
         ProcessFact::Number(value) => Ok(context.number(value)),
         ProcessFact::String(value) => Ok(context.string_rooted(value)),
-        ProcessFact::EmptyArray => context.array_rooted(&[]),
+        ProcessFact::StringArray(values) => {
+            let values = values
+                .iter()
+                .map(|value| context.string_rooted(value))
+                .collect::<Vec<_>>();
+            context.array_rooted(&values)
+        }
     }
 }
 
