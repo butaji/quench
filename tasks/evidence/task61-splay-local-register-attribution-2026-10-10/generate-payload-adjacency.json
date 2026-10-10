@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "kind": "task61-splay-local-register-adjacency-attribution",
+  "measurement_role": "derived from an existing profile; no runtime, timing, or performance claim",
+  "inputs": {
+    "profile": {
+      "path": "tasks/evidence/task61-splay-profile-program-accounting-2026-10-09/node-splay-profile-one.stderr",
+      "sha256": "bf6c1441f9421c4f0f776f28b87be53b49214494397988538dc97f827c14f232",
+      "binary_sha256": "ad582162a826e4be9c6e45f740c960514e65ec2178d7d6f4cf768ca957dc6efa"
+    },
+    "fixture": {
+      "path": "tasks/evidence/task61-splay-step0-2026-10-09/splay-profile.js",
+      "sha256": "8b297e130b8561e5a36223fed924d14c141c2e1a9b4043e13758e710cb862983"
+    }
+  },
+  "scope": {
+    "function_id": 6,
+    "function_name": "GeneratePayloadTree",
+    "profile_call_count": 509040,
+    "instructions": 27,
+    "registers": 17,
+    "max_live_registers": 5,
+    "profile_work": "one 8,000-item SplaySetup plus one 80-item SplayRun",
+    "calls_per_setup_item": 63,
+    "setup_items": 8000,
+    "run_items": 80,
+    "derived_run_fraction": {
+      "numerator": 1,
+      "denominator": 101,
+      "basis": "Each of the 8,080 generated payload trees takes the same 63-call recursion shape; the 80 run trees are 80/8,080 of the combined profile."
+    }
+  },
+  "dynamic_adjacent_sites": [
+    { "pc": 0, "first": "LoadLocalPlain", "second": "StoreLocalPlain", "profile_count": 509040, "derived_run_count": 5040 },
+    { "pc": 1, "first": "StoreLocalPlain", "second": "LoadLocalPlain", "profile_count": 509040, "derived_run_count": 5040 },
+    { "pc": 2, "first": "LoadLocalPlain", "second": "StoreLocalPlain", "profile_count": 509040, "derived_run_count": 5040 },
+    { "pc": 3, "first": "StoreLocalPlain", "second": "LoadLocalPlain", "profile_count": 509040, "derived_run_count": 5040 },
+    { "pc": 4, "first": "LoadLocalPlain", "second": "JumpBinaryFalse", "profile_count": 509040, "derived_run_count": 5040 },
+    { "pc": 10, "first": "LoadLocalPlain", "second": "Binary", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 11, "first": "Binary", "second": "LoadLocalPlain", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 12, "first": "LoadLocalPlain", "second": "Move", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 13, "first": "Move", "second": "Move", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 14, "first": "Move", "second": "Call", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 15, "first": "Call", "second": "LoadConst", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 18, "first": "LoadLocalPlain", "second": "Binary", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 19, "first": "Binary", "second": "LoadLocalPlain", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 20, "first": "LoadLocalPlain", "second": "Move", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 21, "first": "Move", "second": "Move", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 22, "first": "Move", "second": "Call", "profile_count": 250480, "derived_run_count": 2480 },
+    { "pc": 23, "first": "Call", "second": "MakeObject2", "profile_count": 250480, "derived_run_count": 2480 }
+  ],
+  "observed_hot_site_lower_bounds_per_run": {
+    "LoadLocalPlain": 30000,
+    "StoreLocalPlain": 10080,
+    "basis": "The listed hot edges account for 25,040 loads as the first opcode of an edge, plus 4,960 loads as the second opcode after Binary; the two entry load/store sites account for 10,080 stores. The profile report contains only its top 20 adjacent sites, so these are lower bounds for this function, not complete per-function totals."
+  },
+  "interpretation": {
+    "what_data_supports": "At least 40,080 local load/store dispatches per run occur in the hot listed sites of GeneratePayloadTree: 30,000 loads and 10,080 stores. Loads immediately precede conditional, binary, and move operations in the hot recursive paths.",
+    "what_data_does_not_prove": "Adjacent opcode counts do not establish register def-use. They do not prove which local slot a load reads, whether the following instruction consumes that destination, or whether the result remains live elsewhere.",
+    "next_required_data": "Decode bytecode operands and run def-use/liveness over these weighted sites to identify loads that can be replaced by direct local locations, stores that can be absorbed into result destinations, and the resulting register/root-map cost."
+  }
+}

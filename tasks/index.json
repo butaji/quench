@@ -37,10 +37,11 @@
     "semantics": [],
     "conformance": [],
     "host": [],
-    "performance": [],
+    "performance": ["93", "94"],
     "specializers": [],
-    "gates": ["48"],
+    "gates": ["48", "92"],
     "deferred": [
+      "95",
       "07",
       "08",
       "09",
@@ -152,7 +153,7 @@
     "B_performance": {
       "goal": "After Stage A is verified, run every V8-v7 benchmark on Apple M4/macOS and achieve the highest Score and lowest maximum RSS against QuickJS, Bun/JSC with JIT disabled, and Node/V8 --jitless; choose mechanisms only from measured gaps",
       "gate": "28",
-      "tasks": ["62", "61", "28"]
+      "tasks": ["62", "92", "93", "94", "61", "28"]
     }
   },
   "items": [
@@ -715,6 +716,34 @@
       "title": "Derive frame slot representation from static types",
       "status": "pending",
       "depends_on": ["37", "40"]
+    },
+    {
+      "id": "92",
+      "file": "92.md",
+      "title": "Run parallel lanes in sync with the v2 trunk",
+      "status": "in_progress",
+      "depends_on": ["86", "62"]
+    },
+    {
+      "id": "93",
+      "file": "93.md",
+      "title": "Close the active V8-v7 fixture's speed gap on the call and dispatch path",
+      "status": "in_progress",
+      "depends_on": ["86", "62"]
+    },
+    {
+      "id": "94",
+      "file": "94.md",
+      "title": "Collect the active V8-v7 fixture's heap without re-marking old data",
+      "status": "in_progress",
+      "depends_on": ["86", "62"]
+    },
+    {
+      "id": "95",
+      "file": "95.md",
+      "title": "Extend Node API compatibility on the shared VM",
+      "status": "in_progress",
+      "depends_on": ["86"]
     }
   ]
 }

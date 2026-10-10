@@ -86,6 +86,8 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) next_reg: Register,
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
+    local_registers: Vec<Option<Register>>,
+    local_register_count: Register,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
@@ -141,6 +143,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         parameter_arguments_slot: Option<u16>,
         parameter_local_count: usize,
         with_depth: u16,
+        promoted_local_slots: &[u16],
     ) -> Self {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
@@ -152,6 +155,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 .map(|(slot, atom)| (*atom, slot as u16))
                 .collect(),
         );
+        let mut local_registers = vec![None; locals.len()];
+        for (register, slot) in promoted_local_slots.iter().copied().enumerate() {
+            let Some(location) = local_registers.get_mut(usize::from(slot)) else {
+                owner.reject(Span::default(), "promoted local is outside the local table");
+                continue;
+            };
+            let Ok(register) = Register::try_from(register) else {
+                owner.reject(Span::default(), "too many promoted local registers");
+                continue;
+            };
+            *location = Some(register);
+        }
+        let local_register_count = promoted_local_slots.len() as Register;
         Self {
             owner,
             locals,
@@ -159,9 +175,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             wide: vec![],
             source_positions: vec![],
             current_source_position: None,
-            next_reg: 0,
-            max_reg: 0,
+            next_reg: local_register_count,
+            max_reg: local_register_count,
             local_slots,
+            local_registers,
+            local_register_count,
             function_scope,
             annex_b_collisions,
             scopes,
@@ -207,6 +225,27 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.next_reg += 1;
         self.max_reg = self.max_reg.max(self.next_reg);
         value
+    }
+
+    pub(super) fn local_register(&self, atom: Atom) -> Option<Register> {
+        let slot = self.local_slots.get(&atom)?;
+        self.local_registers
+            .get(usize::from(*slot))
+            .copied()
+            .flatten()
+    }
+
+    pub(super) fn promoted_local_layout(&self) -> Vec<crate::bytecode::LocalRegister> {
+        self.local_registers
+            .iter()
+            .enumerate()
+            .filter_map(|(local, register)| {
+                Some(crate::bytecode::LocalRegister {
+                    local: u16::try_from(local).ok()?,
+                    register: (*register)?,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn clear_statement_completion(&mut self) {
@@ -635,7 +674,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.next_reg = self
             .statement_completion
             .register()
-            .map_or(0, |register| register + 1);
+            .map_or(self.local_register_count, |register| register + 1);
     }
 
     fn active_lexical_binding(&self, atom: Atom) -> Option<Atom> {

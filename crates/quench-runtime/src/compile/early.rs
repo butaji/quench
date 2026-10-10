@@ -368,6 +368,75 @@ pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bo
     finder.0
 }
 
+pub(super) struct FixedRegisterLocalFacts {
+    pub(super) safe: bool,
+    pub(super) written_names: FxHashSet<String>,
+}
+
+pub(super) fn fixed_register_local_facts(
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> FixedRegisterLocalFacts {
+    struct Facts {
+        safe: bool,
+        written_names: FxHashSet<String>,
+    }
+
+    impl<'a> Visit<'a> for Facts {
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc_ast::ast::IdentifierReference<'a>,
+        ) {
+            self.safe &= identifier.name != "arguments";
+        }
+
+        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
+                self.written_names.insert(identifier.name.to_string());
+            }
+            walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+            self.safe = false;
+        }
+
+        fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            if expression.operator == oxc_syntax::operator::UnaryOperator::Delete {
+                self.safe = false;
+            }
+            walk::walk_unary_expression(self, expression);
+        }
+
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
+            self.safe = false;
+        }
+
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
+            self.safe = false;
+        }
+
+        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+            self.safe = false;
+        }
+    }
+
+    let mut facts = Facts {
+        safe: true,
+        written_names: FxHashSet::default(),
+    };
+    for statement in body {
+        facts.visit_statement(statement);
+    }
+    if let Some(expression) = expression {
+        facts.visit_expression(expression);
+    }
+    FixedRegisterLocalFacts {
+        safe: facts.safe,
+        written_names: facts.written_names,
+    }
+}
+
 pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
     !call.optional
         && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")

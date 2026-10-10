@@ -208,12 +208,16 @@ impl FunctionCompiler<'_, '_> {
             self.active_lexical_binding(atom)
         };
         let atom = lexical.unwrap_or(atom);
-        let dst = self.reg();
         if (self.with_depth == self.inherited_with_depth || lexical.is_some() || compiler_binding)
             && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
+            if let Some(register) = self.local_register(atom) {
+                return register;
+            }
+            let dst = self.reg();
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
+            dst
         } else if self.with_depth == 0
             && (!self.dynamic_eval || compiler_binding)
             && let Some((depth, slot)) = self
@@ -222,6 +226,7 @@ impl FunctionCompiler<'_, '_> {
                 .enumerate()
                 .find_map(|(depth, scope)| scope.get(&atom).copied().map(|slot| (depth, slot)))
         {
+            let dst = self.reg();
             self.emit(
                 Op::LoadCapture,
                 dst,
@@ -229,7 +234,9 @@ impl FunctionCompiler<'_, '_> {
                 0,
                 crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
+            dst
         } else {
+            let dst = self.reg();
             let cache = self.owner.cache_site();
             match receiver {
                 Some(receiver) => {
@@ -239,8 +246,8 @@ impl FunctionCompiler<'_, '_> {
                     self.emit(Op::LoadName, dst, 0, cache, atom);
                 }
             }
+            dst
         }
-        dst
     }
 
     pub(crate) fn store_atom(&mut self, atom: Atom, value: Register) {
@@ -299,13 +306,19 @@ impl FunctionCompiler<'_, '_> {
             && (self.function_scope.contains(&atom) || lexical.is_some() || compiler_binding)
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
-            self.emit(
-                Op::StoreLocal,
-                value,
-                0,
-                u16::from(initializing),
-                u32::from(slot),
-            );
+            if let Some(register) = self.local_register(atom) {
+                if register != value {
+                    self.emit(Op::Move, register, value, 0, 0);
+                }
+            } else {
+                self.emit(
+                    Op::StoreLocal,
+                    value,
+                    0,
+                    u16::from(initializing),
+                    u32::from(slot),
+                );
+            }
             if lexical.is_none() && self.function_id == 0 && !self.owner.module_goal {
                 let cache = self.owner.cache_site();
                 self.emit(
@@ -625,7 +638,9 @@ impl FunctionCompiler<'_, '_> {
             return None;
         }
         let atom = lexical.unwrap_or(source);
-        self.local_slots.get(&atom).copied().map(Operand::local)
+        self.local_register(atom)
+            .map(Operand::register)
+            .or_else(|| self.local_slots.get(&atom).copied().map(Operand::local))
     }
 
     pub(super) fn condition(&mut self, value: &Expression<'_>) -> usize {
