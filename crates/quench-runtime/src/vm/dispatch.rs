@@ -1482,9 +1482,7 @@ impl<H: Host> Vm<H> {
                     let array = self.read(f, window.base);
                     CallArguments::from_values(self.array_values(array)?)
                 } else {
-                    CallArguments::from_values(
-                        (0..window.count).map(|x| self.read(f, window.base + x)),
-                    )
+                    CallArguments::from_slice(self.register_window(f, window))
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
@@ -1694,12 +1692,10 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
-                let n = window.count;
-                let arguments =
-                    CallArguments::from_values((0..n).map(|x| self.read(f, window.base + x)));
+                let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
-                self.profile.call_target(1, n as usize);
+                self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
                 let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
@@ -1789,10 +1785,7 @@ impl<H: Host> Vm<H> {
                         self.call_argument_list(p, array, false)?
                     }
                     crate::bytecode::ConstructArguments::Registers(window) => {
-                        let arguments = CallArguments::from_values(
-                            (0..window.count).map(|x| self.read(f, window.base + x)),
-                        );
-                        arguments.as_slice().to_vec()
+                        self.register_window(f, window).to_vec()
                     }
                 };
                 self.frames[f].pc = *pc;

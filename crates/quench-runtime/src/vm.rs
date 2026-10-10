@@ -502,12 +502,6 @@ enum UserFrameStart {
     Outcome(FrameOutcome),
     Pushed(crate::stack::StackGuard),
 }
-struct PendingGeneralCall {
-    caller: usize,
-    call_pc: u32,
-    destination: Register,
-    stack_guard: crate::stack::StackGuard,
-}
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MethodCacheKey {
@@ -1212,9 +1206,11 @@ impl<H: Host> Vm<H> {
             u32::MAX,
         );
     }
+    #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
         self.program_cache_layouts[self.active_program.raw() as usize]
     }
+    #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
         self.active_cache_layout().field_base + usize::from(site)
     }
