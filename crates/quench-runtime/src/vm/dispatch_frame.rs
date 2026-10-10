@@ -306,10 +306,9 @@ impl<H: Host> Vm<H> {
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
-        frame.prepare_registers(register_count);
+        frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -496,8 +495,7 @@ impl<H: Host> Vm<H> {
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
         self.frame_pool.push(placeholder);
