@@ -412,39 +412,12 @@ impl ResidualProgram {
                     "function {index} has an ineligible selective capture layout"
                 ));
             }
-            let mut tdz_slots = vec![false; usize::from(function.locals)];
-            for instruction in &function.code {
-                if instruction.op() == super::Op::InitializeTdz
-                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-                {
-                    *slot = true;
-                }
-            }
-            for instruction in &function.wide {
-                if instruction.op() == super::Op::InitializeTdz
-                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-                {
-                    *slot = true;
-                }
-            }
-            let plain_local_context_safe = function.plain_local_context_is_safe();
-            let plain_local_slots: Vec<_> = (0..usize::from(function.locals))
-                .map(|slot| {
-                    function
-                        .local_atoms
-                        .get(slot)
-                        .and_then(|atom| usize::try_from(*atom).ok())
-                        .filter(|atom| *atom < self.atoms.len())
-                        .is_some_and(|atom| {
-                            plain_local_context_safe
-                                && function.plain_local_slot_is_safe(
-                                    slot,
-                                    &self.atoms[atom],
-                                    tdz_slots[slot],
-                                )
-                        })
-                })
-                .collect();
+            let plain_local_slots = function.plain_local_slots(|atom| {
+                usize::try_from(atom)
+                    .ok()
+                    .filter(|atom| *atom < self.atoms.len())
+                    .map(|atom| &self.atoms[atom])
+            });
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
                     .functions
@@ -1053,6 +1026,7 @@ mod tests {
             registers,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: root,
         }

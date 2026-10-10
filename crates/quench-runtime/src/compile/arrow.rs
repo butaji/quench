@@ -157,6 +157,7 @@ impl Compiler<'_> {
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: function.handlers,
             register_root_offset: u32::MAX,
         };
