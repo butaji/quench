@@ -104,7 +104,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -228,7 +228,7 @@ impl<H: Host> Vm<H> {
             .heap
             .weak_handle(target)
             .ok_or_else(|| self.type_error(p, "WeakRef target is not a live object".into()))?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_constructor_prototype_attributes(&mut self, constructor: Value) {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -407,7 +407,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_named(program, map, "prototype", self.map_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             map,
             PropertyKey::string(prototype_atom),
@@ -475,7 +475,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(set_proto, "keys", values)?;
         self.set_builtin_value_named(set_proto, "constructor", set)?;
         self.set_named(program, set, "prototype", set_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             set,
             PropertyKey::string(prototype_atom),
@@ -606,7 +606,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype

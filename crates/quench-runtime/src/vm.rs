@@ -635,6 +635,8 @@ pub(crate) struct Vm<H> {
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
+    // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
+    prototype_atom: Atom,
     size_atom: Atom,
     byte_length_atom: Atom,
     byte_offset_atom: Atom,
@@ -1091,6 +1093,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
+        self.prototype_atom = self.intern_atom("prototype");
         self.size_atom = self.intern_atom("size");
         self.byte_length_atom = self.intern_atom("byteLength");
         self.byte_offset_atom = self.intern_atom("byteOffset");

@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
             "prototype",
             self.async_generator_proto,
         )?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             async_generator_function_proto,
             PropertyKey::string(prototype_atom),
@@ -230,7 +230,7 @@ impl<H: Host> Vm<H> {
                 .expect("function constructor")
                 .proto = self.native_value(Native::Function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
-            let prototype_atom = self.intern_atom("prototype");
+            let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
                 constructor,
                 PropertyKey::string(prototype_atom),
@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn install_iterator_self(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.install_iterator_prototype(self.iterator_proto, None)?;
         self.install_builtin_to_string_tag(self.string_iterator_proto, "String Iterator")?;
         self.install_builtin_to_string_tag(
@@ -446,7 +446,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or_else(|| self.native_value(Native::Iterator));
         self.set_builtin_function_name(constructor, "Iterator")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -914,7 +914,7 @@ impl<H: Host> Vm<H> {
             let iterator = self.heap.root_value(iterator_root).unwrap_or(iterator);
             let constructor_atom = self.intern_atom("Iterator");
             let constructor = self.get_property(p, self.realm.globals, constructor_atom)?;
-            let prototype_atom = self.intern_atom("prototype");
+            let prototype_atom = self.prototype_atom();
             let iterator_prototype = self.get_property(p, constructor, prototype_atom)?;
             let mut current = self.object_get_prototype_of(p, iterator)?;
             while !current.is_null() {
