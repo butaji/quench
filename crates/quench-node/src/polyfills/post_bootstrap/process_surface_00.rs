@@ -245,6 +245,16 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     };
     globalThis.process.cpuUsage ||= cpuUsage;
     globalThis.process.threadCpuUsage ||= cpuUsage;
+    globalThis.process.ref ||= (target) => {
+      const ref = target?.[Symbol.for("nodejs.ref")] || target?.ref;
+      if (typeof ref === "function") ref.call(target);
+      return target;
+    };
+    globalThis.process.unref ||= (target) => {
+      const unref = target?.[Symbol.for("nodejs.unref")] || target?.unref;
+      if (typeof unref === "function") unref.call(target);
+      return target;
+    };
   }
 }
 "#);
