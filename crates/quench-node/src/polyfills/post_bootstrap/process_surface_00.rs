@@ -84,6 +84,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
           error.code = "ERR_INVALID_ARG_TYPE";
           throw error;
         }
+        if (options.type === "DeprecationWarning" && globalThis.process.noDeprecation) {
+          return undefined;
+        }
         return emitWarning(message, options);
       };
     }
