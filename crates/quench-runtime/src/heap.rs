@@ -22,6 +22,15 @@ use slots::SlotArena;
 // representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+/// Allocations between collections never drop below this, so tiny heaps do not collect
+/// on nearly every allocation.
+const MIN_COLLECTION_THRESHOLD: usize = 384;
+/// Surviving cells from which a heap counts as large for the collection trigger.
+const LARGE_HEAP_LIVE_CELLS: usize = 1 << 16;
+/// Large heaps allow this many survivor-sized allocation rounds before collecting again.
+const LARGE_HEAP_HEADROOM_FACTOR: usize = 2;
+/// Small heaps allow survivors divided by this before collecting again.
+const SMALL_HEAP_HEADROOM_DIVISOR: usize = 2;
 
 pub(super) struct Slot {
     cell: Option<Cell>,
@@ -177,9 +186,9 @@ impl Heap {
         Self {
             slots: SlotArena::with_small_capacity(),
             marks: Vec::with_capacity(12),
-            free: Vec::with_capacity(384),
-            threshold: 384,
-            max_threshold: 384,
+            free: Vec::with_capacity(MIN_COLLECTION_THRESHOLD),
+            threshold: MIN_COLLECTION_THRESHOLD,
+            max_threshold: MIN_COLLECTION_THRESHOLD,
             ..Self::default()
         }
     }
@@ -352,12 +361,12 @@ impl Heap {
         self.generations.clear();
         self.external_bytes = 0;
         self.allocations = 0;
-        self.threshold = 384;
+        self.threshold = MIN_COLLECTION_THRESHOLD;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = 384;
+        self.max_threshold = MIN_COLLECTION_THRESHOLD;
         self.properties.reset();
         self.roots.clear();
         self.sparse_arrays = None;
@@ -455,10 +464,16 @@ impl Heap {
         }
         self.marks.fill(0);
         self.allocations = 0;
-        // `threshold` counts allocations *after* this collection. Half the
-        // surviving set therefore targets a 1.5x total occupied high-water.
-        let headroom = if live >= 1 << 16 { live } else { live / 2 };
-        self.threshold = headroom.max(384);
+        // `threshold` counts allocations *after* this collection. Small heaps
+        // allow half the surviving set (a 1.5x occupied high-water); large
+        // heaps allow twice it (3x), since every collection re-marks all
+        // survivors and the mark cost dominates there.
+        let headroom = if live >= LARGE_HEAP_LIVE_CELLS {
+            live * LARGE_HEAP_HEADROOM_FACTOR
+        } else {
+            live / SMALL_HEAP_HEADROOM_DIVISOR
+        };
+        self.threshold = headroom.max(MIN_COLLECTION_THRESHOLD);
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         finalization_jobs
