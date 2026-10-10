@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "ZonedDateTime")?;
         let prototype = self.object();
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -354,7 +354,7 @@ impl<H: Host> Vm<H> {
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
         };
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -2365,7 +2365,7 @@ impl<H: Host> Vm<H> {
         if record.epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype

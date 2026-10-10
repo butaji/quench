@@ -1271,7 +1271,7 @@ impl<H: Host> Vm<H> {
             .insert((global, Native::Promise), prototype);
         self.set_builtin_function_name(promise, "Promise")?;
         self.set_builtin_value_named(promise, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             promise,
             property_key::PropertyKey::string(prototype_atom),
@@ -2156,7 +2156,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.realm.promise.module_sources.get(&identity) {
             return Ok(*value);
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let constructor = self.native_value(Native::AbstractModuleSource);
         let prototype = self
             .own_property(constructor, prototype_atom)

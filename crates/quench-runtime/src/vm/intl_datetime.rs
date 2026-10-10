@@ -706,7 +706,7 @@ impl<H: Host> Vm<H> {
         locale: String,
         options: (bool, bool, Value),
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let locale = self

@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
         let constructor = self
             .lookup_atom(name)
             .and_then(|atom| self.own_property(self.realm.globals, atom))?;
-        self.lookup_atom("prototype")
+        self.known_prototype_atom()
             .and_then(|atom| self.own_property(constructor, atom))
     }
 

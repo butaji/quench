@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
             } else {
                 self.generator_proto
             });
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let generator_prototype = function_object
             .and_then(|function| self.own_property(function, prototype_atom))
             .filter(|prototype| self.object_data(*prototype).is_some())

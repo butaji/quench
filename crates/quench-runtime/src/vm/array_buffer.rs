@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((global, Native::ArrayBuffer), prototype);
         self.set_named(program, array_buffer, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             array_buffer,
             PropertyKey::string(prototype_atom),
@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::SharedArrayBuffer), prototype);
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_named(program, constructor, "prototype", prototype)?;
         self.set_property_attributes(
             constructor,
@@ -495,7 +495,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         shared: bool,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
