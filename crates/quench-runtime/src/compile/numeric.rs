@@ -253,6 +253,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::Numeric,
             handlers: vec![],
             register_root_offset: u32::MAX,
+            parameter_registers: None,
         };
         let mut dead = make_function();
         compact_binary_stores(
@@ -326,6 +327,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::Numeric,
             handlers: vec![],
             register_root_offset: u32::MAX,
+            parameter_registers: None,
         };
         let mut dead = make_function();
         compact_binary_stores(

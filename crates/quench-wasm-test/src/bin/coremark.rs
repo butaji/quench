@@ -13,9 +13,32 @@ const CLOCK_FUNCTION: WasmHostFunctionId = WasmHostFunctionId(0);
 const ENTRY_EXPORT: &str = "run";
 
 /// Milliseconds since first use, truncated to u32 exactly like the comparator harness.
+///
+/// With `COREMARK_CLOCK_STEPS_MS=a,b,...` each read instead advances a virtual
+/// clock by the next listed step, repeating the last one. A schedule fixes
+/// how far CoreMark's calibration grows, so the run does a fixed amount of
+/// work whose instruction count (for example under cachegrind) compares
+/// builds without timing noise. The reported score is then meaningless.
 fn clock_ms() -> u32 {
     static STARTED: OnceLock<Instant> = OnceLock::new();
-    STARTED.get_or_init(Instant::now).elapsed().as_millis() as u32
+    static SCHEDULE: OnceLock<Option<Vec<u32>>> = OnceLock::new();
+    static READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static NOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let schedule = SCHEDULE.get_or_init(|| {
+        let steps = env::var("COREMARK_CLOCK_STEPS_MS").ok()?;
+        steps
+            .split(',')
+            .map(|step| step.trim().parse().ok())
+            .collect()
+    });
+    match schedule {
+        Some(steps) if !steps.is_empty() => {
+            let read = READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let step = steps[read.min(steps.len() - 1)];
+            NOW.fetch_add(step, std::sync::atomic::Ordering::Relaxed)
+        }
+        _ => STARTED.get_or_init(Instant::now).elapsed().as_millis() as u32,
+    }
 }
 
 struct CoremarkHost;

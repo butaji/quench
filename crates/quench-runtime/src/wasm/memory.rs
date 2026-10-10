@@ -457,11 +457,11 @@ impl super::Lowering<'_> {
     ) -> Result<crate::bytecode::Register, crate::Diagnostic> {
         let register = self.push()?;
         self.emit(
-            crate::bytecode::Op::LoadCapture,
+            crate::bytecode::Op::WasmInstanceBinding,
             register,
             0,
             0,
-            crate::bytecode::ImmediateLayout::capture_immediate(0, slot as u16),
+            slot as u32,
         )?;
         Ok(register)
     }

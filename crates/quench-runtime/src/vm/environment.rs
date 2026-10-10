@@ -1952,7 +1952,7 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in &mut self.frames {
+        for frame in self.frames.iter_mut() {
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }

@@ -22,6 +22,13 @@ impl<H: Host> Vm<H> {
                     self.wasm_indirect_target(self.frames[f].program, table, index, i.imm())?;
                 self.write(f, i.result_register(), value);
             }
+            Op::WasmInstanceBinding => {
+                let value = self
+                    .heap
+                    .environment_slot(self.frames[f].env, i.imm() as usize)
+                    .ok_or_else(|| JsError::validation("invalid Wasm instance binding".into()))?;
+                self.write(f, i.result_register(), value);
+            }
             Op::WasmGlobalGet => {
                 let value = self.wasm_global_load(self.read(f, i.register_b()))?;
                 self.write(f, i.result_register(), value);

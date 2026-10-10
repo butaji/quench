@@ -151,46 +151,40 @@ impl<H: Host> Vm<H> {
         let stack_guard = crate::stack::StackGuard::enter()
             .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
+        let program = self.active_program;
+        let with_base = self.with_stack.len();
+        let (caller, frame) = self
+            .frames
+            .activate_after(caller, || Frame::empty(program, with_base));
         frame.locals.clear();
+        frame.locals.extend(
+            (0..arguments.count.min(function.local_parameter_count()))
+                .map(|offset| caller.registers[usize::from(arguments.base + offset)]),
+        );
         frame
             .locals
             .resize(usize::from(function.locals), Value::UNDEFINED);
-        for offset in 0..arguments.count.min(function.params) {
-            frame.locals[usize::from(offset)] = self.read(caller, arguments.base + offset);
-        }
         frame.context = CallContext::Internal;
         frame.function = id;
-        frame.program = self.active_program;
+        frame.program = program;
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
         frame.this = Value::UNDEFINED;
         frame.captured = false;
-        frame.with_base = self.with_stack.len();
+        frame.with_base = with_base;
         frame.prepare_registers(usize::from(function.registers));
-        self.frames.push(frame);
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..arguments.count.min(function.params) {
+                frame.registers[usize::from(base + offset)] =
+                    caller.registers[usize::from(arguments.base + offset)];
+            }
+        }
         Ok(stack_guard)
     }
 
     fn empty_frame(&self) -> Frame {
-        Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-        }
+        Frame::empty(self.active_program, self.with_stack.len())
     }
 
     pub(super) fn push_general_user_frame(
@@ -228,12 +222,16 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
+        let mut frame = self
+            .frames
+            .take_spare()
+            .unwrap_or_else(|| self.empty_frame());
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
+        let local_parameters = usize::from(function.local_parameter_count());
+        frame.locals[local_parameters..].fill(Value::UNDEFINED);
+        let fixed = local_parameters - usize::from(function.rest);
         for index in 0..fixed {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
@@ -320,6 +318,7 @@ impl<H: Host> Vm<H> {
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers(register_count);
+        frame.bind_register_parameters(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
         if id == super::ROOT_FUNCTION_ID
@@ -371,11 +370,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     FrameOutcome::Complete(value)
                 };
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.frames.recycle(frame);
                 Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.frames.recycle(frame);
                 Err(JsError(
                     "nested constructor completion escaped its activation".into(),
                 ))
@@ -442,8 +441,9 @@ impl<H: Host> Vm<H> {
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
+        let local_parameters = usize::from(function.local_parameter_count());
+        frame.locals[local_parameters..].fill(Value::UNDEFINED);
+        let fixed = local_parameters - usize::from(function.rest);
         for index in 0..fixed {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
@@ -502,6 +502,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         frame.prepare_registers(register_count);
+        frame.bind_register_parameters(function, args);
         self.frames[frame_index] = frame;
         Ok(())
     }
@@ -788,29 +789,26 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Return from a frame the running loop pushed. Such a frame completes
+    /// or throws, so it releases its `with` scopes and its slot is reused in
+    /// place; a root record still persists its global lexical bindings.
+    fn retire_pending_frame(&mut self, p: &ResidualProgram) {
+        if self.eval_script_context
+            && self.frames.last().map(|frame| frame.function) == Some(super::ROOT_FUNCTION_ID)
+        {
+            let frame = self.frames.pop().expect("pending frame is active");
+            self.with_stack.truncate(frame.with_base);
+            self.persist_global_lexical_bindings(p, &frame);
+            self.frames.recycle(frame);
+            return;
+        }
+        let frame = self.frames.retire();
+        self.with_stack.truncate(frame.with_base);
+        frame.reset_for_reuse();
+    }
+
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
-        frame.context = CallContext::Internal;
-        frame.original_arguments.clear();
-        frame.with_objects = Vec::new();
-        const RETAINED_VALUES: usize = 256;
-        if frame.original_arguments.capacity() > RETAINED_VALUES {
-            frame.original_arguments.shrink_to(RETAINED_VALUES);
-        }
-        if frame.locals.capacity() > RETAINED_VALUES {
-            frame.locals.clear();
-            frame.locals.shrink_to(RETAINED_VALUES);
-        }
-        if frame.registers.capacity() > RETAINED_VALUES {
-            frame.registers.clear();
-            frame.registers.shrink_to(RETAINED_VALUES);
-        }
-        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
-            frame.dynamic_bindings.clear();
-            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
-        } else {
-            frame.dynamic_bindings.clear();
-        }
-        frame.active_iterators.clear();
+        frame.reset_for_reuse();
         frame
     }
 
@@ -935,11 +933,7 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Return(value)) => {
                     if let Some(pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
-                        let result = Ok(FrameOutcome::Complete(value));
-                        let mut completed_frame = self.frames.pop().unwrap();
-                        self.deactivate_frame(&mut completed_frame, &result);
-                        self.persist_global_lexical_bindings(p, &completed_frame);
-                        self.frame_pool.push(Self::recycle_frame(completed_frame));
+                        self.retire_pending_frame(p);
                         frame = pending.caller;
                         self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
@@ -1028,10 +1022,8 @@ impl<H: Host> Vm<H> {
                                 self.frames[frame].pc = pc;
                                 if let Some(pending) = pending_calls.pop() {
                                     debug_assert_eq!(frame, pending.caller + 1);
-                                    let result = Err(unhandled);
-                                    let mut failed_frame = self.frames.pop().unwrap();
-                                    self.deactivate_frame(&mut failed_frame, &result);
-                                    self.persist_global_lexical_bindings(p, &failed_frame);
+                                    let result: Result<FrameOutcome, JsError> = Err(unhandled);
+                                    self.retire_pending_frame(p);
                                     frame = pending.caller;
                                     pc = self.frames[frame].pc;
                                     cursor = GeneralCodeCursor::new(

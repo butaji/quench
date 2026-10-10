@@ -142,6 +142,7 @@ mod tests {
             dispatch,
             handlers: Vec::new(),
             register_root_offset: 0,
+            parameter_registers: None,
         }
     }
 
