@@ -156,6 +156,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
+                frame.program.raw(),
                 frame.function,
                 frame.pc as u32,
                 index + 1 == self.frames.len(),

@@ -3,12 +3,20 @@
 use super::Profile;
 use crate::bytecode::{DispatchClass, Op, ResidualProgram};
 
-pub(super) fn derive(profile: &Profile, program: &ResidualProgram) -> [[u64; Op::COUNT]; 2] {
+pub(super) fn derive(
+    profile: &Profile,
+    program_id: u32,
+    program: &ResidualProgram,
+) -> [[u64; Op::COUNT]; 2] {
     let mut counts = [[0; Op::COUNT]; 2];
+    let program_sites = profile
+        .site_counts
+        .get(program_id as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     for (function_id, function) in program.functions.iter().enumerate() {
         let class = usize::from(function.dispatch == DispatchClass::Numeric);
-        let sites = profile
-            .site_counts
+        let sites = program_sites
             .get(function_id)
             .map(Vec::as_slice)
             .unwrap_or(&[]);
@@ -24,18 +32,27 @@ pub(super) fn derive(profile: &Profile, program: &ResidualProgram) -> [[u64; Op:
     counts
 }
 
-pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
-    let counts = derive(profile, program);
-    let physical_total = profile.site_counts.iter().flatten().sum::<u64>();
+pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
+    let counts = derive(profile, program_id, program);
+    let sites = profile
+        .site_counts
+        .get(program_id as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let physical_total = sites.iter().flatten().sum::<u64>();
     assert_eq!(
         counts.iter().flatten().sum::<u64>(),
         physical_total,
         "dispatch/opcode matrix lost physical executions"
     );
+    let semantic = profile
+        .opcodes
+        .get(program_id as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let mut virtual_counts = [0; Op::COUNT];
     for opcode in 0..Op::COUNT {
-        virtual_counts[opcode] = profile
-            .opcodes
+        virtual_counts[opcode] = semantic
             .get(opcode)
             .copied()
             .unwrap_or(0)
