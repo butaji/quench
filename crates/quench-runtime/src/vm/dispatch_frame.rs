@@ -181,6 +181,7 @@ impl<H: Host> Vm<H> {
             pc: 0,
             binding_site_pc: None,
             env: Value::NULL,
+            capture_base: Value::DELETED,
             this: Value::UNDEFINED,
             locals: vec![],
             dynamic_bindings: vec![],
@@ -229,6 +230,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
+        frame.capture_base = Value::DELETED;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
         let this = if derived {
@@ -389,6 +391,7 @@ impl<H: Host> Vm<H> {
                 pc: 0,
                 binding_site_pc: None,
                 env: Value::NULL,
+                capture_base: Value::DELETED,
                 this: Value::UNDEFINED,
                 locals: vec![],
                 dynamic_bindings: vec![],
@@ -440,6 +443,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
+        frame.capture_base = Value::DELETED;
         let arrow = function.is_arrow;
         let derived = function.derived_constructor;
         let this = if derived {
@@ -756,6 +760,7 @@ impl<H: Host> Vm<H> {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
+        frame.capture_base = Value::DELETED;
         const RETAINED_VALUES: usize = 256;
         if frame.original_arguments.capacity() > RETAINED_VALUES {
             frame.original_arguments.shrink_to(RETAINED_VALUES);

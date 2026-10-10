@@ -173,6 +173,9 @@ pub(super) struct Frame {
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
     env: Value,
+    // Cached lexical parent for depth-zero capture accesses. DELETED means
+    // capture lookup has not proved that the path contains no skipped layers.
+    capture_base: Value,
     this: Value,
     locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,

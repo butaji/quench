@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
             pc: 0,
             binding_site_pc: None,
             env: Value::NULL,
+            capture_base: Value::DELETED,
             this: Value::UNDEFINED,
             locals: vec![],
             dynamic_bindings: vec![],
@@ -130,6 +131,7 @@ impl<H: Host> Vm<H> {
         frame.pc = 0;
         frame.binding_site_pc = None;
         frame.env = parent;
+        frame.capture_base = Value::DELETED;
         frame.this = self.call_this_value(this, function.strict)?;
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED);
         frame.captured = false;
