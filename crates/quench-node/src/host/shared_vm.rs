@@ -32,6 +32,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
+        method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
+        method "processDeleteEnv" (1) => crate::modules::process_shared_vm::delete_env,
         method "processSetUncaughtExceptionCaptureCallback" (1) => crate::modules::process_shared_vm::set_uncaught_exception_capture_callback,
         method "processHasUncaughtExceptionCaptureCallback" (0) => crate::modules::process_shared_vm::has_uncaught_exception_capture_callback,
         method "processGetActiveHandles" (0) => crate::modules::process_shared_vm::get_active_handles,
