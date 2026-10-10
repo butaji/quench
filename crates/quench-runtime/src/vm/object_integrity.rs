@@ -252,8 +252,9 @@ impl<H: Host> Vm<H> {
         }
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
-            .object_data(value)
-            .map(|object| object.proto)
+            .heap
+            .get(value)
+            .and_then(Cell::ordinary_prototype)
             .unwrap_or(Value::NULL))
     }
 
