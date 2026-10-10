@@ -49,6 +49,14 @@ enum IfArm {
     Else,
 }
 
+/// An i32 branch condition: a register, or a comparison fused into the jump.
+#[derive(Clone, Copy)]
+pub(super) enum Condition {
+    Value(Register),
+    Comparison(I32BinaryOperator, Register, Register),
+    Zero(Register),
+}
+
 /// A branch label resolved against the current operand stack.
 #[derive(Clone, Copy)]
 struct BranchTarget {
@@ -130,13 +138,14 @@ impl Lowering<'_> {
             )?,
             Operator::If { blockty } => {
                 let condition = if self.path == Reachability::Live {
-                    Some(self.pop()?)
+                    Some(self.pop_condition()?)
                 } else {
                     None
                 };
+                self.materialize_aliases()?;
                 self.begin(Kind::If(IfArm::Then { false_jump: None }), *blockty)?;
                 let false_jump = condition
-                    .map(|condition| self.conditional_jump(condition, false))
+                    .map(|condition| self.jump_on(condition, false))
                     .transpose()?;
                 self.controls.last_mut().unwrap().kind = Kind::If(IfArm::Then { false_jump });
             }
@@ -150,7 +159,8 @@ impl Lowering<'_> {
             }
             Operator::BrIf { relative_depth } => {
                 if self.path == Reachability::Live {
-                    let condition = self.pop()?;
+                    let condition = self.pop_condition()?;
+                    self.materialize_aliases()?;
                     self.branch_if(*relative_depth, condition)?;
                 }
             }
@@ -174,7 +184,7 @@ impl Lowering<'_> {
                         )?;
                         self.push()?;
                     }
-                    self.branch_if(*relative_depth, condition)?;
+                    self.branch_if(*relative_depth, Condition::Value(condition))?;
                     self.depth = without_reference;
                     if !carry_reference {
                         self.push()?;
@@ -184,6 +194,7 @@ impl Lowering<'_> {
             Operator::BrTable { targets } => {
                 if self.path == Reachability::Live {
                     let index = self.pop()?;
+                    self.materialize_aliases()?;
                     let depth = self.depth;
                     self.push()?; // Keep the selector live while allocating scratch slots.
                     let constant = self.push()?;
@@ -202,7 +213,7 @@ impl Lowering<'_> {
                             constant,
                             I32BinaryOperator::Equal as u32,
                         )?;
-                        self.branch_if(target, condition)?;
+                        self.branch_if(target, Condition::Value(condition))?;
                     }
                     self.branch(targets.default())?;
                     self.make_dead();
@@ -226,12 +237,16 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    debug_assert_eq!(result, left);
-                    let false_jump = self.conditional_jump(condition, false)?;
-                    let end = self.jump(Op::Jump, 0)?;
-                    self.patch_jump(false_jump, self.code.len())?;
-                    self.emit(Op::Move, result, right, 0, 0)?;
-                    self.patch_jump(end, self.code.len())?;
+                    self.emit(
+                        Op::WasmSelect,
+                        result,
+                        left,
+                        right,
+                        crate::bytecode::ImmediateLayout::register_pair_immediate(
+                            condition, condition,
+                        ),
+                    )?;
+                    self.produced(result);
                 }
             }
             _ => return Ok(false),
@@ -562,7 +577,7 @@ impl Lowering<'_> {
             let tag = self.tag_binding(tag)?;
             let condition = self.push()?;
             self.emit(Op::WasmExceptionMatch, condition, exception, tag, 0)?;
-            Some(self.conditional_jump(condition, false)?)
+            Some(self.jump_on(Condition::Value(condition), false)?)
         } else {
             None
         };
@@ -792,62 +807,84 @@ impl Lowering<'_> {
     pub(super) fn branch_if(
         &mut self,
         relative_depth: u32,
-        condition: Register,
+        condition: Condition,
     ) -> Result<(), Diagnostic> {
         let target = self.branch_target(relative_depth)?;
         if target.base == target.values || target.arity == 0 {
-            let jump = self.conditional_jump(condition, true)?;
+            let jump = self.jump_on(condition, true)?;
             return self.bind_branch(target, jump);
         }
-        let fallthrough = self.conditional_jump(condition, false)?;
+        let fallthrough = self.jump_on(condition, false)?;
         self.branch(relative_depth)?;
         self.patch_jump(fallthrough, self.code.len())
     }
 
-    /// Emit a jump taken when the i32 `condition` is nonzero (`when`) or zero.
-    /// A compare that the previous operator emitted only for this condition
-    /// becomes the jump itself.
-    pub(super) fn conditional_jump(
+    /// Pop an i32 branch condition. A comparison that the previous operator
+    /// emitted only for this condition is withdrawn and becomes the jump.
+    /// Its operands stay intact: they sit in locals or popped positions,
+    /// which later materialization never writes.
+    pub(super) fn pop_condition(&mut self) -> Result<Condition, Diagnostic> {
+        let condition = self.pop()?;
+        let Some(pc) = self.previous_producer(condition) else {
+            return Ok(Condition::Value(condition));
+        };
+        let instruction = self.instruction(pc);
+        if let Some(comparison) = I32BinaryOperator::from_register_op(instruction.op())
+            && comparison.jump_op().is_some()
+        {
+            self.code.pop();
+            return Ok(Condition::Comparison(
+                comparison,
+                instruction.b(),
+                instruction.c(),
+            ));
+        }
+        if instruction.op() == Op::WasmI32Unary
+            && I32UnaryOperator::from_tag(instruction.imm()) == Some(I32UnaryOperator::EqualZero)
+        {
+            self.code.pop();
+            return Ok(Condition::Zero(instruction.b()));
+        }
+        Ok(Condition::Value(condition))
+    }
+
+    /// Emit a jump taken when `condition` holds (`when`) or fails.
+    pub(super) fn jump_on(
         &mut self,
-        condition: Register,
+        condition: Condition,
         when: bool,
     ) -> Result<usize, Diagnostic> {
-        if let Some(pc) = self.previous_producer(condition) {
-            let instruction = self.instruction(pc);
-            let comparison = I32BinaryOperator::from_register_op(instruction.op())
-                .and_then(|comparison| {
-                    if when {
-                        Some(comparison)
-                    } else {
-                        comparison.negated_comparison()
-                    }
-                })
-                .and_then(|comparison| comparison.jump_op());
-            if let Some(op) = comparison {
-                self.code.pop();
-                let jump = self.code.len();
-                self.emit(op, instruction.b(), instruction.c(), 0, 0)?;
-                return Ok(jump);
+        let pc = self.code.len();
+        match condition {
+            Condition::Comparison(comparison, left, right) => {
+                let comparison = if when {
+                    comparison
+                } else {
+                    comparison
+                        .negated_comparison()
+                        .expect("fusable comparison has a negation")
+                };
+                let op = comparison.jump_op().expect("fusable comparison has a jump");
+                self.emit(op, left, right, 0, 0)?;
             }
-            if instruction.op() == Op::WasmI32Unary
-                && I32UnaryOperator::from_tag(instruction.imm())
-                    == Some(I32UnaryOperator::EqualZero)
-            {
-                self.code.pop();
+            Condition::Zero(value) => {
                 let op = if when {
                     Op::WasmJumpI32Zero
                 } else {
                     Op::WasmJumpI32NonZero
                 };
-                return self.jump(op, instruction.b());
+                self.emit(op, value, 0, 0, 0)?;
+            }
+            Condition::Value(value) => {
+                let op = if when {
+                    Op::WasmJumpI32NonZero
+                } else {
+                    Op::WasmJumpI32Zero
+                };
+                self.emit(op, value, 0, 0, 0)?;
             }
         }
-        let op = if when {
-            Op::WasmJumpI32NonZero
-        } else {
-            Op::WasmJumpI32Zero
-        };
-        self.jump(op, condition)
+        Ok(pc)
     }
 
     fn branch_target(&self, relative_depth: u32) -> Result<BranchTarget, Diagnostic> {
