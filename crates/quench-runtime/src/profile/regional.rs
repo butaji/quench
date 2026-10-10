@@ -3,12 +3,17 @@ use crate::bytecode::{ControlFlowLayout, DispatchClass, Instr, Op, ResidualProgr
 
 impl Profile {
     #[inline(always)]
-    pub(super) fn site(&mut self, function: u32, pc: usize) {
+    pub(super) fn site(&mut self, program: u32, function: u32, pc: usize) {
+        let program = program as usize;
         let function = function as usize;
-        if self.site_counts.len() <= function {
-            self.site_counts.resize_with(function + 1, Vec::new);
+        if self.site_counts.len() <= program {
+            self.site_counts.resize_with(program + 1, Vec::new);
         }
-        let sites = &mut self.site_counts[function];
+        let functions = &mut self.site_counts[program];
+        if functions.len() <= function {
+            functions.resize_with(function + 1, Vec::new);
+        }
+        let sites = &mut functions[function];
         if sites.len() <= pc {
             sites.resize(pc + 1, 0);
         }
@@ -16,9 +21,9 @@ impl Profile {
     }
 
     #[inline(always)]
-    pub(crate) fn regional_binary(&mut self, function: u32, pc: u32, fast: bool) {
+    pub(crate) fn regional_binary(&mut self, program: u32, function: u32, pc: u32, fast: bool) {
         self.regional_binary_inputs
-            .entry((function, pc))
+            .entry((program, function, pc))
             .or_default()[usize::from(fast)] += 1;
     }
 }
@@ -32,29 +37,30 @@ struct Region {
     binaries: [u64; 2],
 }
 
-pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+pub(super) fn report(profile: &Profile, program_id: u32, program: &ResidualProgram) {
     let mut regions = Vec::new();
     let mut general = [0u64; 2];
     let mut numeric_dispatch_binaries = 0u64;
     for (id, function) in program.functions.iter().enumerate() {
         let counts = profile
             .site_counts
-            .get(id)
+            .get(program_id as usize)
+            .and_then(|functions| functions.get(id))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if function.dispatch == DispatchClass::Numeric {
             numeric_dispatch_binaries += binary_count(function, counts);
             continue;
         }
-        for (&(function_id, _), counts) in &profile.regional_binary_inputs {
-            if function_id as usize == id {
+        for (&(site_program, function_id, _), counts) in &profile.regional_binary_inputs {
+            if site_program == program_id && function_id as usize == id {
                 general[0] += counts[0];
                 general[1] += counts[1];
             }
         }
         for (pc, instruction) in function.code.iter().enumerate() {
             if let Some(start) = backward_edge_target(*instruction, pc) {
-                regions.push(region(profile, id, start, pc, counts));
+                regions.push(region(profile, program_id, id, start, pc, counts));
             }
         }
     }
@@ -84,13 +90,17 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
     eprintln!("]}}");
 }
 
-pub(super) fn report_functions(profile: &Profile, program: &ResidualProgram) {
+pub(super) fn report_functions(profile: &Profile, program_id: u32, program: &ResidualProgram) {
     eprint!(",\"functions\":[");
-    for (id, count) in profile.functions.iter().enumerate() {
+    let counts = profile
+        .functions
+        .get(program_id as usize)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    for (id, (function, count)) in program.functions.iter().zip(counts).enumerate() {
         if id != 0 {
             eprint!(",");
         }
-        let function = &program.functions[id];
         let name = function
             .name
             .map(|atom| program.atoms[atom as usize].as_ref())
@@ -116,10 +126,20 @@ pub(super) fn report_functions(profile: &Profile, program: &ResidualProgram) {
     eprintln!("]}}");
 }
 
-fn region(profile: &Profile, function: usize, start: usize, end: usize, counts: &[u64]) -> Region {
+fn region(
+    profile: &Profile,
+    program_id: u32,
+    function: usize,
+    start: usize,
+    end: usize,
+    counts: &[u64],
+) -> Region {
     let mut binaries = [0; 2];
-    for (&(id, pc), values) in &profile.regional_binary_inputs {
-        if id as usize == function && (start..=end).contains(&(pc as usize)) {
+    for (&(site_program, id, pc), values) in &profile.regional_binary_inputs {
+        if site_program == program_id
+            && id as usize == function
+            && (start..=end).contains(&(pc as usize))
+        {
             binaries[0] += values[0];
             binaries[1] += values[1];
         }
@@ -161,10 +181,8 @@ fn backward_edge_target(instruction: Instr, pc: usize) -> Option<usize> {
 
 impl Profile {
     #[inline(always)]
-    pub fn function(&mut self, id: usize) {
-        if self.functions.len() <= id {
-            self.functions.resize(id + 1, 0);
-        }
-        self.functions[id] += 1;
+    pub fn function(&mut self, program: u32, id: usize) {
+        let counts = super::ensure_program_counter(&mut self.functions, program, id + 1);
+        counts[id] += 1;
     }
 }

@@ -822,7 +822,8 @@ impl<H: Host> Vm<H> {
                 }
                 if let Some(local) = i.numeric_local_target() {
                     self.frames[f].locals[local as usize] = v;
-                    self.profile.virtual_opcode(Op::StoreLocalPlain as usize);
+                    self.profile
+                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
                 } else {
                     self.write(f, i.result_register(), v);
                 }
