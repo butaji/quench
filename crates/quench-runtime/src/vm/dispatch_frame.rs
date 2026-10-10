@@ -137,6 +137,62 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Activate a Wasm function in the running dispatch loop. Wasm bodies
+    /// observe only their locals and registers: no receiver, arguments
+    /// object, dynamic binding or `with` scope belongs to the activation.
+    pub(super) fn push_wasm_frame(
+        &mut self,
+        p: &ResidualProgram,
+        caller: usize,
+        id: u32,
+        parent: Value,
+        arguments: crate::bytecode::RegisterWindow,
+    ) -> Result<crate::stack::StackGuard, JsError> {
+        let stack_guard = crate::stack::StackGuard::enter()
+            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
+        let function = &p.functions[id as usize];
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
+        frame.locals.clear();
+        frame
+            .locals
+            .resize(usize::from(function.locals), Value::UNDEFINED);
+        for offset in 0..arguments.count.min(function.params) {
+            frame.locals[usize::from(offset)] = self.read(caller, arguments.base + offset);
+        }
+        frame.context = CallContext::Internal;
+        frame.function = id;
+        frame.program = self.active_program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = parent;
+        frame.this = Value::UNDEFINED;
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+        frame.prepare_registers(usize::from(function.registers));
+        self.frames.push(frame);
+        Ok(stack_guard)
+    }
+
+    fn empty_frame(&self) -> Frame {
+        Frame {
+            context: CallContext::Internal,
+            original_arguments: vec![],
+            program: self.active_program,
+            function: 0,
+            pc: 0,
+            binding_site_pc: None,
+            env: Value::NULL,
+            this: Value::UNDEFINED,
+            locals: vec![],
+            dynamic_bindings: vec![],
+            captured: false,
+            registers: vec![],
+            active_iterators: vec![],
+            with_objects: Vec::new(),
+            with_base: self.with_stack.len(),
+        }
+    }
+
     pub(super) fn push_general_user_frame(
         &mut self,
         p: &ResidualProgram,
@@ -172,23 +228,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-        });
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -800,9 +840,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let entry_program = p;
         let frame_program = self.frames[frame].program;
-        let allow_inline_calls = stop_pc.is_none()
-            && initial_error.is_none()
-            && p.kind != crate::bytecode::ProgramKind::Wasm;
+        let allow_inline_calls = stop_pc.is_none() && initial_error.is_none();
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
         let outcome = (|| {
