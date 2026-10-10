@@ -91,8 +91,6 @@ impl<H: Host> Vm<H> {
             well_known_symbols: FxHashMap::default(),
             string_concats: None,
             field_caches: vec![],
-            global_var_reads: [super::field_cache::EMPTY_GLOBAL_VAR_READ;
-                super::field_cache::GLOBAL_VAR_READ_ENTRIES],
             field_add_caches: FxHashMap::default(),
             megamorphic_field_indices: vec![],
             megamorphic_fields: vec![],

@@ -222,11 +222,11 @@ impl<H: Host> Vm<H> {
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
-        // local slots once the frame is set up, so every fixed parameter is copied here.
-        let passed = fixed.min(args.len());
-        frame.locals[..passed].copy_from_slice(&args[..passed]);
-        frame.locals[passed..fixed].fill(Value::UNDEFINED);
+        for index in 0..fixed {
+            if function.promoted_register(index as u16).is_none() {
+                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
+        }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
@@ -438,11 +438,11 @@ impl<H: Host> Vm<H> {
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
-        // local slots once the frame is set up, so every fixed parameter is copied here.
-        let passed = fixed.min(args.len());
-        frame.locals[..passed].copy_from_slice(&args[..passed]);
-        frame.locals[passed..fixed].fill(Value::UNDEFINED);
+        for index in 0..fixed {
+            if function.promoted_register(index as u16).is_none() {
+                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
+        }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
