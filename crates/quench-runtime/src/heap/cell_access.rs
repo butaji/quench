@@ -1,6 +1,15 @@
 use super::cell::{Cell, Object};
 
 impl Cell {
+    #[inline(always)]
+    pub(crate) fn ordinary_prototype(&self) -> Option<crate::Value> {
+        if matches!(self, Self::Proxy { .. }) {
+            None
+        } else {
+            self.object().map(|object| object.proto)
+        }
+    }
+
     pub(crate) fn typed_array_backing(&self) -> Option<(&Object, crate::Value)> {
         match self {
             Self::TypedArray { object, buffer, .. } => Some((object, *buffer)),
