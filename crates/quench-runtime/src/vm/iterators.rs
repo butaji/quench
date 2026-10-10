@@ -838,14 +838,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(prototype)),
             source,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         }))
     }
 
@@ -884,14 +886,16 @@ impl<H: Host> Vm<H> {
             Ok(self.heap.alloc(Cell::Iterator {
                 object: Box::new(Self::empty_object(self.iterator_proto)),
                 source,
-                next_method: None,
-                helper: None,
-                helper_running: false,
-                helper_started: false,
                 kind,
                 index: 0,
                 done: false,
-                generator: None,
+                ext: Box::new(crate::heap::IteratorExt {
+                    next_method: None,
+                    helper: None,
+                    helper_running: false,
+                    helper_started: false,
+                    generator: None,
+                }),
             }))
         })();
         self.heap.release_root(root);
@@ -989,14 +993,16 @@ impl<H: Host> Vm<H> {
         let wrapper = self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(prototype)),
             source,
-            next_method: Some(next_method),
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind: IteratorKind::Protocol,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: Some(next_method),
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         });
         self.heap.release_root(next_root);
         self.heap.release_root(source_root);
@@ -1023,23 +1029,25 @@ impl<H: Host> Vm<H> {
         let iterator = self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(prototype)),
             source,
-            next_method: None,
-            helper: Some(Box::new(helper)),
-            helper_running: false,
-            helper_started: false,
             kind,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: Some(Box::new(helper)),
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         });
         Ok(iterator)
     }
 
     fn iterator_record(&mut self, p: &ResidualProgram, iterator: Value) -> Result<Value, JsError> {
         match self.heap.get(iterator) {
-            Some(Cell::Iterator {
-                next_method: None, ..
-            }) => self.iterator_get_direct(p, iterator),
+            Some(Cell::Iterator { ext, .. }) if ext.next_method.is_none() => {
+                self.iterator_get_direct(p, iterator)
+            }
             _ => Ok(iterator),
         }
     }
@@ -1052,12 +1060,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let (source, state, running, done) = match self.heap.get(iterator) {
             Some(Cell::Iterator {
-                source,
-                helper: Some(helper),
-                helper_running,
-                done,
-                ..
-            }) => (*source, helper.as_ref().clone(), *helper_running, *done),
+                source, done, ext, ..
+            }) if let Some(helper) = &ext.helper => {
+                (*source, helper.as_ref().clone(), ext.helper_running, *done)
+            }
             _ => return Err(self.type_error(p, "iterator helper receiver is invalid".into())),
         };
         if done {
@@ -1066,11 +1072,11 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
-            *helper_running = true;
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator) {
+            ext.helper_running = true;
         }
-        if let Some(Cell::Iterator { helper_started, .. }) = self.heap.get_mut(iterator) {
-            *helper_started = true;
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator) {
+            ext.helper_started = true;
         }
         let result = match state {
             IteratorHelper::RegExpStringMatchAll { .. } => Err(self
@@ -1125,8 +1131,8 @@ impl<H: Host> Vm<H> {
                 Err(error)
             }
         };
-        if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
-            *helper_running = false;
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator) {
+            ext.helper_running = false;
         }
         result
     }
@@ -1138,13 +1144,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let (done, running, started, active) = match self.heap.get(iterator) {
             Some(Cell::Iterator {
-                source,
-                done,
-                helper_running,
-                helper_started,
-                helper: Some(helper),
-                ..
-            }) => {
+                source, done, ext, ..
+            }) if let Some(helper) = &ext.helper => {
+                let (helper_running, helper_started) = (&ext.helper_running, &ext.helper_started);
                 let active = match helper.as_ref() {
                     IteratorHelper::Concat { active, .. } => active.iter().copied().collect(),
                     IteratorHelper::Zip {
@@ -1170,8 +1172,8 @@ impl<H: Host> Vm<H> {
         if running {
             return Err(self.type_error(p, "iterator helper is already executing".into()));
         }
-        if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
-            *helper_running = true;
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator) {
+            ext.helper_running = true;
         }
         let result = (|| {
             if !started {
@@ -1182,8 +1184,8 @@ impl<H: Host> Vm<H> {
             close_result?;
             self.iterator_result(Value::UNDEFINED, true)
         })();
-        if let Some(Cell::Iterator { helper_running, .. }) = self.heap.get_mut(iterator) {
-            *helper_running = false;
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator) {
+            ext.helper_running = false;
         }
         result
     }
@@ -1197,12 +1199,13 @@ impl<H: Host> Vm<H> {
         if let Some(Cell::Iterator {
             source: iterator,
             kind: IteratorKind::Protocol,
-            next_method: Some(next),
             done: false,
+            ext,
             ..
         }) = self.heap.get(source)
+            && let Some(next) = ext.next_method
         {
-            return self.iterator_step_with_method(p, *iterator, *next, args);
+            return self.iterator_step_with_method(p, *iterator, next, args);
         }
         let source_root = self.heap.root(source);
         let next_atom = self.intern_atom("next");
@@ -1298,10 +1301,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn update_iterator_helper(&mut self, iterator: Value, state: IteratorHelper) {
-        if let Some(Cell::Iterator {
-            helper: Some(helper),
-            ..
-        }) = self.heap.get_mut(iterator)
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(iterator)
+            && let Some(helper) = &mut ext.helper
         {
             **helper = state;
         }
@@ -2602,14 +2603,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(self.async_from_sync_iterator_proto)),
             source: iterator,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind: IteratorKind::AsyncFromSync,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         }))
     }
 
@@ -2648,14 +2651,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(self.array_iterator_proto)),
             source,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         }))
     }
 
@@ -2906,10 +2911,9 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::Protocol {
                 let next_method = match vm.heap.get(this) {
-                    Some(Cell::Iterator {
-                        next_method: Some(next_method),
-                        ..
-                    }) => *next_method,
+                    Some(Cell::Iterator { ext, .. }) if let Some(next_method) = ext.next_method => {
+                        next_method
+                    }
                     _ => {
                         return Err(vm.type_error(p, "iterator next method is not callable".into()));
                     }
@@ -2918,10 +2922,7 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::RegExpStringMatchAll {
                 let (input, global, unicode) = match vm.heap.get(this) {
-                    Some(Cell::Iterator {
-                        helper: Some(helper),
-                        ..
-                    }) => match helper.as_ref() {
+                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => match helper.as_ref() {
                         IteratorHelper::RegExpStringMatchAll {
                             input,
                             global,

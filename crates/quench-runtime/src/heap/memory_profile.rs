@@ -224,8 +224,8 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
-            Cell::WasmElements(elements)
-            | Cell::WasmTable { elements, .. }
+            Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. }
             | Cell::WasmGc {
                 fields: elements, ..
             } => elements.capacity() * size_of::<Value>(),
@@ -236,11 +236,8 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
             Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::Environment {
-                slots,
-                with_objects,
-                ..
-            } => {
+            Cell::Environment { slots, scope, .. } => {
+                let with_objects = &scope.with_objects;
                 slots.len() * size_of::<super::EnvironmentSlot>()
                     + with_objects.len() * size_of::<Value>()
             }

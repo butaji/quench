@@ -718,11 +718,15 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
-                next_method,
-                helper,
-                generator,
+                ext,
                 ..
             } => {
+                let IteratorExt {
+                    next_method,
+                    helper,
+                    generator,
+                    ..
+                } = &**ext;
                 object(value);
                 work.push(*source);
                 work.extend(*next_method);
@@ -822,9 +826,8 @@ impl Heap {
                 }
                 work.extend(with_objects.iter().copied());
             }
-            Cell::WasmElements(elements) | Cell::WasmTable { elements, .. } => {
-                work.extend(elements.iter().copied())
-            }
+            Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
+            Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
             Cell::WasmGc {
                 fields, descriptor, ..
             } => {
@@ -935,8 +938,8 @@ impl Heap {
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
                 }
-                Cell::WasmElements(elements)
-                | Cell::WasmTable { elements, .. }
+                Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. }
                 | Cell::WasmGc {
                     fields: elements, ..
                 } => elements.capacity() * size_of::<Value>(),
@@ -958,11 +961,8 @@ impl Heap {
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
-                Cell::Environment {
-                    slots,
-                    with_objects,
-                    ..
-                } => {
+                Cell::Environment { slots, scope, .. } => {
+                    let with_objects = &scope.with_objects;
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
