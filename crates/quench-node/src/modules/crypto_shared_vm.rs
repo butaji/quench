@@ -358,7 +358,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
       state.lifecycle = "finalized";
-      const pem = typeof key === "string" ? Buffer.from(key) : inputBuffer(key);
+      const material = key !== null && typeof key === "object" && key.key !== undefined ? key.key : key;
+      const pem = typeof material === "string" ? Buffer.from(material) : inputBuffer(material);
       try {
         const signature = Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem)));
         return outputEncoding === undefined || outputEncoding === "buffer"
@@ -400,7 +401,21 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
       state.lifecycle = "finalized";
-      const pem = typeof key === "string" ? Buffer.from(key) : inputBuffer(key);
+      let material = key;
+      if (key !== null && typeof key === "object" && !ArrayBuffer.isView(key) && !(key instanceof ArrayBuffer)) {
+        if (key.padding !== undefined && typeof key.padding !== "number") {
+          const error = new TypeError(`The property 'options.padding' is invalid. Received ${String(key.padding)}`);
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        if (key.saltLength !== undefined && typeof key.saltLength !== "number") {
+          const error = new TypeError(`The property 'options.saltLength' is invalid. Received ${String(key.saltLength)}`);
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        material = key.key;
+      }
+      const pem = typeof material === "string" ? Buffer.from(material) : inputBuffer(material);
       const signatureBytes = typeof signature === "string"
         ? Buffer.from(signature, signatureEncoding)
         : inputBuffer(signature);
@@ -412,6 +427,18 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
   SignConstructor.prototype = Sign.prototype;
   function VerifyConstructor(algorithm) { return new Verify(algorithm); }
   VerifyConstructor.prototype = Verify.prototype;
+  const signOnce = (algorithm, data, key, options) => {
+    const signer = new Sign(algorithm);
+    signer.update(data);
+    const outputEncoding = typeof options === "string" ? options : undefined;
+    return signer.sign(key, outputEncoding);
+  };
+  const verifyOnce = (algorithm, data, key, signature, options) => {
+    const verifier = new Verify(algorithm);
+    verifier.update(data);
+    const material = options === undefined ? key : Object.assign({}, options, { key });
+    return verifier.verify(material, signature);
+  };
 
   const hashNames = Object.freeze([
     "RSA-SHA1", "blake2b512", "blake2s256", "md5", "ripemd160",
@@ -1251,6 +1278,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     Hmac: HmacConstructor,
     Sign: SignConstructor,
     Verify: VerifyConstructor,
+    sign: signOnce,
+    verify: verifyOnce,
     hash: hashOnce,
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     setEngine,
@@ -1612,12 +1641,16 @@ pub(crate) fn verify(
     let key = match openssl::pkey::PKey::public_key_from_pem(&key_bytes) {
         Ok(key) => key,
         Err(_) => {
-            let private = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
-                .map_err(|error| RootedError::host(error.to_string()))?;
-            let public = private.public_key_to_pem()
-                .map_err(|error| RootedError::host(error.to_string()))?;
-            openssl::pkey::PKey::public_key_from_pem(&public)
-                .map_err(|error| RootedError::host(error.to_string()))?
+            if let Ok(private) = openssl::pkey::PKey::private_key_from_pem(&key_bytes) {
+                let public = private.public_key_to_pem()
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                openssl::pkey::PKey::public_key_from_pem(&public)
+                    .map_err(|error| RootedError::host(error.to_string()))?
+            } else {
+                openssl::x509::X509::from_pem(&key_bytes)
+                    .and_then(|certificate| certificate.public_key())
+                    .map_err(|error| RootedError::host(error.to_string()))?
+            }
         }
     };
     let digest = openssl::hash::MessageDigest::from_name(&algorithm)
