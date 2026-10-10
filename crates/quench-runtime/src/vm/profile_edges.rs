@@ -11,8 +11,12 @@ impl<H: Host> Vm<H> {
     ) -> bool {
         let fast = self.numeric_binary(operator, left, right).is_some();
         #[cfg(feature = "profile-aggregate")]
-        self.profile
-            .regional_binary(self.frames[frame].function, pc as u32, fast);
+        self.profile.regional_binary(
+            self.frames[frame].program.raw(),
+            self.frames[frame].function,
+            pc as u32,
+            fast,
+        );
         let key = (self.frames[frame].function, pc as u32);
         let site = self.numeric_sites.entry(key).or_default();
         if !self.specialized {

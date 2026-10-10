@@ -165,7 +165,8 @@ impl<H: Host> Vm<H> {
         capture_constructor_this: bool,
         push_to_dispatch: bool,
     ) -> Result<UserFrameStart, JsError> {
-        self.profile.function(id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -370,7 +371,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<(), JsError> {
-        self.profile.function(id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -849,8 +851,13 @@ impl<H: Host> Vm<H> {
                 let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .opcode(ins.op() as usize, frame, cursor.function, instruction_pc);
+                self.profile.opcode(
+                    ins.op() as usize,
+                    frame,
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.object_literal_instruction(
                     cursor.program.raw(),
