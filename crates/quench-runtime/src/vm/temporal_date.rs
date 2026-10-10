@@ -230,7 +230,7 @@ impl<H: Host> Vm<H> {
             year: date.year,
             month: date.month,
             day: date.day,
-            calendar,
+            calendar: Box::new(calendar),
         }))
     }
 
@@ -531,7 +531,7 @@ impl<H: Host> Vm<H> {
             year: date.year,
             month: date.month,
             day: date.day,
-            calendar,
+            calendar: Box::new(calendar),
         }))
     }
 
@@ -552,8 +552,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::TemporalPlainDate { calendar, .. })
             | Some(Cell::TemporalPlainDateTime { calendar, .. })
             | Some(Cell::TemporalPlainMonthDay { calendar, .. })
-            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.clone(),
-            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.to_string(),
+            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.to_string(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         let date = checked_iso_date(year, month as i32, day as i32)
@@ -563,7 +563,7 @@ impl<H: Host> Vm<H> {
             year: date.year,
             month: date.month,
             day: date.day,
-            calendar,
+            calendar: Box::new(calendar),
         }))
     }
 
@@ -583,14 +583,14 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(value)
         {
-            let (year, month, day, calendar) = (*year, *month, *day, calendar.clone());
+            let (year, month, day, calendar) = (*year, *month, *day, calendar.to_string());
             let _ = self.plain_date_overflow(p, options)?;
             let date = checked_iso_date(year, month as i32, day as i32)
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }
         if let Some(Cell::TemporalPlainDateTime { date, calendar, .. }) = self.heap.get(value) {
-            let (date, calendar) = (*date, calendar.clone());
+            let (date, calendar) = (*date, calendar.to_string());
             let _ = self.plain_date_overflow(p, options)?;
             let date = checked_iso_date(date.0, date.1 as i32, date.2 as i32)
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
@@ -604,7 +604,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(value)
         {
             let (epoch_nanoseconds, time_zone, calendar) =
-                (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+                (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
             let _ = self.plain_date_overflow(p, options)?;
             let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
                 epoch_nanoseconds,
@@ -714,8 +714,8 @@ impl<H: Host> Vm<H> {
             Some(Cell::TemporalPlainDate { calendar, .. })
             | Some(Cell::TemporalPlainDateTime { calendar, .. })
             | Some(Cell::TemporalPlainMonthDay { calendar, .. })
-            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.clone(),
-            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.to_string(),
+            Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.to_string(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         if !quench_intl::valid_calendar(&calendar) {
@@ -963,7 +963,7 @@ impl<H: Host> Vm<H> {
                 day,
                 calendar,
                 ..
-            }) => Ok((*year, *month, *day, calendar.clone())),
+            }) => Ok((*year, *month, *day, calendar.to_string())),
             _ => Err(self.type_error(
                 p,
                 "Temporal.PlainDate method called on incompatible receiver".into(),

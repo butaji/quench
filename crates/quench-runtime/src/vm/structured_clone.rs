@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 copied_bytes.extend_from_slice(&bytes);
                 let prototype = self.array_buffer_clone_prototype();
                 let target = self.heap.alloc(Cell::ArrayBuffer {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     bytes: Rc::new(copied_bytes),
                     shared: false,
                     detached: false,

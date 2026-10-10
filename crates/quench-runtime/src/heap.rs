@@ -666,11 +666,11 @@ impl Heap {
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
-                legacy_constructor,
+                meta,
                 ..
             } => {
                 object(value);
-                work.push(legacy_constructor.constructor());
+                work.push(meta.legacy_constructor.constructor());
             }
             Cell::DataView {
                 object: value,
@@ -804,12 +804,16 @@ impl Heap {
             Cell::Environment {
                 parent,
                 slots,
-                dynamic_bindings,
-                with_objects,
+                scope,
                 ..
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
+                let crate::heap::EnvironmentScope {
+                    dynamic_bindings,
+                    with_objects,
+                    ..
+                } = &**scope;
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -945,7 +949,7 @@ impl Heap {
                     calendar,
                     ..
                 } => time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),

@@ -1200,6 +1200,19 @@ pub(crate) enum EnvironmentSlot {
     Shared(Value),
 }
 
+/// An environment's provenance and dynamic-scope state: consulted for eval, `with` and
+/// name resolution, while slot reads only need `parent`, `function` and `slots`.
+#[derive(Debug, Clone)]
+pub(crate) struct EnvironmentScope {
+    pub(crate) program: Option<u32>,
+    pub(crate) root_eval_scope: bool,
+    // A captured lexical scope selects its names from the owning function's
+    // binding-site table; slot values remain shared with that activation.
+    pub(crate) binding_site_pc: Option<u32>,
+    pub(crate) dynamic_bindings: EnvironmentBindings,
+    pub(crate) with_objects: Box<[Value]>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct EnvironmentSlots(pub(super) Box<[EnvironmentSlot]>);
 
@@ -1235,6 +1248,16 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
     }
 }
 
+/// A RegExp's source text, flags and legacy-constructor owner: read when a pattern is
+/// recompiled, reflected or matched through legacy statics, not on every match.
+#[derive(Clone, Debug)]
+pub(crate) struct RegExpMeta {
+    pub(crate) source: JsString,
+    pub(crate) flags: String,
+    // One constructor identity owns creation realm and legacy eligibility.
+    pub(crate) legacy_constructor: RegExpLegacyOwner,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum RegExpLegacyOwner {
     Enabled(Value),
@@ -1257,7 +1280,7 @@ pub(crate) enum Cell {
         elements: Rc<Vec<Value>>,
     },
     ArrayBuffer {
-        object: Object,
+        object: Box<Object>,
         bytes: Rc<Vec<u8>>,
         shared: bool,
         detached: bool,
@@ -1267,51 +1290,51 @@ pub(crate) enum Cell {
     },
     TypedArray {
         kind: TypedArrayKind,
-        object: Object,
+        object: Box<Object>,
         buffer: Value,
         offset: usize,
         length: usize,
         length_tracking: bool,
     },
     DataView {
-        object: Object,
+        object: Box<Object>,
         buffer: Value,
         offset: usize,
         length: usize,
         length_tracking: bool,
     },
     Map {
-        object: Object,
+        object: Box<Object>,
         entries: Vec<(Value, Value)>,
     },
     Set {
-        object: Object,
+        object: Box<Object>,
         entries: Vec<Value>,
     },
     ShadowRealm {
-        object: Object,
+        object: Box<Object>,
         caller_global: Value,
         realm_global: Value,
     },
     WeakMap {
-        object: Object,
-        entries: WeakMapEntries,
+        object: Box<Object>,
+        entries: Box<WeakMapEntries>,
     },
     WeakSet {
-        object: Object,
+        object: Box<Object>,
         entries: Vec<Value>,
     },
     WeakRef {
-        object: Object,
+        object: Box<Object>,
         target: Option<WeakHandle>,
     },
     FinalizationRegistry {
-        object: Object,
+        object: Box<Object>,
         callback: Value,
         entries: Box<FinalizationEntries>,
     },
     Iterator {
-        object: Object,
+        object: Box<Object>,
         source: Value,
         next_method: Option<Value>,
         helper: Option<Box<IteratorHelper>>,
@@ -1324,7 +1347,7 @@ pub(crate) enum Cell {
     },
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     Proxy {
-        object: Object,
+        object: Box<Object>,
         kind: ProxyKind,
         target: Value,
         handler: Value,
@@ -1342,15 +1365,9 @@ pub(crate) enum Cell {
     },
     Environment {
         parent: Value,
-        program: Option<u32>,
-        root_eval_scope: bool,
-        // A captured lexical scope selects its names from the owning function's
-        // binding-site table; slot values remain shared with that activation.
-        binding_site_pc: Option<u32>,
         function: u32,
         slots: EnvironmentSlots,
-        dynamic_bindings: EnvironmentBindings,
-        with_objects: Box<[Value]>,
+        scope: Box<EnvironmentScope>,
     },
     // Immutable raw 64-bit Wasm scalars cannot fit the tagged Value payload.
     WasmBits64(u64),
@@ -1372,7 +1389,7 @@ pub(crate) enum Cell {
     WasmElements(Vec<Value>),
     /// One memory identity owns its bytes and original optional maximum.
     WasmGlobal { value: Value, ty: crate::WasmType, declarations: crate::WasmTypes, mutable: bool },
-    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: wasmparser::MemoryType },
+    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,
@@ -1386,11 +1403,8 @@ pub(crate) enum Cell {
     Date { milliseconds: f64, object: Box<Object> },
     RegExp {
         object: Box<Object>,
-        source: JsString,
-        flags: String,
+        meta: Box<RegExpMeta>,
         matcher: Rc<quench_regexp::Regex>,
-        // One constructor identity owns creation realm and legacy eligibility.
-        legacy_constructor: RegExpLegacyOwner,
     },
     Error(String),
     PromiseResolvingState {
@@ -1399,43 +1413,57 @@ pub(crate) enum Cell {
     },
     TemporalDuration {
         object: Box<Object>,
-        fields: [f64; 10],
+        fields: Box<[f64; 10]>,
     },
     TemporalPlainDate {
         object: Box<Object>,
         year: i32,
         month: u32,
         day: u32,
-        calendar: String,
+        calendar: Box<String>,
     },
     TemporalPlainDateTime {
         object: Box<Object>,
         date: (i32, u32, u32),
-        time: [u32; 6],
-        calendar: String,
+        time: Box<[u32; 6]>,
+        calendar: Box<String>,
     },
     TemporalPlainMonthDay {
         object: Box<Object>,
         month: u32,
         day: u32,
-        calendar: String,
+        calendar: Box<String>,
         reference_iso_year: i32,
     },
     TemporalPlainYearMonth {
         object: Box<Object>,
         year: i32,
         month: u32,
-        calendar: String,
+        calendar: Box<String>,
         reference_iso_day: u32,
     },
     TemporalZonedDateTime {
         object: Box<Object>,
-        epoch_nanoseconds: i128,
-        time_zone: String,
-        calendar: String,
+        epoch_nanoseconds: Box<i128>,
+        time_zone: Box<String>,
+        calendar: Box<String>,
     },
     TemporalInstant {
         object: Box<Object>,
-        epoch_nanoseconds: i128,
+        epoch_nanoseconds: Box<i128>,
     },
+}
+
+#[cfg(test)]
+mod cell_layout_tests {
+    use super::*;
+
+    /// Every heap slot holds one `Cell`, so its size multiplies by the live-cell count.
+    /// Large variant payloads are boxed to keep it at this bound.
+    const MAX_CELL_BYTES: usize = 64;
+
+    #[test]
+    fn cells_stay_compact() {
+        assert!(size_of::<Option<Cell>>() <= MAX_CELL_BYTES);
+    }
 }

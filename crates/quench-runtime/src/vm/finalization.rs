@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::FinalizationRegistry {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             callback,
             entries: Box::new(FinalizationEntries::default()),
         }))

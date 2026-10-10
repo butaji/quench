@@ -522,9 +522,10 @@ impl<H: Host> Vm<H> {
         &self,
         receiver: Value,
     ) -> Option<(Rc<quench_regexp::Regex>, String)> {
-        let Some(Cell::RegExp { matcher, flags, .. }) = self.heap.get(receiver) else {
+        let Some(Cell::RegExp { matcher, meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
+        let flags = &meta.flags;
         if !flags.contains('g') || matcher.capture_count() != 0 {
             return None;
         }
@@ -1022,7 +1023,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     let flags = flags.host_string();
                     Ok(vm.heap.alloc(Cell::Iterator {
-                        object: Self::empty_object(vm.regexp_string_iterator_proto),
+                        object: Box::new(Self::empty_object(vm.regexp_string_iterator_proto)),
                         source: matcher,
                         next_method: None,
                         helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
@@ -1179,8 +1180,8 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { source, .. })) => {
-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(source))))
+            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
+                Ok(self.heap.alloc(Cell::String(escape_regexp_source(&meta.source))))
             }
             (Native::RegExpSource, _)
                 if self
@@ -1203,7 +1204,7 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let flags = match self.heap.get(this) {
-            Some(Cell::RegExp { flags, .. }) => flags.clone(),
+            Some(Cell::RegExp { meta, .. }) => meta.flags.clone(),
             _ if self
                 .realm
                 .intrinsics
@@ -1350,11 +1351,10 @@ impl<H: Host> Vm<H> {
                     return Ok(pattern_value);
                 }
             }
-            let input = if let Some(Cell::RegExp { source, flags, .. }) = vm.heap.get(pattern_value)
-            {
+            let input = if let Some(Cell::RegExp { meta, .. }) = vm.heap.get(pattern_value) {
                 RegExpConstructorInput::Internal {
-                    source: source.clone(),
-                    original_flags: flags_omitted.then(|| flags.clone()),
+                    source: meta.source.clone(),
+                    original_flags: flags_omitted.then(|| meta.flags.clone()),
                 }
             } else {
                 let source = if pattern_is_regexp {
@@ -1536,10 +1536,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
             object: Box::new(Self::empty_object(prototype)),
-            source,
-            flags,
+            meta: Box::new(crate::heap::RegExpMeta {
+                source,
+                flags,
+                legacy_constructor,
+            }),
             matcher,
-            legacy_constructor,
         });
         let last_index_atom = self.intern_atom("lastIndex");
         self.set_property(object, last_index_atom, Value::number(0.0))?;
@@ -1573,25 +1575,20 @@ impl<H: Host> Vm<H> {
                         "RegExp.prototype.compile called on incompatible receiver".into(),
                     ));
                 };
-                let enabled = matches!(vm.heap.get(receiver), Some(Cell::RegExp { legacy_constructor, .. }) if matches!(legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if vm.same_value(*owner, vm.regexp_intrinsic_constructor())));
+                let enabled = matches!(vm.heap.get(receiver), Some(Cell::RegExp { meta, .. }) if matches!(&meta.legacy_constructor, crate::heap::RegExpLegacyOwner::Enabled(owner) if vm.same_value(*owner, vm.regexp_intrinsic_constructor())));
             if !enabled {
                 return Err(vm.type_error(p, "RegExp.prototype.compile called on incompatible receiver".into()));
             }
             let pattern = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let flags = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let (source, flags) = if let Some(Cell::RegExp {
-                    source,
-                    flags: original_flags,
-                    ..
-                }) = vm.heap.get(pattern)
-                {
+                let (source, flags) = if let Some(Cell::RegExp { meta, .. }) = vm.heap.get(pattern) {
                     if !flags.is_undefined() {
                         return Err(vm.type_error(
                             p,
                             "flags cannot be supplied when pattern is a RegExp".into(),
                         ));
                     }
-                    (source.clone(), original_flags.clone())
+                    (meta.source.clone(), meta.flags.clone())
                 } else {
                     vm.regexp_initialization_strings(p, pattern, flags)?
                 };
@@ -1605,16 +1602,15 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let Some(Cell::RegExp {
-                    source: current_source,
-                    flags: current_flags,
+                    meta,
                     matcher: current_matcher,
                     ..
                 }) = vm.heap.get_mut(receiver)
                 else {
                     unreachable!("RegExp receiver slot was validated before compilation")
                 };
-                *current_source = source;
-                *current_flags = flags;
+                meta.source = source;
+                meta.flags = flags;
                 *current_matcher = matcher;
                 let last_index = vm.intern_atom("lastIndex");
                 vm.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
@@ -1707,7 +1703,7 @@ impl<H: Host> Vm<H> {
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
             let (regex, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { matcher, flags, .. }) => (Rc::clone(matcher), flags.clone()),
+                Some(Cell::RegExp { matcher, meta, .. }) => (Rc::clone(matcher), meta.flags.clone()),
                 _ => {
                     return Err(
                         vm.type_error(p, "RegExp method called on incompatible receiver".into())
@@ -1780,9 +1776,7 @@ impl<H: Host> Vm<H> {
                 vm.set_property(result, indices_atom, indices)?;
             }
             let owner = match vm.heap.get(this) {
-                Some(Cell::RegExp {
-                    legacy_constructor, ..
-                }) => *legacy_constructor,
+                Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
                 _ => return Err(JsError("RegExp instance unavailable after match".into())),
             };
             let intrinsic = vm.regexp_intrinsic_constructor();

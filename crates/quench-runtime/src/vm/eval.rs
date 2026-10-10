@@ -468,13 +468,15 @@ impl<H: Host> Vm<H> {
                 };
                 self.heap.alloc(Cell::Environment {
                     parent,
-                    program: None,
-                    root_eval_scope: root_scope,
-                    binding_site_pc: None,
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    dynamic_bindings: dynamic_bindings.into(),
-                    with_objects: Box::default(),
+                    scope: Box::new(crate::heap::EnvironmentScope {
+                        program: None,
+                        root_eval_scope: root_scope,
+                        binding_site_pc: None,
+                        dynamic_bindings: dynamic_bindings.into(),
+                        with_objects: Box::default(),
+                    }),
                 })
             } else {
                 parent
@@ -527,10 +529,8 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid eval scope owner".into()))?;
         let Some(Cell::Environment {
             parent,
-            program,
-            root_eval_scope,
             function,
-            with_objects,
+            scope,
             ..
         }) = self.heap.get(environment)
         else {
@@ -538,13 +538,15 @@ impl<H: Host> Vm<H> {
         };
         let scope = Cell::Environment {
             parent: *parent,
-            program: *program,
-            root_eval_scope: *root_eval_scope,
-            binding_site_pc: Some(binding_site_pc),
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-            with_objects: with_objects.clone(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: scope.program,
+                root_eval_scope: scope.root_eval_scope,
+                binding_site_pc: Some(binding_site_pc),
+                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                with_objects: scope.with_objects.clone(),
+            }),
         };
         Ok(self.heap.alloc(scope))
     }
@@ -935,13 +937,15 @@ impl<H: Host> Vm<H> {
             if root_scope {
                 self.heap.alloc(Cell::Environment {
                     parent,
-                    program: None,
-                    root_eval_scope: true,
-                    binding_site_pc: None,
                     function: u32::MAX,
                     slots: Vec::<Value>::new().into_boxed_slice().into(),
-                    dynamic_bindings: Vec::new().into(),
-                    with_objects: Box::default(),
+                    scope: Box::new(crate::heap::EnvironmentScope {
+                        program: None,
+                        root_eval_scope: true,
+                        binding_site_pc: None,
+                        dynamic_bindings: Vec::new().into(),
+                        with_objects: Box::default(),
+                    }),
                 })
             } else {
                 parent
@@ -960,13 +964,15 @@ impl<H: Host> Vm<H> {
                 .collect();
             parent_environment = self.heap.alloc(Cell::Environment {
                 parent: parent_environment,
-                program: None,
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: bindings.into(),
-                with_objects: Box::default(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: None,
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: bindings.into(),
+                    with_objects: Box::default(),
+                }),
             });
         }
         let active_program = std::mem::replace(&mut self.active_program, program_id);

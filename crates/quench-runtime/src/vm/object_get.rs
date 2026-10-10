@@ -518,9 +518,8 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                 | Some(Cell::TemporalZonedDateTime { object: x, .. })
                 | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                Some(Cell::Object(x))
-                | Some(Cell::Array { object: x, .. })
-                | Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
+                Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
+                Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
                 Some(Cell::RegExp { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto
@@ -604,12 +603,12 @@ impl<H: Host> Vm<H> {
         let mut homes = Vec::with_capacity(home_atoms.len());
         while let Some(Cell::Environment {
             parent,
-            program,
             function,
             slots,
-            ..
+            scope,
         }) = self.heap.get(environment)
         {
+            let program = &scope.program;
             let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()

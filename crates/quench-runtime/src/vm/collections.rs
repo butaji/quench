@@ -1,5 +1,4 @@
 use super::*;
-use crate::heap::WeakMapEntries;
 
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
@@ -128,11 +127,11 @@ impl<H: Host> Vm<H> {
         };
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
-                object: Self::empty_object(prototype),
-                entries: WeakMapEntries::default(),
+                object: Box::new(Self::empty_object(prototype)),
+                entries: Box::default(),
             },
             Native::WeakSet => Cell::WeakSet {
-                object: Self::empty_object(prototype),
+                object: Box::new(Self::empty_object(prototype)),
                 entries: Vec::new(),
             },
             _ => return Err(JsError("invalid weak collection constructor".into())),
@@ -239,7 +238,7 @@ impl<H: Host> Vm<H> {
             self.get_property(p, constructor, prototype_atom)?
         };
         Ok(self.heap.alloc(Cell::WeakRef {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             target: Some(target),
         }))
     }
@@ -627,7 +626,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::Map => {
                 let map = self.heap.alloc(Cell::Map {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args
@@ -678,7 +677,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Set => {
                 let set = self.heap.alloc(Cell::Set {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args

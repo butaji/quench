@@ -364,7 +364,7 @@ impl<H: Host> Vm<H> {
         let realm_global_root = self.heap.root(realm_global);
         let object = Self::empty_object(prototype);
         let shadow_realm = self.heap.alloc(Cell::ShadowRealm {
-            object,
+            object: Box::new(object),
             caller_global,
             realm_global: self
                 .heap

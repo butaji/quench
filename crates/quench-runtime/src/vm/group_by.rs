@@ -38,14 +38,14 @@ impl<H: Host> Vm<H> {
             let result = match kind {
                 GroupByKind::Object => Cell::Object(Self::empty_object(Value::NULL)),
                 GroupByKind::Map => Cell::Map {
-                    object: Self::empty_object(
+                    object: Box::new(Self::empty_object(
                         self.realm
                             .intrinsics
                             .builtin_prototypes
                             .get(&(self.realm.globals, Native::Map))
                             .copied()
                             .unwrap_or(self.map_proto),
-                    ),
+                    )),
                     entries: Vec::new(),
                 },
             };
