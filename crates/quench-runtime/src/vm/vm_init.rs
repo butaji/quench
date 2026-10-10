@@ -94,6 +94,7 @@ impl<H: Host> Vm<H> {
             megamorphic_field_indices: vec![],
             megamorphic_fields: vec![],
             length_atom: u32::MAX,
+            prototype_atom: super::builtins::NO_CACHED_ATOM,
             size_atom: u32::MAX,
             byte_length_atom: u32::MAX,
             byte_offset_atom: u32::MAX,

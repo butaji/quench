@@ -205,7 +205,7 @@ impl<H: Host> Vm<H> {
             if !vm.is_object_like(value) {
                 return Ok(false);
             }
-            let prototype_atom = vm.intern_atom("prototype");
+            let prototype_atom = vm.prototype_atom();
             let prototype = vm.get_property(p, constructor, prototype_atom)?;
             if !vm.is_object_like(prototype) {
                 return Err(vm.type_error(p, "instanceof prototype is not an object".into()));

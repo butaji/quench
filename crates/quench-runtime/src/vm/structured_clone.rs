@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
 
     fn array_buffer_clone_prototype(&mut self) -> Value {
         let constructor = self.native_value(Native::ArrayBuffer);
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto)
     }

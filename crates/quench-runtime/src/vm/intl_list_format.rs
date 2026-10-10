@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         self.set_builtin_function_name(constructor, "ListFormat")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),

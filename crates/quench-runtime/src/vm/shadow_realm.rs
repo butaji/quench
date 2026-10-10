@@ -40,7 +40,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "ShadowRealm")?;
         self.set_builtin_function_length(constructor, 0.0)?;
         self.set_builtin_value_named(global, "ShadowRealm", constructor)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -346,7 +346,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -502,7 +502,7 @@ impl<H: Host> Vm<H> {
         let wrapper = self.native_with_realm(Native::ShadowRealmWrappedFunction, env, caller);
         let function_atom = self.intern_atom("Function");
         let constructor = self.get_property(p, caller, function_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let function_prototype = self.get_property(p, constructor, prototype_atom)?;
         if let Some(object) = self.object_data_mut(wrapper) {
             object.proto = function_prototype;

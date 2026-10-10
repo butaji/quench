@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn lock_instant_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
-        let key = self.intern_atom("prototype");
+        let key = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(key),
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -412,7 +412,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype

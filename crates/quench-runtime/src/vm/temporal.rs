@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn lock_temporal_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
-        let prototype = self.intern_atom("prototype");
+        let prototype = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype),
@@ -584,7 +584,7 @@ impl<H: Host> Vm<H> {
         let temporal = self.get_property(p, self.realm.globals, temporal_atom)?;
         let duration_atom = self.intern_atom("Duration");
         let constructor = self.get_property(p, temporal, duration_atom)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let value = self.heap.alloc(Cell::TemporalDuration {
             object: Box::new(Self::empty_object(self.object_proto)),

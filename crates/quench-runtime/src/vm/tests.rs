@@ -2594,7 +2594,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 vm.execute(&program).unwrap();
                 let target_atom = vm.intern_atom("target");
                 let target = vm.own_property(vm.realm.globals, target_atom).unwrap();
-                let prototype_atom = vm.intern_atom("prototype");
+                let prototype_atom = vm.prototype_atom();
                 let prototype = if intrinsic {
                     vm.realm.intrinsics.builtin_prototypes[&(vm.realm.globals, native)]
                 } else {

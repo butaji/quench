@@ -254,7 +254,7 @@ impl<H: Host> Vm<H> {
             let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
             {
                 let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.own_property(realm, constructor_atom)
                     .and_then(|constructor| self.own_property(constructor, prototype_atom))
                     .and_then(|function_prototype| {
@@ -264,7 +264,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(self.async_generator_proto)
             } else if function_plan.is_generator {
                 let constructor_atom = self.intern_atom("GeneratorFunction");
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.own_property(realm, constructor_atom)
                     .and_then(|constructor| self.own_property(constructor, prototype_atom))
                     .and_then(|function_prototype| {
@@ -282,7 +282,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let function_prototype_atom = self.intern_atom("prototype");
+        let function_prototype_atom = self.prototype_atom();
         let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => Some(Native::AsyncGeneratorFunction),
             (false, true) => Some(Native::GeneratorFunction),
@@ -370,7 +370,7 @@ impl<H: Host> Vm<H> {
             },
         );
         if let Some(prototype) = prototype
-            && let Some(atom) = self.lookup_atom("prototype")
+            && let Some(atom) = self.known_prototype_atom()
         {
             self.set_property(function, atom, prototype)?;
             self.set_property_attributes(
@@ -608,7 +608,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
@@ -628,7 +628,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
@@ -651,7 +651,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
@@ -725,7 +725,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         native: Native,
     ) -> Result<Option<Value>, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = TYPED_ARRAY_INSTALLS

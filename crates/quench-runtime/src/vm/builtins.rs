@@ -1,6 +1,9 @@
 use super::property_key::PropertyKey;
 use super::wtf16::JsString;
 use super::*;
+
+/// Marks a cached atom field that has not been interned since the last program reset.
+pub(super) const NO_CACHED_ATOM: Atom = Atom::MAX;
 const MATH_FUNCTIONS: &[(&str, Native)] = &[
     ("abs", Native::MathAbs),
     ("acos", Native::MathAcos),
@@ -694,7 +697,7 @@ impl<H: Host> Vm<H> {
             self.set_named_constant(program, symbol, name, value)?;
         }
         self.install_typed_array_iterator_symbol(program)?;
-        let symbol_prototype_atom = self.intern_atom("prototype");
+        let symbol_prototype_atom = self.prototype_atom();
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
@@ -757,7 +760,7 @@ impl<H: Host> Vm<H> {
             self.install_builtin_to_string_tag(atomics, "Atomics")?;
         }
         let bigint = self.native_value(Native::BigInt);
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let bigint_prototype = self.get_property(program, bigint, prototype_atom)?;
         self.install_builtin_to_string_tag(bigint_prototype, "BigInt")?;
         let data_view = self.native_value(Native::DataView);
@@ -1031,6 +1034,23 @@ impl<H: Host> Vm<H> {
             self.atom_units_equal_str(atom, name)
         })
     }
+    /// The `prototype` atom, interned once per program reset instead of hashed per use.
+    pub(super) fn prototype_atom(&mut self) -> Atom {
+        if self.prototype_atom == NO_CACHED_ATOM {
+            self.prototype_atom = self.intern_atom("prototype");
+        }
+        self.prototype_atom
+    }
+
+    /// `lookup_atom("prototype")` without hashing once the atom is cached.
+    pub(super) fn known_prototype_atom(&self) -> Option<Atom> {
+        if self.prototype_atom == NO_CACHED_ATOM {
+            self.lookup_atom("prototype")
+        } else {
+            Some(self.prototype_atom)
+        }
+    }
+
     pub(super) fn intern_atom(&mut self, name: &str) -> Atom {
         let hash = Self::atom_hash_str(name);
         if let Some(atom) = self.find_atom(hash, |atom| self.atom_units_equal_str(atom, name)) {

@@ -57,7 +57,7 @@ impl<H: Host> Vm<H> {
             self.set_builtin_function_name(constructor, name)?;
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            let prototype_atom = self.intern_atom("prototype");
+            let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
                 constructor,
                 PropertyKey::string(prototype_atom),
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_named(p, constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -260,7 +260,7 @@ impl<H: Host> Vm<H> {
         );
         self.set_builtin_function_name(disposed, "get disposed")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -285,7 +285,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let async_stack = native == Native::AsyncDisposableStack;
         let constructor = self.native_value(native);
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let candidate = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(candidate).is_some() {
             candidate
@@ -568,7 +568,7 @@ impl<H: Host> Vm<H> {
         } else {
             Native::DisposableStack
         });
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
