@@ -754,15 +754,6 @@ impl Instr {
         Self::wide(usize::try_from(index).ok()?)
     }
 
-    /// Handler tables have one slot per encodable opcode value.
-    pub(crate) const OPCODE_SLOTS: usize = 1 << Self::OP_BITS;
-
-    /// The opcode as a handler-table index, without decoding the enum.
-    #[inline(always)]
-    pub(crate) const fn opcode_index(self) -> usize {
-        (self.0 & (Self::OPCODE_SLOTS as u64 - 1)) as usize
-    }
-
     pub(crate) const fn is_wide(self) -> bool {
         self.op().is_wide_marker()
     }
@@ -895,45 +886,6 @@ impl Instr {
         let packed = packed & Self::FIELD_MASK as u16;
         (packed & Self::FIELD_PAYLOAD_MASK)
             | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
-    }
-
-    /// A narrow field whose layout admits no result flags and no FieldBase
-    /// sentinel. Narrow encoding keeps the reserved tag bits clear, so the
-    /// value is exactly the packed payload.
-    #[inline(always)]
-    const fn flagless_field(self, shift: u32) -> u16 {
-        let packed = (self.0 >> shift) as u16 & Self::FIELD_MASK as u16;
-        debug_assert!(packed & !Self::FIELD_PAYLOAD_MASK == 0);
-        packed & Self::FIELD_PAYLOAD_MASK
-    }
-
-    /// Fields of a narrow instruction whose opcode has flagless register
-    /// fields and an unpaired immediate: the general decode without its
-    /// layout-dependent cases.
-    #[inline(always)]
-    pub(crate) const fn plain_a(self) -> u16 {
-        self.flagless_field(Self::A_SHIFT)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn plain_b(self) -> u16 {
-        self.flagless_field(Self::B_SHIFT)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn plain_c(self) -> u16 {
-        self.flagless_field(Self::C_SHIFT)
-    }
-
-    /// A narrow B field that may use all 16 bits, such as a signed constant.
-    #[inline(always)]
-    pub(crate) const fn full_b(self) -> u16 {
-        Self::unpack_plain_field((self.0 >> Self::B_SHIFT) as u16)
-    }
-
-    #[inline(always)]
-    pub(crate) const fn plain_imm(self) -> u32 {
-        (self.0 >> Self::IMM_SHIFT) as u32
     }
 
     const fn pack_immediate(op: Op, value: u32) -> Option<u16> {

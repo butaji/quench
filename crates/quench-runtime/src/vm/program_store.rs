@@ -13,6 +13,8 @@ struct ProgramEntry {
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
     module: bool,
+    /// Per-function lane views, derived from the residual on first lane entry.
+    lane_views: Vec<std::cell::OnceCell<Box<[super::dispatch_fast::LaneInstruction]>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +81,11 @@ impl ProgramStore {
         let id = ProgramId::from_index(self.programs.len())?;
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
+        let lane_views = program
+            .functions
+            .iter()
+            .map(|_| std::cell::OnceCell::new())
+            .collect();
         self.programs.push(ProgramEntry {
             residual: program,
             wasm_signatures: None,
@@ -90,6 +97,7 @@ impl ProgramStore {
             import_meta: None,
             module_imports: Vec::new(),
             module: false,
+            lane_views,
         });
         Some(id)
     }
@@ -315,6 +323,20 @@ impl ProgramStore {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
         }
+    }
+
+    /// The lane view of `function`, derived by `derive` on first use. The
+    /// residual is immutable, so the view stays valid for the entry's life.
+    pub(super) fn lane_view(
+        &self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(&crate::bytecode::Function) -> Box<[super::dispatch_fast::LaneInstruction]>,
+    ) -> Option<*const super::dispatch_fast::LaneInstruction> {
+        let entry = self.programs.get(id.index())?;
+        let code = entry.residual.functions.get(function as usize)?;
+        let view = entry.lane_views.get(function as usize)?;
+        Some(view.get_or_init(|| derive(code)).as_ptr())
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
