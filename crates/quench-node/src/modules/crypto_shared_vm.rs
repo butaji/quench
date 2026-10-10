@@ -315,7 +315,9 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     : Buffer.from(value);
   const pbkdf2Arguments = (password, salt, iterations, keylen, digest) => {
     const bytesLike = (value) => typeof value === "string" ||
-      value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+      value instanceof ArrayBuffer ||
+      typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer ||
+      ArrayBuffer.isView(value);
     if (!bytesLike(password) || !bytesLike(salt)) {
       const error = new TypeError('The "password" and "salt" arguments must be strings or ArrayBuffer views');
       error.code = "ERR_INVALID_ARG_TYPE";
@@ -362,12 +364,16 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     return randomBuffer(size, callback);
   };
   const derivePbkdf2 = (password, salt, iterations, keylen, digest, callback) => {
+    if (typeof digest === "function" && callback === undefined) {
+      callback = digest;
+      digest = undefined;
+    }
+    pbkdf2Arguments(password, salt, iterations, keylen, digest);
     if (typeof callback !== "function") {
       const error = new TypeError('The "callback" argument must be of type function');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    pbkdf2Arguments(password, salt, iterations, keylen, digest);
     const key = Buffer.from(pbkdf2(
       cryptoBytes(password), cryptoBytes(salt), iterations, keylen, digest,
     ));
