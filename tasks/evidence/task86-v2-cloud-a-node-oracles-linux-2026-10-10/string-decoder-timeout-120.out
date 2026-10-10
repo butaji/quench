@@ -1,0 +1,2 @@
+Pass tests/node/test/parallel/test-string-decoder.js
+all: pass=1 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=1 inventory_hash=b77341f4179dac78

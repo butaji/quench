@@ -1,4 +1,4 @@
-pub(crate) const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promise.resolve; const nativeThen = Promise.prototype.then; return (promiseOrFn, expected, message) => {
+pub(crate) const ASSERT_REJECTS: &str = r#"(AssertionError) => { const nativeResolve = Promise.resolve; const nativeThen = Promise.prototype.then; return (promiseOrFn, expected, message) => {
   const receivedType = (value) => {
     if (value === undefined) return "undefined";
     if (value === null) return "null";
@@ -31,7 +31,7 @@ pub(crate) const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promis
   }
   return nativeThen.call(nativeResolve.call(Promise, input),
     () => {
-      return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
+      return Promise.reject(Object.assign(new AssertionError({message: message || `Missing expected rejection${typeof expected === "function" ? ` (${expected.name || "mustNotCall"})` : ""}.`}), {
       code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message
       }));
     },
@@ -44,7 +44,7 @@ pub(crate) const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promis
             ? `${error.name}: ${error.message || ""}`
             : String(error);
           const validationMessage = `The "validate" validation function is expected to return "true". Received ${received}\n\nCaught error:\n\n${caught}`;
-          return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: validationMessage}), {
+          return Promise.reject(Object.assign(new AssertionError({message: validationMessage}), {
           code: "ERR_ASSERTION", operator: "rejects", actual: error, expected, generatedMessage: true, stack: "AssertionError: The rejection did not match\\n    at Function.rejects"
           }));
         }
@@ -73,7 +73,7 @@ pub(crate) const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promis
             ? expectedValue.test(actualValue)
             : rejectsMatch(actualValue, expectedValue);
           if (!matches) {
-            return Promise.reject(Object.assign(new (require("assert").AssertionError)({message: message || "The input did not match"}), {
+            return Promise.reject(Object.assign(new AssertionError({message: message || "The input did not match"}), {
               code: "ERR_ASSERTION", operator: "rejects", generatedMessage: !message, actual: error, expected, stack: `AssertionError: ${message || "The input did not match"}\\n    at Function.rejects`
             }));
           }
@@ -82,4 +82,4 @@ pub(crate) const ASSERT_REJECTS: &str = r#"(() => { const nativeResolve = Promis
       return error;
     }
   );
-}; })()"#;
+}; }"#;

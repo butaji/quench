@@ -9,6 +9,150 @@ pub(crate) struct TailScan {
     pub pre_dot_state: i32,
 }
 
+#[derive(Default)]
+pub(crate) struct PathParts {
+    pub root: String,
+    pub dir: String,
+    pub base: String,
+    pub ext: String,
+    pub name: String,
+}
+
+pub(crate) fn parse_str(path: &str, windows: bool) -> PathParts {
+    if path.is_empty() {
+        return PathParts::default();
+    }
+    let chars: Vec<char> = path.chars().collect();
+    let len = chars.len();
+    let is_sep = |code: char| {
+        if windows {
+            is_path_separator(code)
+        } else {
+            is_posix_separator(code)
+        }
+    };
+    let mut root_end = usize::from(!windows && chars[0] == '/');
+    if windows {
+        if len == 1 && is_sep(chars[0]) {
+            return PathParts {
+                root: path.to_owned(),
+                dir: path.to_owned(),
+                ..PathParts::default()
+            };
+        }
+        if is_sep(chars[0]) {
+            root_end = 1;
+            if len > 1 && is_sep(chars[1]) {
+                let mut cursor = 2;
+                let server_start = cursor;
+                while cursor < len && !is_sep(chars[cursor]) {
+                    cursor += 1;
+                }
+                if cursor < len && cursor != server_start {
+                    let separator_start = cursor;
+                    while cursor < len && is_sep(chars[cursor]) {
+                        cursor += 1;
+                    }
+                    if cursor < len && cursor != separator_start {
+                        let share_start = cursor;
+                        while cursor < len && !is_sep(chars[cursor]) {
+                            cursor += 1;
+                        }
+                        if cursor == len {
+                            root_end = cursor;
+                        } else if cursor != share_start {
+                            root_end = cursor + 1;
+                        }
+                    }
+                }
+            }
+        } else if len >= 2 && is_device_root(chars[0]) && chars[1] == ':' {
+            if len <= 2 {
+                return PathParts {
+                    root: path.to_owned(),
+                    dir: path.to_owned(),
+                    ..PathParts::default()
+                };
+            }
+            root_end = 2;
+            if is_sep(chars[2]) {
+                if len == 3 {
+                    return PathParts {
+                        root: path.to_owned(),
+                        dir: path.to_owned(),
+                        ..PathParts::default()
+                    };
+                }
+                root_end = 3;
+            }
+        }
+    }
+    let root: String = chars[..root_end].iter().collect();
+    let mut start_part = if windows { root_end } else { 0 };
+    let mut start_dot: Option<usize> = None;
+    let mut end: Option<usize> = None;
+    let mut matched_slash = true;
+    let mut pre_dot_state = 0;
+    for index in (root_end..len).rev() {
+        let code = chars[index];
+        if is_sep(code) {
+            if !matched_slash {
+                start_part = index + 1;
+                break;
+            }
+            continue;
+        }
+        if end.is_none() {
+            matched_slash = false;
+            end = Some(index + 1);
+        }
+        if code == '.' {
+            if start_dot.is_none() {
+                start_dot = Some(index);
+            } else if pre_dot_state != 1 {
+                pre_dot_state = 1;
+            }
+        } else if start_dot.is_some() {
+            pre_dot_state = -1;
+        }
+    }
+    let mut parts = PathParts {
+        root: root.clone(),
+        ..PathParts::default()
+    };
+    if let Some(end) = end {
+        let start = if start_part == 0 && root_end > 0 {
+            root_end
+        } else {
+            start_part
+        };
+        let dot = start_dot.filter(|dot| {
+            pre_dot_state != 0
+                && !(pre_dot_state == 1 && *dot == end - 1 && *dot == start_part + 1)
+        });
+        if let Some(dot) = dot {
+            parts.name = chars[start..dot].iter().collect();
+            parts.base = chars[start..end].iter().collect();
+            parts.ext = chars[dot..end].iter().collect();
+        } else {
+            parts.base = chars[start..end].iter().collect();
+            parts.name = parts.base.clone();
+        }
+    }
+    if windows {
+        if start_part > root_end {
+            parts.dir = chars[..start_part - 1].iter().collect();
+        } else {
+            parts.dir = root;
+        }
+    } else if start_part > 0 {
+        parts.dir = chars[..start_part - 1].iter().collect();
+    } else if root_end > 0 {
+        parts.dir = root;
+    }
+    parts
+}
+
 pub(crate) fn scan_tail(chars: &[char], start: usize, initial: usize, windows: bool) -> TailScan {
     let is_sep = |c: char| {
         if windows {

@@ -248,15 +248,27 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 struct ProcessControlCells {
     started: std::time::Instant,
     exit_code: Cell<Option<i32>>,
+    requested_exit_code: Cell<Option<i32>>,
+    exit_emitting: Cell<bool>,
     umask: Cell<u32>,
 }
 
 impl ProcessControl {
     pub(crate) fn new() -> Self {
+        #[cfg(unix)]
+        let umask = unsafe {
+            let current = libc::umask(0);
+            libc::umask(current);
+            current as u32
+        };
+        #[cfg(not(unix))]
+        let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
             exit_code: Cell::new(None),
-            umask: Cell::new(INITIAL_UMASK),
+            requested_exit_code: Cell::new(None),
+            exit_emitting: Cell::new(false),
+            umask: Cell::new(umask),
         }))
     }
 
@@ -272,14 +284,37 @@ impl ProcessControl {
         self.0.exit_code.set(code);
     }
 
+    pub(crate) fn request_exit(&self, code: i32) {
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit_code.set(Some(code));
+    }
+
+    pub(crate) fn requested_exit_code(&self) -> Option<i32> {
+        self.0.requested_exit_code.get()
+    }
+
+    pub(crate) fn exit_emitting(&self) -> bool {
+        self.0.exit_emitting.get()
+    }
+
+    pub(crate) fn begin_exit_emission(&self) {
+        self.0.exit_emitting.set(true);
+    }
+
     pub(crate) fn umask(&self) -> u32 {
         self.0.umask.get()
     }
 
     pub(crate) fn update_umask(&self, mask: u32) -> u32 {
-        self.0.umask.replace(mask & UMASK_BITS)
+        let mask = mask & UMASK_BITS;
+        #[cfg(unix)]
+        unsafe {
+            libc::umask(mask as libc::mode_t);
+        }
+        self.0.umask.replace(mask)
     }
 }
 
+#[cfg(not(unix))]
 const INITIAL_UMASK: u32 = 0o022;
 const UMASK_BITS: u32 = 0o777;
