@@ -426,6 +426,11 @@ impl Heap {
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
+    /// Make a collection due at the next safepoint.
+    #[cfg(test)]
+    pub(crate) fn make_collection_due_for_test(&mut self) {
+        self.threshold = self.allocations;
+    }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
     }
