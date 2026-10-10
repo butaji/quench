@@ -225,9 +225,6 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmMemoryStoreOperator => {
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm()).is_some()
         }
-        super::ImmediateRole::WasmI32BinaryOperator => {
-            crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm()).is_some()
-        }
         super::ImmediateRole::WasmI64BinaryOperator => {
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm()).is_some()
         }

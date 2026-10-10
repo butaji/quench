@@ -168,7 +168,6 @@ impl AtomicOperator {
         address: u64,
         value: Option<WasmValue>,
         replacement: Option<WasmValue>,
-        shared: bool,
     ) -> Result<Option<WasmValue>, WasmTrap> {
         let layout = self.layout();
         match layout.kind {
@@ -187,7 +186,6 @@ impl AtomicOperator {
                         address,
                         value.expect("wait expected value"),
                         timeout,
-                        shared,
                     )
                     .map(|result| Some(WasmValue::I32(result as i32)));
             }
@@ -277,20 +275,22 @@ impl super::Lowering<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wasm::memory::SharedMemory;
     use std::sync::Arc;
 
     #[test]
     fn atomic_accesses_preserve_critical_sections_and_cross_memory_order() {
-        let memory = Arc::new(MemoryStorage::new(vec![0; std::mem::size_of::<i32>()]));
+        let shared = Arc::new(SharedMemory::new(vec![0; std::mem::size_of::<i32>()]));
+        let memory = MemoryStorage::Shared(shared.clone());
         let mut observed = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..4)
                 .map(|_| {
-                    let memory = memory.clone();
+                    let memory = MemoryStorage::Shared(shared.clone());
                     scope.spawn(move || {
                         (0..100)
                             .map(|_| {
                                 AtomicOperator::I32AtomicRmwAdd
-                                    .apply(&memory, 0, Some(WasmValue::I32(1)), None, true)
+                                    .apply(&memory, 0, Some(WasmValue::I32(1)), None)
                                     .unwrap()
                                     .unwrap()
                             })
@@ -308,28 +308,30 @@ mod tests {
         assert_eq!(observed, (0..400).collect::<Vec<_>>());
         assert_eq!(
             AtomicOperator::I32AtomicLoad
-                .apply(&memory, 0, None, None, true)
+                .apply(&memory, 0, None, None)
                 .unwrap(),
             Some(WasmValue::I32(400))
         );
-        let first = MemoryStorage::new(vec![0; std::mem::size_of::<i32>()]);
-        let second = MemoryStorage::new(vec![0; std::mem::size_of::<i32>()]);
+        let first = Arc::new(SharedMemory::new(vec![0; std::mem::size_of::<i32>()]));
+        let second = Arc::new(SharedMemory::new(vec![0; std::mem::size_of::<i32>()]));
         let epoch = std::sync::Barrier::new(3);
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = [(&first, &second), (&second, &first)]
                 .into_iter()
                 .map(|(own, other)| {
                     let epoch = &epoch;
+                    let own = MemoryStorage::Shared(own.clone());
+                    let other = MemoryStorage::Shared(other.clone());
                     scope.spawn(move || {
                         let mut reads = Vec::new();
                         for _ in 0..100 {
                             epoch.wait();
                             AtomicOperator::I32AtomicStore
-                                .apply(own, 0, Some(WasmValue::I32(1)), None, true)
+                                .apply(&own, 0, Some(WasmValue::I32(1)), None)
                                 .unwrap();
                             reads.push(
                                 AtomicOperator::I32AtomicLoad
-                                    .apply(other, 0, None, None, true)
+                                    .apply(&other, 0, None, None)
                                     .unwrap(),
                             );
                             epoch.wait();
@@ -341,7 +343,12 @@ mod tests {
             for _ in 0..100 {
                 for memory in [&first, &second] {
                     AtomicOperator::I32AtomicStore
-                        .apply(memory, 0, Some(WasmValue::I32(0)), None, true)
+                        .apply(
+                            &MemoryStorage::Shared(memory.clone()),
+                            0,
+                            Some(WasmValue::I32(0)),
+                            None,
+                        )
                         .unwrap();
                 }
                 epoch.wait();

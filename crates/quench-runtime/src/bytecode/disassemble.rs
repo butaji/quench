@@ -245,7 +245,6 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmMemoryOffset
         | ImmediateRole::WasmI32Immediate
         | ImmediateRole::WasmAtomicOperator
-        | ImmediateRole::WasmI32BinaryOperator
         | ImmediateRole::WasmStructFieldIndex
         | ImmediateRole::WasmExceptionFieldIndex
         | ImmediateRole::WasmGcTypeIndex
@@ -352,11 +351,6 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             output,
             " operator={:?}",
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm())
-        ),
-        ImmediateRole::WasmI32BinaryOperator => write!(
-            output,
-            " operator={:?}",
-            crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm())
         ),
         ImmediateRole::WasmI64BinaryOperator => write!(
             output,

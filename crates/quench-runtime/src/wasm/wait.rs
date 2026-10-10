@@ -1,7 +1,7 @@
 //! Waiter lifecycle belongs to the linear-memory backing, independently of VM frames.
 
 use super::atomic::memory_order;
-use super::memory::{MemoryLoad, MemoryStorage};
+use super::memory::{MemoryLoad, MemoryStorage, SharedMemory};
 use super::{WasmTrap, WasmValue};
 use std::thread::Thread;
 use std::time::{Duration, Instant};
@@ -33,20 +33,49 @@ const MAX_ADDRESS_WAITERS: usize = u32::MAX as usize;
 const MIN_FINITE_TIMEOUT_NS: i64 = 0;
 
 impl MemoryStorage {
+    /// Waiting needs a backing store other agents can notify; an unshared
+    /// memory still checks the access before it traps.
     pub(crate) fn wait(
         &self,
         load: MemoryLoad,
         address: u64,
         expected: WasmValue,
         timeout: i64,
-        shared: bool,
+    ) -> Result<WaitResult, WasmTrap> {
+        match self {
+            Self::Unshared(_) => {
+                let _order = memory_order();
+                load.read_atomic(&self.lock(), address)?;
+                Err(WasmTrap::WaitOnUnsharedMemory)
+            }
+            Self::Shared(memory) => memory.wait(load, address, expected, timeout),
+        }
+    }
+
+    /// An unshared memory has no waiters to wake.
+    pub(crate) fn notify(&self, address: u64, count: u32) -> Result<u32, WasmTrap> {
+        match self {
+            Self::Unshared(_) => {
+                let _order = memory_order();
+                MemoryLoad::I32Load.read_atomic(&self.lock(), address)?;
+                Ok(0)
+            }
+            Self::Shared(memory) => memory.notify(address, count),
+        }
+    }
+}
+
+impl SharedMemory {
+    pub(crate) fn wait(
+        &self,
+        load: MemoryLoad,
+        address: u64,
+        expected: WasmValue,
+        timeout: i64,
     ) -> Result<WaitResult, WasmTrap> {
         let order = memory_order();
-        let mut memory = self.lock().0;
+        let mut memory = self.state();
         let loaded = load.read_atomic(&memory.bytes, address)?;
-        if !shared {
-            return Err(WasmTrap::WaitOnUnsharedMemory);
-        }
         if loaded != expected {
             return Ok(WaitResult::NotEqual);
         }
@@ -104,7 +133,7 @@ impl MemoryStorage {
                 Some(remaining) => std::thread::park_timeout(remaining),
                 None => std::thread::park(),
             }
-            memory = self.lock().0;
+            memory = self.state();
         };
         // No useful memoized state remains when the last registration completes.
         if memory.waiters.is_empty() {
@@ -115,7 +144,7 @@ impl MemoryStorage {
 
     pub(crate) fn notify(&self, address: u64, count: u32) -> Result<u32, WasmTrap> {
         let _order = memory_order();
-        let mut memory = self.lock().0;
+        let mut memory = self.state();
         MemoryLoad::I32Load.read_atomic(&memory.bytes, address)?;
         let mut notified = 0;
         for waiter in &mut memory.waiters {
@@ -145,7 +174,7 @@ mod tests {
 
     #[test]
     fn waiter_registration_notification_and_timeout_share_one_lifecycle() {
-        let memory = MemoryStorage::new(vec![0; 32]);
+        let memory = SharedMemory::new(vec![0; 32]);
         let (sender, receiver) = mpsc::channel();
         std::thread::scope(|scope| {
             let handles: Vec<_> = [
@@ -158,14 +187,14 @@ mod tests {
                 let sender = sender.clone();
                 scope.spawn(move || {
                     sender
-                        .send(memory.wait(load, 0, expected, timeout, true))
+                        .send(memory.wait(load, 0, expected, timeout))
                         .unwrap()
                 })
             })
             .collect();
             let started = Instant::now();
             let registered = loop {
-                if memory.lock().0.waiters.len() == 2 {
+                if memory.state().waiters.len() == 2 {
                     break true;
                 }
                 if started.elapsed() >= REGISTRATION_DEADLINE {
@@ -174,8 +203,7 @@ mod tests {
                 std::thread::yield_now();
             };
             let signals: Vec<_> = memory
-                .lock()
-                .0
+                .state()
                 .waiters
                 .iter()
                 .map(|waiter| waiter.thread.clone())
@@ -195,7 +223,7 @@ mod tests {
             let second_count = memory.notify(0, u32::MAX);
             let second_result = receiver.recv_timeout(REGISTRATION_DEADLINE);
             // Release even a failed infinite-wait test before joining its worker.
-            for waiter in &mut memory.lock().0.waiters {
+            for waiter in &mut memory.state().waiters {
                 waiter.state = WaitState::Notified;
                 waiter.thread.unpark();
             }
@@ -212,20 +240,19 @@ mod tests {
             assert_eq!(first_result, Ok(Ok(WaitResult::Notified)));
             assert_eq!(second_result, Ok(Ok(WaitResult::Notified)));
         });
-        assert!(memory.lock().0.waiters.is_empty());
-        assert_eq!(memory.lock().0.waiters.capacity(), 0);
+        assert!(memory.state().waiters.is_empty());
+        assert_eq!(memory.state().waiters.capacity(), 0);
         memory.lock()[0] = 0;
         assert_eq!(
             memory.wait(
                 MemoryLoad::I32Load,
                 0,
                 WasmValue::I32(0),
-                EXPIRING_TIMEOUT_NS,
-                true
+                EXPIRING_TIMEOUT_NS
             ),
             Ok(WaitResult::TimedOut)
         );
-        assert!(memory.lock().0.waiters.is_empty());
-        assert_eq!(memory.lock().0.waiters.capacity(), 0);
+        assert!(memory.state().waiters.is_empty());
+        assert_eq!(memory.state().waiters.capacity(), 0);
     }
 }

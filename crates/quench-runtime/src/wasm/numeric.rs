@@ -22,7 +22,11 @@ macro_rules! selectors {
         #[repr(u32)]
         pub(crate) enum $enum { $($name,)+ }
         impl $enum {
+            // Families with first-class opcodes, such as i32 binary operators,
+            // are never decoded from a selector.
+            #[allow(dead_code)]
             pub(super) const ALL: &'static [Self] = &[$(Self::$name,)+];
+            #[allow(dead_code)]
             pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }

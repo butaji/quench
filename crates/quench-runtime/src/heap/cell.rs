@@ -1406,7 +1406,7 @@ pub(crate) enum Cell {
     WasmElements(Vec<Value>),
     /// One memory identity owns its bytes and original optional maximum.
     WasmGlobal { value: Value, ty: crate::WasmType, declarations: crate::WasmTypes, mutable: bool },
-    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: wasmparser::MemoryType },
+    WasmMemory { bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, ty: wasmparser::MemoryType },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,
