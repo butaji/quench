@@ -253,7 +253,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "ZonedDateTime")?;
         let prototype = self.object();
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -354,7 +354,7 @@ impl<H: Host> Vm<H> {
         } else {
             return Err(self.type_error(p, "Invalid calendar".into()));
         };
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -363,9 +363,9 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: epoch,
-            time_zone: timezone,
-            calendar,
+            epoch_nanoseconds: Box::new(epoch),
+            time_zone: Box::new(timezone),
+            calendar: Box::new(calendar),
         }))
     }
 
@@ -375,7 +375,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<String, JsError> {
         if let Some(Cell::TemporalZonedDateTime { time_zone, .. }) = self.heap.get(value) {
-            return Ok(time_zone.clone());
+            return Ok(time_zone.to_string());
         }
         let Some(Cell::String(_)) = self.heap.get(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
@@ -482,9 +482,9 @@ impl<H: Host> Vm<H> {
                 ));
             };
             let receiver = ZonedDateTimeRecord {
-                epoch_nanoseconds: *epoch_nanoseconds,
-                time_zone: time_zone.clone(),
-                calendar: calendar.clone(),
+                epoch_nanoseconds: **epoch_nanoseconds,
+                time_zone: time_zone.to_string(),
+                calendar: calendar.to_string(),
             };
             let other = self.temporal_zoned_date_time_record(
                 p,
@@ -523,8 +523,8 @@ impl<H: Host> Vm<H> {
                     "Temporal.ZonedDateTime method called on incompatible receiver".into(),
                 ));
             };
-            let epoch_nanoseconds = *epoch_nanoseconds;
-            let calendar = calendar.clone();
+            let epoch_nanoseconds = **epoch_nanoseconds;
+            let calendar = calendar.to_string();
             let zone = args.first().copied().unwrap_or(Value::UNDEFINED);
             let time_zone = self.temporal_timezone_id(p, zone)?;
             let constructor = self.temporal_zoned_date_time_intrinsic_constructor(p)?;
@@ -578,9 +578,9 @@ impl<H: Host> Vm<H> {
                     "Temporal.ZonedDateTime method called on incompatible receiver".into(),
                 ));
             };
-            let epoch_nanoseconds = *epoch_nanoseconds;
-            let time_zone = time_zone.clone();
-            let calendar = calendar.clone();
+            let epoch_nanoseconds = **epoch_nanoseconds;
+            let time_zone = time_zone.to_string();
+            let calendar = calendar.to_string();
             if native == Native::TemporalZonedDateTimeValueOf {
                 return Err(self.type_error(p, "Cannot convert ZonedDateTime to a number".into()));
             }
@@ -629,7 +629,7 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch, zone, calendar) = (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+        let (epoch, zone, calendar) = (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
                 Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
@@ -823,9 +823,9 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
-        let calendar = calendar.clone();
+        let epoch_nanoseconds = **epoch_nanoseconds;
+        let time_zone = time_zone.to_string();
+        let calendar = calendar.to_string();
         let mut duration =
             self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
         let options = args.get(1).copied().unwrap_or(Value::UNDEFINED);
@@ -847,7 +847,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc(Cell::String(calendar.clone().into())),
+            self.heap.alloc(Cell::String(calendar.to_string().into())),
         ];
         let local_date_time =
             self.temporal_plain_date_time_construct(p, &date_time_args, date_time_constructor)?;
@@ -916,9 +916,9 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
-        let calendar = calendar.clone();
+        let epoch_nanoseconds = **epoch_nanoseconds;
+        let time_zone = time_zone.to_string();
+        let calendar = calendar.to_string();
         let options = args
             .first()
             .copied()
@@ -978,9 +978,9 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
-        let calendar = calendar.clone();
+        let epoch_nanoseconds = **epoch_nanoseconds;
+        let time_zone = time_zone.to_string();
+        let calendar = calendar.to_string();
         let at_epoch_limit = epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128;
         if at_epoch_limit && !ZERO_OFFSET_TIME_ZONES.contains(&time_zone.as_str()) {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
@@ -1023,9 +1023,9 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
-        let calendar = calendar.clone();
+        let epoch_nanoseconds = **epoch_nanoseconds;
+        let time_zone = time_zone.to_string();
+        let calendar = calendar.to_string();
         let options = args
             .first()
             .copied()
@@ -1128,8 +1128,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let record_epoch = *epoch_nanoseconds;
-        let record_time_zone = time_zone.clone();
+        let record_epoch = **epoch_nanoseconds;
+        let record_time_zone = time_zone.to_string();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
             Some(Cell::String(_)) => {
@@ -1140,7 +1140,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::TemporalPlainDate { calendar, .. })
             | Some(Cell::TemporalPlainDateTime { calendar, .. })
             | Some(Cell::TemporalPlainMonthDay { calendar, .. })
-            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalPlainYearMonth { calendar, .. }) => calendar.to_string(),
             Some(Cell::TemporalZonedDateTime { .. }) => "iso8601".to_owned(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
@@ -1178,7 +1178,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let (epoch_nanoseconds, time_zone, calendar) =
-            (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+            (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
         let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = if argument.is_undefined() {
             round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
@@ -1206,8 +1206,8 @@ impl<H: Host> Vm<H> {
                     day: fields[2] as u32,
                 },
                 time.map(|field| field as u32),
-                calendar.clone(),
-                time_zone.clone(),
+                calendar.to_string(),
+                time_zone.to_string(),
                 "compatible",
             )?;
             let Some(Cell::TemporalZonedDateTime {
@@ -1216,7 +1216,7 @@ impl<H: Host> Vm<H> {
             else {
                 return Err(self.type_error(p, "Invalid ZonedDateTime".into()));
             };
-            *epoch_nanoseconds
+            **epoch_nanoseconds
         };
         if epoch.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
@@ -1261,7 +1261,7 @@ impl<H: Host> Vm<H> {
             ));
         };
         let (epoch_nanoseconds, time_zone, calendar) =
-            (*epoch_nanoseconds, time_zone.clone(), calendar.clone());
+            (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
         let is_plain_time = matches!(
             self.heap.get(partial),
@@ -1388,7 +1388,7 @@ impl<H: Host> Vm<H> {
             year,
             month: month as u32,
             day: day as u32,
-            calendar: calendar.clone(),
+            calendar: Box::new(calendar.to_string()),
         });
         let changes = self.object();
         let mut has_date_change = false;
@@ -1517,9 +1517,9 @@ impl<H: Host> Vm<H> {
             ));
         };
         let left = ZonedDateTimeRecord {
-            epoch_nanoseconds: *left_epoch,
-            time_zone: left_time_zone.clone(),
-            calendar: left_calendar.clone(),
+            epoch_nanoseconds: **left_epoch,
+            time_zone: left_time_zone.to_string(),
+            calendar: left_calendar.to_string(),
         };
         let other = self.temporal_zoned_date_time_compare_record(
             p,
@@ -1886,7 +1886,7 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc(Cell::String(value.calendar.clone().into())),
+            self.heap.alloc(Cell::String(value.calendar.to_string().into())),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1971,9 +1971,9 @@ impl<H: Host> Vm<H> {
             }) => {
                 self.temporal_zoned_date_time_options(p, options)?;
                 Ok(ZonedDateTimeRecord {
-                    epoch_nanoseconds,
-                    time_zone,
-                    calendar,
+                    epoch_nanoseconds: *epoch_nanoseconds,
+                    time_zone: *time_zone,
+                    calendar: *calendar,
                 })
             }
             Some(Cell::String(_)) => {
@@ -2066,9 +2066,9 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch = *epoch_nanoseconds;
-        let time_zone = time_zone.clone();
-        let calendar = calendar.clone();
+        let epoch = **epoch_nanoseconds;
+        let time_zone = time_zone.to_string();
+        let calendar = calendar.to_string();
         let epoch = round_zoned_date_time_epoch(epoch, &time_zone, &options)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
         let fields = zoned_date_time_fields(epoch, &time_zone)
@@ -2232,7 +2232,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalPlainDateTime { calendar, .. })
             | Some(Cell::TemporalPlainMonthDay { calendar, .. })
             | Some(Cell::TemporalPlainYearMonth { calendar, .. })
-            | Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.clone(),
+            | Some(Cell::TemporalZonedDateTime { calendar, .. }) => calendar.to_string(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         let day = self.temporal_date_bag_field(p, value, "day")?;
@@ -2365,7 +2365,7 @@ impl<H: Host> Vm<H> {
         if record.epoch_nanoseconds.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -2374,9 +2374,9 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: record.epoch_nanoseconds,
-            time_zone: record.time_zone,
-            calendar: record.calendar,
+            epoch_nanoseconds: Box::new(record.epoch_nanoseconds),
+            time_zone: Box::new(record.time_zone),
+            calendar: Box::new(record.calendar),
         }))
     }
 }

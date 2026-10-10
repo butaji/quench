@@ -13,7 +13,7 @@ mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
 pub use instruction::Instr;
-pub(crate) use instruction::{ConstructArguments, WideInstruction};
+pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
@@ -733,6 +733,58 @@ const _: () = {
     }
 };
 
+/// Entries after which a function's packed code is expanded into fixed-width instructions.
+/// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
+/// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
+const HOT_DECODE_ENTRIES: u32 = 64;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HotDecoding {
+    entries: std::cell::Cell<u32>,
+    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    #[allow(clippy::box_collection)]
+    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
+}
+
+impl HotDecoding {
+    /// Counts one entry and returns the expanded code once the function is hot.
+    #[inline(always)]
+    pub(crate) fn on_entry(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+    ) -> Option<&[WideInstruction]> {
+        if let Some(decoded) = self.code.get() {
+            return Some(decoded);
+        }
+        let entries = self.entries.get() + 1;
+        self.entries.set(entries);
+        if entries >= HOT_DECODE_ENTRIES {
+            return Some(self.expand(code, wide));
+        }
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+        self.code
+            .get_or_init(|| {
+                code.iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .as_slice()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
@@ -788,6 +840,10 @@ pub struct Function {
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
+    /// Fixed-width view of `code`, derived once the function proves hot.
+    pub(crate) decoded: HotDecoding,
+    /// Lazily derived `plain_local_slots`; never serialized.
+    pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
 }
@@ -889,6 +945,61 @@ impl Function {
                 || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
         });
         has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
+    }
+
+    /// Which local slots are plain: read and written only through the frame's local array,
+    /// with no environment, TDZ, mapped-argument or dynamic-scope observer. Compilation
+    /// specializes these slots' operations, validation re-derives the same proof, and the
+    /// interpreter memoizes it in `plain_locals` to read plain local operands directly.
+    pub(crate) fn plain_local_slots<'a>(
+        &self,
+        atom_name: impl Fn(Atom) -> Option<&'a str>,
+    ) -> Vec<bool> {
+        let mut plain = vec![false; usize::from(self.locals)];
+        if !self.plain_local_context_is_safe() {
+            return plain;
+        }
+        let mut tdz_slots = vec![false; usize::from(self.locals)];
+        for instruction in &self.code {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for instruction in &self.wide {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for (slot, plain) in plain.iter_mut().enumerate() {
+            *plain = self
+                .local_atoms
+                .get(slot)
+                .and_then(|atom| atom_name(*atom))
+                .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
+        }
+        plain
+    }
+
+    /// The memoized `plain_local_slots` projection for this residual's atoms.
+    #[inline(always)]
+    pub(crate) fn plain_local(&self, atoms: &AtomTable, slot: usize) -> bool {
+        self.plain_locals
+            .get_or_init(|| {
+                self.plain_local_slots(|atom| {
+                    usize::try_from(atom)
+                        .ok()
+                        .filter(|atom| *atom < atoms.len())
+                        .map(|atom| &atoms[atom])
+                })
+                .into_boxed_slice()
+            })
+            .get(slot)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub(crate) fn plain_local_slot_is_safe(
