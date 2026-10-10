@@ -754,6 +754,15 @@ impl Instr {
         Self::wide(usize::try_from(index).ok()?)
     }
 
+    /// Handler tables have one slot per encodable opcode value.
+    pub(crate) const OPCODE_SLOTS: usize = 1 << Self::OP_BITS;
+
+    /// The opcode as a handler-table index, without decoding the enum.
+    #[inline(always)]
+    pub(crate) const fn opcode_index(self) -> usize {
+        (self.0 & (Self::OPCODE_SLOTS as u64 - 1)) as usize
+    }
+
     pub(crate) const fn is_wide(self) -> bool {
         self.op().is_wide_marker()
     }

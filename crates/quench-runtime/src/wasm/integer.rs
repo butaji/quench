@@ -282,6 +282,12 @@ macro_rules! i32_comparison_jumps {
             pub(crate) const fn negated_comparison(self) -> Option<Self> {
                 match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
             }
+            pub(crate) const fn from_jump_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$jump => Some(Self::$name),)+ _ => None }
+            }
+            pub(crate) const fn from_immediate_jump_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
+            }
         }
     };
 }
